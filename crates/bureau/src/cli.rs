@@ -1,6 +1,12 @@
 //! The command line. Verbs are verbs; the hard cap is 15 (DESIGN.md
-//! sections 2–3). This session ships `validate`, `version`, and the
-//! `fake` adapter testing seam.
+//! sections 2–3).
+//!
+//! Shipped: `run`, `list`, `show`, `cancel`, `retry`, `validate`,
+//! `version`, and the `fake` adapter testing seam.
+
+mod inspect;
+mod prepare;
+mod run;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -11,7 +17,30 @@ use clap::{Parser, Subcommand};
 
 use bureau::adapters::fake::{self, Transcript};
 use bureau::config::Config;
+use bureau::contract::StepOutcome;
 use bureau::process::SpawnRequest;
+
+/// The four filesystem roots the run-side verbs work against.
+struct Paths {
+    /// Config repository checkout.
+    config: PathBuf,
+    /// Directory holding run directories.
+    runs: PathBuf,
+    /// Durable state database path.
+    state: PathBuf,
+    /// Checkout cache directory.
+    cache: PathBuf,
+}
+
+/// The kebab-case token for an outcome (its serde name).
+const fn outcome_name(outcome: StepOutcome) -> &'static str {
+    match outcome {
+        StepOutcome::Success => "success",
+        StepOutcome::Failure => "failure",
+        StepOutcome::Blocked => "blocked",
+        StepOutcome::NoWork => "no-work",
+    }
+}
 
 /// How long `fake record` lets a subprocess run before killing it.
 const RECORD_TIMEOUT: Duration = Duration::from_secs(3600);
@@ -129,18 +158,55 @@ pub enum FakeAction {
 /// Propagates unexpected failures (fixture I/O, serialization).
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
     match cli.verb {
-        Verb::Version => {
-            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-            Ok(0)
-        }
+        Verb::Version => Ok(version()),
         Verb::Validate { dir } => Ok(validate(&dir)),
         Verb::Fake { action } => fake_action(action).await,
-        Verb::Run { .. }
-        | Verb::List { .. }
-        | Verb::Show { .. }
-        | Verb::Cancel { .. }
-        | Verb::Retry { .. } => todo!("cli-verbs work item"),
+        verb => run_side(verb).await,
     }
+}
+
+/// The verbs that work against run directories: run, retry, list, show,
+/// cancel.
+async fn run_side(verb: Verb) -> anyhow::Result<i32> {
+    match verb {
+        Verb::Run {
+            pipeline,
+            item,
+            config,
+            runs,
+            state,
+            cache,
+        } => run::run(&pipeline, &item, &paths(config, runs, state, cache)).await,
+        Verb::Retry {
+            run_id,
+            config,
+            runs,
+            state,
+            cache,
+        } => run::retry(&run_id, &paths(config, runs, state, cache)).await,
+        Verb::List { runs } => Ok(inspect::list(&runs)),
+        Verb::Show { run_id, runs } => inspect::show(&runs, &run_id),
+        Verb::Cancel { run_id, runs } => inspect::cancel(&runs, &run_id),
+        Verb::Version | Verb::Validate { .. } | Verb::Fake { .. } => {
+            unreachable!("handled by the caller")
+        }
+    }
+}
+
+/// Bundles the four filesystem roots a run-side verb destructures to.
+const fn paths(config: PathBuf, runs: PathBuf, state: PathBuf, cache: PathBuf) -> Paths {
+    Paths {
+        config,
+        runs,
+        state,
+        cache,
+    }
+}
+
+/// Prints the version line.
+fn version() -> i32 {
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    0
 }
 
 fn validate(dir: &std::path::Path) -> i32 {
