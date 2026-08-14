@@ -1,5 +1,18 @@
 # Agent Instructions
 
+## The spec
+
+`DESIGN.md` is the authoritative specification for this repository. Read it
+before writing anything. In particular:
+
+- The naming law (§2) is enforced in review: no invented nouns, no mascots,
+  no Kubernetes vocabulary.
+- The non-goals (§3) are hard: do not build anything on that list.
+- Layers are built in order (§7); each layer ships with offline tests that
+  need no network and no model calls. Layers 0–3 and the config loader are
+  built; the engine, reconcile loop, git worktrees, and forge clients are
+  not yet.
+
 ## Linting expectations
 
 This repository is a Rust workspace with strict lint configuration. All code must pass these lints before being considered complete.

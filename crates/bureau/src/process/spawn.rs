@@ -1,0 +1,247 @@
+//! Layer 0: spawning a subprocess under the process contract.
+
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::process::{ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{Child, Command};
+
+use super::scrub::ScrubWriter;
+use super::secret::Secret;
+
+/// Where captured output goes besides the result buffers: the run log.
+pub type SharedLog = Arc<Mutex<Box<dyn Write + Send>>>;
+
+/// Wraps a writer for use as a [`SpawnRequest::log`] sink.
+#[must_use]
+pub fn shared_log<W>(writer: W) -> SharedLog
+where
+    W: Write + Send + 'static,
+{
+    Arc::new(Mutex::new(Box::new(writer)))
+}
+
+/// Everything needed to run one subprocess (DESIGN.md layer 0).
+pub struct SpawnRequest {
+    /// Program and arguments; `argv[0]` is the program.
+    pub argv: Vec<String>,
+    /// Working directory — always a worktree path, never the daemon's cwd.
+    pub dir: PathBuf,
+    /// The COMPLETE child environment; nothing is inherited from the daemon.
+    pub env: BTreeMap<String, String>,
+    /// Bytes written to the child's stdin, then closed.
+    pub stdin: Vec<u8>,
+    /// Hard limit; on expiry the child's whole process group is killed.
+    pub timeout: Duration,
+    /// Values scrubbed from all captured output.
+    pub secrets: Vec<Secret>,
+    /// Optional sink receiving scrubbed output as it arrives.
+    pub log: Option<SharedLog>,
+}
+
+/// How a spawned process ended. These four outcomes are genuinely
+/// distinct; a timeout is never collapsed into an exit code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnOutcome {
+    /// Ran to completion; see `exit_code`.
+    Exited,
+    /// Hard-killed (the whole process group) after `timeout`.
+    Timeout,
+    /// Killed externally by a signal.
+    Signaled,
+    /// Never started.
+    SpawnFailed,
+}
+
+/// The captured result of one subprocess. A struct with an enum
+/// discriminant, so it serializes straight into the run log.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SpawnResult {
+    /// How the process ended.
+    pub outcome: SpawnOutcome,
+    /// `Some` only when `outcome == Exited`.
+    pub exit_code: Option<i32>,
+    /// Scrubbed stdout.
+    pub stdout: Vec<u8>,
+    /// Scrubbed stderr.
+    pub stderr: Vec<u8>,
+    /// Wall time from spawn to reaping.
+    pub duration: Duration,
+    /// Spawn or wait error detail, when relevant.
+    pub error: Option<String>,
+}
+
+impl SpawnResult {
+    fn failed(error: String, started: Instant) -> Self {
+        Self {
+            outcome: SpawnOutcome::SpawnFailed,
+            exit_code: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            duration: started.elapsed(),
+            error: Some(error),
+        }
+    }
+}
+
+fn build_command(req: &SpawnRequest) -> Result<Command, String> {
+    let Some(program) = req.argv.first() else {
+        return Err("argv is empty".to_owned());
+    };
+    let mut command = std::process::Command::new(program);
+    command
+        .args(&req.argv[1..])
+        .current_dir(&req.dir)
+        .env_clear()
+        .envs(&req.env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // A new process group per child (pgid == child pid) so a timeout can
+    // kill the whole tree, backgrounded grandchildren included. Both
+    // `process_group` and nix's `killpg` are safe APIs; no `unsafe` here.
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    Ok(Command::from(command))
+}
+
+fn spawn_child(req: &SpawnRequest) -> Result<Child, String> {
+    build_command(req)?.spawn().map_err(|e| e.to_string())
+}
+
+/// Runs a subprocess to completion under the contract.
+#[must_use]
+pub async fn spawn(req: SpawnRequest) -> SpawnResult {
+    let started = Instant::now();
+    match spawn_child(&req) {
+        Ok(child) => run_child(req, child, started).await,
+        Err(error) => SpawnResult::failed(error, started),
+    }
+}
+
+async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> SpawnResult {
+    write_stdin(&mut child, &req.stdin).await;
+    let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
+    let err = drain_task(child.stderr.take(), req.secrets, req.log);
+    let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
+    let (stdout, stderr) = tokio::join!(out, err);
+    SpawnResult {
+        outcome,
+        exit_code,
+        stdout: stdout.unwrap_or_default(),
+        stderr: stderr.unwrap_or_default(),
+        duration: started.elapsed(),
+        error,
+    }
+}
+
+async fn write_stdin(child: &mut Child, stdin: &[u8]) {
+    let Some(mut pipe) = child.stdin.take() else {
+        return;
+    };
+    let _ = pipe.write_all(stdin).await;
+    // Dropping the pipe closes the child's stdin.
+}
+
+type BoxedStream = Pin<Box<dyn AsyncRead + Send>>;
+
+fn stream<R>(stream: Option<R>) -> BoxedStream
+where
+    R: AsyncRead + Send + Unpin + 'static,
+{
+    stream.map_or_else(
+        || Box::pin(tokio::io::empty()) as BoxedStream,
+        |r| Box::pin(r) as BoxedStream,
+    )
+}
+
+fn drain_task(
+    reader: Option<impl AsyncRead + Send + Unpin + 'static>,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> tokio::task::JoinHandle<Vec<u8>> {
+    tokio::spawn(drain(stream(reader), secrets, log))
+}
+
+/// Reads a stream to EOF, scrubbing each chunk as it arrives and
+/// forwarding the scrubbed bytes to the run-log sink immediately.
+async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>) -> Vec<u8> {
+    let mut reader = reader;
+    let mut scrubber = ScrubWriter::new(Vec::new(), &secrets);
+    let mut forwarded = 0;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break, // a read error still leaves partial output usable
+            Ok(n) => {
+                let _ = scrubber.write_all(&chunk[..n]);
+                forward(log.as_ref(), scrubber.get_ref(), &mut forwarded);
+            }
+        }
+    }
+    let captured = scrubber.finish().unwrap_or_default();
+    forward(log.as_ref(), &captured, &mut forwarded);
+    captured
+}
+
+fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
+    if buf.len() <= *forwarded {
+        return;
+    }
+    if let Some(sink) = log {
+        if let Ok(mut w) = sink.lock() {
+            let _ = w.write_all(&buf[*forwarded..]);
+        }
+    }
+    *forwarded = buf.len();
+}
+
+async fn wait_child(
+    child: &mut Child,
+    timeout: Duration,
+) -> (SpawnOutcome, Option<i32>, Option<String>) {
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => classify(status),
+        Ok(Err(e)) => (
+            SpawnOutcome::Signaled,
+            None,
+            Some(format!("wait failed: {e}")),
+        ),
+        Err(_) => {
+            kill_group(child);
+            let _ = child.wait().await; // reap after the group kill
+            (SpawnOutcome::Timeout, None, None)
+        }
+    }
+}
+
+fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
+    use std::os::unix::process::ExitStatusExt;
+    match (status.code(), status.signal()) {
+        (Some(code), _) => (SpawnOutcome::Exited, Some(code), None),
+        (None, signal) => (
+            SpawnOutcome::Signaled,
+            None,
+            signal.map(|s| format!("signal {s}")),
+        ),
+    }
+}
+
+fn kill_group(child: &Child) {
+    use nix::sys::signal::{Signal, killpg};
+    use nix::unistd::Pid;
+
+    let Some(id) = child.id() else {
+        return;
+    };
+    let Ok(pgid) = i32::try_from(id) else {
+        return;
+    };
+    let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
+}

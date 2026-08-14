@@ -8,5 +8,12 @@
     "version": "1.0.0",
     "pluginRoot": "./plugins"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "atomic",
+      "description": "Single-purpose agents for bureau runs. A role references one unmodified as `agent: /atomic:<name>`.",
+      "version": "0.1.0",
+      "source": "./atomic"
+    }
+  ]
 }
