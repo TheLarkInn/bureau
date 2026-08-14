@@ -1,0 +1,12 @@
+{
+  "name": "bureau",
+  "owner": {
+    "name": "TheLarkInn"
+  },
+  "metadata": {
+    "description": "Local plugin marketplace for the bureau repository. Plugins live in this .ai directory.",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": []
+}
