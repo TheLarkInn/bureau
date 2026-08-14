@@ -12,7 +12,7 @@ while IFS= read -r -d '' source_file; do
         failures=$((failures + 1))
     fi
 
-    if grep -zEq '#!?[[:space:]]*\[[[:space:]]*(allow|expect)[[:space:]]*\(' "$source_file"; then
+    if perl -0ne '$found ||= /#!?[[:space:]]*\[[[:space:]]*(allow|expect)[[:space:]]*\(/; END { exit !$found }' "$source_file"; then
         printf '%s contains a forbidden lint-suppression attribute.\n' "$source_file" >&2
         failures=$((failures + 1))
     fi
