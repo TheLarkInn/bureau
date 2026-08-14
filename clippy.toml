@@ -1,0 +1,2 @@
+cognitive-complexity-threshold = 4
+too-many-lines-threshold = 25
