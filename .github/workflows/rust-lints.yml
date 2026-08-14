@@ -1,0 +1,29 @@
+name: Rust lints
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Install lint tools
+        run: |
+          cargo install cargo-dylint --version 5.0.0 --locked
+          cargo install dylint-link --version 5.0.0 --locked
+          rustup toolchain install nightly-2026-01-22 --component rustc-dev
+      - name: Check repository policy
+        run: ./scripts/check-rust-policy.sh
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run custom lints
+        run: >-
+          LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib"
+          RUSTFLAGS="-Dwarnings" cargo dylint --all
