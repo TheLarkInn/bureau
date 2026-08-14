@@ -109,6 +109,15 @@ min_trust: untrusted
 concurrency: 1
 ";
 
+const MINIMAL_PIPELINE: &str = r#"
+name: fix-failing-test
+steps:
+  - name: work
+    type: deterministic
+    run: "true"
+    next: done
+"#;
+
 const MINIMAL_ASSIGNMENT: &str = r#"
 name: job
 work:
@@ -132,6 +141,7 @@ fn write_minimal_config(dir: &Path) {
     write(dir, "repos.yaml", MINIMAL_REPO);
     write(dir, "roles/worker.yaml", MINIMAL_ROLE);
     write(dir, "assignments/job.yaml", MINIMAL_ASSIGNMENT);
+    write(dir, "pipelines/fix-failing-test.yaml", MINIMAL_PIPELINE);
 }
 
 #[test]

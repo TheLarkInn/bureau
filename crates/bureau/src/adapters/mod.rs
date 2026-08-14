@@ -9,6 +9,7 @@
 pub mod claude;
 pub mod copilot;
 pub mod fake;
+pub(crate) mod real;
 
 use serde::{Deserialize, Serialize};
 

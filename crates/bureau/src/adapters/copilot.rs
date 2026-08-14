@@ -1,50 +1,121 @@
 //! The `copilot` adapter: runs the GitHub Copilot CLI as the agent.
 //!
-//! The agent file a developer invokes locally as `/plugin:agent` runs
-//! unmodified in automation (DESIGN.md section 6): the adapter passes the
-//! reference through, and mirrors the role's permissions in argv
-//! (`--allow-tool` / `--deny-tool`) where the CLI can enforce them.
+//! The agent file a developer invokes locally runs unmodified in
+//! automation (DESIGN.md section 6): a `/plugin:agent` reference is
+//! copied verbatim from `.ai/plugins/<plugin>/agents/<name>.agent.md`
+//! when it resolves locally and otherwise passed through by name — the
+//! plugin is expected in the environment (container provisioning,
+//! section 10). A direct `.md` path is copied verbatim into
+//! `<worktree>/.github/agents/<name>.agent.md`: discovery needs the
+//! suffix, so only the file is renamed, never the content.
+//!
+//! argv is `copilot -p <request-json> --agent <name> --model <model>`;
+//! the request JSON also arrives on stdin per the layer-2 contract.
+//! Only the push boundary — the credential line — is mirrored in argv
+//! (section 10); absent grants keep default CLI behavior:
+//!
+//! | permissions                   | flags |
+//! |-------------------------------|-------|
+//! | `repo:write`, not `repo:push` | `--allow-tool=shell(git:*) --deny-tool='shell(git push)'` |
+//! | `repo:push`                   | `--allow-tool=shell(git:*)` |
+//! | anything else                 | *(none)* |
+//!
+//! Credentials arrive by env convention: `GH_TOKEN`, when present in
+//! the daemon environment, is forwarded into the child env and added
+//! to the scrub list. To record a fixture for the `fake` adapter, run
+//! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
 use std::time::Duration;
 
-use crate::config::{Role, StepDef};
+use super::real;
+use crate::config::{Permission, Role, StepDef};
 use crate::contract::{StepRequest, StepResult};
 use crate::process::{Secret, SharedLog, SpawnRequest};
 
 /// The adapter's working binary name.
 pub const BINARY: &str = "copilot";
 
+/// Default per-step timeout when the pipeline does not set one.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(real::DEFAULT_TIMEOUT_SECS);
+
+/// Copilot's agent discovery location inside a worktree.
+const DISCOVERY: real::Discovery = real::Discovery {
+    dir: ".github/agents",
+    suffix: ".agent.md",
+};
+
+/// Credential variables forwarded from the daemon environment.
+const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
+
 /// Builds the layer-0 request for a `copilot` step: the step contract
-/// JSON on stdin, credentials in env, permission flags in argv.
+/// JSON as `-p` and on stdin, credentials in env, permissions in argv.
 ///
-/// `credentials` are the secrets the role's permissions grant, already
-/// resolved; every value is also present in `secrets` for scrubbing.
+/// `secrets` is the engine's scrub list; forwarded credential values
+/// are appended to it. Building never fails: agent materialization is
+/// best effort and the CLI surfaces its own errors at spawn time.
 #[must_use]
 pub fn spawn_request(
-    _role: &Role,
-    _step: &StepDef,
+    role: &Role,
+    step: &StepDef,
     request: &StepRequest,
-    _secrets: Vec<Secret>,
-    _log: Option<SharedLog>,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
 ) -> SpawnRequest {
-    let _ = request;
-    todo!(
-        "adapters-real: argv = copilot -p --agent <ref> ... ; env = credential vars (GH_TOKEN); stdin = request JSON; timeout from step"
-    )
+    let json = request.to_json().unwrap_or_default();
+    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let found = real::daemon_credentials(&CREDENTIAL_VARS);
+    let (env, secrets) = real::child_env(found, secrets);
+    SpawnRequest {
+        argv: argv(role, &agent, &json),
+        dir: request.worktree.clone(),
+        env,
+        stdin: json,
+        timeout: real::timeout(step),
+        secrets,
+        log,
+    }
+}
+
+/// `copilot -p <json> --agent <name> --model <model>` plus the mirror.
+fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        String::from_utf8_lossy(prompt).into_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--model".to_owned(),
+        role.model.clone(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
+
+/// The push-boundary mirror; see the module table.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let mut flags = Vec::new();
+    let (write, push) = real::push_boundary(permissions);
+    if write {
+        flags.push("--allow-tool=shell(git:*)".to_owned());
+        if !push {
+            flags.push("--deny-tool=shell(git push)".to_owned());
+        }
+    }
+    flags
 }
 
 /// Runs a `copilot` step and derives the step result.
+///
+/// A spawn failure is data: it becomes `StepOutcome::Failure` through
+/// `result_from_spawn`, never a panic.
 #[must_use]
 pub async fn execute(
-    _role: &Role,
-    _step: &StepDef,
-    _request: &StepRequest,
-    _secrets: Vec<Secret>,
-    _log: Option<SharedLog>,
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
 ) -> StepResult {
-    tokio::task::yield_now().await;
-    todo!("adapters-real: spawn, then result_from_spawn")
+    let built = spawn_request(role, step, request, secrets, log);
+    super::result_from_spawn(&crate::process::spawn(built).await)
 }
-
-/// Default per-step timeout when the pipeline does not set one.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1800);

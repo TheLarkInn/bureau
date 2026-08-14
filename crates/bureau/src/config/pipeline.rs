@@ -48,6 +48,18 @@ pub enum StepKind {
     Decision,
 }
 
+impl StepKind {
+    /// The lowercase name used in config files and error messages.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Deterministic => "deterministic",
+            Self::Agent => "agent",
+            Self::Decision => "decision",
+        }
+    }
+}
+
 /// One step. Which fields apply depends on `kind`:
 ///
 /// - `deterministic`: `run` required.
@@ -108,4 +120,118 @@ pub struct StepDef {
 
 const fn default_max_attempts() -> u32 {
     1
+}
+
+/// The four outcomes a `decision` step's `on` must cover (kebab-case).
+const OUTCOMES: [&str; 4] = ["success", "failure", "blocked", "no-work"];
+
+impl StepDef {
+    /// Every edge target this step names.
+    pub fn edge_targets(&self) -> impl Iterator<Item = &str> {
+        [
+            self.next.as_deref(),
+            self.on_failure.as_deref(),
+            self.on_blocked.as_deref(),
+            self.on_no_work.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(self.on.values().map(String::as_str))
+    }
+
+    /// Field-level problems with this step, independent of other config.
+    #[must_use]
+    pub fn field_errors(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        self.check_required(&mut errors);
+        self.check_misplaced(&mut errors);
+        self.check_limits(&mut errors);
+        self.check_coverage(&mut errors);
+        errors
+    }
+
+    fn check_required(&self, errors: &mut Vec<String>) {
+        match self.kind {
+            StepKind::Deterministic => self.check_run(errors),
+            StepKind::Agent => self.check_role(errors),
+            StepKind::Decision => self.check_over(errors),
+        }
+    }
+
+    fn check_run(&self, errors: &mut Vec<String>) {
+        if self.run.as_deref().is_none_or(|r| r.trim().is_empty()) {
+            errors.push("`run` is required for a deterministic step".to_owned());
+        }
+    }
+
+    fn check_role(&self, errors: &mut Vec<String>) {
+        if self.role.is_none() {
+            errors.push("`role` is required for an agent step".to_owned());
+        }
+    }
+
+    fn check_over(&self, errors: &mut Vec<String>) {
+        if self.over.is_none() {
+            errors.push("`over` is required for a decision step".to_owned());
+        }
+    }
+
+    fn check_misplaced(&self, errors: &mut Vec<String>) {
+        let fields = [
+            ("run", self.run.is_some()),
+            ("role", self.role.is_some()),
+            ("fixture", self.fixture.is_some()),
+            ("trust", self.trust.is_some()),
+            ("over", self.over.is_some()),
+            ("on", !self.on.is_empty()),
+        ];
+        for (field, present) in fields {
+            if present && !allowed_on(self.kind, field) {
+                errors.push(format!(
+                    "`{field}` does not apply to {} steps",
+                    self.kind.name()
+                ));
+            }
+        }
+    }
+
+    fn check_limits(&self, errors: &mut Vec<String>) {
+        if self.max_attempts == 0 {
+            errors.push("`max_attempts` must be at least 1".to_owned());
+        }
+        if self.timeout_secs == Some(0) {
+            errors.push("`timeout_secs` must be positive".to_owned());
+        }
+    }
+
+    fn check_coverage(&self, errors: &mut Vec<String>) {
+        if self.kind == StepKind::Decision {
+            check_missing_outcomes(&self.on, errors);
+            check_unknown_outcomes(&self.on, errors);
+        }
+    }
+}
+
+fn allowed_on(kind: StepKind, field: &str) -> bool {
+    match kind {
+        StepKind::Deterministic => field == "run",
+        StepKind::Agent => matches!(field, "role" | "fixture" | "trust"),
+        StepKind::Decision => matches!(field, "over" | "on"),
+    }
+}
+
+fn check_missing_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
+    for outcome in OUTCOMES {
+        if !on.contains_key(outcome) {
+            errors.push(format!("`on` is missing a `{outcome}` branch"));
+        }
+    }
+}
+
+fn check_unknown_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
+    for key in on.keys() {
+        if !OUTCOMES.contains(&key.as_str()) {
+            errors.push(format!("`on` has unknown outcome `{key}`"));
+        }
+    }
 }

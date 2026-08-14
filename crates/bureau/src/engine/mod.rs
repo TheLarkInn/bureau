@@ -7,13 +7,34 @@
 //! and opens the PR (DESIGN.md section 11 steps 2 and 9 live here, not in
 //! YAML — the schema has exactly two code-running step types).
 //!
-//! Terminal mapping: `done` → Success (push + PR), `abort` → Failure,
-//! `escalate` → Blocked plus a comment on the work item. On resume the
-//! engine replays `events.jsonl` and skips completed steps — the log is
-//! the only source of truth.
+//! Terminal mapping: `done` → `Success` (push + PR; `NoWork` when the
+//! run changed nothing), `abort` → `Failure`, `escalate` → `Blocked` plus a
+//! comment on the work item. Decision steps run no code: they consume no
+//! retry budget and leave no events — they only route on the outcome of
+//! the step named by `over`.
+//!
+//! On resume the engine replays `events.jsonl` and skips completed steps
+//! — the log is the only source of truth for step state. The log records
+//! outcomes, not outputs, so a resumed run re-derives routing from
+//! outcomes and treats earlier steps' outputs as empty. A finished run
+//! returns its recorded outcome without appending anything (idempotent).
+//! A worktree cannot be re-attached through the `git` contract once its
+//! branch exists, so resume rebuilds `wt/` fresh from the mirror; steps
+//! must pass state through outputs and `artifacts/`, not the worktree.
 //!
 //! Between steps the engine checks for a `CANCEL` marker file in the run
 //! directory (`bureau cancel <run-id>` writes it) and aborts.
+
+mod drive;
+mod edge;
+mod execute;
+mod finalize;
+mod gitcmd;
+mod log;
+mod machine;
+mod resume;
+mod settle;
+mod stream;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -63,6 +84,20 @@ pub struct RunOutcome {
     pub pr: Option<Pr>,
 }
 
+impl RunOutcome {
+    /// An outcome with no PR and no recorded cost, for runs that never
+    /// reached (or never re-entered) the machine.
+    fn bare(run_id: &str, outcome: StepOutcome, message: String) -> Self {
+        Self {
+            run_id: run_id.to_owned(),
+            outcome,
+            cost_usd: 0.0,
+            message,
+            pr: None,
+        }
+    }
+}
+
 /// The engine: runs pipelines in worktrees, logging every event.
 pub struct Engine {
     /// Where run directories live.
@@ -83,16 +118,37 @@ impl Engine {
     }
 
     /// Runs a pipeline to a terminal. Never panics across the boundary:
-    /// internal failures become [`StepOutcome::Failure`] outcomes.
+    /// the machine runs in its own task and a join failure becomes a
+    /// [`StepOutcome::Failure`] outcome.
     ///
     /// If `runs_dir/plan.run_id` already exists, the run resumes from its
-    /// event log; completed steps are skipped.
+    /// event log; a finished run returns its recorded outcome untouched.
     pub async fn run(&self, plan: &RunPlan) -> RunOutcome {
-        let _ = plan;
-        tokio::task::yield_now().await;
-        todo!(
-            "engine-core: create/resume run dir, cut worktree, drive the state machine, finalize on done, Worktree drop tears down"
-        )
+        let (runs_dir, cache, plan) = (self.runs_dir.clone(), self.cache.clone(), plan.clone());
+        let run_id = plan.run_id.clone();
+        let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            tokio::spawn(async move { drive::run(&runs_dir, &cache, &plan).await })
+        }));
+        match spawned {
+            Ok(task) => joined(run_id, task).await,
+            Err(_) => RunOutcome::bare(
+                &run_id,
+                StepOutcome::Failure,
+                "run task panicked before spawn".to_owned(),
+            ),
+        }
+    }
+}
+
+/// Awaits the machine's task; a panic inside it is data, not an unwind.
+async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> RunOutcome {
+    match task.await {
+        Ok(outcome) => outcome,
+        Err(error) => RunOutcome::bare(
+            &run_id,
+            StepOutcome::Failure,
+            format!("run task failed: {error}"),
+        ),
     }
 }
 

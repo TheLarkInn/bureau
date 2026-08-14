@@ -56,6 +56,15 @@ min_trust: maintainer
 concurrency: 2
 ";
 
+const PIPELINE: &str = r#"
+name: fix-failing-test
+steps:
+  - name: work
+    type: deterministic
+    run: "true"
+    next: done
+"#;
+
 const ASSIGNMENT: &str = r#"
 name: fix-flaky-tests
 work:
@@ -85,11 +94,12 @@ fn write_files(dir: &TestDir, files: &[(&str, &str)]) {
     }
 }
 
-const fn valid_files() -> [(&'static str, &'static str); 3] {
+const fn valid_files() -> [(&'static str, &'static str); 4] {
     [
         ("repos.yaml", REPOS),
         ("roles/implementer.yaml", ROLE),
         ("assignments/fix-flaky-tests.yaml", ASSIGNMENT),
+        ("pipelines/fix-failing-test.yaml", PIPELINE),
     ]
 }
 

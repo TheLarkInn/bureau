@@ -1,40 +1,117 @@
-//! The `claude` adapter: runs the Anthropic Claude Code CLI as the agent.
+//! The `claude` adapter: runs the Anthropic Claude Code CLI as the
+//! agent.
 //!
-//! Same contract as `copilot`: the agent file runs unmodified, the role's
-//! permissions are mirrored in argv (`--allowedTools` / --deny
-//! equivalents), and credentials arrive via env only.
+//! Same agent pass-through contract as `copilot` (DESIGN.md section
+//! 6): a `/plugin:agent` reference is copied verbatim from
+//! `.ai/plugins/<plugin>/agents/<name>.agent.md` when it resolves
+//! locally and otherwise passed through by name; a direct `.md` path
+//! is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
+//!
+//! argv is `claude -p --agent <name> --model <model>`: `claude -p`
+//! reads the prompt from stdin, which carries the request JSON per the
+//! layer-2 contract. Only the push boundary — the credential line —
+//! is mirrored in argv (section 10), one flag per rule; absent grants
+//! keep default CLI behavior:
+//!
+//! | permissions                   | flags |
+//! |-------------------------------|-------|
+//! | `repo:write`, not `repo:push` | `--allowedTools 'Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
+//! | `repo:push`                   | `--allowedTools 'Bash(git:*)'` |
+//! | anything else                 | *(none)* |
+//!
+//! Credentials arrive by env convention: `ANTHROPIC_API_KEY` and
+//! `CLAUDE_CODE_OAUTH_TOKEN`, when present in the daemon environment,
+//! are forwarded into the child env and added to the scrub list. To
+//! record a fixture for the `fake` adapter, run
+//! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
-use crate::config::{Role, StepDef};
+use super::real;
+use crate::config::{Permission, Role, StepDef};
 use crate::contract::{StepRequest, StepResult};
 use crate::process::{Secret, SharedLog, SpawnRequest};
 
 /// The adapter's working binary name.
 pub const BINARY: &str = "claude";
 
-/// Builds the layer-0 request for a `claude` step.
+/// Claude's agent discovery location inside a worktree.
+const DISCOVERY: real::Discovery = real::Discovery {
+    dir: ".claude/agents",
+    suffix: ".md",
+};
+
+/// Credential variables forwarded from the daemon environment.
+const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+
+/// Builds the layer-0 request for a `claude` step: the step contract
+/// JSON on stdin, credentials in env, permissions in argv.
+///
+/// `secrets` is the engine's scrub list; forwarded credential values
+/// are appended to it. Building never fails: agent materialization is
+/// best effort and the CLI surfaces its own errors at spawn time.
 #[must_use]
 pub fn spawn_request(
-    _role: &Role,
-    _step: &StepDef,
+    role: &Role,
+    step: &StepDef,
     request: &StepRequest,
-    _secrets: Vec<Secret>,
-    _log: Option<SharedLog>,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
 ) -> SpawnRequest {
-    let _ = request;
-    todo!(
-        "adapters-real: argv = claude -p ... ; env = credential vars (ANTHROPIC_API_KEY / oauth); stdin = request JSON"
-    )
+    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let found = real::daemon_credentials(&CREDENTIAL_VARS);
+    let (env, secrets) = real::child_env(found, secrets);
+    SpawnRequest {
+        argv: argv(role, &agent),
+        dir: request.worktree.clone(),
+        env,
+        stdin: request.to_json().unwrap_or_default(),
+        timeout: real::timeout(step),
+        secrets,
+        log,
+    }
+}
+
+/// `claude -p --agent <name> --model <model>` plus the mirror.
+fn argv(role: &Role, agent: &str) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--model".to_owned(),
+        role.model.clone(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
+
+/// The push-boundary mirror; see the module table.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let mut flags = Vec::new();
+    let (write, push) = real::push_boundary(permissions);
+    if write {
+        flags.extend(["--allowedTools".to_owned(), "Bash(git:*)".to_owned()]);
+        if !push {
+            flags.extend([
+                "--disallowedTools".to_owned(),
+                "Bash(git push:*)".to_owned(),
+            ]);
+        }
+    }
+    flags
 }
 
 /// Runs a `claude` step and derives the step result.
+///
+/// A spawn failure is data: it becomes `StepOutcome::Failure` through
+/// `result_from_spawn`, never a panic.
 #[must_use]
 pub async fn execute(
-    _role: &Role,
-    _step: &StepDef,
-    _request: &StepRequest,
-    _secrets: Vec<Secret>,
-    _log: Option<SharedLog>,
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
 ) -> StepResult {
-    tokio::task::yield_now().await;
-    todo!("adapters-real: spawn, then result_from_spawn")
+    let built = spawn_request(role, step, request, secrets, log);
+    super::result_from_spawn(&crate::process::spawn(built).await)
 }

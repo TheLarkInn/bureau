@@ -193,29 +193,33 @@ pub struct Worktree {
 impl Worktree {
     /// `git worktree add --no-track -b <branch> <dir>` off the mirror, or
     /// with `--detach` when `detach` (read-only steps: git refuses the
-    /// same branch in two worktrees).
+    /// same branch in two worktrees). `--no-track` requires a new branch,
+    /// so it is omitted in detach mode. A relative `dir` is resolved
+    /// against the daemon's cwd — never the mirror, which is the child
+    /// process's cwd and would swallow the worktree into the cache.
     ///
     /// # Errors
-    /// Propagates git failures.
+    /// Propagates git and path-resolution failures.
     pub async fn create(
         mirror: &Path,
         dir: &Path,
         branch: &str,
         detach: bool,
     ) -> Result<Self, Error> {
+        let dir = std::path::absolute(dir)?;
         let dir_arg = dir.to_string_lossy().into_owned();
-        let mut args = vec!["worktree", "add", "--no-track"];
+        let mut args = vec!["worktree", "add"];
         if detach {
             args.push("--detach");
         } else {
-            args.extend(["-b", branch]);
+            args.extend(["--no-track", "-b", branch]);
         }
         args.push(&dir_arg);
         let mut secrets = Vec::new();
         git(&args, mirror, None, &mut secrets).await?;
         Ok(Self {
             mirror: mirror.to_path_buf(),
-            dir: dir.to_path_buf(),
+            dir,
             branch: branch.to_owned(),
         })
     }

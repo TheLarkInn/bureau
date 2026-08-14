@@ -7,11 +7,11 @@ use super::Config;
 use super::files::{Assignment, Limits, Repo, Role};
 use crate::ConfigError;
 
-fn path_of(kind: &str, name: &str) -> PathBuf {
+pub(super) fn path_of(kind: &str, name: &str) -> PathBuf {
     PathBuf::from(format!("{kind}/{name}.yaml"))
 }
 
-fn push(errors: &mut Vec<ConfigError>, path: PathBuf, message: String) {
+pub(super) fn push(errors: &mut Vec<ConfigError>, path: PathBuf, message: String) {
     errors.push(ConfigError { path, message });
 }
 
@@ -39,8 +39,7 @@ pub fn validate(config: &Config) -> Vec<ConfigError> {
 /// references, fixture rules, and the assignment-to-pipeline reference.
 #[must_use]
 pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {
-    let _ = config.repos.len();
-    Vec::new() // implemented by the pipeline-config work item
+    super::validate_pipeline::validate_pipelines(config)
 }
 
 fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {
