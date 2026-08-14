@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "bureau": {
+      "source": {
+        "source": "directory",
+        "path": ".ai"
+      }
+    }
+  }
+}
