@@ -12,8 +12,9 @@ mod event;
 mod state;
 
 pub use event::{
-    Event, EventKind, RunFinishedData, RunStartedData, StepFinishedData, StepStartedData,
-    run_finished, run_started, step_finished, step_started,
+    Event, EventKind, OutputData, RunFinishedData, RunStartedData, StepFinishedData,
+    StepStartedData, output, run_finished, run_started, run_started_for_item, step_finished,
+    step_started,
 };
 pub use state::{RunState, RunStatus, StepRecord, replay};
 

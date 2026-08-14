@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::contract::SCHEMA_VERSION;
-use crate::process::{SpawnRequest, SpawnResult, spawn};
+use crate::config::StepDef;
+use crate::contract::{SCHEMA_VERSION, StepRequest, StepResult};
+use crate::process::{SharedLog, SpawnRequest, SpawnResult, spawn};
 
 /// One output chunk in a recorded transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,4 +151,111 @@ fn emit(chunk: &Chunk) {
 #[must_use]
 pub async fn record(request: SpawnRequest) -> Transcript {
     Transcript::from_result(&spawn(request).await)
+}
+
+/// Builds the layer-0 request that replays a transcript.
+///
+/// Uses only the shell and chunk files written under `work_dir` — the
+/// fake adapter needs no bureau binary, so tests never depend on the
+/// build layout.
+///
+/// # Errors
+/// Propagates filesystem failures writing chunk files.
+pub fn replay_request(
+    transcript: &Transcript,
+    work_dir: &Path,
+    request: &StepRequest,
+    timeout: Duration,
+    log: Option<SharedLog>,
+) -> std::io::Result<SpawnRequest> {
+    use std::fmt::Write as _;
+    let mut script = String::new();
+    for i in 0..transcript.chunks.len() {
+        write_chunk_line(&mut script, transcript, i, work_dir)?;
+    }
+    let _ = writeln!(script, "exit {}", transcript.exit_code);
+    Ok(SpawnRequest {
+        argv: vec!["sh".to_owned(), "-c".to_owned(), script],
+        dir: request.worktree.clone(),
+        env: std::collections::BTreeMap::new(),
+        stdin: request.to_json().map_err(std::io::Error::other)?,
+        timeout,
+        secrets: Vec::new(),
+        log,
+    })
+}
+
+fn write_chunk_line(
+    script: &mut String,
+    transcript: &Transcript,
+    i: usize,
+    work_dir: &Path,
+) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    let chunk = &transcript.chunks[i];
+    if chunk.delay_ms > 0 {
+        let _ = writeln!(
+            script,
+            "sleep {}.{:03}",
+            chunk.delay_ms / 1000,
+            chunk.delay_ms % 1000
+        );
+    }
+    let path = work_dir.join(format!("chunk-{i}"));
+    std::fs::write(&path, &chunk.data)?;
+    let fd = match chunk.stream {
+        Stream::Stdout => 1,
+        Stream::Stderr => 2,
+    };
+    let _ = writeln!(script, "cat \"{}\" >&{fd}", path.display());
+    Ok(())
+}
+
+/// Runs a step through the fake adapter: replay the fixture named by the
+/// step and derive the result. The fixture path is a testing seam and
+/// must be absolute (config validation enforces it).
+pub async fn execute(step: &StepDef, request: &StepRequest, log: Option<SharedLog>) -> StepResult {
+    use crate::process::SpawnOutcome;
+    let Some(fixture) = step.fixture.as_deref() else {
+        return failed("fake adapter requires a `fixture` path on the agent step");
+    };
+    let transcript = match Transcript::load(Path::new(fixture)) {
+        Ok(t) => t,
+        Err(e) => return failed(&format!("loading fixture: {e}")),
+    };
+    let timeout = Duration::from_secs(step.timeout_secs.unwrap_or(300));
+    let scratch = scratch_dir();
+    let built = replay_request(&transcript, &scratch, request, timeout, log);
+    let result = match built {
+        Ok(req) => spawn(req).await,
+        Err(e) => return failed(&format!("preparing replay: {e}")),
+    };
+    let _ = std::fs::remove_dir_all(&scratch);
+    if result.outcome == SpawnOutcome::Timeout {
+        return failed("fake replay timed out");
+    }
+    super::result_from_spawn(&result)
+}
+
+fn scratch_dir() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "bureau-fake-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn failed(message: &str) -> StepResult {
+    StepResult {
+        schema: SCHEMA_VERSION.to_owned(),
+        outcome: crate::contract::StepOutcome::Failure,
+        outputs: std::collections::BTreeMap::new(),
+        artifacts: Vec::new(),
+        trust: crate::contract::Trust::Derived,
+        cost_usd: 0.0,
+        message: message.to_owned(),
+    }
 }

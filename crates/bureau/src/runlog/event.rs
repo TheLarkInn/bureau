@@ -12,6 +12,8 @@ pub enum EventKind {
     RunStarted,
     /// A pipeline step began.
     StepStarted,
+    /// Captured (scrubbed) subprocess output, streamed as it arrives.
+    Output,
     /// A pipeline step finished with an outcome.
     StepFinished,
     /// The run finished with an outcome.
@@ -38,6 +40,21 @@ pub struct RunStartedData {
     pub run_id: String,
     /// The assignment the run belongs to.
     pub assignment: String,
+    /// The work item being run, when the run is for one. `bureau retry`
+    /// reads this.
+    #[serde(default)]
+    pub item: Option<String>,
+}
+
+/// Payload of an `output` event: one scrubbed chunk of a stream.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputData {
+    /// The step whose process produced it, when known.
+    pub step: Option<String>,
+    /// `stdout` or `stderr`.
+    pub stream: String,
+    /// The scrubbed bytes (UTF-8).
+    pub data: String,
 }
 
 /// Payload of a `step_started` event.
@@ -73,6 +90,27 @@ pub fn run_started(run_id: &str, assignment: &str) -> serde_json::Value {
     to_value(&RunStartedData {
         run_id: run_id.to_owned(),
         assignment: assignment.to_owned(),
+        item: None,
+    })
+}
+
+/// Builds the `data` for a `run_started` event tied to a work item.
+#[must_use]
+pub fn run_started_for_item(run_id: &str, assignment: &str, item: &str) -> serde_json::Value {
+    to_value(&RunStartedData {
+        run_id: run_id.to_owned(),
+        assignment: assignment.to_owned(),
+        item: Some(item.to_owned()),
+    })
+}
+
+/// Builds the `data` for an `output` event.
+#[must_use]
+pub fn output(step: Option<&str>, stream: &str, data: &str) -> serde_json::Value {
+    to_value(&OutputData {
+        step: step.map(str::to_owned),
+        stream: stream.to_owned(),
+        data: data.to_owned(),
     })
 }
 

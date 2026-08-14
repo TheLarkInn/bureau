@@ -57,7 +57,7 @@ impl RunState {
     /// Folds one event into the state.
     pub fn apply(&mut self, event: &Event) {
         match event.kind {
-            EventKind::RunStarted => {}
+            EventKind::RunStarted | EventKind::Output => {}
             EventKind::StepStarted => self.start_step(event),
             EventKind::StepFinished => self.finish_step(event),
             EventKind::RunFinished => self.finish_run(event),

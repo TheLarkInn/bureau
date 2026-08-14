@@ -6,12 +6,14 @@
 //! `Vec`.
 
 mod files;
+mod pipeline;
 mod validate;
 
 pub use files::{
     Access, Assignment, ForgeKind, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };
-pub use validate::validate;
+pub use pipeline::{Pipeline, StepDef, StepKind, TERMINALS};
+pub use validate::{validate, validate_pipelines};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,6 +32,8 @@ pub struct Config {
     pub roles: BTreeMap<String, Role>,
     /// Standing arrangements by name.
     pub assignments: BTreeMap<String, Assignment>,
+    /// Step state machines by name.
+    pub pipelines: BTreeMap<String, Pipeline>,
 }
 
 impl Config {
@@ -45,6 +49,7 @@ impl Config {
         let repos = load_repos(dir, &mut errors);
         let roles = load_named::<Role>(dir, "roles", &mut errors);
         let assignments = load_named::<Assignment>(dir, "assignments", &mut errors);
+        let pipelines = load_named::<Pipeline>(dir, "pipelines", &mut errors);
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -52,6 +57,7 @@ impl Config {
             repos,
             roles,
             assignments,
+            pipelines,
         };
         let errors = validate(&config);
         if errors.is_empty() {

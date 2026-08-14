@@ -36,6 +36,65 @@ pub enum Verb {
     },
     /// Prints the version.
     Version,
+    /// Runs a pipeline once for one work item.
+    Run {
+        /// Pipeline name from the config repo.
+        pipeline: String,
+        /// Work item id on the assignment's forge.
+        #[arg(long)]
+        item: String,
+        /// Path to the config repository checkout.
+        #[arg(long, default_value = "runner-config")]
+        config: PathBuf,
+        /// Directory holding run directories.
+        #[arg(long, default_value = "runs")]
+        runs: PathBuf,
+        /// Durable state database path.
+        #[arg(long, default_value = "state.db")]
+        state: PathBuf,
+        /// Checkout cache directory.
+        #[arg(long, default_value = "checkout-cache")]
+        cache: PathBuf,
+    },
+    /// Lists runs.
+    List {
+        /// Directory holding run directories.
+        #[arg(long, default_value = "runs")]
+        runs: PathBuf,
+    },
+    /// Shows one run's replayed state.
+    Show {
+        /// The run id.
+        run_id: String,
+        /// Directory holding run directories.
+        #[arg(long, default_value = "runs")]
+        runs: PathBuf,
+    },
+    /// Cancels a running run by writing its CANCEL marker.
+    Cancel {
+        /// The run id.
+        run_id: String,
+        /// Directory holding run directories.
+        #[arg(long, default_value = "runs")]
+        runs: PathBuf,
+    },
+    /// Starts a new run for the item an earlier run targeted.
+    Retry {
+        /// The earlier run id.
+        run_id: String,
+        /// Path to the config repository checkout.
+        #[arg(long, default_value = "runner-config")]
+        config: PathBuf,
+        /// Directory holding run directories.
+        #[arg(long, default_value = "runs")]
+        runs: PathBuf,
+        /// Durable state database path.
+        #[arg(long, default_value = "state.db")]
+        state: PathBuf,
+        /// Checkout cache directory.
+        #[arg(long, default_value = "checkout-cache")]
+        cache: PathBuf,
+    },
     /// Replays or records adapter transcripts — the testing seam.
     Fake {
         /// What to do with the fixture.
@@ -76,6 +135,11 @@ pub async fn run(cli: Cli) -> anyhow::Result<i32> {
         }
         Verb::Validate { dir } => Ok(validate(&dir)),
         Verb::Fake { action } => fake_action(action).await,
+        Verb::Run { .. }
+        | Verb::List { .. }
+        | Verb::Show { .. }
+        | Verb::Cancel { .. }
+        | Verb::Retry { .. } => todo!("cli-verbs work item"),
     }
 }
 

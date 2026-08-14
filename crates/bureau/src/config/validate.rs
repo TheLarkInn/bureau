@@ -28,7 +28,19 @@ pub fn validate(config: &Config) -> Vec<ConfigError> {
     for (name, assignment) in &config.assignments {
         check_assignment(&mut errors, config, name, assignment);
     }
+    errors.extend(validate_pipelines(config));
     errors
+}
+
+/// Pipeline validation (DESIGN.md layer 4).
+///
+/// Covers per-kind required fields, edge resolution against steps and
+/// terminals, complete decision coverage, `inputs_from` integrity, role
+/// references, fixture rules, and the assignment-to-pipeline reference.
+#[must_use]
+pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {
+    let _ = config.repos.len();
+    Vec::new() // implemented by the pipeline-config work item
 }
 
 fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {

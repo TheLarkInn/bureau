@@ -16,8 +16,11 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
@@ -55,3 +58,7 @@ suspicious = { level = "deny", priority = -1 }
 allow_attributes = "deny"
 cognitive_complexity = "deny"
 too_many_lines = "deny"
+# Unsatisfiable with the spec's approved dependency set: reqwest's own
+# tree pulls syn 2 (synstructure) and syn 3 (displaydoc). The rest of the
+# `cargo` group stays denied.
+multiple_crate_versions = "allow"

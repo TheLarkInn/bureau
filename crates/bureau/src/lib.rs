@@ -12,8 +12,13 @@
 pub mod adapters;
 pub mod config;
 pub mod contract;
+pub mod engine;
+pub mod forge;
+pub mod git;
 pub mod process;
+pub mod reconcile;
 pub mod runlog;
+pub mod state;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
