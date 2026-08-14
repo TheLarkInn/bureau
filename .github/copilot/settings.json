@@ -6,5 +6,8 @@
         "path": ".ai"
       }
     }
+  },
+  "enabledPlugins": {
+    "rust-design-patterns@bureau": true
   }
 }

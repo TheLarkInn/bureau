@@ -8,5 +8,13 @@
     "version": "1.0.0",
     "pluginRoot": "./plugins"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "rust-design-patterns",
+      "description": "Rust design patterns guidance based on the 'Prefer Small Crates' pattern: reviews workspace modularity after code is written via the rust-workspace-modularity-reviewer subagent.",
+      "version": "1.0.0",
+      "source": "./rust-design-patterns",
+      "keywords": ["rust", "design-patterns", "small-crates", "modularity", "workspace"]
+    }
+  ]
 }
