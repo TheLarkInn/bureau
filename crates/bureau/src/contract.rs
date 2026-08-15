@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// The only schema version this build accepts.
-pub const SCHEMA_VERSION: &str = "v1";
+pub const SCHEMA_VERSION: &str = "v2";
 
 /// Provenance grade of a step input (DESIGN.md section 9).
 ///
@@ -82,7 +82,7 @@ pub struct StepRequest {
 }
 
 /// The answer every step writes to stdout.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepResult {
     /// Must equal [`SCHEMA_VERSION`].
     pub schema: String,
@@ -94,8 +94,6 @@ pub struct StepResult {
     pub artifacts: Vec<Artifact>,
     /// Provenance grade of the outputs (usually [`Trust::Derived`]).
     pub trust: Trust,
-    /// What this step cost.
-    pub cost_usd: f64,
     /// Human-readable detail for the run log.
     pub message: String,
 }

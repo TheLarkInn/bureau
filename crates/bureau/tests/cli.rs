@@ -146,7 +146,7 @@ fn write_minimal_config(dir: &Path) {
 fn fake_replay_emits_chunks_and_exit_code() {
     let dir = TestDir::new("cli-replay");
     let fixture = dir.path().join("fixture.json");
-    let text = r#"{"schema":"v1","chunks":[
+    let text = r#"{"schema":"v2","chunks":[
         {"delay_ms":0,"stream":"stdout","data":"hello\n"},
         {"delay_ms":0,"stream":"stderr","data":"oops\n"}],"exit_code":7}"#;
     std::fs::write(&fixture, text).expect("write fixture");
@@ -184,8 +184,8 @@ fn fake_record_captures_a_replayable_transcript() {
 fn fake_replay_rejects_a_bad_schema() {
     let dir = TestDir::new("cli-badschema");
     let fixture = dir.path().join("fixture.json");
-    std::fs::write(&fixture, r#"{"schema":"v2","chunks":[],"exit_code":0}"#).expect("write");
+    std::fs::write(&fixture, r#"{"schema":"v1","chunks":[],"exit_code":0}"#).expect("write");
     let output = bureau(&["fake", "replay", &fixture.to_string_lossy()]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(stderr(&output).contains("\"v2\""), "{}", stderr(&output));
+    assert!(stderr(&output).contains("\"v1\""), "{}", stderr(&output));
 }

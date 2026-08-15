@@ -22,7 +22,6 @@ pub fn fixture(dir: &Path, name: &str, outcome: StepOutcome, message: &str) -> S
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: 0.0,
         message: message.to_owned(),
     };
     let mut data = String::from_utf8(result.to_json().expect("result serializes")).expect("utf8");
@@ -35,6 +34,7 @@ pub fn fixture(dir: &Path, name: &str, outcome: StepOutcome, message: &str) -> S
             data,
         }],
         exit_code: 0,
+        usage: bureau::adapters::Usage::zero("fake"),
     };
     let path = dir.join(name);
     transcript.save(&path).expect("fixture saves");

@@ -51,6 +51,7 @@ fn sample() -> Transcript {
             },
         ],
         exit_code: 7,
+        usage: bureau::adapters::Usage::unknown("fake"),
     }
 }
 

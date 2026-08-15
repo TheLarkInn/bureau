@@ -23,6 +23,7 @@
 //! worktree. A finished run returns its recorded outcome without
 //! appending anything (idempotent).
 
+mod artifact;
 mod drive;
 mod edge;
 mod execute;

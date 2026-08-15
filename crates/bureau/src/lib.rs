@@ -14,6 +14,7 @@ pub mod contract;
 pub mod engine;
 pub mod forge;
 pub mod git;
+pub mod mcp;
 pub mod process;
 pub mod reconcile;
 pub mod runlog;

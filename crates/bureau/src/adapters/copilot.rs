@@ -32,8 +32,10 @@
 use std::time::Duration;
 
 use super::real;
+use super::{Execution, Usage};
 use crate::config::{Permission, Role, StepDef};
-use crate::contract::{StepRequest, StepResult};
+use crate::contract::StepRequest;
+use crate::mcp::Session;
 use crate::process::{Secret, SharedLog, SpawnRequest};
 
 /// The adapter's working binary name.
@@ -88,6 +90,7 @@ fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
         String::from_utf8_lossy(prompt).into_owned(),
         "--agent".to_owned(),
         agent.to_owned(),
+        "--allow-tool=bureau-io".to_owned(),
     ];
     argv.extend(permission_flags(&role.permissions));
     argv
@@ -118,7 +121,32 @@ pub async fn execute(
     request: &StepRequest,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
-) -> StepResult {
-    let built = spawn_request(role, step, request, secrets, log);
-    super::result_from_spawn(&crate::process::spawn(built).await)
+) -> Execution {
+    let Ok(session) = Session::create(request) else {
+        return super::failed("creating bureau-io session failed");
+    };
+    let telemetry = session.dir().join("copilot-otel.jsonl");
+    let mut built = spawn_request(role, step, request, secrets, log);
+    built.env.extend(session.env().clone());
+    enable_telemetry(&mut built.env, &telemetry);
+    let spawned = crate::process::spawn(built).await;
+    let published = match session.published() {
+        Ok(result) => result,
+        Err(error) => return super::failed(&format!("reading published result failed: {error}")),
+    };
+    let result = super::result_from_agent(&spawned, published, &spawned.stdout);
+    let usage = std::fs::read(telemetry).map_or_else(
+        |_| Usage::unknown("copilot"),
+        |bytes| Usage::from_copilot_otel(&bytes),
+    );
+    Execution::new(result, usage)
+}
+
+fn enable_telemetry(env: &mut std::collections::BTreeMap<String, String>, path: &std::path::Path) {
+    env.insert("COPILOT_OTEL_ENABLED".to_owned(), "true".to_owned());
+    env.insert("COPILOT_OTEL_EXPORTER_TYPE".to_owned(), "file".to_owned());
+    env.insert(
+        "COPILOT_OTEL_FILE_EXPORTER_PATH".to_owned(),
+        path.to_string_lossy().into_owned(),
+    );
 }

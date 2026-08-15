@@ -1,7 +1,5 @@
-//! Engine cost-accounting tests (DESIGN.md section 6): a step's
-//! claimed `cost_usd` is clamped into `0.0..=25.0` before it sums into
-//! the run total that `max_cost_per_day_usd` enforces. Offline only
-//! (DESIGN.md section 12).
+//! Engine cost-accounting tests: adapter-measured usage sums into the run
+//! total that `max_cost_per_day_usd` later enforces. Offline only.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -9,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use bureau::adapters::AdapterKind;
+use bureau::adapters::Usage;
 use bureau::adapters::fake::{Chunk, Stream, Transcript};
 use bureau::config::{
     Access, Assignment, ForgeKind, Limits, Pipeline, Repo, Role, StepDef, StepKind, WorkSource,
@@ -78,22 +77,21 @@ fn make_repo(parent: &Path) -> String {
     dir.to_string_lossy().into_owned()
 }
 
-/// A step result claiming `cost` USD.
-fn claim(cost: f64) -> StepResult {
+/// A successful step result; cost belongs to the transcript usage.
+fn result() -> StepResult {
     StepResult {
         schema: SCHEMA_VERSION.to_owned(),
         outcome: StepOutcome::Success,
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: cost,
         message: "done".to_owned(),
     }
 }
 
 /// Writes a `fake` adapter fixture whose stdout is the step result.
-fn fixture(dir: &Path, name: &str, cost: f64) -> String {
-    let json = claim(cost).to_json().expect("result serializes");
+fn fixture(dir: &Path, name: &str, cost: Option<f64>) -> String {
+    let json = result().to_json().expect("result serializes");
     let mut data = String::from_utf8(json).expect("utf8");
     data.push('\n');
     let transcript = Transcript {
@@ -104,6 +102,11 @@ fn fixture(dir: &Path, name: &str, cost: f64) -> String {
             data,
         }],
         exit_code: 0,
+        usage: Usage {
+            provider: "fake".to_owned(),
+            cost_usd: cost,
+            ..Usage::default()
+        },
     };
     let path = dir.join(name);
     transcript.save(&path).expect("fixture saves");
@@ -242,54 +245,5 @@ impl Rig {
     }
 }
 
-/// Bit-exact cost equality: the clamp pins claims to exact bounds or
-/// passes them through unchanged, so bits compare cleanly (and
-/// clippy's `float_cmp` stays quiet).
-const fn same_cost(got: f64, want: f64) -> bool {
-    got.to_bits() == want.to_bits()
-}
-
-#[tokio::test]
-async fn an_honest_claim_sums_into_the_run_total() {
-    let rig = Rig::new();
-    let transcript = fixture(rig.dir.path(), "bill.json", 0.42);
-    let steps = vec![
-        det_step("edit", "echo changed >> file.txt", "bill"),
-        agent_step("bill", &transcript),
-    ];
-    let outcome = rig.engine().run(&rig.plan(steps)).await;
-    let pass = outcome.outcome == StepOutcome::Success && same_cost(outcome.cost_usd, 0.42);
-    assert!(pass, "outcome: {outcome:?}");
-}
-
-#[tokio::test]
-async fn an_inflated_claim_clamps_to_the_cap() {
-    let rig = Rig::new();
-    let transcript = fixture(rig.dir.path(), "bill.json", 1000.0);
-    let steps = vec![agent_step("bill", &transcript)];
-    let outcome = rig.engine().run(&rig.plan(steps)).await;
-    let pass = same_cost(outcome.cost_usd, 25.0);
-    assert!(pass, "outcome: {outcome:?}");
-}
-
-#[tokio::test]
-async fn the_clamp_applies_per_step_not_per_run() {
-    let rig = Rig::new();
-    let big = fixture(rig.dir.path(), "big.json", 1000.0);
-    let also_big = fixture(rig.dir.path(), "also-big.json", 1000.0);
-    let mut first = agent_step("bill-one", &big);
-    first.next = Some("bill-two".to_owned());
-    let second = agent_step("bill-two", &also_big);
-    let outcome = rig.engine().run(&rig.plan(vec![first, second])).await;
-    let pass = same_cost(outcome.cost_usd, 50.0);
-    assert!(pass, "outcome: {outcome:?}");
-}
-
-#[tokio::test]
-async fn a_deterministic_step_claims_no_cost() {
-    let rig = Rig::new();
-    let steps = vec![det_step("edit", "echo changed >> file.txt", "done")];
-    let outcome = rig.engine().run(&rig.plan(steps)).await;
-    let pass = outcome.outcome == StepOutcome::Success && same_cost(outcome.cost_usd, 0.0);
-    assert!(pass, "outcome: {outcome:?}");
-}
+#[path = "engine_cost/cases.rs"]
+mod cases;

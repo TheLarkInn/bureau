@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::{RunPlan, edge, execute, resume, stream};
+use crate::adapters::{Execution, Usage};
 use crate::config::{Repo, StepDef, StepKind};
 use crate::contract::{StepOutcome, StepRequest, StepResult};
 use crate::git::Worktree;
@@ -24,6 +25,8 @@ pub(super) struct RunCtx {
     outcomes: BTreeMap<String, StepOutcome>,
     /// Latest result per step (`inputs_from` reads this).
     results: BTreeMap<String, StepResult>,
+    /// Adapter-measured usage per step.
+    usages: BTreeMap<String, Usage>,
     /// Where the machine starts or resumes.
     start: edge::Route,
 }
@@ -38,15 +41,18 @@ impl RunCtx {
             attempts: history.attempts,
             outcomes: history.outcomes,
             results: BTreeMap::new(),
+            usages: BTreeMap::new(),
             start: history.start,
         }
     }
 
     /// Records a finished step's result for routing and data flow.
-    fn record(&mut self, step: &str, result: StepResult) {
-        self.cost_usd += clamp_step_cost(result.cost_usd);
+    fn record(&mut self, step: &str, execution: Execution) {
+        let Execution { result, usage } = execution;
+        self.cost_usd += measured_cost(&usage);
         self.outcomes.insert(step.to_owned(), result.outcome);
         self.results.insert(step.to_owned(), result);
+        self.usages.insert(step.to_owned(), usage);
     }
 
     /// The latest outcome of `step`, when it has finished one.
@@ -65,24 +71,11 @@ impl RunCtx {
     }
 }
 
-/// The most one step may claim toward a run's cost total.
-const MAX_STEP_COST_USD: f64 = 25.0;
-
-/// Clamps a step's claimed cost into `0.0..=MAX_STEP_COST_USD`.
-///
-/// The claim is advisory: the agent authors it, so a malfunctioning or
-/// prompt-injected agent could report 0.0 and dodge the
-/// `max_cost_per_day_usd` budget. The structural spend guards are
-/// `max_runs_per_hour`/`max_runs_per_day`; adapter-measured cost is
-/// future work. NaN (on which `f64::clamp` panics) clamps to 0.0 — the
-/// contract layer cannot deserialize NaN from JSON, but the clamp does
-/// not trust that.
-const fn clamp_step_cost(claimed: f64) -> f64 {
-    if claimed.is_nan() {
-        0.0
-    } else {
-        claimed.clamp(0.0, MAX_STEP_COST_USD)
-    }
+fn measured_cost(usage: &Usage) -> f64 {
+    usage
+        .cost_usd
+        .filter(|cost| cost.is_finite() && *cost >= 0.0)
+        .unwrap_or(0.0)
 }
 
 /// The worktree phase's products.
@@ -171,9 +164,9 @@ async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
     if let Some(reason) = execute::trust_check(&ctx.plan, step, &request) {
         return Turn::Stop(Stop::Escalate(reason));
     }
-    let result = run_step(ctx, wt, step, &request).await;
-    let (outcome, detail) = (result.outcome, result.message.clone());
-    ctx.record(&step.name, result);
+    let execution = run_step(ctx, wt, step, &request).await;
+    let (outcome, detail) = (execution.result.outcome, execution.result.message.clone());
+    ctx.record(&step.name, execution);
     Turn::Next(edge::route_after(
         step,
         outcome,
@@ -197,7 +190,7 @@ async fn run_step(
     wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
-) -> StepResult {
+) -> Execution {
     append(
         ctx,
         EventKind::StepStarted,
@@ -205,7 +198,7 @@ async fn run_step(
     );
     *ctx.attempts.entry(step.name.clone()).or_insert(0) += 1;
     let result = execute::execute(ctx, wt, step, request).await;
-    let finished = runlog::step_finished(&step.name, result.outcome);
+    let finished = runlog::step_finished(&step.name, result.result.outcome);
     append(ctx, EventKind::StepFinished, finished);
     result
 }
@@ -245,28 +238,25 @@ pub(super) fn primary_repo(plan: &RunPlan) -> Result<(&str, &Repo), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_STEP_COST_USD, clamp_step_cost};
+    use super::measured_cost;
+    use crate::adapters::Usage;
 
-    /// The clamp's truth table: NaN and negative claims zero out,
-    /// in-range claims pass through, anything past the cap clamps to it.
-    /// Compared by bits: the clamp only pins to exact bounds or passes
-    /// its input through unchanged, so equality is exact (and clippy's
-    /// `float_cmp` stays quiet).
     #[test]
-    fn claimed_cost_clamps_into_bounds() {
+    fn only_valid_adapter_cost_is_counted() {
         let cases = [
-            (f64::NAN, 0.0),
-            (f64::NEG_INFINITY, 0.0),
-            (-1.0, 0.0),
-            (0.0, 0.0),
-            (0.42, 0.42),
-            (MAX_STEP_COST_USD, MAX_STEP_COST_USD),
-            (1000.0, MAX_STEP_COST_USD),
-            (f64::INFINITY, MAX_STEP_COST_USD),
+            (None, 0.0_f64),
+            (Some(f64::NAN), 0.0),
+            (Some(-1.0), 0.0),
+            (Some(0.42), 0.42),
+            (Some(1_000.0), 1_000.0),
         ];
-        for (claimed, want) in cases {
-            let got = clamp_step_cost(claimed);
-            assert_eq!(got.to_bits(), want.to_bits(), "claimed {claimed}");
+        for (cost_usd, want) in cases {
+            let usage = Usage {
+                cost_usd,
+                ..Usage::default()
+            };
+            let got = measured_cost(&usage);
+            assert_eq!(got.to_bits(), want.to_bits(), "measured {cost_usd:?}");
         }
     }
 }

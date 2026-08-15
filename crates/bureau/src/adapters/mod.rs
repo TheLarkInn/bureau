@@ -10,6 +10,7 @@ pub mod claude;
 pub mod copilot;
 pub mod fake;
 pub(crate) mod real;
+mod usage;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +21,9 @@ use crate::config::{Role, StepDef};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
 use crate::process::{Secret, SharedLog, SpawnResult};
 
-type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = StepResult> + Send + 'a>>;
+pub use usage::{Execution, Usage};
+
+type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = Execution> + Send + 'a>>;
 
 /// Runs one agent step through the role's adapter and returns the step's
 /// result. Adapter failures are data: they surface as
@@ -32,7 +35,7 @@ pub async fn execute(
     request: &StepRequest,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
-) -> StepResult {
+) -> Execution {
     let future: ExecuteFuture<'_> = match role.adapter {
         AdapterKind::Fake => Box::pin(fake::execute(step, request, secrets, log)),
         AdapterKind::Copilot => Box::pin(copilot::execute(role, step, request, secrets, log)),
@@ -58,9 +61,56 @@ pub fn result_from_spawn(result: &SpawnResult) -> StepResult {
         outputs: std::collections::BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: 0.0,
         message: tail(result),
     }
+}
+
+/// A real/fake agent must return a valid contract result after exit zero.
+#[must_use]
+pub fn result_from_agent(
+    spawned: &SpawnResult,
+    published: Option<StepResult>,
+    response: &[u8],
+) -> StepResult {
+    if !successful(spawned) {
+        return result_from_spawn(spawned);
+    }
+    if let Some(result) = published {
+        return result;
+    }
+    StepResult::from_json(response).unwrap_or_else(|_| missing_result())
+}
+
+const fn successful(result: &SpawnResult) -> bool {
+    matches!(
+        (result.outcome, result.exit_code),
+        (crate::process::SpawnOutcome::Exited, Some(0))
+    )
+}
+
+fn missing_result() -> StepResult {
+    StepResult {
+        schema: SCHEMA_VERSION.to_owned(),
+        outcome: StepOutcome::Failure,
+        outputs: std::collections::BTreeMap::new(),
+        artifacts: Vec::new(),
+        trust: Trust::Derived,
+        message: "agent did not publish a result; call `bureau-io.publish_result` before finishing or print a valid v2 StepResult JSON document".to_owned(),
+    }
+}
+
+pub(crate) fn failed(message: &str) -> Execution {
+    Execution::new(
+        StepResult {
+            schema: SCHEMA_VERSION.to_owned(),
+            outcome: StepOutcome::Failure,
+            outputs: std::collections::BTreeMap::new(),
+            artifacts: Vec::new(),
+            trust: Trust::Derived,
+            message: message.to_owned(),
+        },
+        Usage::unknown("adapter"),
+    )
 }
 
 const fn outcome_of(result: &SpawnResult) -> StepOutcome {

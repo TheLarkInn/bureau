@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::adapters::{Execution, Usage};
 use crate::config::StepDef;
 use crate::contract::{SCHEMA_VERSION, StepRequest, StepResult};
 use crate::process::{Secret, SharedLog, SpawnRequest, SpawnResult, spawn};
@@ -34,7 +35,7 @@ pub enum Stream {
 }
 
 /// A recorded adapter session: the fixture the `fake` adapter replays.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transcript {
     /// Must equal [`SCHEMA_VERSION`].
     pub schema: String,
@@ -42,6 +43,9 @@ pub struct Transcript {
     pub chunks: Vec<Chunk>,
     /// Exit code the replay ends with.
     pub exit_code: i32,
+    /// Adapter-owned usage replayed with the transcript.
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 /// Why a transcript could not be loaded or saved.
@@ -110,6 +114,7 @@ impl Transcript {
             schema: SCHEMA_VERSION.to_owned(),
             chunks,
             exit_code: result.exit_code.unwrap_or(1),
+            usage: Usage::unknown("recorded"),
         }
     }
 }
@@ -226,7 +231,7 @@ pub async fn execute(
     request: &StepRequest,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
-) -> StepResult {
+) -> Execution {
     use crate::process::SpawnOutcome;
     let Some(fixture) = step.fixture.as_deref() else {
         return failed("fake adapter requires a `fixture` path on the agent step");
@@ -246,7 +251,8 @@ pub async fn execute(
     if result.outcome == SpawnOutcome::Timeout {
         return failed("fake replay timed out");
     }
-    super::result_from_spawn(&result)
+    let step_result = super::result_from_agent(&result, None, &result.stdout);
+    Execution::new(step_result, transcript.usage)
 }
 
 fn scratch_dir() -> std::path::PathBuf {
@@ -260,14 +266,14 @@ fn scratch_dir() -> std::path::PathBuf {
     dir
 }
 
-fn failed(message: &str) -> StepResult {
-    StepResult {
+fn failed(message: &str) -> Execution {
+    let result = StepResult {
         schema: SCHEMA_VERSION.to_owned(),
         outcome: crate::contract::StepOutcome::Failure,
         outputs: std::collections::BTreeMap::new(),
         artifacts: Vec::new(),
         trust: crate::contract::Trust::Derived,
-        cost_usd: 0.0,
         message: message.to_owned(),
-    }
+    };
+    Execution::new(result, Usage::zero("fake"))
 }

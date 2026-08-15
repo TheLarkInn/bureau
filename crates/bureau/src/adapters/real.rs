@@ -25,6 +25,15 @@ use crate::process::Secret;
 /// Default per-step timeout, in seconds, when the pipeline sets none.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
 
+/// Non-secret runtime variables agent CLIs and plugin subprocesses need.
+const RUNTIME_VARS: [&str; 5] = [
+    "PATH",
+    "HOME",
+    "COPILOT_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+];
+
 /// The step's spawn timeout.
 pub fn timeout(step: &StepDef) -> Duration {
     Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS))
@@ -172,7 +181,8 @@ pub fn child_env(
     found: Vec<(String, String)>,
     mut secrets: Vec<Secret>,
 ) -> (BTreeMap<String, String>, Vec<Secret>) {
-    let env = found.iter().cloned().collect();
+    let mut env: BTreeMap<String, String> = daemon_credentials(&RUNTIME_VARS).into_iter().collect();
+    env.extend(found.iter().cloned());
     secrets.extend(found.into_iter().map(|(_, value)| Secret::new(value)));
     (env, secrets)
 }
@@ -182,7 +192,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        FORGE_GRANTS, MODEL_GRANTS, agent_name, child_env, push_boundary, scoped_credentials,
+        FORGE_GRANTS, MODEL_GRANTS, RUNTIME_VARS, agent_name, child_env, push_boundary,
+        scoped_credentials,
     };
     use crate::config::Permission;
     use crate::process::Secret;
@@ -200,9 +211,17 @@ mod tests {
     }
 
     #[test]
-    fn child_env_without_credentials_leaves_env_empty() {
+    fn child_env_without_credentials_carries_no_secrets() {
         let (env, secrets) = child_env(Vec::new(), Vec::new());
-        assert_eq!((env.is_empty(), secrets.is_empty()), (true, true));
+        let expected: std::collections::BTreeSet<_> = RUNTIME_VARS
+            .into_iter()
+            .filter(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            (env.keys().cloned().collect(), secrets.is_empty()),
+            (expected, true)
+        );
     }
 
     #[test]

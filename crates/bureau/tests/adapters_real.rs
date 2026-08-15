@@ -15,7 +15,7 @@ use std::time::Duration;
 use bureau::adapters::{AdapterKind, claude, copilot};
 use bureau::config::{Permission, Role, StepDef, StepKind};
 use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust};
-use bureau::process::{Secret, SpawnRequest};
+use bureau::process::SpawnRequest;
 
 /// Joins argv for one-line comparisons (unit separator).
 const SEP: &str = "\u{1f}";
@@ -128,7 +128,7 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
 
 /// Asserts copilot's argv carries the JSON prompt and selected agent.
 /// This grant-less role also gets the deny-by-default flag, so argv
-/// has 6 elements.
+/// has 7 elements including the bureau-io grant.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
@@ -136,7 +136,7 @@ fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
         value_after(&req.argv, "--agent"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", 6);
+    let expected = (Some(copilot::BINARY), json, "analyzer", 7);
     assert_eq!(parts, expected);
 }
 
@@ -213,8 +213,12 @@ fn claude_carries_the_request_on_stdin_only() {
     let argv = [
         claude::BINARY,
         "-p",
+        "--output-format",
+        "json",
         "--agent",
         "a",
+        "--allowedTools",
+        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result",
         "--disallowedTools",
         "Bash(*)",
     ]
@@ -243,7 +247,7 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("copilot-flags");
         let role = role("/p:a", AdapterKind::Copilot, permissions);
         let req = copilot_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[5..].join(SEP), flags);
+        assert_eq!(req.argv[6..].join(SEP), flags);
     }
 }
 
@@ -262,33 +266,9 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("claude-flags");
         let role = role("/p:a", AdapterKind::Claude, permissions);
         let req = claude_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[4..].join(SEP), flags);
+        assert_eq!(req.argv[8..].join(SEP), flags);
     }
 }
 
-// Reading env is safe; setting it is `unsafe` on edition 2024, so the
-// forwarding assertion adapts to whatever the test process has.
-#[test]
-fn copilot_env_forwards_and_scrubs_only_gh_token() {
-    let dir = TestDir::new("env");
-    let role = role("/p:a", AdapterKind::Copilot, &[Permission::RepoRead]);
-    let req = copilot_request(&role, &step(None), dir.path());
-    let token = std::env::var("GH_TOKEN").unwrap_or_default();
-    let expected = !token.is_empty();
-    let hygiene = req.env.keys().all(|k| k == "GH_TOKEN");
-    let forwarded = req.env.contains_key("GH_TOKEN");
-    let scrubbed = req.secrets.contains(&Secret::new(&token));
-    assert_eq!((hygiene, forwarded, scrubbed), (true, expected, expected));
-}
-
-#[test]
-fn claude_env_and_scrub_list_carry_only_credentials() {
-    let dir = TestDir::new("claude-env");
-    let role = role("/p:a", AdapterKind::Claude, &[Permission::ModelInvoke]);
-    let secrets = vec![Secret::new("engine-secret")];
-    let req = claude::spawn_request(&role, &step(None), &request(dir.path()), secrets, None);
-    let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
-    let hygiene = req.env.keys().all(|k| known.contains(&k.as_str()));
-    let scrubbed = req.secrets.contains(&Secret::new("engine-secret"));
-    assert_eq!((hygiene, scrubbed), (true, true));
-}
+#[path = "adapters_real/env.rs"]
+mod env;

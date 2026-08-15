@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::RunPlan;
+use super::artifact;
 use super::machine::{RunCtx, WtCtx};
-use super::stream::LogSink;
-use crate::adapters;
+use super::stream::{self, LogSink};
+use crate::adapters::{self, Execution, Usage};
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
 use crate::process::{SpawnRequest, SpawnResult, shared_log, spawn};
@@ -118,7 +119,7 @@ pub(super) async fn execute(
     wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
-) -> StepResult {
+) -> Execution {
     match step.kind {
         StepKind::Deterministic => deterministic(ctx, wt, step, request).await,
         StepKind::Agent => agent(ctx, step, request).await,
@@ -140,7 +141,7 @@ async fn deterministic(
     wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
-) -> StepResult {
+) -> Execution {
     let spawned = spawn(SpawnRequest {
         argv: vec![
             "sh".to_owned(),
@@ -155,7 +156,10 @@ async fn deterministic(
         log: Some(shared_log(LogSink::new(&step.name, &ctx.log))),
     })
     .await;
-    derive_result(request.trust, &spawned)
+    Execution::new(
+        derive_result(request.trust, &spawned),
+        Usage::zero("deterministic"),
+    )
 }
 
 /// Derives the step result: a contract document on stdout wins;
@@ -176,29 +180,67 @@ fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
 
 /// An agent step runs through the role's adapter; its outputs grade
 /// `Derived` downstream no matter what the process claimed.
-async fn agent(ctx: &RunCtx, step: &StepDef, request: &StepRequest) -> StepResult {
-    let Some(role) = step
-        .role
-        .as_deref()
-        .and_then(|name| ctx.plan.roles.get(name))
-    else {
+async fn agent(ctx: &RunCtx, step: &StepDef, request: &StepRequest) -> Execution {
+    let Some(role) = role_for(ctx, step) else {
         return failed_step(&format!("step `{}` names an unknown role", step.name));
     };
     let sink = shared_log(LogSink::new(&step.name, &ctx.log));
-    let mut result = adapters::execute(role, step, request, ctx.secrets(), Some(sink)).await;
-    result.trust = Trust::Derived;
-    result
+    let mut execution = adapters::execute(role, step, request, ctx.secrets(), Some(sink)).await;
+    execution.result.trust = Trust::Derived;
+    enforce_measured_cost(ctx, &mut execution);
+    publish_artifacts(ctx, step, request, &mut execution).await;
+    execution
+}
+
+fn role_for<'a>(ctx: &'a RunCtx, step: &StepDef) -> Option<&'a crate::config::Role> {
+    step.role
+        .as_deref()
+        .and_then(|name| ctx.plan.roles.get(name))
+}
+
+async fn publish_artifacts(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    execution: &mut Execution,
+) {
+    let destination = stream::lock(&ctx.log)
+        .dir()
+        .join("artifacts")
+        .join(&step.name);
+    if let Err(message) = artifact::materialize(
+        &mut execution.result.artifacts,
+        &request.worktree,
+        &destination,
+        &ctx.secrets(),
+    )
+    .await
+    {
+        execution.result = failure_result(&format!("publishing artifacts failed: {message}"));
+    }
+}
+
+fn enforce_measured_cost(ctx: &RunCtx, execution: &mut Execution) {
+    let capped = ctx.plan.assignment.limits.max_cost_per_day_usd.is_some();
+    if capped && execution.usage.cost_usd.is_none() {
+        execution.result = failure_result(
+            "this assignment has `max_cost_per_day_usd`, but the adapter did not report measurable usage; no further cost-bearing step may run",
+        );
+    }
 }
 
 /// A synthetic failure for a step that cannot run at all.
-fn failed_step(message: &str) -> StepResult {
+fn failed_step(message: &str) -> Execution {
+    Execution::new(failure_result(message), Usage::zero("engine"))
+}
+
+fn failure_result(message: &str) -> StepResult {
     StepResult {
         schema: SCHEMA_VERSION.to_owned(),
         outcome: StepOutcome::Failure,
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: 0.0,
         message: message.to_owned(),
     }
 }

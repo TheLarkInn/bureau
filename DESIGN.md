@@ -410,7 +410,7 @@ artifact file paths. No shared memory, no ambient globals, no reading each other
 scratch directories.
 
 ```rust
-pub const SCHEMA_VERSION: &str = "v1";
+pub const SCHEMA_VERSION: &str = "v2";
 
 #[derive(Serialize, Deserialize)]
 pub struct StepRequest {
@@ -434,7 +434,6 @@ pub struct StepResult {
     pub outputs: BTreeMap<String, serde_json::Value>,
     pub artifacts: Vec<Artifact>,
     pub trust: Trust,
-    pub cost_usd: f64,
     pub message: String,
 }
 ```
@@ -442,8 +441,8 @@ pub struct StepResult {
 Wire form, for reference:
 
 ```jsonc
-{ "schema": "v1", "outcome": "no-work", "outputs": {}, "artifacts": [],
-  "trust": "derived", "cost_usd": 0.42, "message": "" }
+{ "schema": "v2", "outcome": "no-work", "outputs": {}, "artifacts": [],
+  "trust": "derived", "message": "" }
 ```
 
 **Version the schema in the first commit.** Reject any payload whose `schema` is not

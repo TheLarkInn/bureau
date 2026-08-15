@@ -5,6 +5,7 @@
 //! `version`, and the `fake` adapter testing seam.
 
 mod inspect;
+mod mcp;
 mod prepare;
 mod run;
 
@@ -124,6 +125,13 @@ pub enum Verb {
         #[arg(long, default_value = "checkout-cache")]
         cache: PathBuf,
     },
+    /// Serves the adapter step I/O protocol.
+    #[command(hide = true)]
+    Mcp {
+        /// MCP operation.
+        #[command(subcommand)]
+        action: McpAction,
+    },
     /// Replays or records adapter transcripts — the testing seam.
     Fake {
         /// What to do with the fixture.
@@ -152,6 +160,14 @@ pub enum FakeAction {
     },
 }
 
+/// MCP protocol operations.
+#[derive(Debug, Subcommand)]
+pub enum McpAction {
+    /// Serves MCP over standard input and output.
+    #[command(hide = true)]
+    Serve,
+}
+
 /// Runs the CLI and returns the process exit code.
 ///
 /// # Errors
@@ -160,6 +176,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<i32> {
     match cli.verb {
         Verb::Version => Ok(version()),
         Verb::Validate { dir } => Ok(validate(&dir)),
+        Verb::Mcp { action } => mcp::run(&action),
         Verb::Fake { action } => fake_action(action).await,
         verb => run_side(verb).await,
     }
@@ -187,7 +204,7 @@ async fn run_side(verb: Verb) -> anyhow::Result<i32> {
         Verb::List { runs } => Ok(inspect::list(&runs)),
         Verb::Show { run_id, runs } => inspect::show(&runs, &run_id),
         Verb::Cancel { run_id, runs } => inspect::cancel(&runs, &run_id),
-        Verb::Version | Verb::Validate { .. } | Verb::Fake { .. } => {
+        Verb::Version | Verb::Validate { .. } | Verb::Mcp { .. } | Verb::Fake { .. } => {
             unreachable!("handled by the caller")
         }
     }

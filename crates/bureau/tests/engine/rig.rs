@@ -88,6 +88,7 @@ pub fn fixture(dir: &Path, name: &str, result: &StepResult) -> String {
             data,
         }],
         exit_code: 0,
+        usage: bureau::adapters::Usage::zero("fake"),
     };
     let path = dir.join(name);
     transcript.save(&path).expect("fixture saves");
@@ -153,7 +154,6 @@ pub fn result(outcome: StepOutcome, message: &str) -> StepResult {
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: 0.0,
         message: message.to_owned(),
     }
 }
