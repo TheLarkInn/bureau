@@ -1,0 +1,11 @@
+{
+  "name": "language-behaviors",
+  "description": "Output-shaping language behaviors. Ships the base-explanations skill: lead with the next action, number multi-step work, restate state across turns, suppress tangents, give specific time estimates, make wins visible. Adapted from ayghri/i-have-adhd (MIT).",
+  "version": "0.1.0",
+  "author": {
+    "name": "TheLarkInn"
+  },
+  "license": "MIT",
+  "keywords": ["output-style", "formatting", "explanations", "productivity"],
+  "skills": "skills/"
+}

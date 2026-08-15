@@ -21,6 +21,13 @@
       "version": "1.0.0",
       "source": "./rust-design-patterns",
       "keywords": ["rust", "design-patterns", "small-crates", "modularity", "workspace"]
+    },
+    {
+      "name": "language-behaviors",
+      "description": "Output-shaping language behaviors. Ships the base-explanations skill: lead with the next action, number steps, restate state, suppress tangents, make wins visible.",
+      "version": "0.1.0",
+      "source": "./language-behaviors",
+      "keywords": ["output-style", "formatting", "explanations", "productivity"]
     }
   ]
 }

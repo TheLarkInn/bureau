@@ -8,6 +8,7 @@
     }
   },
   "enabledPlugins": {
-    "rust-design-patterns@bureau": true
+    "rust-design-patterns@bureau": true,
+    "language-behaviors@bureau": true
   }
 }
