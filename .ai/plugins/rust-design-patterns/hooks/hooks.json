@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": "create|edit|str_replace_editor|apply_patch",
+        "command": "echo '{\"additionalContext\":\"Code was just written or modified. Before ending your turn, you MUST delegate a modularity review of the changed Rust code and Cargo.toml files to the rust-design-patterns:rust-workspace-modularity-reviewer subagent, which enforces the Prefer Small Crates design pattern. If the change did not touch Rust code or Cargo manifests, state that the review is not applicable.\"}'",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
