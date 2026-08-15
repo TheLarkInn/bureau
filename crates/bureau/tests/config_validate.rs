@@ -48,12 +48,10 @@ repos:
 
 const ROLE: &str = r"
 name: implementer
-agent: /atomic:codebase-analyzer
+agent: /bureau:implementer
 adapter: copilot
-model: claude-opus-5
 permissions: [repo:read, repo:write, repo:push, pr:write]
 min_trust: maintainer
-concurrency: 2
 ";
 
 const PIPELINE: &str = r#"
@@ -230,7 +228,7 @@ fn duplicate_names_are_an_error() {
 #[test]
 fn an_agent_must_be_a_plugin_invocation_or_a_path() {
     let dir = TestDir::new("agent");
-    let role = ROLE.replace("agent: /atomic:codebase-analyzer", "agent: just-a-name");
+    let role = ROLE.replace("agent: /bureau:implementer", "agent: just-a-name");
     write_files(
         &dir,
         &[("repos.yaml", REPOS), ("roles/implementer.yaml", &role)],
@@ -271,16 +269,4 @@ fn empty_filter_is_an_error() {
     );
     let found = errors(&dir);
     assert!(found.iter().any(|e| e.contains("work.filter")), "{found:?}");
-}
-
-#[test]
-fn a_zero_concurrency_role_is_an_error() {
-    let dir = TestDir::new("zeroconc");
-    let role = ROLE.replace("concurrency: 2", "concurrency: 0");
-    write_files(
-        &dir,
-        &[("repos.yaml", REPOS), ("roles/implementer.yaml", &role)],
-    );
-    let found = errors(&dir);
-    assert!(found.iter().any(|e| e.contains("concurrency")), "{found:?}");
 }

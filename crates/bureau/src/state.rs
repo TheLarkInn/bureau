@@ -11,6 +11,7 @@
 //!   scheduled pipeline never re-proposes an identical change.
 
 mod disposition;
+mod limits;
 mod sql;
 
 use std::path::Path;
@@ -155,7 +156,7 @@ impl Store {
     ) -> Result<usize, Error> {
         let now = now_millis();
         let (live, hour, day, spent) = usage(&self.lock(), assignment, now)?;
-        Ok(remaining(limits, open_prs, live, hour, day, spent))
+        Ok(limits::remaining(limits, open_prs, live, hour, day, spent))
     }
 
     /// Records a completed run's cost for budget accounting.
@@ -270,30 +271,4 @@ fn now_millis() -> i64 {
 /// A duration as whole milliseconds, clamped into `i64`.
 fn duration_millis(duration: Duration) -> i64 {
     i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
-}
-
-/// Remaining run slots: the minimum across every limit, so zero when any
-/// one is exhausted. Cost has no natural slot unit, so it gates the rest.
-fn remaining(
-    limits: &Limits,
-    open_prs: usize,
-    live: u32,
-    hour: u32,
-    day: u32,
-    spent: f64,
-) -> usize {
-    let open = u32::try_from(open_prs).unwrap_or(u32::MAX);
-    let slots = [
-        limits.max_concurrent.saturating_sub(live),
-        limits.max_runs_per_hour.saturating_sub(hour),
-        limits.max_runs_per_day.saturating_sub(day),
-        limits.max_open_prs.saturating_sub(open),
-    ];
-    let min = slots.into_iter().min().unwrap_or(0);
-    cost_headroom(spent, limits.max_cost_per_day_usd).min(usize::try_from(min).unwrap_or(0))
-}
-
-/// Unlimited slots while under the ceiling, none at or above it.
-const fn cost_headroom(spent: f64, max_usd: f64) -> usize {
-    if spent >= max_usd { 0 } else { usize::MAX }
 }

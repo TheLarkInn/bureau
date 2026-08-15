@@ -4,8 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use super::Config;
-use super::files::{Assignment, Limits, Repo, Role};
+use super::StepKind;
+use super::files::{Assignment, ForgeKind, Limits, Repo, Role};
 use crate::ConfigError;
+use crate::contract::Trust;
 
 pub(super) fn path_of(kind: &str, name: &str) -> PathBuf {
     PathBuf::from(format!("{kind}/{name}.yaml"))
@@ -62,13 +64,6 @@ fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {
 
 fn check_role(errors: &mut Vec<ConfigError>, name: &str, role: &Role) {
     let path = path_of("roles", name);
-    if role.concurrency == 0 {
-        push(
-            errors,
-            path.clone(),
-            format!("role `{name}`: `concurrency` must be at least 1"),
-        );
-    }
     if !(role.agent.starts_with('/') || role.agent.to_ascii_lowercase().ends_with(".md")) {
         push(
             errors,
@@ -93,6 +88,8 @@ fn check_assignment(errors: &mut Vec<ConfigError>, config: &Config, name: &str, 
     }
     check_limits(errors, name, &a.limits, &path);
     check_text(errors, name, a, &path);
+    check_approval_label(errors, name, a, &path);
+    check_ado_approval(errors, config, name, a, &path);
 }
 
 fn check_repo_refs(
@@ -145,22 +142,41 @@ fn check_primary_access(
 }
 
 fn check_limits(errors: &mut Vec<ConfigError>, name: &str, limits: &Limits, path: &Path) {
-    let checks = [
-        ("max_concurrent", f64::from(limits.max_concurrent)),
-        ("max_runs_per_hour", f64::from(limits.max_runs_per_hour)),
-        ("max_runs_per_day", f64::from(limits.max_runs_per_day)),
-        ("max_open_prs", f64::from(limits.max_open_prs)),
-        ("max_cost_per_day_usd", limits.max_cost_per_day_usd),
+    let integers = [
+        ("max_concurrent", limits.max_concurrent.map(u64::from)),
+        ("max_runs_per_hour", limits.max_runs_per_hour.map(u64::from)),
+        ("max_runs_per_day", limits.max_runs_per_day.map(u64::from)),
+        ("max_open_prs", limits.max_open_prs.map(u64::from)),
+        ("max_run_hours", limits.max_run_hours),
     ];
+    check_positive_integers(errors, name, path, integers);
+    if limits
+        .max_cost_per_day_usd
+        .is_some_and(|value| !value.is_finite() || value <= 0.0)
+    {
+        limit_error(errors, name, path, "max_cost_per_day_usd");
+    }
+}
+
+fn check_positive_integers(
+    errors: &mut Vec<ConfigError>,
+    name: &str,
+    path: &Path,
+    checks: [(&str, Option<u64>); 5],
+) {
     for (field, value) in checks {
-        if value <= 0.0 {
-            push(
-                errors,
-                path.to_path_buf(),
-                format!("assignment `{name}`: `{field}` must be positive"),
-            );
+        if value == Some(0) {
+            limit_error(errors, name, path, field);
         }
     }
+}
+
+fn limit_error(errors: &mut Vec<ConfigError>, name: &str, path: &Path, field: &str) {
+    push(
+        errors,
+        path.to_path_buf(),
+        format!("assignment `{name}`: remove `{field}` or set it to a positive value"),
+    );
 }
 
 fn check_text(errors: &mut Vec<ConfigError>, name: &str, a: &Assignment, path: &Path) {
@@ -180,4 +196,71 @@ fn check_text(errors: &mut Vec<ConfigError>, name: &str, a: &Assignment, path: &
             );
         }
     }
+}
+
+fn check_approval_label(
+    errors: &mut Vec<ConfigError>,
+    name: &str,
+    assignment: &Assignment,
+    path: &Path,
+) {
+    let blank = assignment
+        .work
+        .approval_label
+        .as_deref()
+        .is_some_and(|label| label.trim().is_empty());
+    if blank {
+        push(
+            errors,
+            path.to_path_buf(),
+            format!("assignment `{name}`: remove `work.approval_label` or name the approval label"),
+        );
+    }
+}
+
+fn check_ado_approval(
+    errors: &mut Vec<ConfigError>,
+    config: &Config,
+    name: &str,
+    assignment: &Assignment,
+    path: &Path,
+) {
+    if assignment.work.forge != ForgeKind::Ado || assignment.work.approval_label.is_some() {
+        return;
+    }
+    let Some(pipeline) = config.pipelines.get(&assignment.pipeline) else {
+        return;
+    };
+    for step in &pipeline.steps {
+        check_ado_step(errors, config, name, step, path);
+    }
+}
+
+fn check_ado_step(
+    errors: &mut Vec<ConfigError>,
+    config: &Config,
+    assignment: &str,
+    step: &super::StepDef,
+    path: &Path,
+) {
+    if step.kind != StepKind::Agent {
+        return;
+    }
+    let role_name = step.role.as_deref().unwrap_or_default();
+    let minimum = step
+        .trust
+        .or_else(|| config.roles.get(role_name).map(|role| role.min_trust));
+    if minimum.is_some_and(|trust| trust > Trust::Untrusted) {
+        push(
+            errors,
+            path.to_path_buf(),
+            approval_error(assignment, &step.name, role_name),
+        );
+    }
+}
+
+fn approval_error(assignment: &str, step: &str, role: &str) -> String {
+    format!(
+        "assignment `{assignment}`: add `work.approval_label` so approved ADO items can reach step `{step}`; ADO items are untrusted until they carry that label, but role `{role}` requires higher trust"
+    )
 }

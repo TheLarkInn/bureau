@@ -163,10 +163,8 @@ fn role() -> Role {
         name: "worker".to_owned(),
         agent: "/fake:worker".to_owned(),
         adapter: AdapterKind::Fake,
-        model: "fake".to_owned(),
         permissions: Vec::new(),
         min_trust: Trust::Untrusted,
-        concurrency: 1,
     }
 }
 
@@ -181,11 +179,12 @@ fn repo(url: &str) -> Repo {
 
 const fn limits() -> Limits {
     Limits {
-        max_concurrent: 1,
-        max_runs_per_hour: 10,
-        max_runs_per_day: 20,
-        max_open_prs: 5,
-        max_cost_per_day_usd: 50.0,
+        max_concurrent: Some(1),
+        max_runs_per_hour: Some(10),
+        max_runs_per_day: Some(20),
+        max_open_prs: Some(5),
+        max_cost_per_day_usd: Some(50.0),
+        max_run_hours: None,
     }
 }
 
@@ -196,6 +195,7 @@ fn assignment() -> Assignment {
             forge: ForgeKind::Github,
             source: "fake".to_owned(),
             filter: "*".to_owned(),
+            approval_label: None,
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),

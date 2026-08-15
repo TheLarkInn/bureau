@@ -7,7 +7,7 @@
 //! locally and otherwise passed through by name; a direct `.md` path
 //! is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
 //!
-//! argv is `claude -p --agent <name> --model <model>`: `claude -p`
+//! argv is `claude -p --agent <name>`: `claude -p`
 //! reads the prompt from stdin, which carries the request JSON per the
 //! layer-2 contract. The push boundary is mirrored in argv (section
 //! 10), one flag per rule, and a role without a write grant is denied
@@ -73,15 +73,13 @@ pub fn spawn_request(
     }
 }
 
-/// `claude -p --agent <name> --model <model>` plus the mirror.
+/// `claude -p --agent <name>` plus the permission mirror.
 fn argv(role: &Role, agent: &str) -> Vec<String> {
     let mut argv = vec![
         BINARY.to_owned(),
         "-p".to_owned(),
         "--agent".to_owned(),
         agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
     ];
     argv.extend(permission_flags(&role.permissions));
     argv

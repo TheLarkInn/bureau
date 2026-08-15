@@ -80,7 +80,7 @@ ask before using it.
 | append-only run record | `run log` | journal, ledger, chronicle |
 | claim record with expiry | `lease` | claim ledger, reservation |
 | branch on a step outcome | `decision` | gate, judge, arbiter |
-| concurrent steps | `fan-out` | parallel (noun), scatter |
+| concurrent steps | `concurrent group` | fan-out, parallel (noun), scatter |
 | where work items come from | `work source` | backlog, hopper |
 | bare clone cache | `checkout cache` | workcopies |
 | credential grant | `permission` | capability |
@@ -162,13 +162,25 @@ Plus the run log, which is a record, not scheduler state.
 
 ## 5. Configuration is git
 
-Config lives in a **separate repository** from the code and from the repos being
-worked on. This matters: an assignment may reference repos you do not own and cannot
-commit to.
+Config is reviewed Git state. Its location follows its scope:
+
+- **one work repository** — config lives in that repository under `.bureau/`;
+- **several work repositories** — config lives in a separate repository
+  identified by remote URL plus ref.
+
+The multi-repository distinction matters: an assignment may reference repos you
+do not own and cannot commit to. A local config checkout is always a disposable
+cache, never the system's identity.
 
 ```
-runner-config/
+runner-config/                    # multi-repository mode
   repos.yaml                       # registry: every repo, with an access level
+  roles/implementer.yaml
+  assignments/fix-flaky-tests.yaml
+  pipelines/fix-failing-test.yaml
+
+work-repo/.bureau/                # single-repository mode, same schema
+  repos.yaml
   roles/implementer.yaml
   assignments/fix-flaky-tests.yaml
   pipelines/fix-failing-test.yaml
@@ -233,12 +245,10 @@ needing read-only context from repos in other organizations.
 
 ```yaml
 name: implementer
-agent: /atomic:codebase-analyzer      # plugin invocation, or a path to an agent .md
+agent: /bureau:implementer            # plugin invocation, or a path to an agent .md
 adapter: copilot                      # copilot | claude | fake
-model: claude-opus-5
 permissions: [repo:read, repo:write, repo:push, pr:write]
 min_trust: maintainer
-concurrency: 2
 ```
 
 **Critical:** the agent's name, description, instructions, tools, and model already
@@ -256,7 +266,9 @@ model: opus
 
 Do not re-declare any of that in YAML. Reference it. The role adds only what the
 agent format has no opinion about because it lives outside the agent process:
-which adapter binary, which credentials, concurrency, and minimum input trust.
+which adapter binary, which credential grants, and minimum input trust. Model
+and tools live in the agent resource. Concurrency lives on assignments and
+concurrent groups, never roles.
 
 The payoff: the same agent file a developer invokes locally by typing
 `/atomic:codebase-analyzer` runs unmodified in automation. Author locally, ship by
@@ -277,17 +289,19 @@ work:
     [System.WorkItemType] = 'Bug'
       AND [System.Tags] CONTAINS 'agent-eligible'
       AND [System.State] = 'Active'
+  approval_label: agent-approved # optional; required when ADO input must become maintainer
 repos: [odsp-web, spo.core, augloop]   # first is primary; the branch lands there
 pipeline: fix-failing-test
 role: implementer
 verify: "rush test --to odsp-web"
 branch_prefix: runner/
 limits:
-  max_concurrent: 2
+  max_concurrent: 2              # every field is independently optional
   max_runs_per_hour: 6
   max_runs_per_day: 40
   max_open_prs: 5
   max_cost_per_day_usd: 25
+  max_run_hours: 24              # omitted uses the system default of 24
 ```
 
 `filter` is a **forge-native query string passed through verbatim** — WIQL for ADO,
@@ -298,6 +312,15 @@ area path," and you will hit that limit immediately.
 `limits` is a kill switch that stops a runaway loop from costing $400 overnight. It is
 not chargeback and not cost accounting — that would imply multi-tenancy, which is a
 non-goal.
+
+The `limits` block and every field in it are optional. Omitted concurrency,
+rate, open-PR, and cost limits mean unlimited. Omitted `max_run_hours` uses the
+system default of 24 hours; an explicit positive value may raise or lower it.
+
+`approval_label` is a hard pre-claim admission check and grants `Maintainer`
+trust. Recheck it at every step boundary and before publication. Removing it
+blocks the active run and requires explicit retry. An ADO assignment with a
+reachable agent step requiring more than `Untrusted` trust must configure it.
 
 ---
 
@@ -459,7 +482,34 @@ agent proposes, code verifies.
 - **A missing branch fails closed.** Never fall through to a default. Do not write a
   catch-all `_ =>` arm that resumes execution; exhaustive `match` is the point.
 - Data flow is explicit (`inputs_from: <step>`). No implicit context accumulation.
-- Terminals: `done`, `abort`, `escalate`, `join`.
+- Terminals: `done`, `abort`, `escalate`.
+
+A fourth state kind, `concurrent`, runs a fixed list of evidence-only steps
+against identical detached snapshots, then emits one namespaced result and
+routes through ordinary outcome edges:
+
+```yaml
+- name: inspect-change
+  type: concurrent
+  steps: [run-tests, review-change, check-policy]
+  completion: all              # all | stop_on_failure
+  max_concurrent: 3            # optional; defaults to every listed step
+  next: evaluate-results
+  on_failure: repair
+  on_blocked: escalate
+  on_no_work: done
+```
+
+Each member is exactly one step, belongs to at most one group, has no edges,
+cannot be the entry or an ordinary edge target, cannot be concurrent, and
+cannot consume a sibling's output. Members may only read repos/forges, read run
+evidence, and invoke a model. Repository edits are discarded; outputs and
+artifacts survive. `all` is the default. `stop_on_failure` cancels unfinished
+members only after `Failure`; `Blocked` and `NoWork` do not cancel siblings.
+
+The aggregate outcome is `Failure` when any member fails, else `Blocked` when
+any blocks, else `NoWork` when all report no work, else `Success`. Downstream
+inputs are namespaced by group and member.
 
 ### Layer 5 — durable state (SQLite)
 
@@ -732,3 +782,206 @@ CLI beyond `validate` and `version`.
 
 Show me those four things and wait for my response before implementing.
 
+---
+
+## 15. Approved next phase
+
+Sections 12 and 13 record the original build sequence. All layers named there
+are complete. This section is the authoritative scope for the next phase and
+supersedes earlier examples where they conflict.
+
+### 15.1 Plugins and AI resources
+
+The repository publishes one installable plugin from the standard Copilot
+marketplace layout:
+
+```text
+.github/plugin/marketplace.json
+plugins/bureau/
+  plugin.json
+  agents/implementer.agent.md
+  agents/reviewer.agent.md
+  skills/pipeline-author/SKILL.md
+  skills/run-inspector/SKILL.md
+  .mcp.json
+```
+
+The public resources are `/bureau:implementer`, `/bureau:reviewer`,
+`/bureau:pipeline-author`, and `/bureau:run-inspector`. Delete the `atomic`
+plugin and its analyzer. The implementer uses Opus; the reviewer uses Sonnet.
+Agent frontmatter owns model and tools.
+
+The plugin also exposes a `bureau-io` MCP server by invoking hidden
+`bureau mcp serve`. Its initial tools are:
+
+- `get_step_context` — read the current immutable request;
+- `publish_result` — publish one final result.
+
+Publication is one-shot. Artifact paths must stay inside the step worktree;
+copy and hash them into the durable run directory. The MCP process writes no
+run-log, lease, budget, or forge state. The engine validates before append.
+
+Copilot and Claude both receive these tools. A real agent step succeeds only
+after MCP publication or valid versioned `StepResult` JSON on stdout. Exit zero
+plus prose is failure. Remove agent-controlled `cost_usd` from `StepResult` and
+advance the wire schema to `v2`. Adapters own usage/cost measurement.
+
+### 15.2 Plugin resolution
+
+Resolve role plugins in this order:
+
+1. target-repository enabled local marketplaces;
+2. enabled user-global plugins under `COPILOT_HOME`;
+3. `plugins/bureau` only when running from a bureau source checkout.
+
+Target-repository plugin code intentionally may override the role's plugin
+implementation. Reviewed config still controls adapter, credential grants,
+trust, and limits.
+
+For a run, activate the chosen plugin through the alphabetically first existing
+local-directory marketplace. When none exists, create a temporary `.ai`
+marketplace named `repo-plugins` and add it to repository Copilot settings.
+Save exact originals and restore them before change detection on every exit
+path. A conflicting agent edit to activation files escalates. Record plugin
+source, version, and digest in the run log.
+
+Never auto-install during a run. A missing plugin fails before spawn with
+installation and retry actions.
+
+### 15.3 Reconciliation and committed config
+
+Add:
+
+```text
+bureau reconcile
+bureau reconcile --interval <duration>
+bureau reconcile --now
+```
+
+Continuous mode polls. `--now` performs one pass, starts eligible work up to
+headroom, waits for those runs, prints outcomes, and exits. Keep `bureau run`
+for explicit one-item work.
+
+Before every pass:
+
+1. fetch the configured committed ref;
+2. validate the complete config snapshot;
+3. adopt it atomically or retain last-known-good;
+4. resume unfinished runs;
+5. only then observe and claim new work.
+
+Single-repository reconcile reads committed `.bureau/` from the configured
+work-repo remote/ref. Multi-repository reconcile reads the separate config
+remote/ref. Local config paths are caches only. `bureau validate` may inspect
+uncommitted local authoring changes.
+
+### 15.4 Long-running correctness
+
+Renew every active lease. Losing ownership stops the run. The default complete
+run deadline is 24 hours; an assignment may set a different positive
+`max_run_hours`. Agent steps without `timeout_secs` inherit the remaining run
+deadline. Deterministic steps keep their short default.
+
+Recheck `approval_label` at every step boundary and before publication. At
+deadline or approval revocation, preserve evidence, restore temporary plugin
+activation, tear down, release the lease, comment with the exact retry action,
+and escalate.
+
+The run log must persist enough to resume the same run ID:
+
+- immutable plan, source commit, item snapshot, plugin digest;
+- full scrubbed step and concurrent-member results;
+- adapter usage;
+- internal Git snapshot SHAs;
+- pushed commit and created/adopted PR identity;
+- terminal outcome, cost, and dedup disposition.
+
+Finalization is idempotent. Before PR creation, observe an exact-head-branch PR
+and adopt it. After ambiguous create failure, observe once more. Project
+terminal budget/dedup state from the log with unique `run_id` accounting so a
+crash cannot double count. Release is idempotent.
+
+First SIGINT/SIGTERM drains while renewing leases. A second signal cancels
+process groups, records cancellation, cleans, releases, and exits.
+
+### 15.5 Concurrent evidence
+
+At concurrent-group entry, make an internal commit from a separate temporary
+index containing the current tracked and untracked non-ignored bytes, excluding
+temporary plugin activation. Do not move the branch or real index. Give each
+member a detached worktree at that SHA.
+
+Durable events distinguish group start, member start/finish/cancel, and group
+finish. Resume skips finished members, reruns interrupted attempts, and starts
+pending members under the group limit. Persist the aggregate result under the
+group name for `inputs_from`.
+
+Assignment `max_concurrent` limits active work items. Concurrent-group
+`max_concurrent` limits active members and defaults to every listed member.
+There is no role concurrency.
+
+### 15.6 Local lifecycle
+
+Local state defaults to `~/.bureau` and `BUREAU_HOME` overrides it:
+
+```text
+settings.yaml
+credentials/
+state.db
+runs/
+checkout-cache/
+config-cache/
+```
+
+Add four explicit commands:
+
+- `init` — first-time setup only;
+- `setup` — change local source/plugin/credential/migration settings;
+- `doctor` — read-only human/JSON/offline diagnostics;
+- `repair` — confirmed reversible repairs only.
+
+`init` supports single- and multi-repository config, repository registration,
+three credential sources, optional user-global plugin installation, and a
+fixed or AI-authored first pipeline. It previews and validates config, creates
+a config PR, waits for merge, validates the merged commit, runs one reconcile
+pass, and waits for its outcomes. It never runs unmerged config.
+
+`doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
+and recovery state. `repair` may restore directories/permissions, disposable
+caches, the same plugin version, stale activation, expired ownership, orphan
+worktrees, and derived state. It never changes reviewed policy, credentials,
+plugin versions, live work, or durable history.
+
+All interactive flows are deterministic state machines over injected effects
+and have complete offline transcript tests.
+
+### 15.7 CLI cap and deferrals
+
+Top-level commands after this phase:
+
+```text
+validate version run list show cancel retry fake
+reconcile init setup doctor repair mcp
+```
+
+Fourteen total. `mcp` is hidden from normal help. Add no other top-level verb.
+
+Explicitly defer output-specific gate types, mid-run human pause states,
+cron/signals, webhook listener, scratch/sparse workspaces, timeout salvage,
+per-step cost caps, and log-derived limit sets. The section 3 non-goals remain
+hard.
+
+### 15.8 Delivery order
+
+Deliver in seven tested stages:
+
+1. spec/config cutover and plugin package;
+2. MCP and strict agent contract;
+3. long-run durability and exactly-once recovery;
+4. concurrent evidence groups;
+5. reconcile, committed sources, and plugin activation;
+6. init/setup/doctor/repair;
+7. full offline acceptance.
+
+Each stage passes the four repository gates before the next begins. Every Rust
+stage also receives a small-crate modularity review.

@@ -25,7 +25,7 @@ async fn pending_subtracts_open_prs_and_active_leases() {
 #[tokio::test]
 async fn zero_headroom_starts_nothing_and_claims_nothing() {
     let limits = Limits {
-        max_open_prs: 0,
+        max_open_prs: Some(0),
         ..generous()
     };
     let world = World::new(&["1"], "true", limits);

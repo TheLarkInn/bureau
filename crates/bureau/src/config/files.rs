@@ -74,7 +74,7 @@ impl Access {
 ///
 /// The agent's name, description, instructions, tools, and model live in
 /// the plugin/agent file; the role adds only what lives outside the agent
-/// process: adapter, credentials (via permissions), concurrency, trust.
+/// process: adapter, credentials (via permissions), and trust.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Role {
@@ -84,14 +84,10 @@ pub struct Role {
     pub agent: String,
     /// Which agent CLI runs the agent.
     pub adapter: AdapterKind,
-    /// Model name as the adapter understands it.
-    pub model: String,
     /// Credential grants checked before spawn (DESIGN.md section 10).
     pub permissions: Vec<Permission>,
     /// Minimum input trust this role accepts.
     pub min_trust: Trust,
-    /// How many runs may use this role at once.
-    pub concurrency: u32,
 }
 
 impl Named for Role {
@@ -119,6 +115,7 @@ pub struct Assignment {
     /// Every branch carries this prefix so cleanup is one glob.
     pub branch_prefix: String,
     /// Kill switch against a runaway loop (DESIGN.md section 6).
+    #[serde(default)]
     pub limits: Limits,
 }
 
@@ -147,22 +144,33 @@ pub struct WorkSource {
     pub source: String,
     /// Forge-native query, opaque to the runner.
     pub filter: String,
+    /// Label that admits the item and grades it as maintainer-approved.
+    #[serde(default)]
+    pub approval_label: Option<String>,
 }
 
 /// Per-assignment limits; a kill switch, not chargeback.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     /// Concurrent runs for this assignment.
-    pub max_concurrent: u32,
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
     /// Runs started per hour.
-    pub max_runs_per_hour: u32,
+    #[serde(default)]
+    pub max_runs_per_hour: Option<u32>,
     /// Runs started per day.
-    pub max_runs_per_day: u32,
+    #[serde(default)]
+    pub max_runs_per_day: Option<u32>,
     /// Open PRs this assignment may have at once.
-    pub max_open_prs: u32,
+    #[serde(default)]
+    pub max_open_prs: Option<u32>,
     /// Daily cost ceiling.
-    pub max_cost_per_day_usd: f64,
+    #[serde(default)]
+    pub max_cost_per_day_usd: Option<f64>,
+    /// Complete-run deadline; omitted uses the system default.
+    #[serde(default)]
+    pub max_run_hours: Option<u64>,
 }
 
 /// A credential grant, checked before spawn (DESIGN.md section 10). The

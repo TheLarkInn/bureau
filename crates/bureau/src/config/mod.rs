@@ -140,5 +140,25 @@ fn is_yaml(path: &Path) -> bool {
 
 fn load_one<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
     let text = std::fs::read_to_string(path).map_err(|e| ConfigError::new(path, &e))?;
+    if let Some(message) = removed_role_field(path, &text) {
+        return Err(ConfigError::new(path, message));
+    }
     serde_yaml_ng::from_str(&text).map_err(|e| ConfigError::new(path, &e))
+}
+
+fn removed_role_field(path: &Path, text: &str) -> Option<&'static str> {
+    if path.parent()?.file_name()?.to_str()? != "roles" {
+        return None;
+    }
+    if has_key(text, "model") {
+        return Some("remove `model`; the referenced agent resource now selects its model");
+    }
+    has_key(text, "concurrency").then_some(
+        "remove `concurrency`; use assignment `limits.max_concurrent` or a concurrent group's `max_concurrent`",
+    )
+}
+
+fn has_key(text: &str, key: &str) -> bool {
+    text.lines()
+        .any(|line| line.trim_start().starts_with(&format!("{key}:")))
 }

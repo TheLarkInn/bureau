@@ -69,10 +69,8 @@ const MINIMAL_ROLE: &str = r"
 name: worker
 agent: agents/worker.md
 adapter: fake
-model: none
 permissions: [repo:read, repo:write, pr:write]
 min_trust: untrusted
-concurrency: 1
 ";
 
 const MINIMAL_PIPELINE: &str = r#"

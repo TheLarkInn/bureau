@@ -29,7 +29,7 @@ const TOKEN: &str = "test-token";
 #[tokio::test]
 async fn an_exhausted_hourly_limit_spawns_nothing() {
     let limits = Limits {
-        max_runs_per_hour: 2,
+        max_runs_per_hour: Some(2),
         ..generous()
     };
     let world = World::new(&["1", "2"], "echo changed >> file.txt", limits);
@@ -221,10 +221,8 @@ const MINIMAL_ROLE: &str = r"
 name: worker
 agent: agents/worker.md
 adapter: fake
-model: none
 permissions: [repo:read, repo:write, pr:write]
 min_trust: untrusted
-concurrency: 1
 ";
 
 const MINIMAL_PIPELINE: &str = r#"

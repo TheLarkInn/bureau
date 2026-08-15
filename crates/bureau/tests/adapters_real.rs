@@ -75,10 +75,8 @@ fn role(agent: &str, adapter: AdapterKind, permissions: &[Permission]) -> Role {
         name: "reviewer".to_owned(),
         agent: agent.to_owned(),
         adapter,
-        model: "test-model".to_owned(),
         permissions: permissions.to_vec(),
         min_trust: Trust::Derived,
-        concurrency: 1,
     }
 }
 
@@ -128,18 +126,17 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
     &argv[at + 1]
 }
 
-/// Asserts copilot's argv carries the JSON prompt, agent, and model.
+/// Asserts copilot's argv carries the JSON prompt and selected agent.
 /// This grant-less role also gets the deny-by-default flag, so argv
-/// has 8 elements.
+/// has 6 elements.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
         value_after(&req.argv, "-p"),
         value_after(&req.argv, "--agent"),
-        value_after(&req.argv, "--model"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", "test-model", 8);
+    let expected = (Some(copilot::BINARY), json, "analyzer", 6);
     assert_eq!(parts, expected);
 }
 
@@ -218,8 +215,6 @@ fn claude_carries_the_request_on_stdin_only() {
         "-p",
         "--agent",
         "a",
-        "--model",
-        "test-model",
         "--disallowedTools",
         "Bash(*)",
     ]
@@ -248,7 +243,7 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("copilot-flags");
         let role = role("/p:a", AdapterKind::Copilot, permissions);
         let req = copilot_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[7..].join(SEP), flags);
+        assert_eq!(req.argv[5..].join(SEP), flags);
     }
 }
 
@@ -267,7 +262,7 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("claude-flags");
         let role = role("/p:a", AdapterKind::Claude, permissions);
         let req = claude_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[6..].join(SEP), flags);
+        assert_eq!(req.argv[4..].join(SEP), flags);
     }
 }
 

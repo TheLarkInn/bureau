@@ -9,7 +9,7 @@
 //! `<worktree>/.github/agents/<name>.agent.md`: discovery needs the
 //! suffix, so only the file is renamed, never the content.
 //!
-//! argv is `copilot -p <request-json> --agent <name> --model <model>`;
+//! argv is `copilot -p <request-json> --agent <name>`;
 //! the request JSON also arrives on stdin per the layer-2 contract.
 //! The push boundary is mirrored in argv (section 10), and a role
 //! without a write grant is denied shell outright — the tool grammar
@@ -80,7 +80,7 @@ pub fn spawn_request(
     }
 }
 
-/// `copilot -p <json> --agent <name> --model <model>` plus the mirror.
+/// `copilot -p <json> --agent <name>` plus the permission mirror.
 fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
     let mut argv = vec![
         BINARY.to_owned(),
@@ -88,8 +88,6 @@ fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
         String::from_utf8_lossy(prompt).into_owned(),
         "--agent".to_owned(),
         agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
     ];
     argv.extend(permission_flags(&role.permissions));
     argv

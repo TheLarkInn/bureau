@@ -50,10 +50,8 @@ fn role(adapter: AdapterKind, permissions: &[Permission]) -> Role {
         name: "reviewer".to_owned(),
         agent: "/no-such-plugin:a".to_owned(),
         adapter,
-        model: "test-model".to_owned(),
         permissions: permissions.to_vec(),
         min_trust: Trust::Derived,
-        concurrency: 1,
     }
 }
 
