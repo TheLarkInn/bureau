@@ -23,6 +23,74 @@ use serde::de::DeserializeOwned;
 
 use crate::ConfigError;
 
+fn is_yaml(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("yaml" | "yml")
+    )
+}
+fn yaml_paths(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new(); // a missing subdir means an empty collection
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| is_yaml(p))
+        .collect()
+}
+fn load_one<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
+    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::new(path, &e))?;
+    serde_yaml_ng::from_str(&text).map_err(|e| ConfigError::new(path, &e))
+}
+fn insert_named<T: Named>(
+    map: &mut BTreeMap<String, T>,
+    item: T,
+    path: &Path,
+    errors: &mut Vec<ConfigError>,
+) {
+    let name = item.name().to_owned();
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if stem != name {
+        errors.push(ConfigError::new(
+            path,
+            format!("declared name `{name}` does not match file name `{stem}`"),
+        ));
+    }
+    if map.insert(name.clone(), item).is_some() {
+        errors.push(ConfigError::new(path, format!("duplicate name `{name}`")));
+    }
+}
+fn load_named<T>(dir: &Path, sub: &str, errors: &mut Vec<ConfigError>) -> BTreeMap<String, T>
+where
+    T: DeserializeOwned + Named,
+{
+    let mut map = BTreeMap::new();
+    for path in yaml_paths(&dir.join(sub)) {
+        match load_one::<T>(&path) {
+            Ok(item) => insert_named(&mut map, item, &path, errors),
+            Err(e) => errors.push(e),
+        }
+    }
+    map
+}
+fn load_repos(dir: &Path, errors: &mut Vec<ConfigError>) -> BTreeMap<String, Repo> {
+    let path = dir.join("repos.yaml");
+    if !path.exists() {
+        errors.push(ConfigError::new(&path, "missing repos.yaml"));
+        return BTreeMap::new();
+    }
+    match load_one::<ReposFile>(&path) {
+        Ok(file) => file.repos,
+        Err(e) => {
+            errors.push(e);
+            BTreeMap::new()
+        }
+    }
+}
 /// The loaded runner configuration: the repo registry plus every role
 /// and assignment.
 #[derive(Debug, Clone)]
@@ -67,78 +135,4 @@ impl Config {
             Err(errors)
         }
     }
-}
-
-fn load_repos(dir: &Path, errors: &mut Vec<ConfigError>) -> BTreeMap<String, Repo> {
-    let path = dir.join("repos.yaml");
-    if !path.exists() {
-        errors.push(ConfigError::new(&path, "missing repos.yaml"));
-        return BTreeMap::new();
-    }
-    match load_one::<ReposFile>(&path) {
-        Ok(file) => file.repos,
-        Err(e) => {
-            errors.push(e);
-            BTreeMap::new()
-        }
-    }
-}
-
-fn load_named<T>(dir: &Path, sub: &str, errors: &mut Vec<ConfigError>) -> BTreeMap<String, T>
-where
-    T: DeserializeOwned + Named,
-{
-    let mut map = BTreeMap::new();
-    for path in yaml_paths(&dir.join(sub)) {
-        match load_one::<T>(&path) {
-            Ok(item) => insert_named(&mut map, item, &path, errors),
-            Err(e) => errors.push(e),
-        }
-    }
-    map
-}
-
-fn insert_named<T: Named>(
-    map: &mut BTreeMap<String, T>,
-    item: T,
-    path: &Path,
-    errors: &mut Vec<ConfigError>,
-) {
-    let name = item.name().to_owned();
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
-    if stem != name {
-        errors.push(ConfigError::new(
-            path,
-            format!("declared name `{name}` does not match file name `{stem}`"),
-        ));
-    }
-    if map.insert(name.clone(), item).is_some() {
-        errors.push(ConfigError::new(path, format!("duplicate name `{name}`")));
-    }
-}
-
-fn yaml_paths(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new(); // a missing subdir means an empty collection
-    };
-    entries
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| is_yaml(p))
-        .collect()
-}
-
-fn is_yaml(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("yaml" | "yml")
-    )
-}
-
-fn load_one<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::new(path, &e))?;
-    serde_yaml_ng::from_str(&text).map_err(|e| ConfigError::new(path, &e))
 }

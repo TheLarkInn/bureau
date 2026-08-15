@@ -56,6 +56,75 @@ pub struct Lease {
     pub expires_at_ms: u64,
 }
 
+/// Milliseconds since the Unix epoch, clamped into `i64`.
+fn now_millis() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+/// A duration as whole milliseconds, clamped into `i64`.
+fn duration_millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+const fn cost_headroom(spent: f64, max_usd: f64) -> usize {
+    if spent >= max_usd { 0 } else { usize::MAX }
+}
+/// Remaining run slots: the minimum across every limit, so zero when any
+/// one is exhausted. Cost has no natural slot unit, so it gates the rest.
+fn remaining(
+    limits: &Limits,
+    open_prs: usize,
+    live: u32,
+    hour: u32,
+    day: u32,
+    spent: f64,
+) -> usize {
+    let open = u32::try_from(open_prs).unwrap_or(u32::MAX);
+    let slots = [
+        limits.max_concurrent.saturating_sub(live),
+        limits.max_runs_per_hour.saturating_sub(hour),
+        limits.max_runs_per_day.saturating_sub(day),
+        limits.max_open_prs.saturating_sub(open),
+    ];
+    let min = slots.into_iter().min().unwrap_or(0);
+    cost_headroom(spent, limits.max_cost_per_day_usd).min(usize::try_from(min).unwrap_or(0))
+}
+/// Live leases for an assignment, read through the locked connection.
+fn active_leases(conn: &Connection, assignment: &str) -> Result<Vec<Lease>, Error> {
+    let mut stmt = conn.prepare(sql::ACTIVE_LEASES)?;
+    let rows = stmt.query_map((assignment, now_millis()), sql::lease_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+/// One moment's usage: live leases, runs this hour and day, day's spend.
+fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32, f64), Error> {
+    let live = sql::count(conn, sql::LIVE_LEASES, assignment, now)?;
+    let hour = sql::count(conn, sql::RUNS_SINCE, assignment, now - HOUR_MS)?;
+    let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
+    let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
+    Ok((live, hour, day, spent))
+}
+/// One claim transaction: reap the key's expired lease, then insert.
+/// The unique index makes exactly one concurrent claimant win.
+fn claim_tx(
+    conn: &mut Connection,
+    assignment: &str,
+    forge: &str,
+    external_id: &str,
+    now: i64,
+    expires: i64,
+) -> Result<bool, Error> {
+    let tx = conn.transaction()?;
+    tx.execute(sql::REAP_EXPIRED, (assignment, forge, external_id, now))?;
+    match tx.execute(sql::INSERT_LEASE, (assignment, forge, external_id, expires)) {
+        Ok(_) => {
+            tx.commit()?;
+            Ok(true)
+        }
+        Err(err) if sql::is_unique_violation(&err) => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
 /// The durable store. Safe to share: the connection sits behind a mutex,
 /// and single-claim correctness lives in the database, not the process.
 pub struct Store {
@@ -219,81 +288,4 @@ impl Store {
     fn lock(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-/// Live leases for an assignment, read through the locked connection.
-fn active_leases(conn: &Connection, assignment: &str) -> Result<Vec<Lease>, Error> {
-    let mut stmt = conn.prepare(sql::ACTIVE_LEASES)?;
-    let rows = stmt.query_map((assignment, now_millis()), sql::lease_from_row)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
-/// One moment's usage: live leases, runs this hour and day, day's spend.
-fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32, f64), Error> {
-    let live = sql::count(conn, sql::LIVE_LEASES, assignment, now)?;
-    let hour = sql::count(conn, sql::RUNS_SINCE, assignment, now - HOUR_MS)?;
-    let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
-    let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
-    Ok((live, hour, day, spent))
-}
-
-/// One claim transaction: reap the key's expired lease, then insert.
-/// The unique index makes exactly one concurrent claimant win.
-fn claim_tx(
-    conn: &mut Connection,
-    assignment: &str,
-    forge: &str,
-    external_id: &str,
-    now: i64,
-    expires: i64,
-) -> Result<bool, Error> {
-    let tx = conn.transaction()?;
-    tx.execute(sql::REAP_EXPIRED, (assignment, forge, external_id, now))?;
-    match tx.execute(sql::INSERT_LEASE, (assignment, forge, external_id, expires)) {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(true)
-        }
-        Err(err) if sql::is_unique_violation(&err) => Ok(false),
-        Err(err) => Err(err.into()),
-    }
-}
-
-/// Milliseconds since the Unix epoch, clamped into `i64`.
-fn now_millis() -> i64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis());
-    i64::try_from(millis).unwrap_or(i64::MAX)
-}
-
-/// A duration as whole milliseconds, clamped into `i64`.
-fn duration_millis(duration: Duration) -> i64 {
-    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
-}
-
-/// Remaining run slots: the minimum across every limit, so zero when any
-/// one is exhausted. Cost has no natural slot unit, so it gates the rest.
-fn remaining(
-    limits: &Limits,
-    open_prs: usize,
-    live: u32,
-    hour: u32,
-    day: u32,
-    spent: f64,
-) -> usize {
-    let open = u32::try_from(open_prs).unwrap_or(u32::MAX);
-    let slots = [
-        limits.max_concurrent.saturating_sub(live),
-        limits.max_runs_per_hour.saturating_sub(hour),
-        limits.max_runs_per_day.saturating_sub(day),
-        limits.max_open_prs.saturating_sub(open),
-    ];
-    let min = slots.into_iter().min().unwrap_or(0);
-    cost_headroom(spent, limits.max_cost_per_day_usd).min(usize::try_from(min).unwrap_or(0))
-}
-
-/// Unlimited slots while under the ceiling, none at or above it.
-const fn cost_headroom(spent: f64, max_usd: f64) -> usize {
-    if spent >= max_usd { 0 } else { usize::MAX }
 }

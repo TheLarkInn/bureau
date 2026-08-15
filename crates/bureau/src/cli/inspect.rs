@@ -17,14 +17,25 @@ use super::outcome_name;
 /// The marker file the engine checks between steps.
 const CANCEL_FILE: &str = "CANCEL";
 
-/// `list`: one line per run dir, sorted by run id.
-pub fn list(runs: &Path) -> i32 {
-    for line in list_lines(runs) {
-        println!("{line}");
+/// `running` or `finished(<outcome>)`.
+fn status_text(status: &RunStatus) -> String {
+    match status {
+        RunStatus::Running => "running".to_owned(),
+        RunStatus::Finished(outcome) => format!("finished({})", outcome_name(*outcome)),
     }
-    0
 }
-
+/// `<run_id>  <status>  <assignment>`; an unreadable or absent log
+/// shows `unknown`.
+fn list_line(name: &str, dir: &Path) -> String {
+    match runlog::replay_state(dir) {
+        Ok(state) => format!(
+            "{name}  {}  {}",
+            status_text(&state.status),
+            state.assignment
+        ),
+        Err(_) => format!("{name}  unknown  unknown"),
+    }
+}
 /// Every run dir's line; a missing `runs/` reads as empty.
 fn list_lines(runs: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(runs) else {
@@ -41,45 +52,13 @@ fn list_lines(runs: &Path) -> Vec<String> {
     lines.sort();
     lines
 }
-
-/// `<run_id>  <status>  <assignment>`; an unreadable or absent log
-/// shows `unknown`.
-fn list_line(name: &str, dir: &Path) -> String {
-    match runlog::replay_state(dir) {
-        Ok(state) => format!(
-            "{name}  {}  {}",
-            status_text(&state.status),
-            state.assignment
-        ),
-        Err(_) => format!("{name}  unknown  unknown"),
+/// `list`: one line per run dir, sorted by run id.
+pub fn list(runs: &Path) -> i32 {
+    for line in list_lines(runs) {
+        println!("{line}");
     }
+    0
 }
-
-/// `running` or `finished(<outcome>)`.
-fn status_text(status: &RunStatus) -> String {
-    match status {
-        RunStatus::Running => "running".to_owned(),
-        RunStatus::Finished(outcome) => format!("finished({})", outcome_name(*outcome)),
-    }
-}
-
-/// `show <run-id>`: the replayed state, then the last five events.
-///
-/// # Errors
-/// Propagates an unreadable or headerless event log.
-pub fn show(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
-    let dir = runlog::run_dir(runs, run_id);
-    if !dir.is_dir() {
-        eprintln!("no such run: `{run_id}`");
-        return Ok(2);
-    }
-    let events = runlog::read_events(&dir).context("reading run events")?;
-    let state = runlog::replay(events.clone()).context("run log has no run_started event")?;
-    print_state(&state);
-    print_tail(&events);
-    Ok(0)
-}
-
 /// The replayed header: run id, assignment, status, and each step with
 /// its outcome.
 fn print_state(state: &RunState) {
@@ -92,15 +71,6 @@ fn print_state(state: &RunState) {
         println!("  {}: {outcome}", step.step);
     }
 }
-
-/// The last five events, oldest first: `#<seq> <kind> <gist>`.
-fn print_tail(events: &[Event]) {
-    println!("events (last 5):");
-    for event in events.iter().rev().take(5).rev() {
-        println!("  #{} {} {}", event.seq, kind_name(event.kind), gist(event));
-    }
-}
-
 /// The snake-case token for an event kind (its serde name).
 const fn kind_name(kind: EventKind) -> &'static str {
     match kind {
@@ -111,7 +81,27 @@ const fn kind_name(kind: EventKind) -> &'static str {
         EventKind::RunFinished => "run_finished",
     }
 }
-
+/// Deserializes an event payload; a mismatch displays as an empty gist.
+fn payload<T: serde::de::DeserializeOwned>(event: &Event) -> Option<T> {
+    serde_json::from_value(event.data.clone()).ok()
+}
+/// `run_started`: the assignment and item.
+fn started_gist(data: RunStartedData) -> String {
+    let item = data.item.unwrap_or_else(|| "none".to_owned());
+    format!("assignment={} item={item}", data.assignment)
+}
+/// `step_finished`: the step and its outcome.
+fn step_gist(data: &StepFinishedData) -> String {
+    format!("{} -> {}", data.step, outcome_name(data.outcome))
+}
+/// `output`: the stream and a trimmed chunk.
+fn output_gist(data: &OutputData) -> String {
+    format!("{}: {}", data.stream, data.data.trim_end())
+}
+/// `run_finished`: the outcome.
+fn run_gist(data: &RunFinishedData) -> String {
+    outcome_name(data.outcome).to_owned()
+}
 /// A one-line, message-ish summary of an event's payload.
 fn gist(event: &Event) -> String {
     match event.kind {
@@ -132,33 +122,35 @@ fn gist(event: &Event) -> String {
         }
     }
 }
-
-/// Deserializes an event payload; a mismatch displays as an empty gist.
-fn payload<T: serde::de::DeserializeOwned>(event: &Event) -> Option<T> {
-    serde_json::from_value(event.data.clone()).ok()
+/// The last five events, oldest first: `#<seq> <kind> <gist>`.
+fn print_tail(events: &[Event]) {
+    println!("events (last 5):");
+    for event in events.iter().rev().take(5).rev() {
+        println!("  #{} {} {}", event.seq, kind_name(event.kind), gist(event));
+    }
 }
-
-/// `run_started`: the assignment and item.
-fn started_gist(data: RunStartedData) -> String {
-    let item = data.item.unwrap_or_else(|| "none".to_owned());
-    format!("assignment={} item={item}", data.assignment)
+/// `show <run-id>`: the replayed state, then the last five events.
+///
+/// # Errors
+/// Propagates an unreadable or headerless event log.
+pub fn show(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
+    let dir = runlog::run_dir(runs, run_id);
+    if !dir.is_dir() {
+        eprintln!("no such run: `{run_id}`");
+        return Ok(2);
+    }
+    let events = runlog::read_events(&dir).context("reading run events")?;
+    let state = runlog::replay(events.clone()).context("run log has no run_started event")?;
+    print_state(&state);
+    print_tail(&events);
+    Ok(0)
 }
-
-/// `step_finished`: the step and its outcome.
-fn step_gist(data: &StepFinishedData) -> String {
-    format!("{} -> {}", data.step, outcome_name(data.outcome))
+/// Whether the run's log already holds `run_finished`.
+fn finished(dir: &Path) -> bool {
+    runlog::read_events(dir)
+        .map(|events| events.iter().any(|e| e.kind == EventKind::RunFinished))
+        .unwrap_or(false)
 }
-
-/// `output`: the stream and a trimmed chunk.
-fn output_gist(data: &OutputData) -> String {
-    format!("{}: {}", data.stream, data.data.trim_end())
-}
-
-/// `run_finished`: the outcome.
-fn run_gist(data: &RunFinishedData) -> String {
-    outcome_name(data.outcome).to_owned()
-}
-
 /// `cancel <run-id>`: writes the CANCEL marker the engine checks between
 /// steps.
 ///
@@ -177,11 +169,4 @@ pub fn cancel(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
     std::fs::write(dir.join(CANCEL_FILE), "cancelled\n").context("writing CANCEL marker")?;
     println!("run `{run_id}` marked for cancellation");
     Ok(0)
-}
-
-/// Whether the run's log already holds `run_finished`.
-fn finished(dir: &Path) -> bool {
-    runlog::read_events(dir)
-        .map(|events| events.iter().any(|e| e.kind == EventKind::RunFinished))
-        .unwrap_or(false)
 }

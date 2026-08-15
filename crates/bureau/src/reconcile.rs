@@ -33,7 +33,6 @@ pub enum Error {
     #[error(transparent)]
     Forge(#[from] crate::forge::Error),
 }
-
 /// A claimed, started run.
 pub struct Started {
     /// The run id.
@@ -41,7 +40,6 @@ pub struct Started {
     /// The run's task; joining it yields the outcome.
     pub handle: JoinHandle<RunOutcome>,
 }
-
 /// One assignment's observed world for a pass.
 struct Observed<'a> {
     /// The assignment being reconciled.
@@ -57,7 +55,56 @@ struct Observed<'a> {
     /// How many more runs the assignment may start now.
     headroom: usize,
 }
-
+/// Desired items with no open PR and no live lease (section 8).
+fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
+    let prs = &observed.open_prs;
+    let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
+    let live = &observed.inflight;
+    let leased: Vec<&str> = live.iter().map(|l| l.external_id.as_str()).collect();
+    let excluded = move |item: &&Item| {
+        let id = item.external_id.as_str();
+        !open.contains(&id) && !leased.contains(&id)
+    };
+    observed.desired.iter().filter(excluded).cloned()
+}
+/// An assignment-level config failure, as a forge-shaped error.
+fn bad_assignment(name: &str, reason: &str) -> Error {
+    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
+    Error::Forge(parse)
+}
+/// The pass result: the started runs, or the first failure when nothing started.
+fn settle(failed: Vec<Error>, started: Vec<Started>) -> Result<Vec<Started>, Error> {
+    match (failed.into_iter().next(), started.is_empty()) {
+        (Some(first), true) => Err(first),
+        _ => Ok(started),
+    }
+}
+/// The lease's forge key: the work forge's lowercase name.
+const fn forge_key(forge: ForgeKind) -> &'static str {
+    match forge {
+        ForgeKind::Ado => "ado",
+        ForgeKind::Github => "github",
+    }
+}
+/// The interval ± 25%, derived from the system clock's nanoseconds.
+fn jittered(interval: Duration) -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    let base = interval.as_nanos();
+    let spread = (base / 4).max(1);
+    let shifted = base.saturating_sub(spread) + u128::from(nanos) % (2 * spread + 1);
+    Duration::from_nanos(u64::try_from(shifted).unwrap_or(u64::MAX))
+}
+/// Sleeps a jittered interval, returning early on a wake; a closed channel degrades to plain sleeps.
+async fn wait(interval: Duration, wake: &mut tokio::sync::mpsc::Receiver<()>) {
+    let Ok(woken) = tokio::time::timeout(jittered(interval), wake.recv()).await else {
+        return; // the jittered interval elapsed
+    };
+    if woken.is_none() {
+        tokio::time::sleep(interval).await;
+    }
+}
 /// Compares desired and observed state, closing the gap.
 ///
 /// Drain semantics: an assignment removed from the config is never
@@ -77,7 +124,6 @@ pub struct Reconciler {
     /// startup from the daemon's environment.
     pub credentials: BTreeMap<String, Secret>,
 }
-
 impl Reconciler {
     /// One reconcile pass over every assignment: observe, subtract, budget-check, claim, spawn.
     /// A failing assignment is skipped; the level-triggered loop retries it later.
@@ -241,60 +287,4 @@ impl Reconciler {
         });
         Started { run_id, handle }
     }
-}
-
-/// Desired items with no open PR and no live lease (section 8).
-fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
-    let prs = &observed.open_prs;
-    let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
-    let live = &observed.inflight;
-    let leased: Vec<&str> = live.iter().map(|l| l.external_id.as_str()).collect();
-    let excluded = move |item: &&Item| {
-        let id = item.external_id.as_str();
-        !open.contains(&id) && !leased.contains(&id)
-    };
-    observed.desired.iter().filter(excluded).cloned()
-}
-
-/// An assignment-level config failure, as a forge-shaped error.
-fn bad_assignment(name: &str, reason: &str) -> Error {
-    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
-    Error::Forge(parse)
-}
-
-/// The pass result: the started runs, or the first failure when nothing started.
-fn settle(failed: Vec<Error>, started: Vec<Started>) -> Result<Vec<Started>, Error> {
-    match (failed.into_iter().next(), started.is_empty()) {
-        (Some(first), true) => Err(first),
-        _ => Ok(started),
-    }
-}
-
-/// Sleeps a jittered interval, returning early on a wake; a closed channel degrades to plain sleeps.
-async fn wait(interval: Duration, wake: &mut tokio::sync::mpsc::Receiver<()>) {
-    let Ok(woken) = tokio::time::timeout(jittered(interval), wake.recv()).await else {
-        return; // the jittered interval elapsed
-    };
-    if woken.is_none() {
-        tokio::time::sleep(interval).await;
-    }
-}
-
-/// The lease's forge key: the work forge's lowercase name.
-const fn forge_key(forge: ForgeKind) -> &'static str {
-    match forge {
-        ForgeKind::Ado => "ado",
-        ForgeKind::Github => "github",
-    }
-}
-
-/// The interval ± 25%, derived from the system clock's nanoseconds.
-fn jittered(interval: Duration) -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |since| since.subsec_nanos());
-    let base = interval.as_nanos();
-    let spread = (base / 4).max(1);
-    let shifted = base.saturating_sub(spread) + u128::from(nanos) % (2 * spread + 1);
-    Duration::from_nanos(u64::try_from(shifted).unwrap_or(u64::MAX))
 }

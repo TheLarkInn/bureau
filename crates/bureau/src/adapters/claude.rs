@@ -45,6 +45,35 @@ const DISCOVERY: real::Discovery = real::Discovery {
 /// Credential variables forwarded when the role holds `model:invoke`.
 const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
 
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default rule instead of silence.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let (write, push) = real::push_boundary(permissions);
+    if !write {
+        return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
+    }
+    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
+    if !push {
+        flags.extend([
+            "--disallowedTools".to_owned(),
+            "Bash(git push:*)".to_owned(),
+        ]);
+    }
+    flags
+}
+/// `claude -p --agent <name> --model <model>` plus the mirror.
+fn argv(role: &Role, agent: &str) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--model".to_owned(),
+        role.model.clone(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
 /// Builds the layer-0 request for a `claude` step: the step contract
 /// JSON on stdin, credentials in env, permissions in argv.
 ///
@@ -72,38 +101,6 @@ pub fn spawn_request(
         log,
     }
 }
-
-/// `claude -p --agent <name> --model <model>` plus the mirror.
-fn argv(role: &Role, agent: &str) -> Vec<String> {
-    let mut argv = vec![
-        BINARY.to_owned(),
-        "-p".to_owned(),
-        "--agent".to_owned(),
-        agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
-    ];
-    argv.extend(permission_flags(&role.permissions));
-    argv
-}
-
-/// The push-boundary mirror; see the module table. Without a write
-/// grant the CLI gets a deny-by-default rule instead of silence.
-fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let (write, push) = real::push_boundary(permissions);
-    if !write {
-        return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
-    }
-    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
-    if !push {
-        flags.extend([
-            "--disallowedTools".to_owned(),
-            "Bash(git push:*)".to_owned(),
-        ]);
-    }
-    flags
-}
-
 /// Runs a `claude` step and derives the step result.
 ///
 /// A spawn failure is data: it becomes `StepOutcome::Failure` through

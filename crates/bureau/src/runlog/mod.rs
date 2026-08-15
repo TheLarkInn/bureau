@@ -37,6 +37,11 @@ pub fn run_dir(runs_dir: &Path, run_id: &str) -> PathBuf {
     runs_dir.join(run_id)
 }
 
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
 /// An open run log. Appends are fsync'd and scrubbed on write.
 pub struct RunLog {
     writer: ScrubWriter<BufWriter<File>>,
@@ -100,7 +105,6 @@ impl RunLog {
         Ok(())
     }
 }
-
 /// Reads every event in a run directory's log, in sequence order.
 ///
 /// A daemon kill mid-append leaves the final line torn — the scrubber's
@@ -153,10 +157,4 @@ pub fn write_state_cache(dir: &Path, state: &RunState) -> io::Result<()> {
         dir.join(STATE_FILE),
         serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
     )
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

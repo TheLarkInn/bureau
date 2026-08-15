@@ -14,6 +14,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::process::{ScrubWriter, Secret};
 use crate::runlog::{self, Event, EventKind};
 
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
 /// An open run log. Appends are fsync'd and scrubbed on write, exactly
 /// as [`runlog::RunLog`] appends them.
 pub(super) struct Appender {
@@ -94,10 +99,4 @@ impl Appender {
         self.writer.finish()?;
         Ok(())
     }
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

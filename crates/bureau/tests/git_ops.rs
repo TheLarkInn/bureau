@@ -143,7 +143,10 @@ async fn mirror_creates_a_bare_mirror() {
     let tmp = TestDir::new("mirror");
     let (cache, mirror, source) = mirrored(&tmp, "src").await;
     let m = mirror.to_string_lossy().into_owned();
-    let bare = git_ok(tmp.path(), &["-C", &m, "rev-parse", "--is-bare-repository"]);
+    let bare = git_ok(
+        tmp.path(),
+        &["--git-dir", &m, "rev-parse", "--is-bare-repository"],
+    );
     let state = (
         mirror == cache.mirror_dir(&source.url()),
         bare,
@@ -161,7 +164,10 @@ async fn mirror_fetches_new_commits_and_reuses_the_clone() {
     let url = source.url();
     let again = cache.mirror(&url, None).await.expect("second mirror");
     let m = mirror.to_string_lossy().into_owned();
-    let head = git_ok(tmp.path(), &["-C", &m, "rev-parse", "refs/heads/main"]);
+    let head = git_ok(
+        tmp.path(),
+        &["--git-dir", &m, "rev-parse", "refs/heads/main"],
+    );
     let state = (again == mirror, mirror.join("SENTINEL").exists(), head);
     assert_eq!(state, (true, true, new_head));
 }
@@ -247,7 +253,10 @@ async fn drop_removes_the_worktree_and_its_registration() {
         .expect("create");
     drop(wt);
     let m = mirror.to_string_lossy().into_owned();
-    let listed = git_ok(tmp.path(), &["-C", &m, "worktree", "list", "--porcelain"]);
+    let listed = git_ok(
+        tmp.path(),
+        &["--git-dir", &m, "worktree", "list", "--porcelain"],
+    );
     let gone = (dir.exists(), listed.matches("worktree ").count());
     assert_eq!(gone, (false, 1));
 }

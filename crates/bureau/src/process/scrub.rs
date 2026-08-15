@@ -7,6 +7,15 @@ use super::secret::Secret;
 /// Replacement text for a scrubbed secret value.
 pub const REDACTED: &str = "[REDACTED]";
 
+/// Start positions of every occurrence of `needle` in `haystack`.
+fn occurrences(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+    haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, w)| *w == needle)
+        .map(|(i, _)| i)
+        .collect()
+}
 /// A writer that removes secret values before bytes reach the inner sink.
 ///
 /// Scrubbing happens on write, never on read. A tail of
@@ -124,14 +133,4 @@ impl<W: Write> Write for ScrubWriter<W> {
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
-}
-
-/// Start positions of every occurrence of `needle` in `haystack`.
-fn occurrences(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
-    haystack
-        .windows(needle.len())
-        .enumerate()
-        .filter(|(_, w)| *w == needle)
-        .map(|(i, _)| i)
-        .collect()
 }

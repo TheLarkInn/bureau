@@ -9,6 +9,21 @@ use crate::contract::StepOutcome;
 use crate::forge::Pr;
 use crate::runlog::{self, EventKind};
 
+/// Closes the log and rewrites the derived state cache. Best effort:
+/// the event log is already the source of truth.
+fn teardown(log: stream::Shared) {
+    let Ok(mutex) = Arc::try_unwrap(log) else {
+        return;
+    };
+    let appender = mutex
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = appender.dir().to_path_buf();
+    let _ = appender.close();
+    if let Ok(state) = runlog::replay_state(&dir) {
+        let _ = runlog::write_state_cache(&dir, &state);
+    }
+}
 /// The `escalate` terminal: comment on the item (best effort), then
 /// Blocked. A failed comment is noted in the message, never retried.
 pub(super) async fn escalate(ctx: &RunCtx, message: String) -> (StepOutcome, String, Option<Pr>) {
@@ -27,7 +42,6 @@ pub(super) async fn escalate(ctx: &RunCtx, message: String) -> (StepOutcome, Str
         ),
     }
 }
-
 /// Appends the run's message and `run_finished`, then tears the log
 /// down. The worktree guard must already have dropped.
 pub(super) fn finish(
@@ -50,21 +64,5 @@ pub(super) fn finish(
         cost_usd,
         message,
         pr,
-    }
-}
-
-/// Closes the log and rewrites the derived state cache. Best effort:
-/// the event log is already the source of truth.
-fn teardown(log: stream::Shared) {
-    let Ok(mutex) = Arc::try_unwrap(log) else {
-        return;
-    };
-    let appender = mutex
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = appender.dir().to_path_buf();
-    let _ = appender.close();
-    if let Ok(state) = runlog::replay_state(&dir) {
-        let _ = runlog::write_state_cache(&dir, &state);
     }
 }

@@ -101,6 +101,20 @@ pub fn auth_args(credential: &Credential, secrets: &mut Vec<Secret>) -> Vec<Stri
     ]
 }
 
+fn check(result: SpawnResult, args: &[&str]) -> Result<Vec<u8>, Error> {
+    if result.outcome == SpawnOutcome::Exited && result.exit_code == Some(0) {
+        return Ok(result.stdout);
+    }
+    Err(Error::Command {
+        args: args.join(" "),
+        outcome: format!("{:?}", result.outcome),
+        detail: String::from_utf8_lossy(&result.stderr)
+            .trim()
+            .chars()
+            .take(500)
+            .collect(),
+    })
+}
 async fn git(
     args: &[&str],
     dir: &Path,
@@ -125,22 +139,6 @@ async fn git(
     .await;
     check(result, args)
 }
-
-fn check(result: SpawnResult, args: &[&str]) -> Result<Vec<u8>, Error> {
-    if result.outcome == SpawnOutcome::Exited && result.exit_code == Some(0) {
-        return Ok(result.stdout);
-    }
-    Err(Error::Command {
-        args: args.join(" "),
-        outcome: format!("{:?}", result.outcome),
-        detail: String::from_utf8_lossy(&result.stderr)
-            .trim()
-            .chars()
-            .take(500)
-            .collect(),
-    })
-}
-
 /// Bare-mirror cache, one directory per remote URL.
 #[derive(Debug, Clone)]
 pub struct CheckoutCache {
@@ -281,9 +279,11 @@ impl Drop for Worktree {
         // an already-removed worktree or a missing mirror both fall
         // through to the directory sweep.
         let removed = std::process::Command::new("git")
+            .args(["-c", "safe.bareRepository=all"])
             .args(["worktree", "remove", "--force"])
             .arg(&self.dir)
             .current_dir(&self.mirror)
+            .env_clear()
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .is_ok_and(|o| o.status.success());

@@ -15,23 +15,6 @@ pub(super) fn push(errors: &mut Vec<ConfigError>, path: PathBuf, message: String
     errors.push(ConfigError { path, message });
 }
 
-/// All validation rules. Returns every problem found in one pass.
-#[must_use]
-pub fn validate(config: &Config) -> Vec<ConfigError> {
-    let mut errors = Vec::new();
-    for (name, repo) in &config.repos {
-        check_repo(&mut errors, name, repo);
-    }
-    for (name, role) in &config.roles {
-        check_role(&mut errors, name, role);
-    }
-    for (name, assignment) in &config.assignments {
-        check_assignment(&mut errors, config, name, assignment);
-    }
-    errors.extend(validate_pipelines(config));
-    errors
-}
-
 /// Pipeline validation (DESIGN.md layer 4).
 ///
 /// Covers per-kind required fields, edge resolution against steps and
@@ -41,7 +24,6 @@ pub fn validate(config: &Config) -> Vec<ConfigError> {
 pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {
     super::validate_pipeline::validate_pipelines(config)
 }
-
 fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {
     let path = PathBuf::from("repos.yaml");
     if repo.url.trim().is_empty() {
@@ -59,7 +41,6 @@ fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {
         );
     }
 }
-
 fn check_role(errors: &mut Vec<ConfigError>, name: &str, role: &Role) {
     let path = path_of("roles", name);
     if role.concurrency == 0 {
@@ -79,22 +60,6 @@ fn check_role(errors: &mut Vec<ConfigError>, name: &str, role: &Role) {
         );
     }
 }
-
-fn check_assignment(errors: &mut Vec<ConfigError>, config: &Config, name: &str, a: &Assignment) {
-    let path = path_of("assignments", name);
-    check_repo_refs(errors, config, name, a, &path);
-    check_primary_access(errors, config, name, a, &path);
-    if !config.roles.contains_key(&a.role) {
-        push(
-            errors,
-            path.clone(),
-            format!("assignment `{name}` references unknown role `{}`", a.role),
-        );
-    }
-    check_limits(errors, name, &a.limits, &path);
-    check_text(errors, name, a, &path);
-}
-
 fn check_repo_refs(
     errors: &mut Vec<ConfigError>,
     config: &Config,
@@ -119,7 +84,6 @@ fn check_repo_refs(
         }
     }
 }
-
 fn check_primary_access(
     errors: &mut Vec<ConfigError>,
     config: &Config,
@@ -143,7 +107,6 @@ fn check_primary_access(
         );
     }
 }
-
 fn check_limits(errors: &mut Vec<ConfigError>, name: &str, limits: &Limits, path: &Path) {
     let checks = [
         ("max_concurrent", f64::from(limits.max_concurrent)),
@@ -162,7 +125,6 @@ fn check_limits(errors: &mut Vec<ConfigError>, name: &str, limits: &Limits, path
         }
     }
 }
-
 fn check_text(errors: &mut Vec<ConfigError>, name: &str, a: &Assignment, path: &Path) {
     let fields = [
         ("pipeline", a.pipeline.as_str()),
@@ -180,4 +142,34 @@ fn check_text(errors: &mut Vec<ConfigError>, name: &str, a: &Assignment, path: &
             );
         }
     }
+}
+fn check_assignment(errors: &mut Vec<ConfigError>, config: &Config, name: &str, a: &Assignment) {
+    let path = path_of("assignments", name);
+    check_repo_refs(errors, config, name, a, &path);
+    check_primary_access(errors, config, name, a, &path);
+    if !config.roles.contains_key(&a.role) {
+        push(
+            errors,
+            path.clone(),
+            format!("assignment `{name}` references unknown role `{}`", a.role),
+        );
+    }
+    check_limits(errors, name, &a.limits, &path);
+    check_text(errors, name, a, &path);
+}
+/// All validation rules. Returns every problem found in one pass.
+#[must_use]
+pub fn validate(config: &Config) -> Vec<ConfigError> {
+    let mut errors = Vec::new();
+    for (name, repo) in &config.repos {
+        check_repo(&mut errors, name, repo);
+    }
+    for (name, role) in &config.roles {
+        check_role(&mut errors, name, role);
+    }
+    for (name, assignment) in &config.assignments {
+        check_assignment(&mut errors, config, name, assignment);
+    }
+    errors.extend(validate_pipelines(config));
+    errors
 }

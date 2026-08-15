@@ -38,6 +38,45 @@ pub struct Discovery {
     pub suffix: &'static str,
 }
 
+/// Splits a `/plugin:agent` reference; anything else is a path.
+fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
+    agent.strip_prefix('/')?.split_once(':')
+}
+/// The local plugin cache location of an agent file.
+fn plugin_agent_path(plugin: &str, name: &str) -> PathBuf {
+    Path::new(".ai")
+        .join("plugins")
+        .join(plugin)
+        .join("agents")
+        .join(format!("{name}.agent.md"))
+}
+/// The agent name a path implies: file name minus discovery suffixes.
+fn agent_name(source: &Path) -> String {
+    let file = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("agent");
+    let base = file.strip_suffix(".agent.md").unwrap_or(file);
+    base.strip_suffix(".md").unwrap_or(base).to_owned()
+}
+/// Copies the agent file into the worktree's discovery dir, verbatim.
+///
+/// Only the file name changes to fit discovery, never the content.
+/// `None` on any I/O failure — see [`resolve_agent`].
+fn copy_agent(
+    source: &Path,
+    worktree: &Path,
+    discovery: &Discovery,
+    name: &str,
+) -> Option<PathBuf> {
+    let content = std::fs::read(source).ok()?;
+    let dest = worktree
+        .join(discovery.dir)
+        .join(format!("{name}{}", discovery.suffix));
+    std::fs::create_dir_all(dest.parent()?).ok()?;
+    std::fs::write(&dest, content).ok()?;
+    Some(dest)
+}
 /// Resolves a role's agent reference to the `--agent` value
 /// (DESIGN.md section 6).
 ///
@@ -60,50 +99,6 @@ pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> Str
     let _copied = copy_agent(source, worktree, discovery, &name);
     name
 }
-
-/// Splits a `/plugin:agent` reference; anything else is a path.
-fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
-    agent.strip_prefix('/')?.split_once(':')
-}
-
-/// The local plugin cache location of an agent file.
-fn plugin_agent_path(plugin: &str, name: &str) -> PathBuf {
-    Path::new(".ai")
-        .join("plugins")
-        .join(plugin)
-        .join("agents")
-        .join(format!("{name}.agent.md"))
-}
-
-/// The agent name a path implies: file name minus discovery suffixes.
-fn agent_name(source: &Path) -> String {
-    let file = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("agent");
-    let base = file.strip_suffix(".agent.md").unwrap_or(file);
-    base.strip_suffix(".md").unwrap_or(base).to_owned()
-}
-
-/// Copies the agent file into the worktree's discovery dir, verbatim.
-///
-/// Only the file name changes to fit discovery, never the content.
-/// `None` on any I/O failure — see [`resolve_agent`].
-fn copy_agent(
-    source: &Path,
-    worktree: &Path,
-    discovery: &Discovery,
-    name: &str,
-) -> Option<PathBuf> {
-    let content = std::fs::read(source).ok()?;
-    let dest = worktree
-        .join(discovery.dir)
-        .join(format!("{name}{}", discovery.suffix));
-    std::fs::create_dir_all(dest.parent()?).ok()?;
-    std::fs::write(&dest, content).ok()?;
-    Some(dest)
-}
-
 /// The push boundary a role's permissions imply, as `(write, push)`.
 ///
 /// `repo:push` implies `repo:write` — a push is a write that lands.
@@ -115,7 +110,6 @@ pub fn push_boundary(permissions: &[Permission]) -> (bool, bool) {
     let push = has(Permission::RepoPush);
     (push || has(Permission::RepoWrite), push)
 }
-
 /// Grants that map to a forge credential (DESIGN.md section 10): a
 /// forge token authorizes repository and pull-request access, so any
 /// repo or PR grant unlocks it.
@@ -131,21 +125,6 @@ pub const FORGE_GRANTS: [Permission; 7] = [
 
 /// The grant that maps to a model credential (DESIGN.md section 10).
 pub const MODEL_GRANTS: [Permission; 1] = [Permission::ModelInvoke];
-
-/// Reads `names` from the daemon's environment when `permissions` hold
-/// any of `grants`, and reads nothing otherwise — the section-10 check
-/// before spawn, applied at the one place credentials cross over.
-pub fn scoped_credentials(
-    permissions: &[Permission],
-    grants: &[Permission],
-    names: &[&str],
-) -> Vec<(String, String)> {
-    if grants.iter().any(|grant| permissions.contains(grant)) {
-        return daemon_credentials(names);
-    }
-    Vec::new()
-}
-
 /// Reads credential variables from the daemon's environment.
 ///
 /// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
@@ -162,7 +141,19 @@ pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
     };
     names.iter().copied().filter_map(found).collect()
 }
-
+/// Reads `names` from the daemon's environment when `permissions` hold
+/// any of `grants`, and reads nothing otherwise — the section-10 check
+/// before spawn, applied at the one place credentials cross over.
+pub fn scoped_credentials(
+    permissions: &[Permission],
+    grants: &[Permission],
+    names: &[&str],
+) -> Vec<(String, String)> {
+    if grants.iter().any(|grant| permissions.contains(grant)) {
+        return daemon_credentials(names);
+    }
+    Vec::new()
+}
 /// Builds the complete child env and scrub list from found credentials.
 ///
 /// Pure: the found values arrive as parameters so tests need no

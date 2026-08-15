@@ -45,15 +45,25 @@ const fn outcome_name(outcome: StepOutcome) -> &'static str {
 /// How long `fake record` lets a subprocess run before killing it.
 const RECORD_TIMEOUT: Duration = Duration::from_secs(3600);
 
-/// `bureau` — a local agent work runner.
-#[derive(Debug, Parser)]
-#[command(name = "bureau", version, about)]
-pub struct Cli {
-    /// What to do.
-    #[command(subcommand)]
-    pub verb: Verb,
+/// `fake` adapter operations.
+#[derive(Debug, Subcommand)]
+pub enum FakeAction {
+    /// Replays a transcript fixture to stdout/stderr, exiting with the
+    /// recorded exit code.
+    Replay {
+        /// Fixture path.
+        fixture: PathBuf,
+    },
+    /// Runs a command under the layer-0 contract and writes the captured
+    /// transcript fixture, passing output through.
+    Record {
+        /// Fixture path to write.
+        fixture: PathBuf,
+        /// The command to run, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
 }
-
 /// CLI verbs.
 #[derive(Debug, Subcommand)]
 pub enum Verb {
@@ -131,40 +141,72 @@ pub enum Verb {
         action: FakeAction,
     },
 }
-
-/// `fake` adapter operations.
-#[derive(Debug, Subcommand)]
-pub enum FakeAction {
-    /// Replays a transcript fixture to stdout/stderr, exiting with the
-    /// recorded exit code.
-    Replay {
-        /// Fixture path.
-        fixture: PathBuf,
-    },
-    /// Runs a command under the layer-0 contract and writes the captured
-    /// transcript fixture, passing output through.
-    Record {
-        /// Fixture path to write.
-        fixture: PathBuf,
-        /// The command to run, after `--`.
-        #[arg(last = true, required = true)]
-        argv: Vec<String>,
-    },
+/// `bureau` — a local agent work runner.
+#[derive(Debug, Parser)]
+#[command(name = "bureau", version, about)]
+pub struct Cli {
+    /// What to do.
+    #[command(subcommand)]
+    pub verb: Verb,
 }
-
-/// Runs the CLI and returns the process exit code.
-///
-/// # Errors
-/// Propagates unexpected failures (fixture I/O, serialization).
-pub async fn run(cli: Cli) -> anyhow::Result<i32> {
-    match cli.verb {
-        Verb::Version => Ok(version()),
-        Verb::Validate { dir } => Ok(validate(&dir)),
-        Verb::Fake { action } => fake_action(action).await,
-        verb => run_side(verb).await,
+/// Bundles the four filesystem roots a run-side verb destructures to.
+const fn paths(config: PathBuf, runs: PathBuf, state: PathBuf, cache: PathBuf) -> Paths {
+    Paths {
+        config,
+        runs,
+        state,
+        cache,
     }
 }
-
+/// Prints the version line.
+fn version() -> i32 {
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    0
+}
+fn validate(dir: &std::path::Path) -> i32 {
+    match Config::load(dir) {
+        Ok(config) => {
+            println!(
+                "config ok: {} repos, {} roles, {} assignments",
+                config.repos.len(),
+                config.roles.len(),
+                config.assignments.len()
+            );
+            0
+        }
+        Err(errors) => {
+            for error in &errors {
+                eprintln!("{error}");
+            }
+            eprintln!("{} config error(s)", errors.len());
+            1
+        }
+    }
+}
+async fn record(fixture: &std::path::Path, argv: Vec<String>) -> anyhow::Result<i32> {
+    let dir = std::env::current_dir().context("reading current directory")?;
+    let request = SpawnRequest {
+        argv,
+        dir,
+        env: BTreeMap::new(),
+        stdin: Vec::new(),
+        timeout: RECORD_TIMEOUT,
+        secrets: Vec::new(),
+        log: None,
+    };
+    let transcript = fake::record(request).await;
+    transcript.save(fixture).context("writing fixture")?;
+    Ok(fake::replay(&transcript).await)
+}
+async fn fake_action(action: FakeAction) -> anyhow::Result<i32> {
+    match action {
+        FakeAction::Replay { fixture } => {
+            let transcript = Transcript::load(&fixture).context("loading fixture")?;
+            Ok(fake::replay(&transcript).await)
+        }
+        FakeAction::Record { fixture, argv } => record(&fixture, argv).await,
+    }
+}
 /// The verbs that work against run directories: run, retry, list, show,
 /// cancel.
 async fn run_side(verb: Verb) -> anyhow::Result<i32> {
@@ -192,66 +234,15 @@ async fn run_side(verb: Verb) -> anyhow::Result<i32> {
         }
     }
 }
-
-/// Bundles the four filesystem roots a run-side verb destructures to.
-const fn paths(config: PathBuf, runs: PathBuf, state: PathBuf, cache: PathBuf) -> Paths {
-    Paths {
-        config,
-        runs,
-        state,
-        cache,
+/// Runs the CLI and returns the process exit code.
+///
+/// # Errors
+/// Propagates unexpected failures (fixture I/O, serialization).
+pub async fn run(cli: Cli) -> anyhow::Result<i32> {
+    match cli.verb {
+        Verb::Version => Ok(version()),
+        Verb::Validate { dir } => Ok(validate(&dir)),
+        Verb::Fake { action } => fake_action(action).await,
+        verb => run_side(verb).await,
     }
-}
-
-/// Prints the version line.
-fn version() -> i32 {
-    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-    0
-}
-
-fn validate(dir: &std::path::Path) -> i32 {
-    match Config::load(dir) {
-        Ok(config) => {
-            println!(
-                "config ok: {} repos, {} roles, {} assignments",
-                config.repos.len(),
-                config.roles.len(),
-                config.assignments.len()
-            );
-            0
-        }
-        Err(errors) => {
-            for error in &errors {
-                eprintln!("{error}");
-            }
-            eprintln!("{} config error(s)", errors.len());
-            1
-        }
-    }
-}
-
-async fn fake_action(action: FakeAction) -> anyhow::Result<i32> {
-    match action {
-        FakeAction::Replay { fixture } => {
-            let transcript = Transcript::load(&fixture).context("loading fixture")?;
-            Ok(fake::replay(&transcript).await)
-        }
-        FakeAction::Record { fixture, argv } => record(&fixture, argv).await,
-    }
-}
-
-async fn record(fixture: &std::path::Path, argv: Vec<String>) -> anyhow::Result<i32> {
-    let dir = std::env::current_dir().context("reading current directory")?;
-    let request = SpawnRequest {
-        argv,
-        dir,
-        env: BTreeMap::new(),
-        stdin: Vec::new(),
-        timeout: RECORD_TIMEOUT,
-        secrets: Vec::new(),
-        log: None,
-    };
-    let transcript = fake::record(request).await;
-    transcript.save(fixture).context("writing fixture")?;
-    Ok(fake::replay(&transcript).await)
 }

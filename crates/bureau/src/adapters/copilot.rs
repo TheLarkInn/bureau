@@ -51,6 +51,33 @@ const DISCOVERY: real::Discovery = real::Discovery {
 /// Credential variable forwarded when the role holds a forge grant.
 const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default flag instead of silence.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let (write, push) = real::push_boundary(permissions);
+    if !write {
+        return vec!["--deny-tool=shell(*)".to_owned()];
+    }
+    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
+    if !push {
+        flags.push("--deny-tool=shell(git push)".to_owned());
+    }
+    flags
+}
+/// `copilot -p <json> --agent <name> --model <model>` plus the mirror.
+fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        String::from_utf8_lossy(prompt).into_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--model".to_owned(),
+        role.model.clone(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
 /// Builds the layer-0 request for a `copilot` step: the step contract
 /// JSON as `-p` and on stdin, credentials in env, permissions in argv.
 ///
@@ -79,36 +106,6 @@ pub fn spawn_request(
         log,
     }
 }
-
-/// `copilot -p <json> --agent <name> --model <model>` plus the mirror.
-fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
-    let mut argv = vec![
-        BINARY.to_owned(),
-        "-p".to_owned(),
-        String::from_utf8_lossy(prompt).into_owned(),
-        "--agent".to_owned(),
-        agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
-    ];
-    argv.extend(permission_flags(&role.permissions));
-    argv
-}
-
-/// The push-boundary mirror; see the module table. Without a write
-/// grant the CLI gets a deny-by-default flag instead of silence.
-fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let (write, push) = real::push_boundary(permissions);
-    if !write {
-        return vec!["--deny-tool=shell(*)".to_owned()];
-    }
-    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
-    if !push {
-        flags.push("--deny-tool=shell(git push)".to_owned());
-    }
-    flags
-}
-
 /// Runs a `copilot` step and derives the step result.
 ///
 /// A spawn failure is data: it becomes `StepOutcome::Failure` through

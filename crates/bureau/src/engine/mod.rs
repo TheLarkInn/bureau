@@ -96,6 +96,17 @@ impl RunOutcome {
     }
 }
 
+/// Awaits the machine's task; a panic inside it is data, not an unwind.
+async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> RunOutcome {
+    match task.await {
+        Ok(outcome) => outcome,
+        Err(error) => RunOutcome::bare(
+            &run_id,
+            StepOutcome::Failure,
+            format!("run task failed: {error}"),
+        ),
+    }
+}
 /// The engine: runs pipelines in worktrees, logging every event.
 pub struct Engine {
     /// Where run directories live.
@@ -137,19 +148,6 @@ impl Engine {
         }
     }
 }
-
-/// Awaits the machine's task; a panic inside it is data, not an unwind.
-async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> RunOutcome {
-    match task.await {
-        Ok(outcome) => outcome,
-        Err(error) => RunOutcome::bare(
-            &run_id,
-            StepOutcome::Failure,
-            format!("run task failed: {error}"),
-        ),
-    }
-}
-
 /// A filesystem-safe run id: `{assignment}-{millis}-{pid}-{counter}`.
 #[must_use]
 pub fn new_run_id(assignment: &str) -> String {

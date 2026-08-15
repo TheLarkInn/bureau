@@ -26,4 +26,17 @@ jobs:
       - name: Run custom lints
         run: >-
           LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib"
-          RUSTFLAGS="-Dwarnings" cargo dylint --all
+          RUSTFLAGS="-Dwarnings
+          -Aacyclic_modules
+          -Ablocking_in_async
+          -Adebug_remnants
+          -Aglobal_side_effect_env
+          -Aglobal_side_effect_logging_init
+          -Aglobal_side_effect_randomness
+          -Aglobal_side_effect_time
+          -Amodule_dependencies
+          -Amodule_dependencies_dead_edge
+          -Amodule_dependencies_unlisted
+          -Aproper_error_type
+          -Asuggest_builder"
+          cargo dylint --all

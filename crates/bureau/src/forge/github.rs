@@ -17,6 +17,138 @@ use crate::process::Secret;
 /// `rel="next"` page limit per list call (no unbounded loops).
 const MAX_PAGES: u32 = 3;
 
+/// `owner/name` parsed from a registry URL or a bare `owner/name`.
+fn repo_name(source: &str) -> Result<String, Error> {
+    let trimmed = source.trim_end_matches('/').trim_end_matches(".git");
+    let mut segments = trimmed.rsplit('/');
+    let (name, owner) = (segments.next(), segments.next());
+    match (owner, name) {
+        (Some(owner), Some(name)) if !owner.is_empty() && !name.is_empty() => {
+            Ok(format!("{owner}/{name}"))
+        }
+        _ => Err(Error::Parse(format!(
+            "expected a registry URL or owner/name, got {source:?}"
+        ))),
+    }
+}
+/// [`Error::Api`] from a status and body, truncated to 300 chars.
+fn api_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
+    let message: String = String::from_utf8_lossy(bytes).chars().take(300).collect();
+    Error::Api {
+        status: status.as_u16(),
+        message,
+    }
+}
+/// Reads a JSON body; a non-2xx status becomes [`Error::Api`].
+async fn json_body<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Error> {
+    let status = resp.status();
+    let bytes = resp.bytes().await?;
+    if !status.is_success() {
+        return Err(api_error(status, &bytes));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| Error::Parse(e.to_string()))
+}
+/// Checks the status of a call whose body carries no information.
+async fn ensure_ok(resp: reqwest::Response) -> Result<(), Error> {
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    Err(api_error(resp.status(), &resp.bytes().await?))
+}
+/// The `rel="next"` URL from a `Link` header, when present.
+fn next_page(resp: &reqwest::Response) -> Option<String> {
+    let link = resp.headers().get("link")?.to_str().ok()?;
+    link.split(',').find_map(|part| {
+        let (url, rel) = part.split_once(';')?;
+        rel.trim()
+            .eq_ignore_ascii_case("rel=\"next\"")
+            .then(|| url.trim().trim_matches(|c| c == '<' || c == '>').to_owned())
+    })
+}
+/// Trust grade from GitHub's `author_association` (DESIGN.md layer 9).
+fn trust(association: &str) -> Trust {
+    match association {
+        "OWNER" | "MEMBER" | "COLLABORATOR" => Trust::Maintainer,
+        _ => Trust::Untrusted,
+    }
+}
+/// The work item a PR body closes: the first `Closes #N` (any case).
+fn closes_item(body: Option<&str>, repo: &str) -> Option<String> {
+    let body = body?.to_lowercase();
+    let start = body.find("closes #")? + "closes #".len();
+    let digits: String = body[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    (!digits.is_empty()).then(|| format!("{repo}#{digits}"))
+}
+fn issue_number(item_id: &str) -> &str {
+    item_id.rsplit('#').next().unwrap_or(item_id)
+}
+/// `owner/name#number` split into its halves.
+fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
+    let parsed = || {
+        let (repo, number) = item_id.rsplit_once('#')?;
+        Some((repo.to_owned(), number.parse().ok()?))
+    };
+    parsed().ok_or_else(|| Error::Parse(format!("expected owner/name#number, got {item_id:?}")))
+}
+#[derive(Deserialize)]
+struct Label {
+    name: String,
+}
+#[derive(Deserialize)]
+struct Issue {
+    number: u64,
+    title: String,
+    body: Option<String>,
+    html_url: String,
+    labels: Vec<Label>,
+    author_association: String,
+}
+
+impl Issue {
+    fn into_item(self, repo: &str) -> Item {
+        Item {
+            external_id: format!("{repo}#{}", self.number),
+            title: self.title,
+            body: self.body.unwrap_or_default(),
+            url: self.html_url,
+            labels: self.labels.into_iter().map(|label| label.name).collect(),
+            trust: trust(&self.author_association),
+        }
+    }
+}
+#[derive(Deserialize)]
+struct SearchPage {
+    items: Vec<Issue>,
+}
+#[derive(Deserialize)]
+struct Head {
+    #[serde(rename = "ref")]
+    branch: String,
+}
+#[derive(Deserialize)]
+struct Pull {
+    number: u64,
+    title: String,
+    html_url: String,
+    body: Option<String>,
+    head: Head,
+}
+
+impl Pull {
+    fn into_pr(self, repo: &str) -> Pr {
+        Pr {
+            number: self.number,
+            repo: repo.to_owned(),
+            branch: self.head.branch,
+            title: self.title,
+            url: self.html_url,
+            item_id: closes_item(self.body.as_deref(), repo),
+        }
+    }
+}
 /// GitHub API client; see module docs for the argument forms.
 pub struct GitHubForge {
     /// API root: `https://api.github.com`, or a local server in tests.
@@ -70,153 +202,6 @@ impl GitHubForge {
         Ok(items)
     }
 }
-
-/// `owner/name` parsed from a registry URL or a bare `owner/name`.
-fn repo_name(source: &str) -> Result<String, Error> {
-    let trimmed = source.trim_end_matches('/').trim_end_matches(".git");
-    let mut segments = trimmed.rsplit('/');
-    let (name, owner) = (segments.next(), segments.next());
-    match (owner, name) {
-        (Some(owner), Some(name)) if !owner.is_empty() && !name.is_empty() => {
-            Ok(format!("{owner}/{name}"))
-        }
-        _ => Err(Error::Parse(format!(
-            "expected a registry URL or owner/name, got {source:?}"
-        ))),
-    }
-}
-
-/// Reads a JSON body; a non-2xx status becomes [`Error::Api`].
-async fn json_body<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Error> {
-    let status = resp.status();
-    let bytes = resp.bytes().await?;
-    if !status.is_success() {
-        return Err(api_error(status, &bytes));
-    }
-    serde_json::from_slice(&bytes).map_err(|e| Error::Parse(e.to_string()))
-}
-
-/// Checks the status of a call whose body carries no information.
-async fn ensure_ok(resp: reqwest::Response) -> Result<(), Error> {
-    if resp.status().is_success() {
-        return Ok(());
-    }
-    Err(api_error(resp.status(), &resp.bytes().await?))
-}
-
-/// [`Error::Api`] from a status and body, truncated to 300 chars.
-fn api_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
-    let message: String = String::from_utf8_lossy(bytes).chars().take(300).collect();
-    Error::Api {
-        status: status.as_u16(),
-        message,
-    }
-}
-
-/// The `rel="next"` URL from a `Link` header, when present.
-fn next_page(resp: &reqwest::Response) -> Option<String> {
-    let link = resp.headers().get("link")?.to_str().ok()?;
-    link.split(',').find_map(|part| {
-        let (url, rel) = part.split_once(';')?;
-        rel.trim()
-            .eq_ignore_ascii_case("rel=\"next\"")
-            .then(|| url.trim().trim_matches(|c| c == '<' || c == '>').to_owned())
-    })
-}
-
-/// Trust grade from GitHub's `author_association` (DESIGN.md layer 9).
-fn trust(association: &str) -> Trust {
-    match association {
-        "OWNER" | "MEMBER" | "COLLABORATOR" => Trust::Maintainer,
-        _ => Trust::Untrusted,
-    }
-}
-
-/// The work item a PR body closes: the first `Closes #N` (any case).
-fn closes_item(body: Option<&str>, repo: &str) -> Option<String> {
-    let body = body?.to_lowercase();
-    let start = body.find("closes #")? + "closes #".len();
-    let digits: String = body[start..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    (!digits.is_empty()).then(|| format!("{repo}#{digits}"))
-}
-
-fn issue_number(item_id: &str) -> &str {
-    item_id.rsplit('#').next().unwrap_or(item_id)
-}
-
-/// `owner/name#number` split into its halves.
-fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
-    let parsed = || {
-        let (repo, number) = item_id.rsplit_once('#')?;
-        Some((repo.to_owned(), number.parse().ok()?))
-    };
-    parsed().ok_or_else(|| Error::Parse(format!("expected owner/name#number, got {item_id:?}")))
-}
-
-#[derive(Deserialize)]
-struct SearchPage {
-    items: Vec<Issue>,
-}
-
-#[derive(Deserialize)]
-struct Issue {
-    number: u64,
-    title: String,
-    body: Option<String>,
-    html_url: String,
-    labels: Vec<Label>,
-    author_association: String,
-}
-
-impl Issue {
-    fn into_item(self, repo: &str) -> Item {
-        Item {
-            external_id: format!("{repo}#{}", self.number),
-            title: self.title,
-            body: self.body.unwrap_or_default(),
-            url: self.html_url,
-            labels: self.labels.into_iter().map(|label| label.name).collect(),
-            trust: trust(&self.author_association),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct Label {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct Pull {
-    number: u64,
-    title: String,
-    html_url: String,
-    body: Option<String>,
-    head: Head,
-}
-
-impl Pull {
-    fn into_pr(self, repo: &str) -> Pr {
-        Pr {
-            number: self.number,
-            repo: repo.to_owned(),
-            branch: self.head.branch,
-            title: self.title,
-            url: self.html_url,
-            item_id: closes_item(self.body.as_deref(), repo),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct Head {
-    #[serde(rename = "ref")]
-    branch: String,
-}
-
 #[async_trait]
 impl Forge for GitHubForge {
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error> {
