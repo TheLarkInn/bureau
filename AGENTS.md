@@ -7,7 +7,7 @@ cargo fmt --all
 bash scripts/check-rust-policy.sh
 cargo clippy --workspace --all-targets --all-features
 cargo test --offline
-LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib" RUSTFLAGS="-Dwarnings -A module-dependencies-dead-edge" cargo dylint --all
+LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib" DYLINT_RUSTFLAGS="-Dwarnings -A module-dependencies-dead-edge" cargo dylint --all
 ```
 
 The last gate — the custom dylint libraries (`li-kai/rust-lints`, pinned in
@@ -21,6 +21,9 @@ dead-edge check runs per crate, so in this lib+bin package every
 lib-internal edge reads as dead in the bin crate. The allowlist in
 `dylint.toml` stays fully enforced. Adding a module edge means editing
 `dylint.toml` — that edit is the architectural decision reviewers check.
+The flags ride in `DYLINT_RUSTFLAGS`, not `RUSTFLAGS`: `RUSTFLAGS` also
+applies when building the dylint driver itself, where custom lint names
+are not yet registered.
 
 ## The spec
 
