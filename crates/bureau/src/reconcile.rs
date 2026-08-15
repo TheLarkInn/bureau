@@ -6,7 +6,7 @@
 //! A webhook or `bureau reconcile --now` only shortens the interval;
 //! the loop is fully correct with every webhook unplugged.
 
-mod dedup;
+mod start;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use crate::process::Secret;
 use crate::state::{Lease, Store};
 
 /// How long a claim lives before a crashed run's lease may be reclaimed.
-const LEASE_TTL: Duration = Duration::from_secs(3600);
+pub(super) const LEASE_TTL: Duration = Duration::from_secs(3600);
 
 /// Reconcile-pass failure.
 #[derive(Debug, thiserror::Error)]
@@ -226,20 +226,7 @@ impl Reconciler {
     /// content seen on every terminal outcome but `Failure`, and always
     /// releases the lease.
     fn spawn(&self, plan: RunPlan) -> Started {
-        let run_id = plan.run_id.clone();
-        let (engine, state) = (self.engine.clone(), self.state.clone());
-        let (name, external_id) = (plan.assignment.name.clone(), plan.item.external_id.clone());
-        let hash = plan.item.content_hash();
-        let handle = tokio::spawn(async move {
-            let outcome = engine.run(&plan).await;
-            let _ = state.record_run(&name, outcome.cost_usd);
-            if let Some(disposition) = dedup::marker(&outcome) {
-                let _ = state.mark_seen(&hash, disposition);
-            }
-            let _ = state.release(&name, &external_id);
-            outcome
-        });
-        Started { run_id, handle }
+        start::spawn(self.engine.clone(), self.state.clone(), plan)
     }
 }
 

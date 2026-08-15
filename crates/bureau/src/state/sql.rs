@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS leases (
     UNIQUE (assignment, forge, external_id)
 );
 CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
     assignment TEXT NOT NULL,
     started_at_ms INTEGER NOT NULL,
     cost_usd REAL NOT NULL
@@ -63,8 +64,24 @@ SELECT COALESCE(SUM(cost_usd), 0.0) FROM runs
 WHERE assignment = ?1 AND started_at_ms > ?2";
 
 pub(super) const RECORD_RUN: &str = "
-INSERT INTO runs (assignment, started_at_ms, cost_usd)
-VALUES (?1, ?2, ?3)";
+INSERT INTO runs (run_id, assignment, started_at_ms, cost_usd)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(run_id) DO NOTHING";
+
+const MIGRATE_RUNS: &str = "
+BEGIN;
+ALTER TABLE runs RENAME TO runs_legacy;
+CREATE TABLE runs (
+    run_id TEXT PRIMARY KEY,
+    assignment TEXT NOT NULL,
+    started_at_ms INTEGER NOT NULL,
+    cost_usd REAL NOT NULL
+);
+INSERT INTO runs (run_id, assignment, started_at_ms, cost_usd)
+SELECT 'legacy-' || rowid, assignment, started_at_ms, cost_usd FROM runs_legacy;
+DROP TABLE runs_legacy;
+COMMIT;
+";
 
 pub(super) const SEEN: &str = "SELECT EXISTS(SELECT 1 FROM dedup WHERE content_hash = ?1)";
 
@@ -126,4 +143,15 @@ pub(super) fn is_unique_violation(err: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
+}
+
+/// Adds the v0.2 run id key without discarding legacy budget history.
+pub(super) fn migrate_runs(conn: &Connection) -> Result<(), Error> {
+    let mut statement = conn.prepare("PRAGMA table_info(runs)")?;
+    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let has_run_id = names.filter_map(Result::ok).any(|name| name == "run_id");
+    if !has_run_id {
+        conn.execute_batch(MIGRATE_RUNS)?;
+    }
+    Ok(())
 }

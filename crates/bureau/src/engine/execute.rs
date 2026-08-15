@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::RunPlan;
-use super::artifact;
 use super::machine::{RunCtx, WtCtx};
 use super::stream::{self, LogSink};
+use super::{artifact, deadline};
 use crate::adapters::{self, Execution, Usage};
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
@@ -120,9 +120,14 @@ pub(super) async fn execute(
     step: &StepDef,
     request: &StepRequest,
 ) -> Execution {
+    let timeout = deadline::bounded(
+        step.timeout_secs,
+        Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+        ctx.remaining(),
+    );
     match step.kind {
-        StepKind::Deterministic => deterministic(ctx, wt, step, request).await,
-        StepKind::Agent => agent(ctx, step, request).await,
+        StepKind::Deterministic => deterministic(ctx, wt, step, request, timeout).await,
+        StepKind::Agent => agent(ctx, step, request, agent_timeout(ctx, step)).await,
         StepKind::Decision => failed_step("decision steps do not run code"),
     }
 }
@@ -141,6 +146,7 @@ async fn deterministic(
     wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
+    timeout: Duration,
 ) -> Execution {
     let spawned = spawn(SpawnRequest {
         argv: vec![
@@ -151,9 +157,10 @@ async fn deterministic(
         dir: wt.worktree.path().to_path_buf(),
         env: BTreeMap::new(),
         stdin: request.to_json().unwrap_or_default(),
-        timeout: Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
+        timeout,
         secrets: ctx.secrets(),
         log: Some(shared_log(LogSink::new(&step.name, &ctx.log))),
+        cancel: Some(ctx.cancel_path()),
     })
     .await;
     Execution::new(
@@ -180,16 +187,26 @@ fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
 
 /// An agent step runs through the role's adapter; its outputs grade
 /// `Derived` downstream no matter what the process claimed.
-async fn agent(ctx: &RunCtx, step: &StepDef, request: &StepRequest) -> Execution {
+async fn agent(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+) -> Execution {
     let Some(role) = role_for(ctx, step) else {
         return failed_step(&format!("step `{}` names an unknown role", step.name));
     };
     let sink = shared_log(LogSink::new(&step.name, &ctx.log));
-    let mut execution = adapters::execute(role, step, request, ctx.secrets(), Some(sink)).await;
+    let mut execution =
+        adapters::execute(role, step, request, timeout, ctx.secrets(), Some(sink)).await;
     execution.result.trust = Trust::Derived;
     enforce_measured_cost(ctx, &mut execution);
     publish_artifacts(ctx, step, request, &mut execution).await;
     execution
+}
+
+fn agent_timeout(ctx: &RunCtx, step: &StepDef) -> Duration {
+    deadline::bounded(step.timeout_secs, ctx.remaining(), ctx.remaining())
 }
 
 fn role_for<'a>(ctx: &'a RunCtx, step: &StepDef) -> Option<&'a crate::config::Role> {

@@ -9,13 +9,16 @@
 //! ```
 
 mod event;
+mod snapshot;
 mod state;
 
 pub use event::{
-    Event, EventKind, OutputData, RunFinishedData, RunStartedData, StepFinishedData,
-    StepStartedData, output, run_finished, run_started, run_started_for_item, step_finished,
-    step_started,
+    BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData, RunFinishedData,
+    RunStartedData, StepFinishedData, StepStartedData, TerminalDisposition, branch_pushed,
+    checkpoint, output, pr_created, run_finished, run_finished_full, run_started,
+    run_started_for_item, run_started_snapshot, step_finished, step_finished_full, step_started,
 };
+pub use snapshot::{ConfigSource, PluginSource, RunSnapshot};
 pub use state::{RunState, RunStatus, StepRecord, replay};
 
 use std::fs::{File, OpenOptions};
@@ -23,7 +26,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::process::{ScrubWriter, Secret};
+use crate::process::{Secret, scrub_json};
 
 /// The append-only event log file name within a run directory.
 pub const EVENTS_FILE: &str = "events.jsonl";
@@ -39,7 +42,8 @@ pub fn run_dir(runs_dir: &Path, run_id: &str) -> PathBuf {
 
 /// An open run log. Appends are fsync'd and scrubbed on write.
 pub struct RunLog {
-    writer: ScrubWriter<BufWriter<File>>,
+    writer: BufWriter<File>,
+    secrets: Vec<Secret>,
     next_seq: u64,
     dir: PathBuf,
 }
@@ -59,9 +63,28 @@ impl RunLog {
             .append(true)
             .open(dir.join(EVENTS_FILE))?;
         Ok(Self {
-            writer: ScrubWriter::new(BufWriter::new(file), secrets),
+            writer: BufWriter::new(file),
+            secrets: secrets.to_vec(),
             next_seq: 0,
             dir,
+        })
+    }
+
+    /// Opens an existing log after repairing any torn final line.
+    ///
+    /// # Errors
+    /// Propagates filesystem failures and rejects corrupt earlier events.
+    pub fn resume(dir: &Path, secrets: &[Secret]) -> io::Result<Self> {
+        let events = read_events(dir)?;
+        let next_seq = events.last().map_or(0, |event| event.seq + 1);
+        let file = OpenOptions::new()
+            .append(true)
+            .open(dir.join(EVENTS_FILE))?;
+        Ok(Self {
+            writer: BufWriter::new(file),
+            secrets: secrets.to_vec(),
+            next_seq,
+            dir: dir.to_path_buf(),
         })
     }
 
@@ -75,7 +98,8 @@ impl RunLog {
     ///
     /// # Errors
     /// Propagates serialization, write, and sync failures.
-    pub fn append(&mut self, kind: EventKind, data: serde_json::Value) -> io::Result<u64> {
+    pub fn append(&mut self, kind: EventKind, mut data: serde_json::Value) -> io::Result<u64> {
+        scrub_json(&mut data, &self.secrets);
         let event = Event {
             seq: self.next_seq,
             at_ms: now_millis(),
@@ -86,7 +110,7 @@ impl RunLog {
         line.push(b'\n');
         self.writer.write_all(&line)?;
         self.writer.flush()?;
-        self.writer.get_ref().get_ref().sync_all()?;
+        self.writer.get_ref().sync_all()?;
         self.next_seq += 1;
         Ok(event.seq)
     }
@@ -95,8 +119,9 @@ impl RunLog {
     ///
     /// # Errors
     /// Propagates write and flush failures.
-    pub fn close(self) -> io::Result<()> {
-        self.writer.finish()?;
+    pub fn close(mut self) -> io::Result<()> {
+        self.writer.flush()?;
+        self.writer.get_ref().sync_all()?;
         Ok(())
     }
 }

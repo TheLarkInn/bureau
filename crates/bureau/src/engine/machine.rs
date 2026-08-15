@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::{RunPlan, edge, execute, resume, stream};
+use super::{RunPlan, approval, checkpoint, control, deadline, edge, execute, resume, stream};
 use crate::adapters::{Execution, Usage};
 use crate::config::{Repo, StepDef, StepKind};
 use crate::contract::{StepOutcome, StepRequest, StepResult};
@@ -27,21 +27,41 @@ pub(super) struct RunCtx {
     results: BTreeMap<String, StepResult>,
     /// Adapter-measured usage per step.
     usages: BTreeMap<String, Usage>,
+    /// Latest durable branch checkpoint.
+    pub(super) checkpoint: Option<String>,
+    /// Run branch base before step changes.
+    pub(super) base_commit: Option<String>,
+    /// Exact pushed commit.
+    pub(super) pushed_commit: Option<String>,
+    /// Created/adopted PR.
+    pub(super) pr: Option<crate::forge::Pr>,
+    /// Complete-run deadline.
+    deadline: tokio::time::Instant,
     /// Where the machine starts or resumes.
     start: edge::Route,
 }
 
 impl RunCtx {
     /// Assembles the machine's state from the plan and the replay.
-    pub(super) fn new(plan: &RunPlan, log: super::log::Appender, history: resume::History) -> Self {
+    pub(super) fn new(
+        plan: &RunPlan,
+        log: crate::runlog::RunLog,
+        history: resume::History,
+    ) -> Self {
+        let deadline = deadline::at(history.started_at_ms, plan.assignment.limits.max_run_hours);
         Self {
             plan: plan.clone(),
             log: Arc::new(Mutex::new(log)),
-            cost_usd: 0.0,
+            cost_usd: history.usages.values().map(measured_cost).sum(),
             attempts: history.attempts,
             outcomes: history.outcomes,
-            results: BTreeMap::new(),
-            usages: BTreeMap::new(),
+            results: history.results,
+            usages: history.usages,
+            checkpoint: history.checkpoint,
+            base_commit: history.base_commit,
+            pushed_commit: history.pushed_commit,
+            pr: history.pr,
+            deadline,
             start: history.start,
         }
     }
@@ -68,6 +88,14 @@ impl RunCtx {
     /// The scrub list: every resolved credential value.
     pub(super) fn secrets(&self) -> Vec<crate::process::Secret> {
         self.plan.credentials.values().cloned().collect()
+    }
+
+    pub(super) fn remaining(&self) -> std::time::Duration {
+        deadline::remaining(self.deadline)
+    }
+
+    pub(super) fn cancel_path(&self) -> PathBuf {
+        stream::lock(&self.log).dir().join("CANCEL")
     }
 }
 
@@ -121,9 +149,13 @@ pub(super) async fn run_loop(ctx: &mut RunCtx, wt: &WtCtx) -> Stop {
 
 /// One iteration: the between-steps CANCEL check, then the route.
 async fn advance(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
-    if cancelled(ctx) {
-        return Turn::Stop(Stop::Fail("cancelled".to_owned()));
+    if let Some(stop) = boundary_stop(ctx).await {
+        return Turn::Stop(stop);
     }
+    route_turn(ctx, wt, route).await
+}
+
+async fn route_turn(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
     match route {
         edge::Route::Step(name) => step_turn(ctx, wt, &name).await,
         edge::Route::Done => Turn::Stop(Stop::Done),
@@ -132,9 +164,14 @@ async fn advance(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
     }
 }
 
-/// The CANCEL marker `bureau cancel <run-id>` writes into the run dir.
-fn cancelled(ctx: &RunCtx) -> bool {
-    stream::lock(&ctx.log).dir().join("CANCEL").exists()
+async fn boundary_stop(ctx: &RunCtx) -> Option<Stop> {
+    if let Some(reason) = control::cancel_reason(ctx) {
+        return Some(Stop::Fail(reason));
+    }
+    if ctx.remaining().is_zero() {
+        return Some(Stop::Escalate(control::deadline_message(ctx)));
+    }
+    approval::check(ctx).await.err().map(Stop::Escalate)
 }
 
 /// Enters one step: decisions route for free, code steps run.
@@ -167,6 +204,12 @@ async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
     let execution = run_step(ctx, wt, step, &request).await;
     let (outcome, detail) = (execution.result.outcome, execution.result.message.clone());
     ctx.record(&step.name, execution);
+    if let Some(reason) = control::cancel_reason(ctx) {
+        return Turn::Stop(Stop::Fail(reason));
+    }
+    if ctx.remaining().is_zero() {
+        return Turn::Stop(Stop::Escalate(control::deadline_message(ctx)));
+    }
     Turn::Next(edge::route_after(
         step,
         outcome,
@@ -197,8 +240,9 @@ async fn run_step(
         runlog::step_started(&step.name),
     );
     *ctx.attempts.entry(step.name.clone()).or_insert(0) += 1;
-    let result = execute::execute(ctx, wt, step, request).await;
-    let finished = runlog::step_finished(&step.name, result.result.outcome);
+    let mut result = execute::execute(ctx, wt, step, request).await;
+    checkpoint::save_result(ctx, wt, step, &mut result).await;
+    let finished = runlog::step_finished_full(&step.name, &result);
     append(ctx, EventKind::StepFinished, finished);
     result
 }
@@ -237,26 +281,4 @@ pub(super) fn primary_repo(plan: &RunPlan) -> Result<(&str, &Repo), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::measured_cost;
-    use crate::adapters::Usage;
-
-    #[test]
-    fn only_valid_adapter_cost_is_counted() {
-        let cases = [
-            (None, 0.0_f64),
-            (Some(f64::NAN), 0.0),
-            (Some(-1.0), 0.0),
-            (Some(0.42), 0.42),
-            (Some(1_000.0), 1_000.0),
-        ];
-        for (cost_usd, want) in cases {
-            let usage = Usage {
-                cost_usd,
-                ..Usage::default()
-            };
-            let got = measured_cost(&usage);
-            assert_eq!(got.to_bits(), want.to_bits(), "measured {cost_usd:?}");
-        }
-    }
-}
+mod tests;

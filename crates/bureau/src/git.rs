@@ -121,6 +121,7 @@ async fn git(
         timeout: GIT_TIMEOUT,
         secrets: std::mem::take(secrets),
         log: None,
+        cancel: None,
     })
     .await;
     check(result, args)

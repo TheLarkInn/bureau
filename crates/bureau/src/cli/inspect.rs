@@ -8,8 +8,8 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use bureau::runlog::{
-    self, Event, EventKind, OutputData, RunFinishedData, RunStartedData, RunState, RunStatus,
-    StepFinishedData, StepStartedData,
+    self, BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData,
+    RunFinishedData, RunStartedData, RunState, RunStatus, StepFinishedData, StepStartedData,
 };
 
 use super::outcome_name;
@@ -108,6 +108,9 @@ const fn kind_name(kind: EventKind) -> &'static str {
         EventKind::StepStarted => "step_started",
         EventKind::Output => "output",
         EventKind::StepFinished => "step_finished",
+        EventKind::Checkpoint => "checkpoint",
+        EventKind::BranchPushed => "branch_pushed",
+        EventKind::PrCreated => "pr_created",
         EventKind::RunFinished => "run_finished",
     }
 }
@@ -127,9 +130,28 @@ fn gist(event: &Event) -> String {
         EventKind::Output => {
             payload::<OutputData>(event).map_or_else(String::new, |d| output_gist(&d))
         }
+        EventKind::Checkpoint | EventKind::BranchPushed | EventKind::PrCreated => {
+            durable_gist(event)
+        }
         EventKind::RunFinished => {
             payload::<RunFinishedData>(event).map_or_else(String::new, |d| run_gist(&d))
         }
+    }
+}
+
+fn durable_gist(event: &Event) -> String {
+    match event.kind {
+        EventKind::Checkpoint => {
+            payload::<CheckpointData>(event).map_or_else(String::new, |data| data.commit)
+        }
+        EventKind::BranchPushed => payload::<BranchPushedData>(event)
+            .map_or_else(String::new, |data| {
+                format!("{} {}", data.branch, data.commit)
+            }),
+        EventKind::PrCreated => {
+            payload::<PrCreatedData>(event).map_or_else(String::new, |data| data.pr.url)
+        }
+        _ => String::new(),
     }
 }
 

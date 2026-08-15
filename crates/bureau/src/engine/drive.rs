@@ -3,12 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-use super::log::Appender;
 use super::machine::{RunCtx, Stop, WtCtx, primary_repo, run_loop};
-use super::{RunOutcome, RunPlan, edge, finalize, gitcmd, resume, settle, stream};
+use super::{RunOutcome, RunPlan, finalize, gitcmd, resume, settle, stream};
 use crate::contract::StepOutcome;
 use crate::git::{CheckoutCache, Worktree, credential_for};
 use crate::process::Secret;
+use crate::runlog::RunLog;
 use crate::runlog::{self, EventKind};
 
 /// Runs a pipeline to a terminal, creating or resuming the run's log.
@@ -41,7 +41,7 @@ fn open(dir: &Path, runs_dir: &Path, plan: &RunPlan) -> Result<Open, String> {
 
 /// Creates a run's log and records `run_started` first.
 fn fresh_open(runs_dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
-    let mut log = Appender::create(runs_dir, &plan.run_id, secrets)
+    let mut log = RunLog::create(runs_dir, &plan.run_id, secrets)
         .map_err(|e| format!("creating run log: {e}"))?;
     append_started(&mut log, plan)?;
     let history = resume::History::fresh(resume::entry(&plan.pipeline), true);
@@ -52,11 +52,9 @@ fn fresh_open(runs_dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Ope
 fn resume_open(dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
     let events = runlog::read_events(dir).map_err(|e| format!("reading run log: {e}"))?;
     match resume::replay(events, &plan.pipeline) {
-        resume::Replay::Finished(outcome) => Ok(Open::Finished(RunOutcome::bare(
-            &plan.run_id,
-            outcome,
-            format!("run already finished: {}", edge::outcome_key(outcome)),
-        ))),
+        resume::Replay::Finished(data) => {
+            Ok(Open::Finished(RunOutcome::finished(&plan.run_id, data)))
+        }
         resume::Replay::Resume(history) => resume_ctx(dir, plan, secrets, history),
     }
 }
@@ -68,7 +66,7 @@ fn resume_ctx(
     secrets: &[Secret],
     history: resume::History,
 ) -> Result<Open, String> {
-    let mut log = Appender::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
+    let mut log = RunLog::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
     if !history.started {
         append_started(&mut log, plan)?;
     }
@@ -76,9 +74,8 @@ fn resume_ctx(
 }
 
 /// Appends the `run_started` event every run begins with.
-fn append_started(log: &mut Appender, plan: &RunPlan) -> Result<(), String> {
-    let data =
-        runlog::run_started_for_item(&plan.run_id, &plan.assignment.name, &plan.item.external_id);
+fn append_started(log: &mut RunLog, plan: &RunPlan) -> Result<(), String> {
+    let data = runlog::run_started_snapshot(&plan.snapshot());
     log.append(EventKind::RunStarted, data)
         .map_err(|e| format!("appending run_started: {e}"))?;
     Ok(())
@@ -113,18 +110,38 @@ async fn end_run(ctx: RunCtx, wt: WtCtx, stop: Stop) -> RunOutcome {
 /// Cuts (or re-cuts) the worktree and records its start commit.
 async fn worktree_phase(cache: &CheckoutCache, ctx: &RunCtx) -> Result<WtCtx, String> {
     let (mirror, branch, wt_dir) = prepare(cache, ctx).await?;
-    let worktree = Worktree::create(&mirror, &wt_dir, &branch, false)
-        .await
-        .map_err(|e| format!("creating worktree failed: {e}"))?;
-    let start_head = gitcmd::git(&["rev-parse", "HEAD"], worktree.path(), &[])
-        .await
-        .map_err(|e| format!("reading worktree HEAD failed: {e}"))?;
+    let (worktree, created_head) = create_worktree(&mirror, &wt_dir, &branch).await?;
+    restore_checkpoint(&worktree, ctx.checkpoint.as_deref()).await?;
+    let start_head = ctx.base_commit.clone().unwrap_or(created_head);
     Ok(WtCtx {
         worktree,
         mirror,
         branch,
         start_head,
     })
+}
+
+async fn create_worktree(
+    mirror: &Path,
+    directory: &Path,
+    branch: &str,
+) -> Result<(Worktree, String), String> {
+    let worktree = Worktree::create(mirror, directory, branch, false)
+        .await
+        .map_err(|error| format!("creating worktree failed: {error}"))?;
+    let head = gitcmd::git(&["rev-parse", "HEAD"], worktree.path(), &[])
+        .await
+        .map_err(|error| format!("reading worktree HEAD failed: {error}"))?;
+    Ok((worktree, head))
+}
+
+async fn restore_checkpoint(worktree: &Worktree, commit: Option<&str>) -> Result<(), String> {
+    if let Some(commit) = commit {
+        gitcmd::git(&["reset", "--hard", commit], worktree.path(), &[])
+            .await
+            .map_err(|error| format!("restoring checkpoint failed: {error}"))?;
+    }
+    Ok(())
 }
 
 /// Ensures the mirror is fresh and clears stale worktree state for the

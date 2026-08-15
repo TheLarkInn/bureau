@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,6 +43,8 @@ pub struct SpawnRequest {
     pub secrets: Vec<Secret>,
     /// Optional sink receiving scrubbed output as it arrives.
     pub log: Option<SharedLog>,
+    /// Optional durable cancellation marker.
+    pub cancel: Option<PathBuf>,
 }
 
 /// How a spawned process ended. These four outcomes are genuinely
@@ -129,7 +131,8 @@ async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> Spa
     let stdin = write_task(child.stdin.take(), req.stdin);
     let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
     let err = drain_task(child.stderr.take(), req.secrets, req.log);
-    let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
+    let (outcome, exit_code, error) =
+        super::wait::wait_child(&mut child, req.timeout, req.cancel.as_deref()).await;
     // A timeout kills the process group, closing the pipes: the drains see
     // EOF and the writer gets EPIPE, so joining all three never hangs.
     let (_, stdout, stderr) = tokio::join!(stdin, out, err);
@@ -206,48 +209,4 @@ fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
         }
     }
     *forwarded = buf.len();
-}
-
-async fn wait_child(
-    child: &mut Child,
-    timeout: Duration,
-) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => classify(status),
-        Ok(Err(e)) => (
-            SpawnOutcome::Signaled,
-            None,
-            Some(format!("wait failed: {e}")),
-        ),
-        Err(_) => {
-            kill_group(child);
-            let _ = child.wait().await; // reap after the group kill
-            (SpawnOutcome::Timeout, None, None)
-        }
-    }
-}
-
-fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    use std::os::unix::process::ExitStatusExt;
-    match (status.code(), status.signal()) {
-        (Some(code), _) => (SpawnOutcome::Exited, Some(code), None),
-        (None, signal) => (
-            SpawnOutcome::Signaled,
-            None,
-            signal.map(|s| format!("signal {s}")),
-        ),
-    }
-}
-
-fn kill_group(child: &Child) {
-    use nix::sys::signal::{Signal, killpg};
-    use nix::unistd::Pid;
-
-    let Some(id) = child.id() else {
-        return;
-    };
-    let Ok(pgid) = i32::try_from(id) else {
-        return;
-    };
-    let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
 }

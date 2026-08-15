@@ -64,8 +64,10 @@ fn headroom(store: &Store, limits: &Limits, open_prs: usize) -> usize {
 }
 
 fn recorded(store: &Store, runs: u32, cost_usd: f64) {
-    for _ in 0..runs {
-        store.record_run(ASSIGNMENT, cost_usd).expect("record run");
+    for run in 0..runs {
+        store
+            .record_run(&format!("run-{run}"), ASSIGNMENT, cost_usd)
+            .expect("record run");
     }
 }
 
@@ -201,7 +203,9 @@ fn headroom_is_the_tightest_limit_when_idle() {
 #[test]
 fn omitted_limits_leave_unlimited_headroom() {
     let store = Store::open_in_memory().expect("open");
-    store.record_run(ASSIGNMENT, 1_000.0).expect("record");
+    store
+        .record_run("unlimited-run", ASSIGNMENT, 1_000.0)
+        .expect("record");
     assert_eq!(headroom(&store, &Limits::default(), usize::MAX), usize::MAX);
 }
 

@@ -23,14 +23,18 @@
 //! worktree. A finished run returns its recorded outcome without
 //! appending anything (idempotent).
 
+mod approval;
 mod artifact;
+mod checkpoint;
+mod control;
+mod deadline;
 mod drive;
 mod edge;
 mod execute;
 mod finalize;
 mod gitcmd;
-mod log;
 mod machine;
+mod recovery;
 mod resume;
 mod settle;
 mod stream;
@@ -44,6 +48,16 @@ use crate::contract::StepOutcome;
 use crate::forge::{Forge, Item, Pr};
 use crate::git::CheckoutCache;
 use crate::process::Secret;
+use crate::runlog::{RunFinishedData, RunSnapshot};
+
+/// One terminal log and the immutable run inputs it projects into state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerminalRecord {
+    /// Immutable run inputs.
+    pub snapshot: RunSnapshot,
+    /// Complete terminal event.
+    pub finished: RunFinishedData,
+}
 
 /// Everything one run needs. The item is already leased by the caller;
 /// lease release on completion is also the caller's job (the reconcile
@@ -66,6 +80,42 @@ pub struct RunPlan {
     pub forge: Arc<dyn Forge>,
     /// Credentials keyed by registry credential name, resolved pre-spawn.
     pub credentials: BTreeMap<String, Secret>,
+}
+
+impl RunPlan {
+    /// Serializable plan inputs; secret values and the forge client stay out.
+    #[must_use]
+    pub fn snapshot(&self) -> RunSnapshot {
+        RunSnapshot {
+            run_id: self.run_id.clone(),
+            assignment: self.assignment.clone(),
+            pipeline: self.pipeline.clone(),
+            roles: self.roles.clone(),
+            repos: self.repos.clone(),
+            item: self.item.clone(),
+            config_source: None,
+            plugin_source: None,
+        }
+    }
+
+    /// Rehydrates a durable snapshot with current secret values and forge client.
+    #[must_use]
+    pub fn from_snapshot(
+        snapshot: RunSnapshot,
+        forge: Arc<dyn Forge>,
+        credentials: BTreeMap<String, Secret>,
+    ) -> Self {
+        Self {
+            run_id: snapshot.run_id,
+            assignment: snapshot.assignment,
+            pipeline: snapshot.pipeline,
+            roles: snapshot.roles,
+            repos: snapshot.repos,
+            item: snapshot.item,
+            forge,
+            credentials,
+        }
+    }
 }
 
 /// How a run ended. Failures are data, not exceptions.
@@ -93,6 +143,16 @@ impl RunOutcome {
             cost_usd: 0.0,
             message,
             pr: None,
+        }
+    }
+
+    fn finished(run_id: &str, data: RunFinishedData) -> Self {
+        Self {
+            run_id: run_id.to_owned(),
+            outcome: data.outcome,
+            cost_usd: data.cost_usd,
+            message: data.message,
+            pr: data.pr,
         }
     }
 }
@@ -136,6 +196,22 @@ impl Engine {
                 "run task panicked before spawn".to_owned(),
             ),
         }
+    }
+
+    /// Immutable snapshots for started runs lacking a terminal event.
+    ///
+    /// # Errors
+    /// Returns an error when a run log cannot be read or replayed.
+    pub fn unfinished(&self) -> std::io::Result<Vec<RunSnapshot>> {
+        recovery::unfinished(&self.runs_dir)
+    }
+
+    /// Terminal logs safe to idempotently project into `SQLite` on startup.
+    ///
+    /// # Errors
+    /// Returns an error when a run log cannot be read or replayed.
+    pub fn finished(&self) -> std::io::Result<Vec<TerminalRecord>> {
+        recovery::finished(&self.runs_dir)
     }
 }
 

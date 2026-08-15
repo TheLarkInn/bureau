@@ -36,8 +36,10 @@ fn headroom(store: &Store, limits: &Limits, open_prs: usize) -> usize {
 }
 
 fn recorded(store: &Store, runs: u32, cost_usd: f64) {
-    for _ in 0..runs {
-        store.record_run(ASSIGNMENT, cost_usd).expect("record run");
+    for run in 0..runs {
+        store
+            .record_run(&format!("edge-run-{run}"), ASSIGNMENT, cost_usd)
+            .expect("record run");
     }
 }
 

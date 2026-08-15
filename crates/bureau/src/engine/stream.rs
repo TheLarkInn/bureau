@@ -7,15 +7,14 @@
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::log::Appender;
-use crate::runlog::{self, EventKind};
+use crate::runlog::{self, EventKind, RunLog};
 
 /// The log handle shared between the machine and live step sinks.
-pub(super) type Shared = Arc<Mutex<Appender>>;
+pub(super) type Shared = Arc<Mutex<RunLog>>;
 
 /// Locks a run-log mutex, surviving poisoning: a panicking step writer
 /// must not cascade into losing the run's events.
-pub(super) fn lock(log: &Shared) -> MutexGuard<'_, Appender> {
+pub(super) fn lock(log: &Shared) -> MutexGuard<'_, RunLog> {
     log.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }

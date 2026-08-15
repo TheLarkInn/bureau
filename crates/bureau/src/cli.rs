@@ -267,6 +267,7 @@ async fn record(fixture: &std::path::Path, argv: Vec<String>) -> anyhow::Result<
         timeout: RECORD_TIMEOUT,
         secrets: Vec::new(),
         log: None,
+        cancel: None,
     };
     let transcript = fake::record(request).await;
     transcript.save(fixture).context("writing fixture")?;

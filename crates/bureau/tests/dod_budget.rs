@@ -33,8 +33,11 @@ async fn an_exhausted_hourly_limit_spawns_nothing() {
         ..generous()
     };
     let world = World::new(&["1", "2"], "echo changed >> file.txt", limits);
-    for _ in 0..2 {
-        world.store.record_run(ASSIGNMENT, 0.0).expect("record_run");
+    for run in 0..2 {
+        world
+            .store
+            .record_run(&format!("budget-run-{run}"), ASSIGNMENT, 0.0)
+            .expect("record_run");
     }
     let started = world.pass().await;
     let gate = (started.len(), world.run_dirs(), world.leased().len());

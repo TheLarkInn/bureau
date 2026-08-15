@@ -2,7 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::contract::StepOutcome;
+use crate::adapters::{Execution, Usage};
+use crate::contract::{StepOutcome, StepResult};
+use crate::forge::Pr;
+
+use super::RunSnapshot;
 
 /// The kind of a run-log event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,6 +20,12 @@ pub enum EventKind {
     Output,
     /// A pipeline step finished with an outcome.
     StepFinished,
+    /// The run branch was checkpointed after a step.
+    Checkpoint,
+    /// The final branch commit was pushed.
+    BranchPushed,
+    /// A PR was created or adopted.
+    PrCreated,
     /// The run finished with an outcome.
     RunFinished,
 }
@@ -34,7 +44,7 @@ pub struct Event {
 }
 
 /// Payload of a `run_started` event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunStartedData {
     /// The run's id.
     pub run_id: String,
@@ -44,6 +54,9 @@ pub struct RunStartedData {
     /// reads this.
     #[serde(default)]
     pub item: Option<String>,
+    /// Immutable plan snapshot for automatic restart.
+    #[serde(default)]
+    pub snapshot: Option<RunSnapshot>,
 }
 
 /// Payload of an `output` event: one scrubbed chunk of a stream.
@@ -65,19 +78,92 @@ pub struct StepStartedData {
 }
 
 /// Payload of a `step_finished` event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepFinishedData {
     /// Step name within the pipeline.
     pub step: String,
     /// What the step concluded.
     pub outcome: StepOutcome,
+    /// Full scrubbed result for explicit downstream data flow and resume.
+    #[serde(default)]
+    pub result: Option<StepResult>,
+    /// Adapter-owned usage.
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
 /// Payload of a `run_finished` event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunFinishedData {
     /// What the run concluded.
     pub outcome: StepOutcome,
+    /// Human-readable terminal detail.
+    #[serde(default)]
+    pub message: String,
+    /// Adapter-measured total cost.
+    #[serde(default)]
+    pub cost_usd: f64,
+    /// PR created/adopted by this run.
+    #[serde(default)]
+    pub pr: Option<Pr>,
+    /// Dedup disposition projected after the terminal event.
+    #[serde(default)]
+    pub disposition: Option<TerminalDisposition>,
+}
+
+/// State projection implied by a terminal run event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalDisposition {
+    /// A PR exists for this content.
+    Proposed,
+    /// The run settled without a PR.
+    NoChange,
+}
+
+impl TerminalDisposition {
+    /// One terminal outcome's durable dedup policy.
+    #[must_use]
+    pub const fn for_outcome(outcome: StepOutcome, has_pr: bool) -> Option<Self> {
+        if has_pr {
+            return Some(Self::Proposed);
+        }
+        match outcome {
+            StepOutcome::Failure => None,
+            StepOutcome::Success | StepOutcome::Blocked | StepOutcome::NoWork => {
+                Some(Self::NoChange)
+            }
+        }
+    }
+}
+
+/// Durable branch checkpoint after one step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointData {
+    /// Step whose work was checkpointed.
+    pub step: String,
+    /// Run branch base before any step changes.
+    pub base_commit: String,
+    /// Exact Git commit.
+    pub commit: String,
+}
+
+/// Final pushed branch state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchPushedData {
+    /// Head branch.
+    pub branch: String,
+    /// Exact pushed commit.
+    pub commit: String,
+}
+
+/// Created or observed PR.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrCreatedData {
+    /// Exact PR identity.
+    pub pr: Pr,
+    /// Pushed commit the PR represents.
+    pub commit: String,
 }
 
 fn to_value<T: Serialize>(data: &T) -> serde_json::Value {
@@ -91,6 +177,7 @@ pub fn run_started(run_id: &str, assignment: &str) -> serde_json::Value {
         run_id: run_id.to_owned(),
         assignment: assignment.to_owned(),
         item: None,
+        snapshot: None,
     })
 }
 
@@ -101,6 +188,18 @@ pub fn run_started_for_item(run_id: &str, assignment: &str, item: &str) -> serde
         run_id: run_id.to_owned(),
         assignment: assignment.to_owned(),
         item: Some(item.to_owned()),
+        snapshot: None,
+    })
+}
+
+/// Builds a `run_started` payload with the complete immutable plan.
+#[must_use]
+pub fn run_started_snapshot(snapshot: &RunSnapshot) -> serde_json::Value {
+    to_value(&RunStartedData {
+        run_id: snapshot.run_id.clone(),
+        assignment: snapshot.assignment.name.clone(),
+        item: Some(snapshot.item.external_id.clone()),
+        snapshot: Some(snapshot.clone()),
     })
 }
 
@@ -128,11 +227,70 @@ pub fn step_finished(step: &str, outcome: StepOutcome) -> serde_json::Value {
     to_value(&StepFinishedData {
         step: step.to_owned(),
         outcome,
+        result: None,
+        usage: None,
     })
 }
 
-/// Builds the `data` for a `run_finished` event.
+/// Builds full durable step data.
+#[must_use]
+pub fn step_finished_full(step: &str, execution: &Execution) -> serde_json::Value {
+    to_value(&StepFinishedData {
+        step: step.to_owned(),
+        outcome: execution.result.outcome,
+        result: Some(execution.result.clone()),
+        usage: Some(execution.usage.clone()),
+    })
+}
+
+/// Builds the legacy-minimal `data` for a `run_finished` event.
 #[must_use]
 pub fn run_finished(outcome: StepOutcome) -> serde_json::Value {
-    to_value(&RunFinishedData { outcome })
+    run_finished_full(outcome, "", 0.0, None, None)
+}
+
+/// Builds complete terminal data.
+#[must_use]
+pub fn run_finished_full(
+    outcome: StepOutcome,
+    message: &str,
+    cost_usd: f64,
+    pr: Option<&Pr>,
+    disposition: Option<TerminalDisposition>,
+) -> serde_json::Value {
+    to_value(&RunFinishedData {
+        outcome,
+        message: message.to_owned(),
+        cost_usd,
+        pr: pr.cloned(),
+        disposition,
+    })
+}
+
+/// Builds a branch checkpoint payload.
+#[must_use]
+pub fn checkpoint(step: &str, base_commit: &str, commit: &str) -> serde_json::Value {
+    to_value(&CheckpointData {
+        step: step.to_owned(),
+        base_commit: base_commit.to_owned(),
+        commit: commit.to_owned(),
+    })
+}
+
+/// Builds a branch-pushed payload.
+#[must_use]
+pub fn branch_pushed(branch: &str, commit: &str) -> serde_json::Value {
+    to_value(&BranchPushedData {
+        branch: branch.to_owned(),
+        commit: commit.to_owned(),
+    })
+}
+
+/// Builds a PR-created/adopted payload.
+#[must_use]
+pub fn pr_created(pr: &Pr, commit: &str) -> serde_json::Value {
+    to_value(&PrCreatedData {
+        pr: pr.clone(),
+        commit: commit.to_owned(),
+    })
 }

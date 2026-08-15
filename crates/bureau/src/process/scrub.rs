@@ -7,6 +7,30 @@ use super::secret::Secret;
 /// Replacement text for a scrubbed secret value.
 pub const REDACTED: &str = "[REDACTED]";
 
+/// Scrubs every string value without touching JSON object keys.
+pub fn scrub_json(value: &mut serde_json::Value, secrets: &[Secret]) {
+    match value {
+        serde_json::Value::String(text) => *text = scrub_text(text, secrets),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                scrub_json(value, secrets);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for value in map.values_mut() {
+                scrub_json(value, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn scrub_text(text: &str, secrets: &[Secret]) -> String {
+    let mut writer = ScrubWriter::new(Vec::new(), secrets);
+    let _ = writer.write_all(text.as_bytes());
+    String::from_utf8_lossy(&writer.finish().unwrap_or_default()).into_owned()
+}
+
 /// A writer that removes secret values before bytes reach the inner sink.
 ///
 /// Scrubbing happens on write, never on read. A tail of

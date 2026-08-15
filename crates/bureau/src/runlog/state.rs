@@ -3,10 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::RunSnapshot;
 use super::event::{
-    Event, EventKind, RunFinishedData, RunStartedData, StepFinishedData, StepStartedData,
+    BranchPushedData, CheckpointData, Event, EventKind, PrCreatedData, RunFinishedData,
+    RunStartedData, StepFinishedData, StepStartedData,
 };
-use crate::contract::StepOutcome;
+use crate::adapters::Usage;
+use crate::contract::{StepOutcome, StepResult};
+use crate::forge::Pr;
 
 /// Where a run stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,25 +23,43 @@ pub enum RunStatus {
 }
 
 /// One step's record within a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepRecord {
     /// Step name within the pipeline.
     pub step: String,
     /// Set when the step finishes.
     pub outcome: Option<StepOutcome>,
+    /// Full result when the step finished.
+    pub result: Option<StepResult>,
+    /// Adapter-owned usage when the step finished.
+    pub usage: Option<Usage>,
 }
 
 /// Everything the run log implies about a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     /// The run's id.
     pub run_id: String,
     /// The assignment the run belongs to.
     pub assignment: String,
+    /// Wall-clock start from the first run event.
+    pub started_at_ms: u64,
+    /// Immutable plan snapshot when the engine wrote one.
+    pub snapshot: Option<RunSnapshot>,
     /// Steps in start order.
     pub steps: Vec<StepRecord>,
     /// Where the run stands.
     pub status: RunStatus,
+    /// Latest durable branch checkpoint.
+    pub checkpoint: Option<String>,
+    /// Run branch base before step changes.
+    pub base_commit: Option<String>,
+    /// Exact pushed commit.
+    pub pushed_commit: Option<String>,
+    /// Created or adopted PR.
+    pub pr: Option<Pr>,
+    /// Complete terminal payload.
+    pub finished: Option<RunFinishedData>,
 }
 
 impl RunState {
@@ -49,8 +71,15 @@ impl RunState {
         Some(Self {
             run_id: data.run_id,
             assignment: data.assignment,
+            started_at_ms: event.at_ms,
+            snapshot: data.snapshot,
             steps: Vec::new(),
             status: RunStatus::Running,
+            checkpoint: None,
+            base_commit: None,
+            pushed_commit: None,
+            pr: None,
+            finished: None,
         })
     }
 
@@ -60,6 +89,9 @@ impl RunState {
             EventKind::RunStarted | EventKind::Output => {}
             EventKind::StepStarted => self.start_step(event),
             EventKind::StepFinished => self.finish_step(event),
+            EventKind::Checkpoint => self.checkpoint(event),
+            EventKind::BranchPushed => self.branch_pushed(event),
+            EventKind::PrCreated => self.pr_created(event),
             EventKind::RunFinished => self.finish_run(event),
         }
     }
@@ -69,6 +101,8 @@ impl RunState {
             self.steps.push(StepRecord {
                 step: data.step,
                 outcome: None,
+                result: None,
+                usage: None,
             });
         }
     }
@@ -79,12 +113,34 @@ impl RunState {
         };
         if let Some(record) = self.steps.last_mut() {
             record.outcome = Some(data.outcome);
+            record.result = data.result;
+            record.usage = data.usage;
+        }
+    }
+
+    fn checkpoint(&mut self, event: &Event) {
+        if let Ok(data) = serde_json::from_value::<CheckpointData>(event.data.clone()) {
+            self.base_commit = Some(data.base_commit);
+            self.checkpoint = Some(data.commit);
+        }
+    }
+
+    fn branch_pushed(&mut self, event: &Event) {
+        if let Ok(data) = serde_json::from_value::<BranchPushedData>(event.data.clone()) {
+            self.pushed_commit = Some(data.commit);
+        }
+    }
+
+    fn pr_created(&mut self, event: &Event) {
+        if let Ok(data) = serde_json::from_value::<PrCreatedData>(event.data.clone()) {
+            self.pr = Some(data.pr);
         }
     }
 
     fn finish_run(&mut self, event: &Event) {
         if let Ok(data) = serde_json::from_value::<RunFinishedData>(event.data.clone()) {
             self.status = RunStatus::Finished(data.outcome);
+            self.finished = Some(data);
         }
     }
 }

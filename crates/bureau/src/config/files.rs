@@ -27,7 +27,7 @@ pub struct ReposFile {
 }
 
 /// One registered repo with its access level.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repo {
     /// Clone URL.
@@ -75,7 +75,7 @@ impl Access {
 /// The agent's name, description, instructions, tools, and model live in
 /// the plugin/agent file; the role adds only what lives outside the agent
 /// process: adapter, credentials (via permissions), and trust.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Role {
     /// Must match the file stem.
@@ -97,7 +97,7 @@ impl Named for Role {
 }
 
 /// `assignments/<name>.yaml` — the standing arrangement.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Assignment {
     /// Must match the file stem.
@@ -135,7 +135,7 @@ impl Named for Assignment {
 
 /// Where work items come from. `filter` is a forge-native query string
 /// passed through verbatim — WIQL for ADO, search syntax for GitHub.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSource {
     /// Which forge holds the work items.
@@ -150,7 +150,7 @@ pub struct WorkSource {
 }
 
 /// Per-assignment limits; a kill switch, not chargeback.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     /// Concurrent runs for this assignment.

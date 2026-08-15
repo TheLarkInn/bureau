@@ -11,7 +11,9 @@
 //!   scheduled pipeline never re-proposes an identical change.
 
 mod disposition;
+mod lease;
 mod limits;
+mod project;
 mod sql;
 
 use std::path::Path;
@@ -21,6 +23,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 
 pub use disposition::Disposition;
+pub use lease::maintain as maintain_lease;
+pub use project::{run as project_run, terminal as project_terminal};
 
 use crate::config::Limits;
 
@@ -163,8 +167,8 @@ impl Store {
     ///
     /// # Errors
     /// Propagates `SQLite` failures.
-    pub fn record_run(&self, assignment: &str, cost_usd: f64) -> Result<(), Error> {
-        let params = (assignment, now_millis(), cost_usd);
+    pub fn record_run(&self, run_id: &str, assignment: &str, cost_usd: f64) -> Result<(), Error> {
+        let params = (run_id, assignment, now_millis(), cost_usd);
         self.lock().execute(sql::RECORD_RUN, params)?;
         Ok(())
     }
@@ -211,6 +215,7 @@ impl Store {
     fn init(conn: Connection) -> Result<Self, Error> {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch(sql::SCHEMA)?;
+        sql::migrate_runs(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })

@@ -176,6 +176,24 @@ fn claude_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
 #[tokio::test]
 async fn fake_replay_scrubs_run_credentials() {
     let dir = TestDir::new("fake-scrub");
+    let step = scrub_step(&dir);
+    let secrets = vec![Secret::new("cred-123")];
+    let result = fake::execute(
+        &step,
+        &request(dir.path()),
+        std::time::Duration::from_secs(300),
+        secrets,
+        None,
+    )
+    .await;
+    let seen = (
+        result.result.message.contains("cred-123"),
+        result.result.message.contains(REDACTED),
+    );
+    assert_eq!(seen, (false, true));
+}
+
+fn scrub_step(dir: &TestDir) -> StepDef {
     let fixture = dir.path().join("fixture.json");
     let chunk = Chunk {
         delay_ms: 0,
@@ -191,11 +209,5 @@ async fn fake_replay_scrubs_run_credentials() {
     transcript.save(&fixture).expect("save fixture");
     let mut step = step();
     step.fixture = Some(fixture.to_string_lossy().into_owned());
-    let secrets = vec![Secret::new("cred-123")];
-    let result = fake::execute(&step, &request(dir.path()), secrets, None).await;
-    let seen = (
-        result.result.message.contains("cred-123"),
-        result.result.message.contains(REDACTED),
-    );
-    assert_eq!(seen, (false, true));
+    step
 }

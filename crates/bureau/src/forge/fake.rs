@@ -93,6 +93,12 @@ impl Forge for FakeForge {
     }
 
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error> {
+        if let Some(item) = lock(&self.items)
+            .iter_mut()
+            .find(|item| item.external_id == item_id)
+        {
+            item.labels = labels.to_vec();
+        }
         lock(&self.labels).insert(item_id.to_owned(), labels.to_vec());
         Ok(())
     }

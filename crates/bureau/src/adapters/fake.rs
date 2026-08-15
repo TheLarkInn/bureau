@@ -190,6 +190,7 @@ pub fn replay_request(
         timeout,
         secrets,
         log,
+        cancel: None,
     })
 }
 
@@ -229,6 +230,7 @@ fn write_chunk_line(
 pub async fn execute(
     step: &StepDef,
     request: &StepRequest,
+    timeout: Duration,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
@@ -240,11 +242,13 @@ pub async fn execute(
         Ok(t) => t,
         Err(e) => return failed(&format!("loading fixture: {e}")),
     };
-    let timeout = Duration::from_secs(step.timeout_secs.unwrap_or(300));
     let scratch = scratch_dir();
     let built = replay_request(&transcript, &scratch, request, timeout, secrets, log);
     let result = match built {
-        Ok(req) => spawn(req).await,
+        Ok(mut request_to_spawn) => {
+            request_to_spawn.cancel = super::cancel_path(request);
+            spawn(request_to_spawn).await
+        }
         Err(e) => return failed(&format!("preparing replay: {e}")),
     };
     let _ = std::fs::remove_dir_all(&scratch);

@@ -79,6 +79,7 @@ pub fn spawn_request(
         timeout: real::timeout(step),
         secrets,
         log,
+        cancel: None,
     }
 }
 
@@ -119,6 +120,7 @@ pub async fn execute(
     role: &Role,
     step: &StepDef,
     request: &StepRequest,
+    timeout: Duration,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
@@ -127,6 +129,8 @@ pub async fn execute(
     };
     let telemetry = session.dir().join("copilot-otel.jsonl");
     let mut built = spawn_request(role, step, request, secrets, log);
+    built.timeout = timeout;
+    built.cancel = super::cancel_path(request);
     built.env.extend(session.env().clone());
     enable_telemetry(&mut built.env, &telemetry);
     let spawned = crate::process::spawn(built).await;

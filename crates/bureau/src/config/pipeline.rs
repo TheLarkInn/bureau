@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::files::Named;
 use crate::contract::Trust;
@@ -21,7 +21,7 @@ use crate::contract::Trust;
 pub const TERMINALS: [&str; 4] = ["done", "abort", "escalate", "join"];
 
 /// A pipeline definition: the file you edit is the file that runs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pipeline {
     /// Must match the file stem.
@@ -37,7 +37,7 @@ impl Named for Pipeline {
 }
 
 /// The step's kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepKind {
     /// Runs code: a shell command through the layer-0 contract.
@@ -66,7 +66,7 @@ impl StepKind {
 /// - `agent`: `role` required; `fixture` only with the `fake` adapter;
 ///   `trust` overrides the role's `min_trust`.
 /// - `decision`: `over` and a complete `on` (all four outcomes) required.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDef {
     /// Step name, unique within the pipeline.

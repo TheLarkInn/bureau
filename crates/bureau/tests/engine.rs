@@ -45,9 +45,13 @@ fn check_linear_events(rig: &Rig, run_id: &str) {
     let wanted = [
         EventKind::RunStarted,
         EventKind::StepStarted,
+        EventKind::Checkpoint,
         EventKind::StepFinished,
         EventKind::StepStarted,
+        EventKind::Checkpoint,
         EventKind::StepFinished,
+        EventKind::BranchPushed,
+        EventKind::PrCreated,
         EventKind::RunFinished,
     ];
     let found: Vec<EventKind> = events

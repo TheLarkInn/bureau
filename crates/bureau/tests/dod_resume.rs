@@ -47,22 +47,19 @@ async fn killing_the_daemon_mid_run_resumes_from_events_jsonl() {
     check_resumed_run(&run_dir, &second);
 }
 
-/// §13: with a realistic (multi-byte) credential the same kill leaves
-/// the log's final line torn — the scrubber holds back
-/// `max_secret_len - 1` bytes that only `close()` flushes, and a killed
-/// run never closes. `read_events` drops the torn tail and resume
-/// proceeds from the intact events.
+/// A multi-byte credential cannot corrupt JSON keys or leave a scrubber
+/// holdback tail: run-log scrubbing operates on complete string values.
 #[tokio::test]
-async fn a_killed_run_resumes_past_a_torn_log_line() {
+async fn a_killed_run_with_a_multibyte_secret_remains_replayable() {
     let rig = Rig::new();
     let plan = rig.plan("test-credential", kill_steps());
     let resume_plan = plan.clone();
     let run_dir = rig.dir.path().join("runs").join(&plan.run_id);
     kill_mid_run(&rig, plan);
-    assert_torn(&run_dir);
+    assert_mid_kill(&run_dir);
     std::fs::write(run_dir.join("PROCEED"), "go\n").expect("PROCEED writes");
     let second = rig.engine().run(&resume_plan).await;
-    check_torn_resume(&run_dir, &second);
+    check_multibyte_resume(&run_dir, &second);
 }
 
 /// §13: two daemons on one state file claim one item exactly once; a
@@ -123,15 +120,6 @@ fn assert_mid_kill(run_dir: &Path) {
     assert_eq!(step_counts(&events, "block"), (1, 0));
 }
 
-/// The kill left the log mid-line: the scrubber's holdback tail was
-/// never flushed to it.
-fn assert_torn(run_dir: &Path) {
-    let raw = std::fs::read_to_string(run_dir.join(runlog::EVENTS_FILE)).expect("raw log");
-    let last = raw.lines().last().expect("a last line");
-    let parsed = serde_json::from_str::<serde_json::Value>(last);
-    assert!(parsed.is_err(), "final line should be torn, got: {last}");
-}
-
 /// Resume skipped `first`, re-entered `block` once, and landed the PR.
 fn check_resumed_run(run_dir: &Path, second: &RunOutcome) {
     let events = runlog::read_events(run_dir).expect("events read");
@@ -144,9 +132,8 @@ fn check_resumed_run(run_dir: &Path, second: &RunOutcome) {
     check_replay(run_dir);
 }
 
-/// The correct behavior once the engine tolerates a torn tail: the run
-/// resumes and finishes, never re-running `first`.
-fn check_torn_resume(run_dir: &Path, second: &RunOutcome) {
+/// The complete event stream resumes without re-running `first`.
+fn check_multibyte_resume(run_dir: &Path, second: &RunOutcome) {
     assert_eq!(second.outcome, StepOutcome::Success);
     let events = runlog::read_events(run_dir).expect("events read");
     assert_eq!(step_counts(&events, "first"), (1, 1), "no re-run");

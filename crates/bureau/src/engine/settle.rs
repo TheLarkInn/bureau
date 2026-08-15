@@ -41,7 +41,10 @@ pub(super) fn finish(
         EventKind::Output,
         runlog::output(None, "run", &message),
     );
-    machine::append(&ctx, EventKind::RunFinished, runlog::run_finished(outcome));
+    let disposition = runlog::TerminalDisposition::for_outcome(outcome, pr.is_some());
+    let finished =
+        runlog::run_finished_full(outcome, &message, ctx.cost_usd, pr.as_ref(), disposition);
+    machine::append(&ctx, EventKind::RunFinished, finished);
     let (run_id, cost_usd) = (ctx.plan.run_id.clone(), ctx.cost_usd);
     teardown(ctx.log);
     RunOutcome {

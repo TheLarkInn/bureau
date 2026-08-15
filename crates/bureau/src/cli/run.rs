@@ -135,11 +135,11 @@ async fn execute(
         eprintln!("no item `{item_query}` in `{}`", assignment.work.source);
         return Ok(2);
     };
-    let store = Store::open(&paths.state).context("opening state database")?;
+    let store = Arc::new(Store::open(&paths.state).context("opening state database")?);
     if !claim(&store, assignment, &item)? {
         return Ok(1);
     }
-    finish(config, assignment, item, forge, credentials, paths, &store).await
+    finish(config, assignment, item, forge, credentials, paths, store).await
 }
 
 /// Claims the item for 30 minutes; on loss, says so and exits 1.
@@ -167,16 +167,25 @@ async fn finish(
     forge: Arc<dyn Forge>,
     credentials: BTreeMap<String, Secret>,
     paths: &Paths,
-    store: &Store,
+    store: Arc<Store>,
 ) -> anyhow::Result<i32> {
-    let outcome = drive(config, assignment, item.clone(), forge, credentials, paths).await;
-    let recorded = store
-        .record_run(&assignment.name, outcome.cost_usd)
-        .context("recording run cost");
-    let released = store
-        .release(&assignment.name, &item.external_id)
-        .context("releasing lease");
-    recorded.and(released)?;
+    let outcome = drive(
+        config,
+        assignment,
+        item.clone(),
+        forge,
+        credentials,
+        paths,
+        store.clone(),
+    )
+    .await;
+    let projected = bureau::state::project_run(&store, &paths.runs, &outcome.run_id)
+        .context("projecting terminal run state")?;
+    if !projected {
+        store
+            .release(&assignment.name, &item.external_id)
+            .context("releasing lease")?;
+    }
     print_outcome(&outcome);
     Ok(exit_code(&outcome))
 }
@@ -190,8 +199,20 @@ async fn drive(
     forge: Arc<dyn Forge>,
     credentials: BTreeMap<String, Secret>,
     paths: &Paths,
+    store: Arc<Store>,
 ) -> RunOutcome {
-    let plan = RunPlan {
+    let plan = plan(config, assignment, item, forge, credentials);
+    run_plan(plan, assignment, paths, store).await
+}
+
+fn plan(
+    config: &Config,
+    assignment: &Assignment,
+    item: Item,
+    forge: Arc<dyn Forge>,
+    credentials: BTreeMap<String, Secret>,
+) -> RunPlan {
+    RunPlan {
         run_id: new_run_id(&assignment.name),
         assignment: assignment.clone(),
         pipeline: config
@@ -204,10 +225,27 @@ async fn drive(
         item,
         forge,
         credentials,
-    };
-    Engine::new(paths.runs.clone(), paths.cache.clone())
-        .run(&plan)
-        .await
+    }
+}
+
+async fn run_plan(
+    plan: RunPlan,
+    assignment: &Assignment,
+    paths: &Paths,
+    store: Arc<Store>,
+) -> RunOutcome {
+    let engine = Engine::new(paths.runs.clone(), paths.cache.clone());
+    let cancel = runlog::run_dir(&paths.runs, &plan.run_id).join("CANCEL");
+    let future = engine.run(&plan);
+    bureau::state::maintain_lease(
+        store,
+        &assignment.name,
+        &plan.item.external_id,
+        LEASE_TTL,
+        &cancel,
+        future,
+    )
+    .await
 }
 
 /// The one-line outcome: `<run_id> <outcome> cost=$X.XX message [pr]`.

@@ -1,24 +1,23 @@
-//! The `done` terminal: commit, push, open the PR (DESIGN.md section 11
-//! step 9). A run that changed nothing exits `NoWork` instead.
+//! Idempotent `done`: checkpoint, push, and create or adopt one PR.
 
 use std::path::Path;
 
-use super::machine::{RunCtx, WtCtx, primary_repo};
+use super::machine::{self, RunCtx, WtCtx, primary_repo};
 use super::{gitcmd, settle};
+use crate::config::Repo;
 use crate::contract::StepOutcome;
 use crate::forge::{Pr, PrRequest};
-use crate::git::credential_for;
+use crate::git::{Credential, credential_for};
+use crate::runlog::EventKind;
 
-/// Commit identity inside worktrees; no host git config is consulted.
-const IDENTITY: [(&str, &str); 4] = [
-    ("GIT_AUTHOR_NAME", "bureau"),
-    ("GIT_AUTHOR_EMAIL", "bureau@localhost"),
-    ("GIT_COMMITTER_NAME", "bureau"),
-    ("GIT_COMMITTER_EMAIL", "bureau@localhost"),
-];
-
-/// Runs the `done` terminal: change detection, commit, push, PR.
 pub(super) async fn finalize(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
+    if let Some(pr) = &ctx.pr {
+        return opened(pr.clone());
+    }
+    finalize_new(ctx, wt).await
+}
+
+async fn finalize_new(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     match changed(wt).await {
         Ok(false) => (
             StepOutcome::NoWork,
@@ -30,7 +29,6 @@ pub(super) async fn finalize(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, 
     }
 }
 
-/// Whether the worktree moved past its start commit or holds edits.
 async fn changed(wt: &WtCtx) -> Result<bool, String> {
     let head = gitcmd::git(&["rev-parse", "HEAD"], wt.worktree.path(), &[]).await?;
     if head != wt.start_head {
@@ -40,7 +38,6 @@ async fn changed(wt: &WtCtx) -> Result<bool, String> {
     Ok(!status.is_empty())
 }
 
-/// Commits leftover edits, pushes the branch, and opens the PR.
 async fn land(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     let message = format!("bureau: {} ({})", ctx.plan.item.title, ctx.plan.run_id);
     if let Err(error) = commit_all(wt, &message).await {
@@ -49,16 +46,21 @@ async fn land(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     push_pr(ctx, wt).await
 }
 
-/// `git add -A && git commit` for changes steps left uncommitted.
 async fn commit_all(wt: &WtCtx, message: &str) -> Result<(), String> {
+    let status = gitcmd::git(&["status", "--porcelain"], wt.worktree.path(), &[]).await?;
+    if status.is_empty() {
+        return Ok(());
+    }
     gitcmd::git(&["add", "-A"], wt.worktree.path(), &[]).await?;
-    gitcmd::git(&["commit", "-m", message], wt.worktree.path(), &IDENTITY).await?;
+    gitcmd::git(
+        &["commit", "-m", message],
+        wt.worktree.path(),
+        &gitcmd::IDENTITY,
+    )
+    .await?;
     Ok(())
 }
 
-/// Pushes the run branch with the repo's credential. An unresolvable
-/// credential reference escalates — a human must grant it — and nothing
-/// is pushed.
 async fn push_pr(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     let Ok((name, repo)) = primary_repo(&ctx.plan) else {
         return (
@@ -75,41 +77,123 @@ async fn push_pr(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) 
         return settle::escalate(ctx, message).await;
     };
     let credential = credential_for(repo.forge, secret.clone());
-    if let Err(error) = wt.worktree.push(&repo.url, Some(&credential)).await {
-        return (
-            StepOutcome::Failure,
-            format!("pushing `{}` failed: {error}", wt.branch),
-            None,
-        );
+    match push_branch(ctx, wt, repo, &credential).await {
+        Ok(commit) => open_pr(ctx, wt, name, &commit).await,
+        Err(error) => (StepOutcome::Failure, error, None),
     }
-    open_pr(ctx, wt, name).await
 }
 
-/// Opens the PR for the pushed branch, linked to the work item.
-async fn open_pr(ctx: &RunCtx, wt: &WtCtx, repo: &str) -> (StepOutcome, String, Option<Pr>) {
-    let request = PrRequest {
+async fn push_branch(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    repo: &Repo,
+    credential: &Credential,
+) -> Result<String, String> {
+    let commit = gitcmd::git(&["rev-parse", "HEAD"], wt.worktree.path(), &[]).await?;
+    if ctx.pushed_commit.as_deref() != Some(&commit) {
+        wt.worktree
+            .push(&repo.url, Some(credential))
+            .await
+            .map_err(|error| format!("pushing `{}` failed: {error}", wt.branch))?;
+        let data = crate::runlog::branch_pushed(&wt.branch, &commit);
+        machine::append(ctx, EventKind::BranchPushed, data);
+    }
+    Ok(commit)
+}
+
+async fn open_pr(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    repo: &str,
+    commit: &str,
+) -> (StepOutcome, String, Option<Pr>) {
+    if let Some(pr) = observed(ctx, repo, &wt.branch).await {
+        return record_pr(ctx, pr, commit);
+    }
+    create_pr(ctx, wt, repo, commit).await
+}
+
+async fn create_pr(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    repo: &str,
+    commit: &str,
+) -> (StepOutcome, String, Option<Pr>) {
+    let request = request(ctx, wt, repo).await;
+    let result = ctx.plan.forge.create_pr(&request).await;
+    finish_create(ctx, repo, &wt.branch, commit, result).await
+}
+
+async fn finish_create(
+    ctx: &RunCtx,
+    repo: &str,
+    branch: &str,
+    commit: &str,
+    result: Result<Pr, crate::forge::Error>,
+) -> (StepOutcome, String, Option<Pr>) {
+    match result {
+        Ok(pr) => record_pr(ctx, pr, commit),
+        Err(error) => recover_create(ctx, repo, branch, commit, error).await,
+    }
+}
+
+async fn request(ctx: &RunCtx, wt: &WtCtx, repo: &str) -> PrRequest {
+    PrRequest {
         repo: repo.to_owned(),
         branch: wt.branch.clone(),
         base: base_branch(&wt.mirror).await,
         title: ctx.plan.item.title.clone(),
         body: format!("{}\n\nCloses {}", ctx.plan.item.body, ctx.plan.item.url),
         item_id: Some(ctx.plan.item.external_id.clone()),
-    };
-    match ctx.plan.forge.create_pr(&request).await {
-        Ok(pr) => (
-            StepOutcome::Success,
-            format!("opened PR {}", pr.url),
-            Some(pr),
-        ),
-        Err(error) => (
-            StepOutcome::Failure,
-            format!("opening PR failed: {error}"),
-            None,
-        ),
     }
 }
 
-/// The mirror's default branch: the base PRs target.
+async fn observed(ctx: &RunCtx, repo: &str, branch: &str) -> Option<Pr> {
+    ctx.plan
+        .forge
+        .open_prs(repo, branch)
+        .await
+        .ok()?
+        .into_iter()
+        .find(|pr| pr.branch == branch)
+}
+
+async fn recover_create(
+    ctx: &RunCtx,
+    repo: &str,
+    branch: &str,
+    commit: &str,
+    error: crate::forge::Error,
+) -> (StepOutcome, String, Option<Pr>) {
+    observed(ctx, repo, branch).await.map_or_else(
+        || {
+            (
+                StepOutcome::Failure,
+                format!("opening PR failed: {error}"),
+                None,
+            )
+        },
+        |pr| record_pr(ctx, pr, commit),
+    )
+}
+
+fn record_pr(ctx: &RunCtx, pr: Pr, commit: &str) -> (StepOutcome, String, Option<Pr>) {
+    machine::append(
+        ctx,
+        EventKind::PrCreated,
+        crate::runlog::pr_created(&pr, commit),
+    );
+    opened(pr)
+}
+
+fn opened(pr: Pr) -> (StepOutcome, String, Option<Pr>) {
+    (
+        StepOutcome::Success,
+        format!("opened PR {}", pr.url),
+        Some(pr),
+    )
+}
+
 async fn base_branch(mirror: &Path) -> String {
     gitcmd::git(&["symbolic-ref", "--short", "HEAD"], mirror, &[])
         .await

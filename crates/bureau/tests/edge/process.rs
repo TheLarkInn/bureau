@@ -18,6 +18,7 @@ fn request(dir: &Path, script: &str, timeout: Duration) -> SpawnRequest {
         timeout,
         secrets: Vec::new(),
         log: None,
+        cancel: None,
     }
 }
 

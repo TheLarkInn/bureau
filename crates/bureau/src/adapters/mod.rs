@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::config::{Role, StepDef};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
@@ -33,13 +34,18 @@ pub async fn execute(
     role: &Role,
     step: &StepDef,
     request: &StepRequest,
+    timeout: Duration,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
     let future: ExecuteFuture<'_> = match role.adapter {
-        AdapterKind::Fake => Box::pin(fake::execute(step, request, secrets, log)),
-        AdapterKind::Copilot => Box::pin(copilot::execute(role, step, request, secrets, log)),
-        AdapterKind::Claude => Box::pin(claude::execute(role, step, request, secrets, log)),
+        AdapterKind::Fake => Box::pin(fake::execute(step, request, timeout, secrets, log)),
+        AdapterKind::Copilot => {
+            Box::pin(copilot::execute(role, step, request, timeout, secrets, log))
+        }
+        AdapterKind::Claude => {
+            Box::pin(claude::execute(role, step, request, timeout, secrets, log))
+        }
     };
     future.await
 }
@@ -111,6 +117,13 @@ pub(crate) fn failed(message: &str) -> Execution {
         },
         Usage::unknown("adapter"),
     )
+}
+
+pub(crate) fn cancel_path(request: &StepRequest) -> Option<std::path::PathBuf> {
+    request
+        .worktree
+        .parent()
+        .map(|parent| parent.join("CANCEL"))
 }
 
 const fn outcome_of(result: &SpawnResult) -> StepOutcome {
