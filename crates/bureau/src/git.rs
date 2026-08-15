@@ -283,7 +283,9 @@ impl Drop for Worktree {
             .args(["worktree", "remove", "--force"])
             .arg(&self.dir)
             .current_dir(&self.mirror)
-            .env_clear()
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
             .env("GIT_TERMINAL_PROMPT", "0")
             .output()
             .is_ok_and(|o| o.status.success());
