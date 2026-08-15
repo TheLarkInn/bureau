@@ -85,7 +85,7 @@ steps:
 "#;
 
 const MINIMAL_ASSIGNMENT: &str = r#"
-name: job
+name: demo
 work:
   forge: github
   source: "example/code"
@@ -106,24 +106,24 @@ limits:
 fn write_minimal_config(dir: &Path) {
     write(dir, "repos.yaml", MINIMAL_REPO);
     write(dir, "roles/worker.yaml", MINIMAL_ROLE);
-    write(dir, "assignments/job.yaml", MINIMAL_ASSIGNMENT);
+    write(dir, "assignments/demo.yaml", MINIMAL_ASSIGNMENT);
     write(dir, "pipelines/fix-failing-test.yaml", MINIMAL_PIPELINE);
 }
 
 /// A finished run: started, one step, finished with success.
-const EVENTS_FINISHED: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r1","assignment":"job","item":"example/code#42"}}
+const EVENTS_FINISHED: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r1","assignment":"demo","item":"example/code#42"}}
 {"seq":1,"at_ms":1,"kind":"step_started","data":{"step":"work"}}
 {"seq":2,"at_ms":2,"kind":"step_finished","data":{"step":"work","outcome":"success"}}
 {"seq":3,"at_ms":3,"kind":"run_finished","data":{"outcome":"success"}}
 "#;
 
 /// A run still in flight: started, one step begun, never finished.
-const EVENTS_UNFINISHED: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r2","assignment":"job","item":"example/code#42"}}
+const EVENTS_UNFINISHED: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r2","assignment":"demo","item":"example/code#42"}}
 {"seq":1,"at_ms":1,"kind":"step_started","data":{"step":"work"}}
 "#;
 
 /// A run whose `run_started` names no item; `retry` cannot help.
-const EVENTS_NO_ITEM: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r3","assignment":"job"}}
+const EVENTS_NO_ITEM: &str = r#"{"seq":0,"at_ms":0,"kind":"run_started","data":{"run_id":"r3","assignment":"demo"}}
 "#;
 
 fn write_events(dir: &Path, run_id: &str, events: &str) {
@@ -187,7 +187,7 @@ fn list_shows_a_finished_run() {
         output.status.code(),
         out.contains("r1"),
         out.contains("finished(success)"),
-        out.contains("job"),
+        out.contains("demo"),
     );
     assert_eq!(got, (Some(0), true, true, true), "{out}");
 }
@@ -202,7 +202,7 @@ fn show_prints_replayed_state_and_event_tail() {
     let got = (
         output.status.code(),
         out.contains("run: r1"),
-        out.contains("assignment: job"),
+        out.contains("assignment: demo"),
         out.contains("status: finished(success)"),
         out.contains("work: success"),
         out.contains("#3 run_finished success"),

@@ -1,6 +1,8 @@
 //! Resume: replaying the event log into where the machine continues.
-//! The log records outcomes, not outputs, so a resumed run re-derives
-//! routing from outcomes and earlier steps' outputs are empty.
+//! The log records outcomes, not outputs or trust grades, so a resumed
+//! run re-derives routing from outcomes, earlier steps' outputs are
+//! empty, and their grades conservatively count as `Derived` when a
+//! later step's request trust is folded (see `execute::request_trust`).
 
 use std::collections::BTreeMap;
 

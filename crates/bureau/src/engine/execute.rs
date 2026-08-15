@@ -1,4 +1,4 @@
-//! Running one step: request assembly, the trust gate, and the two
+//! Running one step: request assembly, the trust check, and the two
 //! code-running kinds (DESIGN.md layer 4 and section 9).
 
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use super::stream::LogSink;
 use crate::adapters;
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
-use crate::process::{Secret, SpawnRequest, SpawnResult, shared_log, spawn};
+use crate::process::{SpawnRequest, SpawnResult, shared_log, spawn};
 
 /// Default per-step timeout when the pipeline sets none, matching the
 /// `fake` adapter's.
@@ -58,18 +58,34 @@ fn collect_artifacts(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, PathBuf> 
     merged
 }
 
-/// A request's trust: the item's grade raised by any graded input.
+/// A request's trust: the item's grade, lowered to the weakest input's
+/// grade. The item seeds the fold because it is an input-less step's
+/// only input; a step is only as trustworthy as its weakest input
+/// (DESIGN.md section 9).
 fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
     step.inputs_from
         .iter()
-        .filter_map(|name| ctx.result_of(name))
-        .map(|result| result.trust)
-        .fold(ctx.plan.item.trust, Ord::max)
+        .filter_map(|name| input_trust(ctx, name))
+        .fold(ctx.plan.item.trust, Ord::min)
 }
 
-/// The trust gate: a step whose inputs grade below its minimum
+/// One input's grade, when data flowed from it. A step finished in
+/// this run contributes its recorded grade. A step finished before a
+/// resume has no result in memory — the log records outcomes, not
+/// grades — so it conservatively counts as `Derived`, the weakest
+/// grade a finished step can claim; the item-grade seed then keeps a
+/// resumed request at or below the fresh run's grade. A step that
+/// never ran contributes nothing: no data flowed from it.
+fn input_trust(ctx: &RunCtx, step: &str) -> Option<Trust> {
+    if let Some(result) = ctx.result_of(step) {
+        return Some(result.trust);
+    }
+    ctx.outcome_of(step).map(|_| Trust::Derived)
+}
+
+/// The trust check: a step whose inputs grade below its minimum
 /// escalates (fail closed), naming both grades.
-pub(super) fn trust_gate(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
+pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
     let minimum = min_trust(plan, step);
     if request.trust < minimum {
         return Some(format!(
@@ -111,8 +127,14 @@ pub(super) async fn execute(
 }
 
 /// A deterministic step: `sh -c <run>` in the worktree under the
-/// layer-0 contract. Resolved credentials arrive as
-/// `BUREAU_CREDENTIAL_<NAME>` and join the scrub list.
+/// layer-0 contract. It receives NO credentials in its environment —
+/// DESIGN.md section 10: a step that does not need to push never
+/// receives a token that can push, and deterministic steps run repo
+/// code and build tooling. The resolved credentials still form the
+/// spawn's scrub list, so any of them the step manages to print is
+/// redacted from the log. The engine's own mirror and push paths
+/// resolve their credentials straight from the plan, never via a
+/// step's environment.
 async fn deterministic(
     ctx: &RunCtx,
     wt: &WtCtx,
@@ -126,7 +148,7 @@ async fn deterministic(
             step.run.clone().unwrap_or_default(),
         ],
         dir: wt.worktree.path().to_path_buf(),
-        env: credential_env(&ctx.plan.credentials),
+        env: BTreeMap::new(),
         stdin: request.to_json().unwrap_or_default(),
         timeout: Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
         secrets: ctx.secrets(),
@@ -179,22 +201,4 @@ fn failed_step(message: &str) -> StepResult {
         cost_usd: 0.0,
         message: message.to_owned(),
     }
-}
-
-/// The complete deterministic-step env: every resolved credential as
-/// `BUREAU_CREDENTIAL_<NAME>`.
-fn credential_env(credentials: &BTreeMap<String, Secret>) -> BTreeMap<String, String> {
-    credentials
-        .iter()
-        .map(|(name, secret)| (env_name(name), secret.expose().to_owned()))
-        .collect()
-}
-
-/// `api-token` becomes `BUREAU_CREDENTIAL_API_TOKEN` (the layer-0
-/// convention).
-fn env_name(reference: &str) -> String {
-    format!(
-        "BUREAU_CREDENTIAL_{}",
-        reference.to_uppercase().replace('-', "_")
-    )
 }

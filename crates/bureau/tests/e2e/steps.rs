@@ -97,7 +97,7 @@ fn decision(name: &str, over: &str, success: &str) -> StepDef {
 
 /// The reference pipeline (DESIGN.md section 11): reproduce fails, the
 /// agent proposes, `apply` writes the fix and re-checks, review and
-/// verdict gate it, verify re-runs the check. Push and PR live in the
+/// verdict check it, verify re-runs the check. Push and PR live in the
 /// engine's `done` terminal, so no publish step is needed.
 pub fn reference_steps(propose: &str, review: &str, max_attempts: u32) -> Vec<StepDef> {
     let mut propose_step = agent("propose", "implementer", propose, "apply");

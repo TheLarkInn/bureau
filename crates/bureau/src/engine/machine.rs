@@ -18,7 +18,7 @@ pub(super) struct RunCtx {
     pub(super) log: stream::Shared,
     /// Summed step cost.
     pub(super) cost_usd: f64,
-    /// Entries per step name, from history plus this invocation.
+    /// Entries per step name, from history plus this run.
     attempts: BTreeMap<String, u32>,
     /// Latest outcome per step (decision `over` reads this).
     outcomes: BTreeMap<String, StepOutcome>,
@@ -44,7 +44,7 @@ impl RunCtx {
 
     /// Records a finished step's result for routing and data flow.
     fn record(&mut self, step: &str, result: StepResult) {
-        self.cost_usd += result.cost_usd;
+        self.cost_usd += clamp_step_cost(result.cost_usd);
         self.outcomes.insert(step.to_owned(), result.outcome);
         self.results.insert(step.to_owned(), result);
     }
@@ -54,7 +54,7 @@ impl RunCtx {
         self.outcomes.get(step).copied()
     }
 
-    /// The latest result of `step`, when this invocation has it.
+    /// The latest result of `step`, when this run has it.
     pub(super) fn result_of(&self, step: &str) -> Option<&StepResult> {
         self.results.get(step)
     }
@@ -62,6 +62,26 @@ impl RunCtx {
     /// The scrub list: every resolved credential value.
     pub(super) fn secrets(&self) -> Vec<crate::process::Secret> {
         self.plan.credentials.values().cloned().collect()
+    }
+}
+
+/// The most one step may claim toward a run's cost total.
+const MAX_STEP_COST_USD: f64 = 25.0;
+
+/// Clamps a step's claimed cost into `0.0..=MAX_STEP_COST_USD`.
+///
+/// The claim is advisory: the agent authors it, so a malfunctioning or
+/// prompt-injected agent could report 0.0 and dodge the
+/// `max_cost_per_day_usd` budget. The structural spend guards are
+/// `max_runs_per_hour`/`max_runs_per_day`; adapter-measured cost is
+/// future work. NaN (on which `f64::clamp` panics) clamps to 0.0 — the
+/// contract layer cannot deserialize NaN from JSON, but the clamp does
+/// not trust that.
+const fn clamp_step_cost(claimed: f64) -> f64 {
+    if claimed.is_nan() {
+        0.0
+    } else {
+        claimed.clamp(0.0, MAX_STEP_COST_USD)
     }
 }
 
@@ -142,13 +162,13 @@ async fn step_turn(ctx: &mut RunCtx, wt: &WtCtx, name: &str) -> Turn {
     code_route(ctx, wt, &step).await
 }
 
-/// Runs one code step: attempts gate, trust gate, execute, record.
+/// Runs one code step: attempts check, trust check, execute, record.
 async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
-    if let Some(reason) = attempts_gate(ctx, step) {
+    if let Some(reason) = attempts_check(ctx, step) {
         return Turn::Stop(Stop::Escalate(reason));
     }
     let request = execute::build_request(ctx, step, wt.worktree.path());
-    if let Some(reason) = execute::trust_gate(&ctx.plan, step, &request) {
+    if let Some(reason) = execute::trust_check(&ctx.plan, step, &request) {
         return Turn::Stop(Stop::Escalate(reason));
     }
     let result = run_step(ctx, wt, step, &request).await;
@@ -162,8 +182,8 @@ async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
     ))
 }
 
-/// The attempts gate: a step entered `max_attempts` times escalates.
-fn attempts_gate(ctx: &RunCtx, step: &StepDef) -> Option<String> {
+/// The attempts check: a step entered `max_attempts` times escalates.
+fn attempts_check(ctx: &RunCtx, step: &StepDef) -> Option<String> {
     let entries = ctx.attempts.get(&step.name).copied().unwrap_or(0);
     if entries >= step.max_attempts {
         return Some(format!("step `{}` exceeded max attempts", step.name));
@@ -221,4 +241,32 @@ pub(super) fn primary_repo(plan: &RunPlan) -> Result<(&str, &Repo), String> {
         .get(name)
         .ok_or_else(|| format!("primary repo `{name}` is not in the registry"))?;
     Ok((name, repo))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_STEP_COST_USD, clamp_step_cost};
+
+    /// The clamp's truth table: NaN and negative claims zero out,
+    /// in-range claims pass through, anything past the cap clamps to it.
+    /// Compared by bits: the clamp only pins to exact bounds or passes
+    /// its input through unchanged, so equality is exact (and clippy's
+    /// `float_cmp` stays quiet).
+    #[test]
+    fn claimed_cost_clamps_into_bounds() {
+        let cases = [
+            (f64::NAN, 0.0),
+            (f64::NEG_INFINITY, 0.0),
+            (-1.0, 0.0),
+            (0.0, 0.0),
+            (0.42, 0.42),
+            (MAX_STEP_COST_USD, MAX_STEP_COST_USD),
+            (1000.0, MAX_STEP_COST_USD),
+            (f64::INFINITY, MAX_STEP_COST_USD),
+        ];
+        for (claimed, want) in cases {
+            let got = clamp_step_cost(claimed);
+            assert_eq!(got.to_bits(), want.to_bits(), "claimed {claimed}");
+        }
+    }
 }

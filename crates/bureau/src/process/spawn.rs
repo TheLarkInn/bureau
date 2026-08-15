@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 
 use super::scrub::ScrubWriter;
 use super::secret::Secret;
@@ -126,11 +126,13 @@ pub async fn spawn(req: SpawnRequest) -> SpawnResult {
 }
 
 async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> SpawnResult {
-    write_stdin(&mut child, &req.stdin).await;
+    let stdin = write_task(child.stdin.take(), req.stdin);
     let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
     let err = drain_task(child.stderr.take(), req.secrets, req.log);
     let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
-    let (stdout, stderr) = tokio::join!(out, err);
+    // A timeout kills the process group, closing the pipes: the drains see
+    // EOF and the writer gets EPIPE, so joining all three never hangs.
+    let (_, stdout, stderr) = tokio::join!(stdin, out, err);
     SpawnResult {
         outcome,
         exit_code,
@@ -141,12 +143,16 @@ async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> Spa
     }
 }
 
-async fn write_stdin(child: &mut Child, stdin: &[u8]) {
-    let Some(mut pipe) = child.stdin.take() else {
-        return;
-    };
-    let _ = pipe.write_all(stdin).await;
-    // Dropping the pipe closes the child's stdin.
+/// Writes `bytes` to the child's stdin in its own task, so a child that
+/// never reads stdin can't block the drains or delay the arming of the
+/// timeout. Dropping the pipe closes the child's stdin.
+fn write_task(pipe: Option<ChildStdin>, bytes: Vec<u8>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let Some(mut pipe) = pipe else {
+            return;
+        };
+        let _ = pipe.write_all(&bytes).await;
+    })
 }
 
 type BoxedStream = Pin<Box<dyn AsyncRead + Send>>;

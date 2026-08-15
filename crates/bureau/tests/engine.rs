@@ -231,11 +231,8 @@ async fn check_resume(rig: &Rig, plan: &RunPlan) {
 #[tokio::test]
 async fn credentials_never_reach_the_event_log() {
     let rig = Rig::new();
-    let steps = vec![det_step(
-        "echo",
-        "echo token=$BUREAU_CREDENTIAL_API_TOKEN",
-        Some("done"),
-    )];
+    let run = r#"echo "env=${BUREAU_CREDENTIAL_API_TOKEN:+present}" && echo token=hunter7secret"#;
+    let steps = vec![det_step("echo", run, Some("done"))];
     let mut plan = rig.plan(steps);
     plan.credentials
         .insert("api-token".to_owned(), Secret::new("hunter7secret"));
@@ -244,13 +241,17 @@ async fn credentials_never_reach_the_event_log() {
     check_scrubbed(rig.dir.path(), &plan.run_id);
 }
 
-/// The raw log holds the redaction marker, never the secret.
+/// The raw log holds the redaction marker, never the secret — and the
+/// step's environment never held the credential at all (§10).
 fn check_scrubbed(dir: &Path, run_id: &str) {
     let path = dir.join("runs").join(run_id).join(runlog::EVENTS_FILE);
     let raw = std::fs::read_to_string(path).expect("events file");
     assert!(
-        !raw.contains("hunter7secret"),
-        "secret leaked into events.jsonl"
+        !raw.contains("hunter7secret") && raw.contains(REDACTED),
+        "the echoed secret was scrubbed, never leaked"
     );
-    assert!(raw.contains(REDACTED), "the echoed value was scrubbed");
+    assert!(
+        !raw.contains("env=present"),
+        "BUREAU_CREDENTIAL_API_TOKEN reached the step env"
+    );
 }

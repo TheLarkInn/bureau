@@ -1,6 +1,6 @@
 //! The reference pipeline "fix a failing test" (DESIGN.md section 11)
 //! run end to end under the `fake` adapter and forge: offline,
-//! deterministic, and fast enough for CI (section 13's acceptance gate).
+//! deterministic, and fast enough for CI (section 13's acceptance criteria).
 
 mod e2e;
 

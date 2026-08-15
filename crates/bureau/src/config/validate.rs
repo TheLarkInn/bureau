@@ -35,7 +35,7 @@ pub fn validate(config: &Config) -> Vec<ConfigError> {
 /// Pipeline validation (DESIGN.md layer 4).
 ///
 /// Covers per-kind required fields, edge resolution against steps and
-/// terminals, complete decision coverage, `inputs_from` integrity, role
+/// terminals, complete decision coverage, `inputs_from` references, role
 /// references, fixture rules, and the assignment-to-pipeline reference.
 #[must_use]
 pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {

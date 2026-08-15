@@ -9,9 +9,9 @@ before writing anything. In particular:
   no Kubernetes vocabulary.
 - The non-goals (§3) are hard: do not build anything on that list.
 - Layers are built in order (§7); each layer ships with offline tests that
-  need no network and no model calls. Layers 0–3 and the config loader are
-  built; the engine, reconcile loop, git worktrees, and forge clients are
-  not yet.
+  need no network and no model calls. All layers are built: layers 0–3,
+  the config loader, the engine, durable state, git worktrees, the forge
+  clients, and the reconcile loop.
 
 ## Linting expectations
 

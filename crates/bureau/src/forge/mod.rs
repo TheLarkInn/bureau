@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::Trust;
 
-/// A work item off the backlog (bug, issue, task — the forge owns the
+/// A work item from the work source (bug, issue, task — the forge owns
 /// taxonomy).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {

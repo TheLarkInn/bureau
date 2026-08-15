@@ -10,6 +10,7 @@
 //! - **dedup markers** — content hashes of proposed output, so a
 //!   scheduled pipeline never re-proposes an identical change.
 
+mod disposition;
 mod sql;
 
 use std::path::Path;
@@ -17,6 +18,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
+
+pub use disposition::Disposition;
 
 use crate::config::Limits;
 
@@ -34,6 +37,9 @@ pub enum Error {
     /// Filesystem failure opening the database file.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A stored dedup token this build does not recognize.
+    #[error("unknown stored disposition: {0}")]
+    UnknownDisposition(String),
 }
 
 /// A claim on one work item, with expiry. A crashed run releases
@@ -48,26 +54,6 @@ pub struct Lease {
     pub external_id: String,
     /// Expiry, milliseconds since the Unix epoch.
     pub expires_at_ms: u64,
-}
-
-/// How a dedup marker was resolved when it was written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Disposition {
-    /// A PR was opened for this content.
-    Proposed,
-    /// The proposal was rejected (review closed it).
-    Rejected,
-}
-
-impl Disposition {
-    /// The stored token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Proposed => "proposed",
-            Self::Rejected => "rejected",
-        }
-    }
 }
 
 /// The durable store. Safe to share: the connection sits behind a mutex,
@@ -194,14 +180,30 @@ impl Store {
         Ok(seen)
     }
 
-    /// Writes a dedup marker for a content hash. Idempotent.
+    /// Writes a dedup marker for a content hash. Idempotent — except a
+    /// terminal `Rejected` row is never overwritten; weaker markers flip.
     ///
     /// # Errors
     /// Propagates `SQLite` failures.
     pub fn mark_seen(&self, content_hash: &str, disposition: Disposition) -> Result<(), Error> {
-        let params = (content_hash, disposition.as_str(), now_millis());
+        let params = (
+            content_hash,
+            disposition.as_str(),
+            now_millis(),
+            Disposition::Rejected.as_str(),
+        );
         self.lock().execute(sql::MARK_SEEN, params)?;
         Ok(())
+    }
+
+    /// The disposition recorded for a content hash, when one exists.
+    ///
+    /// # Errors
+    /// Propagates `SQLite` failures and rejects unknown stored tokens.
+    pub fn disposition(&self, content_hash: &str) -> Result<Option<Disposition>, Error> {
+        sql::disposition(&self.lock(), content_hash)?
+            .map(|token| Disposition::from_token(&token))
+            .transpose()
     }
 
     /// Applies the schema to a connection behind the sharing mutex.

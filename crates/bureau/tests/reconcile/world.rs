@@ -108,7 +108,7 @@ fn det_step(run: &str) -> StepDef {
     }
 }
 
-/// Budget limits that never gate a test unless overridden.
+/// Budget limits that never constrain a test unless overridden.
 pub const fn generous() -> Limits {
     Limits {
         max_concurrent: 5,

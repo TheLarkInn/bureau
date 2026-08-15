@@ -103,12 +103,33 @@ impl RunLog {
 
 /// Reads every event in a run directory's log, in sequence order.
 ///
+/// A daemon kill mid-append leaves the final line torn — the scrubber's
+/// holdback tail is flushed only by [`RunLog::close`] — so for crash
+/// recovery a torn LAST line is dropped, not an error, and is truncated
+/// from the file (WAL-style repair on open; otherwise a resume's next
+/// append would fuse onto the partial bytes and poison the log
+/// mid-file). An unparseable line anywhere earlier remains an error.
+///
 /// # Errors
-/// Propagates filesystem failures and rejects any unparseable line.
+/// Propagates filesystem failures and rejects any unparseable line
+/// before the last one.
 pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
-    let text = std::fs::read_to_string(dir.join(EVENTS_FILE))?;
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
+    let path = dir.join(EVENTS_FILE);
+    let text = std::fs::read_to_string(&path)?;
+    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines
+        .last()
+        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
+    {
+        let torn = lines.pop().unwrap_or_default();
+        let keep = torn.as_ptr() as usize - text.as_ptr() as usize;
+        OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_len(u64::try_from(keep).map_err(io::Error::other)?)?;
+    }
+    lines
+        .iter()
         .map(|line| serde_json::from_str(line).map_err(io::Error::other))
         .collect()
 }

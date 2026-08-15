@@ -117,16 +117,20 @@ pub enum DecodeError {
 /// Parses `bytes` as JSON and rejects any schema but [`SCHEMA_VERSION`].
 fn checked_value(bytes: &[u8]) -> Result<serde_json::Value, DecodeError> {
     let value: serde_json::Value = serde_json::from_slice(bytes)?;
-    let received = value
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("<missing>");
+    // `<missing>` is only for an absent field; a present but non-string
+    // `schema` renders as its JSON form so the error names what arrived.
+    let received = value.get("schema").map_or_else(
+        || "<missing>".to_owned(),
+        |schema| {
+            schema
+                .as_str()
+                .map_or_else(|| schema.to_string(), str::to_owned)
+        },
+    );
     if received == SCHEMA_VERSION {
         Ok(value)
     } else {
-        Err(DecodeError::Schema {
-            received: received.to_owned(),
-        })
+        Err(DecodeError::Schema { received })
     }
 }
 

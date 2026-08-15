@@ -6,6 +6,8 @@
 //! A webhook or `bureau reconcile --now` only shortens the interval;
 //! the loop is fully correct with every webhook unplugged.
 
+mod dedup;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -16,7 +18,7 @@ use crate::config::{Assignment, Config, ForgeKind, Repo};
 use crate::engine::{Engine, RunOutcome, RunPlan, new_run_id};
 use crate::forge::{Forge, Item, Pr};
 use crate::process::Secret;
-use crate::state::{Disposition, Lease, Store};
+use crate::state::{Lease, Store};
 
 /// How long a claim lives before a crashed run's lease may be reclaimed.
 const LEASE_TTL: Duration = Duration::from_secs(3600);
@@ -77,7 +79,7 @@ pub struct Reconciler {
 }
 
 impl Reconciler {
-    /// One reconcile pass over every assignment: observe, subtract, budget-gate, claim, spawn.
+    /// One reconcile pass over every assignment: observe, subtract, budget-check, claim, spawn.
     /// A failing assignment is skipped; the level-triggered loop retries it later.
     ///
     /// # Errors
@@ -220,7 +222,9 @@ impl Reconciler {
             .collect()
     }
 
-    /// Spawns the run task; the wrapper records cost, marks seen when a PR opened, and always releases the lease.
+    /// Spawns the run task; the wrapper records cost, marks the item's
+    /// content seen on every terminal outcome but `Failure`, and always
+    /// releases the lease.
     fn spawn(&self, plan: RunPlan) -> Started {
         let run_id = plan.run_id.clone();
         let (engine, state) = (self.engine.clone(), self.state.clone());
@@ -229,8 +233,8 @@ impl Reconciler {
         let handle = tokio::spawn(async move {
             let outcome = engine.run(&plan).await;
             let _ = state.record_run(&name, outcome.cost_usd);
-            if outcome.pr.is_some() {
-                let _ = state.mark_seen(&hash, Disposition::Proposed);
+            if let Some(disposition) = dedup::marker(&outcome) {
+                let _ = state.mark_seen(&hash, disposition);
             }
             let _ = state.release(&name, &external_id);
             outcome

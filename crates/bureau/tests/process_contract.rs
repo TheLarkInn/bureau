@@ -80,22 +80,46 @@ async fn exit_code_and_captured_streams() {
     let result = run("echo out; echo err >&2; exit 3", Duration::from_secs(5)).await;
     let status = (result.outcome, result.exit_code, result.error.is_none());
     assert_eq!(status, (SpawnOutcome::Exited, Some(3), true));
-    let captured = format!(
-        "{}|{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_eq!(captured, "out\n|err\n");
+    let out = String::from_utf8_lossy(&result.stdout);
+    let err = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(format!("{out}|{err}"), "out\n|err\n");
 }
 
 #[tokio::test]
 async fn stdin_is_delivered() {
+    // 300KB exceeds both pipe buffers — guards the concurrent-writer fix.
     let dir = TestDir::new("stdin");
     let mut req = request(dir.path(), "cat", Duration::from_secs(5));
-    req.stdin = b"hello stdin".to_vec();
+    req.stdin = vec![b'y'; 300_000];
     let result = spawn(req).await;
-    assert_eq!(result.outcome, SpawnOutcome::Exited);
-    assert_eq!(result.stdout, b"hello stdin");
+    let all_y = result.stdout.iter().all(|&b| b == b'y');
+    let status = (result.outcome, result.stdout.len(), all_y);
+    assert_eq!(status, (SpawnOutcome::Exited, 300_000, true));
+}
+
+#[tokio::test]
+async fn timeout_covers_a_blocked_stdin_writer() {
+    // `yes` floods stdout, never reads stdin: the 1MB write blocks forever;
+    // only the timeout's group kill (which closes the pipes) can end it.
+    let dir = TestDir::new("stdinblock");
+    let mut req = request(dir.path(), "yes", Duration::from_millis(500));
+    req.stdin = vec![b'x'; 1_000_000];
+    let started = Instant::now();
+    let result = spawn(req).await;
+    let done = started.elapsed() < Duration::from_secs(10);
+    assert_eq!((result.outcome, done), (SpawnOutcome::Timeout, true));
+}
+
+#[tokio::test]
+async fn large_stdout_with_pending_stdin_is_captured() {
+    // 200KB stdout with a full, unread stdin pipe: the writer must run
+    // concurrently with the drains or the run stalls before the child exits.
+    let dir = TestDir::new("bigout");
+    let mut req = request(dir.path(), "yes | head -c 200000", Duration::from_secs(10));
+    req.stdin = vec![b'x'; 100_000];
+    let result = spawn(req).await;
+    let status = (result.outcome, result.stdout.len());
+    assert_eq!(status, (SpawnOutcome::Exited, 200_000));
 }
 
 #[tokio::test]
@@ -109,10 +133,8 @@ async fn env_is_exactly_what_was_passed() {
 
 #[tokio::test]
 async fn env_is_never_inherited() {
-    // The test runner process certainly has PATH and HOME set; a child
-    // spawned with an empty env must see neither. (A sentinel var cannot
-    // be set in-process: `std::env::set_var` is `unsafe` on edition 2024
-    // and this workspace forbids unsafe code.)
+    // The runner has PATH/HOME set; an empty-env child must see neither.
+    // (No in-process sentinel: `std::env::set_var` is `unsafe` on 2024.)
     let result = run("env", Duration::from_secs(5)).await;
     let env = String::from_utf8_lossy(&result.stdout);
     assert!(!env.contains("PATH="), "inherited PATH: {env}");
@@ -125,9 +147,8 @@ async fn missing_program_is_spawn_failed() {
     let mut req = request(dir.path(), "", Duration::from_secs(5));
     req.argv = vec!["/definitely/not/a/binary".to_owned()];
     let result = spawn(req).await;
-    assert_eq!(result.outcome, SpawnOutcome::SpawnFailed);
-    assert_eq!(result.exit_code, None);
-    assert!(result.error.is_some());
+    let status = (result.outcome, result.exit_code, result.error.is_some());
+    assert_eq!(status, (SpawnOutcome::SpawnFailed, None, true));
 }
 
 #[tokio::test]
@@ -143,16 +164,16 @@ async fn empty_argv_is_spawn_failed_before_spawn() {
 #[tokio::test]
 async fn signaled_is_distinct_from_exited() {
     let result = run("kill -TERM $$", Duration::from_secs(5)).await;
-    assert_eq!(result.outcome, SpawnOutcome::Signaled);
-    assert_eq!(result.exit_code, None);
+    let status = (result.outcome, result.exit_code);
+    assert_eq!(status, (SpawnOutcome::Signaled, None));
 }
 
 #[tokio::test]
 async fn timeout_hard_kills() {
     let started = Instant::now();
     let result = run("sleep 30", Duration::from_millis(500)).await;
-    assert_eq!(result.outcome, SpawnOutcome::Timeout);
-    assert_eq!(result.exit_code, None);
+    let status = (result.outcome, result.exit_code);
+    assert_eq!(status, (SpawnOutcome::Timeout, None));
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
@@ -182,40 +203,26 @@ async fn timeout_kills_the_whole_process_group() {
         .expect("pid is a number");
     let dead = wait_for_death(pid);
     if !dead {
-        let _ = nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(pid),
-            nix::sys::signal::Signal::SIGKILL,
-        );
+        let pid = nix::unistd::Pid::from_raw(pid);
+        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
     }
-    assert_eq!(
-        (result.outcome, dead),
-        (SpawnOutcome::Timeout, true),
-        "grandchild survived"
-    );
+    assert_eq!((result.outcome, dead), (SpawnOutcome::Timeout, true));
 }
 
 #[tokio::test]
 async fn secrets_are_scrubbed_from_result_and_sink() {
     let dir = TestDir::new("scrub");
     let sink = MemLog::default();
-    let mut req = request(
-        dir.path(),
-        "echo token is hunter2hunter2 ok; echo err hunter2hunter2 >&2",
-        Duration::from_secs(5),
-    );
+    let script = "echo token is hunter2hunter2 ok; echo err hunter2hunter2 >&2";
+    let mut req = request(dir.path(), script, Duration::from_secs(5));
     req.secrets = vec![Secret::new("hunter2hunter2")];
     req.log = Some(shared_log(sink.clone()));
     let result = spawn(req).await;
-    let combined = format!(
-        "{}|{}|{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr),
-        String::from_utf8_lossy(&sink.bytes())
-    );
-    assert!(
-        !combined.contains("hunter2hunter2"),
-        "secret leaked: {combined}"
-    );
+    let out = String::from_utf8_lossy(&result.stdout);
+    let err = String::from_utf8_lossy(&result.stderr);
+    let logged = sink.bytes();
+    let combined = format!("{out}|{err}|{}", String::from_utf8_lossy(&logged));
+    assert!(!combined.contains("hunter2hunter2"), "leaked: {combined}");
     assert_eq!(combined.matches(REDACTED).count(), 4, "{combined}");
 }
 
@@ -229,11 +236,8 @@ async fn secret_split_across_chunks_is_caught() {
 
 async fn split_secret_run() -> SpawnResult {
     let dir = TestDir::new("split");
-    let mut req = request(
-        dir.path(),
-        "printf 'hunter'; sleep 0.4; printf '2hunter2\\n'",
-        Duration::from_secs(5),
-    );
+    let script = "printf 'hunter'; sleep 0.4; printf '2hunter2\\n'";
+    let mut req = request(dir.path(), script, Duration::from_secs(5));
     req.secrets = vec![Secret::new("hunter2hunter2")];
     spawn(req).await
 }
@@ -254,11 +258,8 @@ async fn first_output(sink: &MemLog) -> Option<Vec<u8>> {
 async fn output_streams_to_sink_before_exit() {
     let dir = TestDir::new("stream");
     let sink = MemLog::default();
-    let mut req = request(
-        dir.path(),
-        "echo first; sleep 1; echo second",
-        Duration::from_secs(10),
-    );
+    let script = "echo first; sleep 1; echo second";
+    let mut req = request(dir.path(), script, Duration::from_secs(10));
     req.log = Some(shared_log(sink.clone()));
     let task = tokio::spawn(spawn(req));
     let logged = first_output(&sink)
@@ -272,11 +273,9 @@ async fn output_streams_to_sink_before_exit() {
 fn missing_credential_fails_with_its_name() {
     let error = process::resolve("no-such-credential").expect_err("must fail");
     let message = error.to_string();
-    assert!(message.contains("no-such-credential"), "message: {message}");
-    assert!(
-        message.contains("BUREAU_CREDENTIAL_NO_SUCH_CREDENTIAL"),
-        "message: {message}"
-    );
+    let named = message.contains("no-such-credential")
+        && message.contains("BUREAU_CREDENTIAL_NO_SUCH_CREDENTIAL");
+    assert!(named, "message: {message}");
 }
 
 #[test]
@@ -289,8 +288,6 @@ fn credential_resolves_from_a_file() {
 
 #[test]
 fn secret_debug_is_redacted() {
-    assert_eq!(
-        format!("{:?}", Secret::new("hunter2hunter2")),
-        "Secret(***)"
-    );
+    let debug = format!("{:?}", Secret::new("hunter2hunter2"));
+    assert_eq!(debug, "Secret(***)");
 }

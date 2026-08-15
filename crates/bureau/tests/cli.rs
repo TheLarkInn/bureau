@@ -76,7 +76,7 @@ fn validate_reports_every_error_and_fails() {
         .replace("repos: [code]", "repos: [code, missing-repo]");
     write(dir.path(), "repos.yaml", MINIMAL_REPO);
     write(dir.path(), "roles/worker.yaml", MINIMAL_ROLE);
-    write(dir.path(), "assignments/job.yaml", &assignment);
+    write(dir.path(), "assignments/demo.yaml", &assignment);
     let output = bureau(&["validate", &dir.path().to_string_lossy()]);
     assert_eq!(output.status.code(), Some(1));
     let err = stderr(&output);
@@ -119,7 +119,7 @@ steps:
 "#;
 
 const MINIMAL_ASSIGNMENT: &str = r#"
-name: job
+name: demo
 work:
   forge: github
   source: "example/code"
@@ -140,7 +140,7 @@ limits:
 fn write_minimal_config(dir: &Path) {
     write(dir, "repos.yaml", MINIMAL_REPO);
     write(dir, "roles/worker.yaml", MINIMAL_ROLE);
-    write(dir, "assignments/job.yaml", MINIMAL_ASSIGNMENT);
+    write(dir, "assignments/demo.yaml", MINIMAL_ASSIGNMENT);
     write(dir, "pipelines/fix-failing-test.yaml", MINIMAL_PIPELINE);
 }
 

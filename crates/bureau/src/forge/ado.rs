@@ -260,9 +260,9 @@ async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> 
     })
 }
 
-/// Maps a hydrated work item. Trust is `Maintainer`: creating an ADO
-/// work item requires write access on the project, so a human with
-/// maintainer-grade authority authored the body (DESIGN.md section 9).
+/// Maps a hydrated work item. Trust fails closed at `Untrusted`: ADO
+/// Stakeholders author items without maintainer authority (§9), so
+/// maintainer gates need a triage step or label convention (future work).
 fn work_item(project: &str, raw: RawWorkItem) -> Item {
     let url = raw.links["html"]["href"].as_str().unwrap_or_default();
     Item {
@@ -278,7 +278,7 @@ fn work_item(project: &str, raw: RawWorkItem) -> Item {
             .filter(|tag| !tag.is_empty())
             .map(str::to_owned)
             .collect(),
-        trust: Trust::Maintainer,
+        trust: Trust::Untrusted,
     }
 }
 

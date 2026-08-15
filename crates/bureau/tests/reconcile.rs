@@ -78,6 +78,19 @@ async fn a_second_pass_starts_nothing_new() {
 }
 
 #[tokio::test]
+async fn a_no_work_run_marks_the_item_seen() {
+    let world = World::new(&["1"], "true", generous());
+    for run in world.pass().await {
+        run.handle.await.expect("run joins");
+    }
+    let hash = item("1").content_hash();
+    let marker = world.store.disposition(&hash).expect("disposition");
+    let second = world.pass().await;
+    let state = (marker, second.len(), world.leased().len());
+    assert_eq!(state, (Some(Disposition::NoChange), 0, 0));
+}
+
+#[tokio::test]
 async fn run_loop_passes_on_wake_and_interval() {
     let world = World::new(&["1"], "true", generous());
     let (tx, rx) = tokio::sync::mpsc::channel(1);

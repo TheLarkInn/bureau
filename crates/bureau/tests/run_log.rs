@@ -2,6 +2,8 @@
 //! scrub-on-write, and replay reconstructing identical state after
 //! `state.json` is deleted.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -130,10 +132,29 @@ fn a_run_id_is_used_exactly_once() {
 }
 
 #[test]
+fn read_events_drops_a_torn_final_line() {
+    let dir = TestDir::new("torn");
+    let run = write_run(dir.path(), "run-1", &[]);
+    let intact = runlog::read_events(&run).expect("intact log reads");
+    // A kill mid-append: partial JSON, no trailing newline, never closed.
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(run.join(runlog::EVENTS_FILE))
+        .expect("open for append");
+    file.write_all(b"{\"seq\":4,\"at_ms\":0,\"kind\":\"outp")
+        .expect("torn append");
+    drop(file);
+    assert_eq!(runlog::read_events(&run).expect("torn tail reads"), intact);
+}
+
+#[test]
 fn replay_rejects_a_corrupt_line() {
     let dir = TestDir::new("corrupt");
     let run = write_run(dir.path(), "run-1", &[]);
-    std::fs::write(run.join(runlog::EVENTS_FILE), "{ not json\n").expect("corrupt");
+    let path = run.join(runlog::EVENTS_FILE);
+    let raw = std::fs::read_to_string(&path).expect("read");
+    let corrupt = raw.replacen('\n', "\n{ not json\n", 1);
+    std::fs::write(&path, corrupt).expect("corrupt");
     assert!(runlog::read_events(&run).is_err());
 }
 

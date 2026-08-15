@@ -137,7 +137,7 @@ fn expected_items() -> Vec<Item> {
         body: "Null handle".to_owned(),
         url: "https://example/1".to_owned(),
         labels: vec!["crash".to_owned(), "ui".to_owned()],
-        trust: Trust::Maintainer,
+        trust: Trust::Untrusted,
     };
     let sparse = Item {
         external_id: "Odsp/2".to_owned(),
@@ -145,7 +145,7 @@ fn expected_items() -> Vec<Item> {
         body: "Ten minutes".to_owned(),
         url: String::new(),
         labels: Vec::new(),
-        trust: Trust::Maintainer,
+        trust: Trust::Untrusted,
     };
     vec![full, sparse]
 }

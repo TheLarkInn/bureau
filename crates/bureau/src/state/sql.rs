@@ -3,7 +3,7 @@
 //! milliseconds since the Unix epoch; `SQLite` has no unsigned 64-bit
 //! integer, so values cross the boundary as `i64`.
 
-use rusqlite::{Connection, ErrorCode, Row};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, Row};
 
 use super::{Error, Lease};
 
@@ -68,9 +68,19 @@ VALUES (?1, ?2, ?3)";
 
 pub(super) const SEEN: &str = "SELECT EXISTS(SELECT 1 FROM dedup WHERE content_hash = ?1)";
 
+/// Reads back the stored disposition token, when the hash has one.
+pub(super) const DISPOSITION: &str = "SELECT disposition FROM dedup WHERE content_hash = ?1";
+
+/// Writes the marker. On conflict the row updates only when its stored
+/// disposition is not the terminal `?4`, so a rejection is never
+/// overwritten by a later write; anything weaker still flips.
 pub(super) const MARK_SEEN: &str = "
-INSERT OR REPLACE INTO dedup (content_hash, disposition, at_ms)
-VALUES (?1, ?2, ?3)";
+INSERT INTO dedup (content_hash, disposition, at_ms)
+VALUES (?1, ?2, ?3)
+ON CONFLICT(content_hash) DO UPDATE SET
+    disposition = excluded.disposition,
+    at_ms = excluded.at_ms
+WHERE dedup.disposition != ?4";
 
 /// Maps one `leases` row to a [`Lease`].
 pub(super) fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<Lease> {
@@ -93,6 +103,14 @@ pub(super) fn count(
     let params = (assignment, since_ms);
     let count: i64 = conn.query_row(statement, params, |row| row.get(0))?;
     Ok(u32::try_from(count).unwrap_or(0))
+}
+
+/// The stored disposition token for a content hash, when present.
+pub(super) fn disposition(conn: &Connection, hash: &str) -> Result<Option<String>, Error> {
+    let token = conn
+        .query_row(DISPOSITION, (hash,), |row| row.get(0))
+        .optional()?;
+    Ok(token)
 }
 
 /// Total recorded run cost for an assignment since `since_ms`.
