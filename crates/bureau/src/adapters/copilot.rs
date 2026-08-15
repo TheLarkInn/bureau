@@ -11,18 +11,22 @@
 //!
 //! argv is `copilot -p <request-json> --agent <name> --model <model>`;
 //! the request JSON also arrives on stdin per the layer-2 contract.
-//! Only the push boundary — the credential line — is mirrored in argv
-//! (section 10); absent grants keep default CLI behavior:
+//! The push boundary is mirrored in argv (section 10), and a role
+//! without a write grant is denied shell outright — the tool grammar
+//! matches commands, not effects, so a read-only shell is not
+//! expressible:
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
 //! | `repo:write`, not `repo:push` | `--allow-tool=shell(git:*) --deny-tool='shell(git push)'` |
 //! | `repo:push`                   | `--allow-tool=shell(git:*)` |
-//! | anything else                 | *(none)* |
+//! | anything else                 | `--deny-tool='shell(*)'` |
 //!
-//! Credentials arrive by env convention: `GH_TOKEN`, when present in
-//! the daemon environment, is forwarded into the child env and added
-//! to the scrub list. To record a fixture for the `fake` adapter, run
+//! Credentials arrive by env convention, gated on the role's grants
+//! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
+//! child env and added to the scrub list only when the role holds one
+//! of [`real::FORGE_GRANTS`]. To record a fixture for the `fake`
+//! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
 use std::time::Duration;
@@ -44,7 +48,7 @@ const DISCOVERY: real::Discovery = real::Discovery {
     suffix: ".agent.md",
 };
 
-/// Credential variables forwarded from the daemon environment.
+/// Credential variable forwarded when the role holds a forge grant.
 const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
 /// Builds the layer-0 request for a `copilot` step: the step contract
@@ -63,7 +67,7 @@ pub fn spawn_request(
 ) -> SpawnRequest {
     let json = request.to_json().unwrap_or_default();
     let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
-    let found = real::daemon_credentials(&CREDENTIAL_VARS);
+    let found = real::scoped_credentials(&role.permissions, &real::FORGE_GRANTS, &CREDENTIAL_VARS);
     let (env, secrets) = real::child_env(found, secrets);
     SpawnRequest {
         argv: argv(role, &agent, &json),
@@ -91,15 +95,16 @@ fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
     argv
 }
 
-/// The push-boundary mirror; see the module table.
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default flag instead of silence.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let mut flags = Vec::new();
     let (write, push) = real::push_boundary(permissions);
-    if write {
-        flags.push("--allow-tool=shell(git:*)".to_owned());
-        if !push {
-            flags.push("--deny-tool=shell(git push)".to_owned());
-        }
+    if !write {
+        return vec!["--deny-tool=shell(*)".to_owned()];
+    }
+    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
+    if !push {
+        flags.push("--deny-tool=shell(git push)".to_owned());
     }
     flags
 }

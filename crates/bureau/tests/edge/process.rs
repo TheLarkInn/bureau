@@ -45,13 +45,10 @@ async fn a_sigkilled_child_is_signaled_with_no_exit_code() {
     assert_eq!(status, (SpawnOutcome::Signaled, None, Some("signal 9")));
 }
 
-// BLOCKED: run_child() awaits write_stdin() BEFORE spawning the drain
-// tasks and arming the timeout, so a child that fills its stdout pipe
-// before reading stdin deadlocks forever: the parent blocks on write,
-// nobody drains stdout, and the timeout never starts. Unignore once the
-// stdin writer and the stream drains run concurrently.
+// Regression: the stdin writer must run concurrently with the stream
+// drains under the timeout, so a child that fills its stdout pipe before
+// reading stdin cannot deadlock the run.
 #[tokio::test]
-#[ignore = "BLOCKED: write_stdin is awaited before the drains and timeout; a full stdout pipe deadlocks"]
 async fn a_full_stdout_pipe_cannot_deadlock_the_stdin_write() {
     let dir = TestDir::new("deadlock");
     let script = "head -c 200000 < /dev/zero; cat > /dev/null";

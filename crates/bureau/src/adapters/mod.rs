@@ -34,7 +34,7 @@ pub async fn execute(
     log: Option<SharedLog>,
 ) -> StepResult {
     let future: ExecuteFuture<'_> = match role.adapter {
-        AdapterKind::Fake => Box::pin(fake::execute(step, request, log)),
+        AdapterKind::Fake => Box::pin(fake::execute(step, request, secrets, log)),
         AdapterKind::Copilot => Box::pin(copilot::execute(role, step, request, secrets, log)),
         AdapterKind::Claude => Box::pin(claude::execute(role, step, request, secrets, log)),
     };

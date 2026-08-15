@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use bureau::git::{CheckoutCache, Worktree};
+use bureau::config::ForgeKind;
+use bureau::git::{CheckoutCache, Worktree, auth_args, credential_for};
+use bureau::process::Secret;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
@@ -105,6 +107,25 @@ async fn mirrored(tmp: &TestDir, tag: &str) -> (CheckoutCache, PathBuf, Source) 
     let cache = CheckoutCache::new(tmp.path().join("cache"));
     let mirror = cache.mirror(&source.url(), None).await.expect("mirror");
     (cache, mirror, source)
+}
+
+/// The auth argv carries the full header value; the scrub list holds
+/// every form the credential can take in argv, on the wire, or echoed
+/// by a reflected error page: raw secret, base64 pair, full header.
+#[test]
+fn auth_args_scrub_every_form_of_the_credential() {
+    let credential = credential_for(ForgeKind::Github, Secret::new("s3cret"));
+    let mut secrets = Vec::new();
+    let argv = auth_args(&credential, &mut secrets);
+    let pair = "eC1hY2Nlc3MtdG9rZW46czNjcmV0";
+    let header = format!("AUTHORIZATION: Basic {pair}");
+    let expected = vec!["-c".to_owned(), format!("http.extraheader={header}")];
+    let scrubbed = [
+        secrets.contains(&Secret::new("s3cret")),
+        secrets.contains(&Secret::new(pair)),
+        secrets.contains(&Secret::new(header.as_str())),
+    ];
+    assert_eq!((argv, scrubbed), (expected, [true, true, true]));
 }
 
 #[test]

@@ -129,6 +129,8 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
 }
 
 /// Asserts copilot's argv carries the JSON prompt, agent, and model.
+/// This grant-less role also gets the deny-by-default flag, so argv
+/// has 8 elements.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
@@ -137,7 +139,7 @@ fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
         value_after(&req.argv, "--model"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", "test-model", 7);
+    let expected = (Some(copilot::BINARY), json, "analyzer", "test-model", 8);
     assert_eq!(parts, expected);
 }
 
@@ -218,6 +220,8 @@ fn claude_carries_the_request_on_stdin_only() {
         "a",
         "--model",
         "test-model",
+        "--disallowedTools",
+        "Bash(*)",
     ]
     .join(SEP);
     let shape = (
@@ -230,14 +234,15 @@ fn claude_carries_the_request_on_stdin_only() {
 }
 
 #[test]
-fn copilot_mirrors_only_the_push_boundary() {
-    let cases: [(&[Permission], &str); 3] = [
+fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
+    let cases: [(&[Permission], &str); 4] = [
         (
             &[Permission::RepoWrite],
             "--allow-tool=shell(git:*)\u{1f}--deny-tool=shell(git push)",
         ),
         (&[Permission::RepoPush], "--allow-tool=shell(git:*)"),
-        (&[Permission::RepoRead], ""),
+        (&[Permission::RepoRead], "--deny-tool=shell(*)"),
+        (&[], "--deny-tool=shell(*)"),
     ];
     for (permissions, flags) in cases {
         let dir = TestDir::new("copilot-flags");
@@ -248,14 +253,15 @@ fn copilot_mirrors_only_the_push_boundary() {
 }
 
 #[test]
-fn claude_mirrors_only_the_push_boundary() {
-    let cases: [(&[Permission], &str); 3] = [
+fn claude_mirrors_the_push_boundary_and_denies_by_default() {
+    let cases: [(&[Permission], &str); 4] = [
         (
             &[Permission::RepoWrite],
             "--allowedTools\u{1f}Bash(git:*)\u{1f}--disallowedTools\u{1f}Bash(git push:*)",
         ),
         (&[Permission::RepoPush], "--allowedTools\u{1f}Bash(git:*)"),
-        (&[Permission::RepoRead], ""),
+        (&[Permission::RepoRead], "--disallowedTools\u{1f}Bash(*)"),
+        (&[], "--disallowedTools\u{1f}Bash(*)"),
     ];
     for (permissions, flags) in cases {
         let dir = TestDir::new("claude-flags");
@@ -270,7 +276,7 @@ fn claude_mirrors_only_the_push_boundary() {
 #[test]
 fn copilot_env_forwards_and_scrubs_only_gh_token() {
     let dir = TestDir::new("env");
-    let role = role("/p:a", AdapterKind::Copilot, &[]);
+    let role = role("/p:a", AdapterKind::Copilot, &[Permission::RepoRead]);
     let req = copilot_request(&role, &step(None), dir.path());
     let token = std::env::var("GH_TOKEN").unwrap_or_default();
     let expected = !token.is_empty();
@@ -283,7 +289,7 @@ fn copilot_env_forwards_and_scrubs_only_gh_token() {
 #[test]
 fn claude_env_and_scrub_list_carry_only_credentials() {
     let dir = TestDir::new("claude-env");
-    let role = role("/p:a", AdapterKind::Claude, &[]);
+    let role = role("/p:a", AdapterKind::Claude, &[Permission::ModelInvoke]);
     let secrets = vec![Secret::new("engine-secret")];
     let req = claude::spawn_request(&role, &step(None), &request(dir.path()), secrets, None);
     let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];

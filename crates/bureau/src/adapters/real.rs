@@ -2,8 +2,18 @@
 //!
 //! Deliberately small: agent-file resolution and verbatim
 //! materialization (DESIGN.md section 6), the push-boundary permission
-//! mirror (section 10), credential forwarding by env convention, and
+//! mirror (section 10), permission-gated credential forwarding, and
 //! step timeouts.
+//!
+//! Section 10 checks permissions before spawn: each grant maps to a
+//! credential that layer 0 does or does not inject. An adapter reads a
+//! credential variable from the daemon's environment only when the
+//! role holds a grant mapped to it:
+//!
+//! | credential variables                           | grants |
+//! |------------------------------------------------|--------|
+//! | `GH_TOKEN` (a forge credential)                | [`FORGE_GRANTS`] |
+//! | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (model credentials) | [`MODEL_GRANTS`] |
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -97,20 +107,52 @@ fn copy_agent(
 /// The push boundary a role's permissions imply, as `(write, push)`.
 ///
 /// `repo:push` implies `repo:write` — a push is a write that lands.
-/// Only this credential line is mirrored in argv (DESIGN.md section
-/// 10); absent grants keep the CLI's default behavior, so no grants
-/// mean no flags.
+/// The adapters mirror this line in argv (DESIGN.md section 10):
+/// `write` allows the git shell, `!push` still denies `git push`, and
+/// no write grant at all denies the shell outright (deny by default).
 pub fn push_boundary(permissions: &[Permission]) -> (bool, bool) {
     let has = |p: Permission| permissions.contains(&p);
     let push = has(Permission::RepoPush);
     (push || has(Permission::RepoWrite), push)
 }
 
+/// Grants that map to a forge credential (DESIGN.md section 10): a
+/// forge token authorizes repository and pull-request access, so any
+/// repo or PR grant unlocks it.
+pub const FORGE_GRANTS: [Permission; 7] = [
+    Permission::RepoRead,
+    Permission::RepoWrite,
+    Permission::RepoPush,
+    Permission::PrRead,
+    Permission::PrWrite,
+    Permission::PrReview,
+    Permission::PrMerge,
+];
+
+/// The grant that maps to a model credential (DESIGN.md section 10).
+pub const MODEL_GRANTS: [Permission; 1] = [Permission::ModelInvoke];
+
+/// Reads `names` from the daemon's environment when `permissions` hold
+/// any of `grants`, and reads nothing otherwise — the section-10 check
+/// before spawn, applied at the one place credentials cross over.
+pub fn scoped_credentials(
+    permissions: &[Permission],
+    grants: &[Permission],
+    names: &[&str],
+) -> Vec<(String, String)> {
+    if grants.iter().any(|grant| permissions.contains(grant)) {
+        return daemon_credentials(names);
+    }
+    Vec::new()
+}
+
 /// Reads credential variables from the daemon's environment.
 ///
 /// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
 /// missing or empty variable is not forwarded; the engine resolves
-/// repo credentials itself, so that is never an error here.
+/// repo credentials itself, so that is never an error here. Callers
+/// gate through [`scoped_credentials`] so a role without the mapped
+/// grant receives nothing.
 pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
     let found = |name: &str| {
         std::env::var(name)
@@ -139,7 +181,9 @@ pub fn child_env(
 mod tests {
     use std::path::Path;
 
-    use super::{agent_name, child_env, push_boundary};
+    use super::{
+        FORGE_GRANTS, MODEL_GRANTS, agent_name, child_env, push_boundary, scoped_credentials,
+    };
     use crate::config::Permission;
     use crate::process::Secret;
 
@@ -171,6 +215,43 @@ mod tests {
         for (permissions, expected) in cases {
             assert_eq!(push_boundary(&permissions), expected);
         }
+    }
+
+    /// The section-10 mapping as `(permission, forge, model)`: which
+    /// grant set forwards a credential for each permission.
+    const MAPPING: [(Permission, bool, bool); 11] = [
+        (Permission::RepoRead, true, false),
+        (Permission::RepoWrite, true, false),
+        (Permission::RepoPush, true, false),
+        (Permission::PrRead, true, false),
+        (Permission::PrWrite, true, false),
+        (Permission::PrReview, true, false),
+        (Permission::PrMerge, true, false),
+        (Permission::IssuesRead, false, false),
+        (Permission::IssuesWrite, false, false),
+        (Permission::RunsRead, false, false),
+        (Permission::ModelInvoke, false, true),
+    ];
+
+    /// `PATH` stands in for a credential variable because a test
+    /// process always has it set and non-empty.
+    #[test]
+    fn scoped_credentials_follow_the_permission_mapping() {
+        let found = |p: Permission, grants: &[Permission]| {
+            scoped_credentials(&[p], grants, &["PATH"]).len()
+        };
+        for (permission, forge, model) in MAPPING {
+            let seen = (
+                found(permission, &FORGE_GRANTS),
+                found(permission, &MODEL_GRANTS),
+            );
+            assert_eq!(
+                seen,
+                (usize::from(forge), usize::from(model)),
+                "{permission:?}"
+            );
+        }
+        assert!(scoped_credentials(&[], &FORGE_GRANTS, &["PATH"]).is_empty());
     }
 
     #[test]

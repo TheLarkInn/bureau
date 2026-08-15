@@ -9,20 +9,23 @@
 //!
 //! argv is `claude -p --agent <name> --model <model>`: `claude -p`
 //! reads the prompt from stdin, which carries the request JSON per the
-//! layer-2 contract. Only the push boundary — the credential line —
-//! is mirrored in argv (section 10), one flag per rule; absent grants
-//! keep default CLI behavior:
+//! layer-2 contract. The push boundary is mirrored in argv (section
+//! 10), one flag per rule, and a role without a write grant is denied
+//! shell outright — the tool grammar matches commands, not effects, so
+//! a read-only shell is not expressible:
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
 //! | `repo:write`, not `repo:push` | `--allowedTools 'Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
 //! | `repo:push`                   | `--allowedTools 'Bash(git:*)'` |
-//! | anything else                 | *(none)* |
+//! | anything else                 | `--disallowedTools 'Bash(*)'` |
 //!
-//! Credentials arrive by env convention: `ANTHROPIC_API_KEY` and
-//! `CLAUDE_CODE_OAUTH_TOKEN`, when present in the daemon environment,
-//! are forwarded into the child env and added to the scrub list. To
-//! record a fixture for the `fake` adapter, run
+//! Credentials arrive by env convention, gated on the role's grants
+//! (section 10): `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are
+//! model credentials, forwarded into the child env and added to the
+//! scrub list only when the role holds `model:invoke`
+//! ([`real::MODEL_GRANTS`]). To record a fixture for the `fake`
+//! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
 use super::real;
@@ -39,7 +42,7 @@ const DISCOVERY: real::Discovery = real::Discovery {
     suffix: ".md",
 };
 
-/// Credential variables forwarded from the daemon environment.
+/// Credential variables forwarded when the role holds `model:invoke`.
 const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
 
 /// Builds the layer-0 request for a `claude` step: the step contract
@@ -57,7 +60,7 @@ pub fn spawn_request(
     log: Option<SharedLog>,
 ) -> SpawnRequest {
     let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
-    let found = real::daemon_credentials(&CREDENTIAL_VARS);
+    let found = real::scoped_credentials(&role.permissions, &real::MODEL_GRANTS, &CREDENTIAL_VARS);
     let (env, secrets) = real::child_env(found, secrets);
     SpawnRequest {
         argv: argv(role, &agent),
@@ -84,18 +87,19 @@ fn argv(role: &Role, agent: &str) -> Vec<String> {
     argv
 }
 
-/// The push-boundary mirror; see the module table.
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default rule instead of silence.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let mut flags = Vec::new();
     let (write, push) = real::push_boundary(permissions);
-    if write {
-        flags.extend(["--allowedTools".to_owned(), "Bash(git:*)".to_owned()]);
-        if !push {
-            flags.extend([
-                "--disallowedTools".to_owned(),
-                "Bash(git push:*)".to_owned(),
-            ]);
-        }
+    if !write {
+        return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
+    }
+    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
+    if !push {
+        flags.extend([
+            "--disallowedTools".to_owned(),
+            "Bash(git push:*)".to_owned(),
+        ]);
     }
     flags
 }

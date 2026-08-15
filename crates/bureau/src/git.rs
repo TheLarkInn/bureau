@@ -9,10 +9,12 @@
 //!   `Drop`, not only the happy path.
 //!
 //! Credentials travel only in `http.extraheader` config for the single
-//! command and in the scrub list, so they never land in the run log, the
-//! mirror's stored remote URL, or on disk. They are visible in the
-//! container's process table for the duration of the push; the container
-//! is the sandbox boundary (DESIGN.md section 10).
+//! command and in the scrub list, which holds every form they take:
+//! the raw secret, the base64 `user:secret` pair argv carries, and the
+//! full `AUTHORIZATION: Basic` header value. They never land in the
+//! run log, the mirror's stored remote URL, or on disk. They are
+//! visible in the container's process table for the duration of the
+//! push; the container is the sandbox boundary (DESIGN.md section 10).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -80,6 +82,25 @@ fn base64(data: &[u8]) -> String {
     out
 }
 
+/// The `-c http.extraheader=...` argv carrying `credential`.
+///
+/// Every form the credential takes joins the scrub list: the raw
+/// secret, the base64 `user:secret` pair that sits in argv and on the
+/// wire, and the full `AUTHORIZATION: Basic` value a reflected error
+/// page would echo back.
+#[must_use]
+pub fn auth_args(credential: &Credential, secrets: &mut Vec<Secret>) -> Vec<String> {
+    let user = credential.user;
+    let pair = base64(format!("{user}:{}", credential.secret.expose()).as_bytes());
+    secrets.push(credential.secret.clone());
+    secrets.push(Secret::new(pair.as_str()));
+    secrets.push(Secret::new(format!("AUTHORIZATION: Basic {pair}")));
+    vec![
+        "-c".to_owned(),
+        format!("http.extraheader=AUTHORIZATION: Basic {pair}"),
+    ]
+}
+
 async fn git(
     args: &[&str],
     dir: &Path,
@@ -89,10 +110,7 @@ async fn git(
     let mut command = vec!["git".to_owned()];
     let env = BTreeMap::from([("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned())]);
     if let Some(cred) = credential {
-        let pair = base64(format!("{}:{}", cred.user, cred.secret.expose()).as_bytes());
-        command.push("-c".to_owned());
-        command.push(format!("http.extraheader=AUTHORIZATION: Basic {pair}"));
-        secrets.push(cred.secret.clone());
+        command.extend(auth_args(cred, secrets));
     }
     command.extend(args.iter().map(|s| (*s).to_owned()));
     let result = spawn(SpawnRequest {

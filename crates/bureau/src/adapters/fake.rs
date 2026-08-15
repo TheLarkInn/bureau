@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::StepDef;
 use crate::contract::{SCHEMA_VERSION, StepRequest, StepResult};
-use crate::process::{SharedLog, SpawnRequest, SpawnResult, spawn};
+use crate::process::{Secret, SharedLog, SpawnRequest, SpawnResult, spawn};
 
 /// One output chunk in a recorded transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +157,9 @@ pub async fn record(request: SpawnRequest) -> Transcript {
 ///
 /// Uses only the shell and chunk files written under `work_dir` — the
 /// fake adapter needs no bureau binary, so tests never depend on the
-/// build layout.
+/// build layout. `secrets` is the run's scrub list, forwarded
+/// unchanged: a fixture echoing a credential is redacted at the
+/// capture boundary exactly like a real subprocess.
 ///
 /// # Errors
 /// Propagates filesystem failures writing chunk files.
@@ -166,6 +168,7 @@ pub fn replay_request(
     work_dir: &Path,
     request: &StepRequest,
     timeout: Duration,
+    secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> std::io::Result<SpawnRequest> {
     use std::fmt::Write as _;
@@ -180,7 +183,7 @@ pub fn replay_request(
         env: std::collections::BTreeMap::new(),
         stdin: request.to_json().map_err(std::io::Error::other)?,
         timeout,
-        secrets: Vec::new(),
+        secrets,
         log,
     })
 }
@@ -211,10 +214,19 @@ fn write_chunk_line(
     Ok(())
 }
 
-/// Runs a step through the fake adapter: replay the fixture named by the
-/// step and derive the result. The fixture path is a testing seam and
-/// must be absolute (config validation enforces it).
-pub async fn execute(step: &StepDef, request: &StepRequest, log: Option<SharedLog>) -> StepResult {
+/// Runs a step through the fake adapter: replay the fixture named by
+/// the step and derive the result.
+///
+/// The fixture path is a testing seam and must be absolute (config
+/// validation enforces it). The run's scrub list reaches the replay
+/// spawn unchanged, so fixture output cannot leak a credential into
+/// the run log.
+pub async fn execute(
+    step: &StepDef,
+    request: &StepRequest,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> StepResult {
     use crate::process::SpawnOutcome;
     let Some(fixture) = step.fixture.as_deref() else {
         return failed("fake adapter requires a `fixture` path on the agent step");
@@ -225,7 +237,7 @@ pub async fn execute(step: &StepDef, request: &StepRequest, log: Option<SharedLo
     };
     let timeout = Duration::from_secs(step.timeout_secs.unwrap_or(300));
     let scratch = scratch_dir();
-    let built = replay_request(&transcript, &scratch, request, timeout, log);
+    let built = replay_request(&transcript, &scratch, request, timeout, secrets, log);
     let result = match built {
         Ok(req) => spawn(req).await,
         Err(e) => return failed(&format!("preparing replay: {e}")),
