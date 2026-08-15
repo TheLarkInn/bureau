@@ -10,6 +10,12 @@
   },
   "plugins": [
     {
+      "name": "atomic",
+      "description": "Single-purpose agents for bureau runs. A role references one unmodified as `agent: /atomic:<name>`.",
+      "version": "0.1.0",
+      "source": "./atomic"
+    },
+    {
       "name": "rust-design-patterns",
       "description": "Rust design patterns guidance based on the 'Prefer Small Crates' pattern: reviews workspace modularity after code is written via the rust-workspace-modularity-reviewer subagent.",
       "version": "1.0.0",
