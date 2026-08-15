@@ -25,7 +25,7 @@ pub fn list(runs: &Path) -> i32 {
     0
 }
 
-/// Every run dir's line; a missing `runs/` is simply empty.
+/// Every run dir's line; a missing `runs/` reads as empty.
 fn list_lines(runs: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(runs) else {
         return Vec::new();

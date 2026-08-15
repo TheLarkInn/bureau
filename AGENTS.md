@@ -1,57 +1,53 @@
 # Agent Instructions
 
-## The spec
-
-`DESIGN.md` is the authoritative specification for this repository. Read it
-before writing anything. In particular:
-
-- The naming law (§2) is enforced in review: no invented nouns, no mascots,
-  no Kubernetes vocabulary.
-- The non-goals (§3) are hard: do not build anything on that list.
-- Layers are built in order (§7); each layer ships with offline tests that
-  need no network and no model calls. All layers are built: layers 0–3,
-  the config loader, the engine, durable state, git worktrees, the forge
-  clients, and the reconcile loop.
-
-## Linting expectations
-
-This repository is a Rust workspace with strict lint configuration. All code must pass these lints before being considered complete.
-
-### Rust lints (from `[workspace.lints.rust]` in root `Cargo.toml`)
-
-- `unsafe_code = "forbid"` — never use `unsafe` blocks.
-- `warnings = "deny"` — all compiler warnings are errors; fix them, don't ignore them.
-
-### Clippy lints (from `[workspace.lints.clippy]`)
-
-All of the following Clippy lint groups are set to **deny**:
-
-- `all` (priority -1)
-- `cargo`
-- `complexity`
-- `correctness`
-- `nursery`
-- `pedantic`
-- `perf`
-- `style`
-- `suspicious`
-
-Additionally:
-
-- `allow_attributes = "forbid"` — do not use `#[allow(...)]` to suppress lints.
-- `cognitive_complexity = "deny"` — keep functions simple; break up complex logic.
-- `too_many_lines = "deny"` — keep functions short; extract helpers when needed.
-
-### Additional tooling
-
-- Root `clippy.toml` and `dylint.toml` exist — dylint runs extra lint libraries (see `[workspace.metadata.dylint]` in root `Cargo.toml`).
-
-### How to verify
-
-Run clippy across the workspace and fix every finding:
+Before you finish any change, run all four gates and fix every finding:
 
 ```sh
-cargo clippy --workspace --all-targets
+cargo fmt --all
+bash scripts/check-rust-policy.sh
+cargo clippy --workspace --all-targets --all-features
+cargo test --offline
 ```
 
-Do not add `#[allow]` attributes or otherwise suppress lints; refactor the code to satisfy them instead.
+## The spec
+
+`DESIGN.md` is the authoritative specification. Read it before writing
+anything. Three rules are enforced in review:
+
+1. Naming law (§2): no invented nouns, no mascots, no Kubernetes
+   vocabulary.
+2. Non-goals (§3) are hard: do not build anything on that list.
+3. Every layer ships with offline tests: no network, no model calls.
+
+All layers are built: process contract, fake adapter, step contract, run
+log, config loader, engine, durable state, git worktrees, forge clients,
+reconcile loop.
+
+## Hard limits (deny-level; CI fails otherwise)
+
+| Limit | Value | Tool |
+|---|---|---|
+| Function length | 25 lines | clippy `too_many_lines` |
+| Cognitive complexity | 4 — each `assert!` and `.await` costs 1 | clippy `cognitive_complexity` |
+| File length | 300 lines | `scripts/check-rust-policy.sh` |
+| `#[allow]`/`#[expect]` in source | zero | policy script + clippy `allow_attributes` |
+| `unsafe` | zero | `unsafe_code = "forbid"` |
+| Compiler warnings | zero | `warnings = "deny"` |
+
+Clippy groups at deny: `all`, `cargo`, `complexity`, `correctness`,
+`nursery`, `pedantic`, `perf`, `style`, `suspicious`.
+
+Two deliberate lint adjustments (root `Cargo.toml` comments carry the
+reasons): `allow_attributes` is `deny`, not `forbid` — `forbid` breaks
+spec-approved derive macros (clap); `multiple_crate_versions` is
+`allow` — reqwest's own tree requires both syn 2 and syn 3.
+
+## Writing tests under these limits
+
+A test function fits at most ~3 assert-family calls. So:
+
+1. Table-drive: one assert inside a loop over cases.
+2. Or aggregate values into a tuple/`Vec` and assert once.
+3. `.expect()` and `?` are free — use them for setup.
+
+Pattern to copy: `crates/bureau/tests/process_contract.rs`.

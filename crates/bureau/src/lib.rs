@@ -5,9 +5,8 @@
 //! against git worktrees. `DESIGN.md` at the repository root is the
 //! authoritative spec; the naming law there is enforced in review.
 //!
-//! Layers built so far: the process contract ([`process`]), the `fake`
-//! adapter ([`adapters`]), the step I/O contract ([`contract`]), the run
-//! log ([`runlog`]), and the config loader ([`config`]).
+//! Start here: [`process`] is the layer-0 contract everything spawns
+//! through; [`engine`] drives pipelines; [`reconcile`] is the loop.
 
 pub mod adapters;
 pub mod config;

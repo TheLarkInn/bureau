@@ -1,29 +1,27 @@
-//! Layer 4: the pipeline engine (DESIGN.md section 7) — a state machine
-//! over steps. Alternating `deterministic` and `agent` steps is the
-//! entire value proposition: the agent proposes, code verifies.
+//! Layer 4: the pipeline engine — a state machine over steps (DESIGN.md
+//! section 7). Entry point: [`Engine::run`] with a [`RunPlan`].
 //!
-//! Host phases wrap the pipeline file: the engine creates the worktree
-//! before the first step, and on the `done` terminal pushes the branch
-//! and opens the PR (DESIGN.md section 11 steps 2 and 9 live here, not in
-//! YAML — the schema has exactly two code-running step types).
+//! Alternating `deterministic` and `agent` steps is the entire value
+//! proposition: the agent proposes, code verifies.
 //!
-//! Terminal mapping: `done` → `Success` (push + PR; `NoWork` when the
-//! run changed nothing), `abort` → `Failure`, `escalate` → `Blocked` plus a
-//! comment on the work item. Decision steps run no code: they consume no
-//! retry budget and leave no events — they only route on the outcome of
-//! the step named by `over`.
+//! Run lifecycle:
 //!
-//! On resume the engine replays `events.jsonl` and skips completed steps
-//! — the log is the only source of truth for step state. The log records
-//! outcomes, not outputs, so a resumed run re-derives routing from
-//! outcomes and treats earlier steps' outputs as empty. A finished run
-//! returns its recorded outcome without appending anything (idempotent).
-//! A worktree cannot be re-attached through the `git` contract once its
-//! branch exists, so resume rebuilds `wt/` fresh from the mirror; steps
-//! must pass state through outputs and `artifacts/`, not the worktree.
+//! 1. Setup: create the run directory and the worktree (`wt/`).
+//! 2. Steps: follow explicit edges; a missing branch aborts (fails
+//!    closed). Decision steps only route — no code, no retry budget, no
+//!    events. Between steps, a `CANCEL` marker file in the run directory
+//!    aborts the run (`bureau cancel <run-id>` writes it).
+//! 3. Terminals: `done` → `Success` (push + PR; `NoWork` when nothing
+//!    changed), `abort` → `Failure`, `escalate` → `Blocked` plus a
+//!    comment on the work item.
 //!
-//! Between steps the engine checks for a `CANCEL` marker file in the run
-//! directory (`bureau cancel <run-id>` writes it) and aborts.
+//! Resume replays `events.jsonl` — the only source of truth for step
+//! state — and skips completed steps. The log records outcomes, not
+//! outputs, so a resumed run re-derives routing from outcomes, treats
+//! earlier steps' outputs as empty, and rebuilds `wt/` fresh from the
+//! mirror; steps pass state through outputs and `artifacts/`, never the
+//! worktree. A finished run returns its recorded outcome without
+//! appending anything (idempotent).
 
 mod drive;
 mod edge;

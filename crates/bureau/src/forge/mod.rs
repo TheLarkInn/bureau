@@ -1,9 +1,9 @@
-//! Layer 7: forges (DESIGN.md section 7).
+//! Layer 7: forges (DESIGN.md section 7). Implement the [`Forge`] trait
+//! to add one; use [`fake::FakeForge`] in tests.
 //!
-//! A forge is the GitHub or ADO API integration. The runner consumes the
-//! forge via this interface and never reimplements what the forge owns:
-//! work item storage, assignment, labels, repos, pull requests, review
-//! threads, merge queues, identity, human authorization.
+//! A forge is the GitHub or ADO API integration. The runner consumes it
+//! through this interface and never reimplements what the forge owns
+//! (work items, PRs, labels, review, identity — DESIGN.md section 1).
 
 pub mod ado;
 pub mod fake;

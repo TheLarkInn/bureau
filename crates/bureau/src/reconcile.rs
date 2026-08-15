@@ -60,8 +60,8 @@ struct Observed<'a> {
 
 /// Compares desired and observed state, closing the gap.
 ///
-/// Drain semantics: an assignment removed from the config is simply
-/// never claimed again; in-flight runs finish and release their leases.
+/// Drain semantics: an assignment removed from the config is never
+/// claimed again; in-flight runs finish and release their leases.
 pub struct Reconciler {
     /// The loaded runner configuration.
     pub config: Config,
