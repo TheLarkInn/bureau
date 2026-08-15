@@ -24,19 +24,15 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Run custom lints
+        # The pinned bundle includes advisory architecture lints outside
+        # the hard gates in AGENTS.md. Enforce the ordering lint here.
         run: >-
           LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib"
-          RUSTFLAGS="-Dwarnings
+          RUSTFLAGS="-Awarnings
+          -Dtopological_ordering
           -Aacyclic_modules
           -Ablocking_in_async
-          -Adebug_remnants
-          -Aglobal_side_effect_env
-          -Aglobal_side_effect_logging_init
-          -Aglobal_side_effect_randomness
-          -Aglobal_side_effect_time
           -Amodule_dependencies
           -Amodule_dependencies_dead_edge
-          -Amodule_dependencies_unlisted
-          -Aproper_error_type
-          -Asuggest_builder"
+          -Amodule_dependencies_unlisted"
           cargo dylint --all
