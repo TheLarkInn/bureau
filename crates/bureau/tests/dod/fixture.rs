@@ -23,6 +23,13 @@ const ASSIGNMENT: &str = "fix-tests";
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// A temporary directory removed on drop.
 pub struct TestDir(PathBuf);
 
@@ -188,7 +195,11 @@ impl Rig {
     }
 
     pub fn engine(&self) -> Engine {
-        Engine::new(self.dir.path().join("runs"), self.dir.path().join("cache"))
+        Engine::new(
+            self.dir.path().join("runs"),
+            self.dir.path().join("cache"),
+            test_clock,
+        )
     }
 
     /// A plan whose git credential is `secret`. The scrubber's holdback
@@ -196,7 +207,7 @@ impl Rig {
     /// while a longer one exercises the torn-tail shape.
     pub fn plan(&self, secret: &str, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id(ASSIGNMENT),
+            run_id: new_run_id(ASSIGNMENT, test_clock()),
             assignment: assignment(generous()),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -207,6 +218,7 @@ impl Rig {
             item: item("42"),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new(secret))]),
+            daemon_env: BTreeMap::new(),
         }
     }
 }
@@ -215,10 +227,16 @@ impl Rig {
 fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Reconciler {
     Reconciler {
         config: config.clone(),
-        state: Arc::new(Store::open(db).expect("store opens")),
+        state: Arc::new(Store::open(db, test_clock).expect("store opens")),
         forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
-        engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
+        engine: Arc::new(Engine::new(
+            root.join("runs"),
+            root.join("cache"),
+            test_clock,
+        )),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+        daemon_env: BTreeMap::new(),
+        clock: test_clock,
     }
 }
 
@@ -250,8 +268,8 @@ impl Daemons {
         let a = tokio::spawn(async move { left.reconcile_once().await });
         let b = tokio::spawn(async move { right.reconcile_once().await });
         let (a, b) = tokio::join!(a, b);
-        let left = a.expect("left joins").expect("left pass");
-        let right = b.expect("right joins").expect("right pass");
+        let left = a.expect("left joins").expect("left pass").started;
+        let right = b.expect("right joins").expect("right pass").started;
         (left, right)
     }
 

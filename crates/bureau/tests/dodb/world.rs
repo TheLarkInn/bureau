@@ -15,6 +15,13 @@ use bureau::state::Store;
 
 use crate::fixtures::{self, ASSIGNMENT, TestDir};
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// One reconcile test's world: temp dirs, a local repo, a fake forge.
 pub struct World {
     dir: TestDir,
@@ -32,7 +39,7 @@ impl World {
         let url = fixtures::make_repo(dir.path());
         let items = ids.iter().map(|id| fixtures::item(id)).collect();
         let forge = Arc::new(FakeForge::new(items));
-        let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+        let store = Arc::new(Store::open_in_memory(test_clock).expect("in-memory store"));
         let reconciler = Arc::new(Reconciler {
             config: fixtures::config(&url, run, limits),
             state: store.clone(),
@@ -40,8 +47,11 @@ impl World {
             engine: Arc::new(Engine::new(
                 dir.path().join("runs"),
                 dir.path().join("cache"),
+                test_clock,
             )),
             credentials: credentials(),
+            daemon_env: BTreeMap::new(),
+            clock: test_clock,
         });
         Self {
             dir,
@@ -57,6 +67,7 @@ impl World {
             .reconcile_once()
             .await
             .expect("pass succeeds")
+            .started
     }
 
     /// The item ids the assignment holds live leases on, sorted.
@@ -111,7 +122,11 @@ impl EngineRig {
 
     /// Runs the one-step pipeline `run` under `credentials`.
     pub async fn run(&self, run: &str, credentials: BTreeMap<String, Secret>) -> RunOutcome {
-        let engine = Engine::new(self.dir.path().join("runs"), self.dir.path().join("cache"));
+        let engine = Engine::new(
+            self.dir.path().join("runs"),
+            self.dir.path().join("cache"),
+            test_clock,
+        );
         engine.run(&self.plan(run, credentials)).await
     }
 
@@ -123,7 +138,7 @@ impl EngineRig {
     /// The run's plan: the `fix` pipeline's one step, this rig's repo.
     fn plan(&self, run: &str, credentials: BTreeMap<String, Secret>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id(ASSIGNMENT),
+            run_id: new_run_id(ASSIGNMENT, test_clock()),
             assignment: fixtures::assignment(fixtures::generous()),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -134,6 +149,7 @@ impl EngineRig {
             item: fixtures::item("42"),
             forge: self.forge.clone(),
             credentials,
+            daemon_env: BTreeMap::new(),
         }
     }
 }

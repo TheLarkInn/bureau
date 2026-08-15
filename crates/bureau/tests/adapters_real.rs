@@ -70,6 +70,18 @@ impl Drop for PluginDir {
 
 const AGENT_BODY: &str = "---\nname: helper\ndescription: test\n---\nYou help.\n";
 
+/// The process environment, snapshotted as `main` would capture it.
+fn daemon_env() -> BTreeMap<String, String> {
+    std::env::vars().collect()
+}
+
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 fn role(agent: &str, adapter: AdapterKind, permissions: &[Permission]) -> Role {
     Role {
         name: "reviewer".to_owned(),
@@ -115,11 +127,13 @@ fn request(worktree: &Path) -> StepRequest {
 }
 
 fn copilot_request(role: &Role, step: &StepDef, dir: &Path) -> SpawnRequest {
-    copilot::spawn_request(role, step, &request(dir), Vec::new(), None)
+    let (env, request) = (daemon_env(), request(dir));
+    copilot::spawn_request(role, step, &request, &env, test_clock, Vec::new(), None)
 }
 
 fn claude_request(role: &Role, step: &StepDef, dir: &Path) -> SpawnRequest {
-    claude::spawn_request(role, step, &request(dir), Vec::new(), None)
+    let (env, request) = (daemon_env(), request(dir));
+    claude::spawn_request(role, step, &request, &env, test_clock, Vec::new(), None)
 }
 
 /// The argv value following `flag`.
@@ -148,7 +162,8 @@ fn copilot_passes_request_json_as_prompt_and_stdin() {
     let dir = TestDir::new("argv");
     let role = role("/no-such-plugin:analyzer", AdapterKind::Copilot, &[]);
     let request = request(dir.path());
-    let req = copilot::spawn_request(&role, &step(Some(60)), &request, Vec::new(), None);
+    let (step, env) = (step(Some(60)), daemon_env());
+    let req = copilot::spawn_request(&role, &step, &request, &env, test_clock, Vec::new(), None);
     let json = String::from_utf8(request.to_json().expect("serialize")).expect("utf8");
     let stdin = StepRequest::from_json(&req.stdin).expect("stdin parses");
     assert_copilot_argv(&req, &json);
@@ -211,7 +226,8 @@ fn claude_carries_the_request_on_stdin_only() {
     let dir = TestDir::new("claude-stdin");
     let role = role("/p:a", AdapterKind::Claude, &[]);
     let request = request(dir.path());
-    let req = claude::spawn_request(&role, &step(Some(5)), &request, Vec::new(), None);
+    let (step, env) = (step(Some(5)), daemon_env());
+    let req = claude::spawn_request(&role, &step, &request, &env, test_clock, Vec::new(), None);
     let stdin = StepRequest::from_json(&req.stdin).expect("stdin parses");
     let argv = [
         claude::BINARY,
@@ -233,46 +249,8 @@ fn claude_carries_the_request_on_stdin_only() {
     assert_eq!(req.timeout, Duration::from_secs(5));
 }
 
-#[test]
-fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
-    let cases: [(&[Permission], &str); 4] = [
-        (
-            &[Permission::RepoWrite],
-            "--allow-tool=shell(git:*)\u{1f}--deny-tool=shell(git push)",
-        ),
-        (&[Permission::RepoPush], "--allow-tool=shell(git:*)"),
-        (&[Permission::RepoRead], "--deny-tool=shell(*)"),
-        (&[], "--deny-tool=shell(*)"),
-    ];
-    for (permissions, flags) in cases {
-        let dir = TestDir::new("copilot-flags");
-        let role = role("/p:a", AdapterKind::Copilot, permissions);
-        let req = copilot_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[7..].join(SEP), flags);
-    }
-}
-
-#[test]
-fn claude_mirrors_the_push_boundary_and_denies_by_default() {
-    let cases: [(&[Permission], &str); 4] = [
-        (
-            &[Permission::RepoWrite],
-            "--allowedTools\u{1f}Bash(git:*)\u{1f}--disallowedTools\u{1f}Bash(git push:*)",
-        ),
-        (&[Permission::RepoPush], "--allowedTools\u{1f}Bash(git:*)"),
-        (&[Permission::RepoRead], "--disallowedTools\u{1f}Bash(*)"),
-        (&[], "--disallowedTools\u{1f}Bash(*)"),
-    ];
-    for (permissions, flags) in cases {
-        let dir = TestDir::new("claude-flags");
-        let role = role("/p:a", AdapterKind::Claude, permissions);
-        let req = claude_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[6..].join(SEP), flags);
-    }
-}
-
-// Reading env is safe; setting it is `unsafe` on edition 2024, so the
-// forwarding assertion adapts to whatever the test process has.
+// The snapshot adapts to whatever the test process has; setting env
+// in-process is `unsafe` on edition 2024, so tests never set it.
 #[test]
 fn copilot_env_forwards_and_scrubs_only_gh_token() {
     let dir = TestDir::new("env");
@@ -291,7 +269,8 @@ fn claude_env_and_scrub_list_carry_only_credentials() {
     let dir = TestDir::new("claude-env");
     let role = role("/p:a", AdapterKind::Claude, &[Permission::ModelInvoke]);
     let secrets = vec![Secret::new("engine-secret")];
-    let req = claude::spawn_request(&role, &step(None), &request(dir.path()), secrets, None);
+    let (step, env, request) = (step(None), daemon_env(), request(dir.path()));
+    let req = claude::spawn_request(&role, &step, &request, &env, test_clock, secrets, None);
     let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
     let hygiene = req.env.keys().all(|k| known.contains(&k.as_str()));
     let scrubbed = req.secrets.contains(&Secret::new("engine-secret"));

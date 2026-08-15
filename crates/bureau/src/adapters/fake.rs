@@ -12,17 +12,6 @@ use crate::config::StepDef;
 use crate::contract::{SCHEMA_VERSION, StepRequest, StepResult};
 use crate::process::{Secret, SharedLog, SpawnRequest, SpawnResult, spawn};
 
-/// One output chunk in a recorded transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Chunk {
-    /// Delay before emitting, relative to the previous chunk.
-    pub delay_ms: u64,
-    /// Which stream the bytes go to.
-    pub stream: Stream,
-    /// The bytes (UTF-8).
-    pub data: String,
-}
-
 /// Which stream a chunk belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,15 +22,15 @@ pub enum Stream {
     Stderr,
 }
 
-/// A recorded adapter session: the fixture the `fake` adapter replays.
+/// One output chunk in a recorded transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Transcript {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// Output chunks in order.
-    pub chunks: Vec<Chunk>,
-    /// Exit code the replay ends with.
-    pub exit_code: i32,
+pub struct Chunk {
+    /// Delay before emitting, relative to the previous chunk.
+    pub delay_ms: u64,
+    /// Which stream the bytes go to.
+    pub stream: Stream,
+    /// The bytes (UTF-8).
+    pub data: String,
 }
 
 /// Why a transcript could not be loaded or saved.
@@ -62,6 +51,25 @@ pub enum FakeError {
     /// Filesystem failure.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+fn schema_of(value: &serde_json::Value) -> String {
+    value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<missing>")
+        .to_owned()
+}
+
+/// A recorded adapter session: the fixture the `fake` adapter replays.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Transcript {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// Output chunks in order.
+    pub chunks: Vec<Chunk>,
+    /// Exit code the replay ends with.
+    pub exit_code: i32,
 }
 
 impl Transcript {
@@ -114,24 +122,6 @@ impl Transcript {
     }
 }
 
-fn schema_of(value: &serde_json::Value) -> String {
-    value
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("<missing>")
-        .to_owned()
-}
-
-/// Replays a transcript to this process's stdout and stderr, honoring
-/// chunk delays, and returns the recorded exit code.
-pub async fn replay(transcript: &Transcript) -> i32 {
-    for chunk in &transcript.chunks {
-        tokio::time::sleep(Duration::from_millis(chunk.delay_ms)).await;
-        emit(chunk);
-    }
-    transcript.exit_code
-}
-
 fn emit(chunk: &Chunk) {
     let bytes = chunk.data.as_bytes();
     match chunk.stream {
@@ -146,46 +136,21 @@ fn emit(chunk: &Chunk) {
     }
 }
 
+/// Replays a transcript to this process's stdout and stderr, honoring
+/// chunk delays, and returns the recorded exit code.
+pub async fn replay(transcript: &Transcript) -> i32 {
+    for chunk in &transcript.chunks {
+        tokio::time::sleep(Duration::from_millis(chunk.delay_ms)).await;
+        emit(chunk);
+    }
+    transcript.exit_code
+}
+
 /// Runs `request` under the layer-0 contract and returns the transcript a
 /// `fake` adapter can replay later.
 #[must_use]
 pub async fn record(request: SpawnRequest) -> Transcript {
     Transcript::from_result(&spawn(request).await)
-}
-
-/// Builds the layer-0 request that replays a transcript.
-///
-/// Uses only the shell and chunk files written under `work_dir` — the
-/// fake adapter needs no bureau binary, so tests never depend on the
-/// build layout. `secrets` is the run's scrub list, forwarded
-/// unchanged: a fixture echoing a credential is redacted at the
-/// capture boundary exactly like a real subprocess.
-///
-/// # Errors
-/// Propagates filesystem failures writing chunk files.
-pub fn replay_request(
-    transcript: &Transcript,
-    work_dir: &Path,
-    request: &StepRequest,
-    timeout: Duration,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> std::io::Result<SpawnRequest> {
-    use std::fmt::Write as _;
-    let mut script = String::new();
-    for i in 0..transcript.chunks.len() {
-        write_chunk_line(&mut script, transcript, i, work_dir)?;
-    }
-    let _ = writeln!(script, "exit {}", transcript.exit_code);
-    Ok(SpawnRequest {
-        argv: vec!["sh".to_owned(), "-c".to_owned(), script],
-        dir: request.worktree.clone(),
-        env: std::collections::BTreeMap::new(),
-        stdin: request.to_json().map_err(std::io::Error::other)?,
-        timeout,
-        secrets,
-        log,
-    })
 }
 
 fn write_chunk_line(
@@ -214,39 +179,41 @@ fn write_chunk_line(
     Ok(())
 }
 
-/// Runs a step through the fake adapter: replay the fixture named by
-/// the step and derive the result.
+/// Builds the layer-0 request that replays a transcript.
 ///
-/// The fixture path is a testing seam and must be absolute (config
-/// validation enforces it). The run's scrub list reaches the replay
-/// spawn unchanged, so fixture output cannot leak a credential into
-/// the run log.
-pub async fn execute(
-    step: &StepDef,
+/// Uses only the shell and chunk files written under `work_dir` — the
+/// fake adapter needs no bureau binary, so tests never depend on the
+/// build layout. `secrets` is the run's scrub list, forwarded
+/// unchanged: a fixture echoing a credential is redacted at the
+/// capture boundary exactly like a real subprocess.
+///
+/// # Errors
+/// Propagates filesystem failures writing chunk files.
+pub fn replay_request(
+    transcript: &Transcript,
+    work_dir: &Path,
     request: &StepRequest,
+    timeout: Duration,
+    clock: fn() -> u64,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
-) -> StepResult {
-    use crate::process::SpawnOutcome;
-    let Some(fixture) = step.fixture.as_deref() else {
-        return failed("fake adapter requires a `fixture` path on the agent step");
-    };
-    let transcript = match Transcript::load(Path::new(fixture)) {
-        Ok(t) => t,
-        Err(e) => return failed(&format!("loading fixture: {e}")),
-    };
-    let timeout = Duration::from_secs(step.timeout_secs.unwrap_or(300));
-    let scratch = scratch_dir();
-    let built = replay_request(&transcript, &scratch, request, timeout, secrets, log);
-    let result = match built {
-        Ok(req) => spawn(req).await,
-        Err(e) => return failed(&format!("preparing replay: {e}")),
-    };
-    let _ = std::fs::remove_dir_all(&scratch);
-    if result.outcome == SpawnOutcome::Timeout {
-        return failed("fake replay timed out");
+) -> std::io::Result<SpawnRequest> {
+    use std::fmt::Write as _;
+    let mut script = String::new();
+    for i in 0..transcript.chunks.len() {
+        write_chunk_line(&mut script, transcript, i, work_dir)?;
     }
-    super::result_from_spawn(&result)
+    let _ = writeln!(script, "exit {}", transcript.exit_code);
+    Ok(SpawnRequest {
+        argv: vec!["sh".to_owned(), "-c".to_owned(), script],
+        dir: request.worktree.clone(),
+        env: std::collections::BTreeMap::new(),
+        stdin: request.to_json().map_err(std::io::Error::other)?,
+        timeout,
+        secrets,
+        clock,
+        log,
+    })
 }
 
 fn scratch_dir() -> std::path::PathBuf {
@@ -270,4 +237,40 @@ fn failed(message: &str) -> StepResult {
         cost_usd: 0.0,
         message: message.to_owned(),
     }
+}
+
+/// Runs a step through the fake adapter: replay the fixture named by
+/// the step and derive the result.
+///
+/// The fixture path is a testing seam and must be absolute (config
+/// validation enforces it). The run's scrub list reaches the replay
+/// spawn unchanged, so fixture output cannot leak a credential into
+/// the run log.
+pub async fn execute(
+    step: &StepDef,
+    request: &StepRequest,
+    clock: fn() -> u64,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> StepResult {
+    use crate::process::SpawnOutcome;
+    let Some(fixture) = step.fixture.as_deref() else {
+        return failed("fake adapter requires a `fixture` path on the agent step");
+    };
+    let transcript = match Transcript::load(Path::new(fixture)) {
+        Ok(t) => t,
+        Err(e) => return failed(&format!("loading fixture: {e}")),
+    };
+    let timeout = Duration::from_secs(step.timeout_secs.unwrap_or(300));
+    let scratch = scratch_dir();
+    let built = replay_request(&transcript, &scratch, request, timeout, clock, secrets, log);
+    let result = match built {
+        Ok(req) => spawn(req).await,
+        Err(e) => return failed(&format!("preparing replay: {e}")),
+    };
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
+    if result.outcome == SpawnOutcome::Timeout {
+        return failed("fake replay timed out");
+    }
+    super::result_from_spawn(&result)
 }

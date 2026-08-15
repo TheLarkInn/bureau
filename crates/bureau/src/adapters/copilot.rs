@@ -29,6 +29,7 @@
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use super::real;
@@ -51,33 +52,18 @@ const DISCOVERY: real::Discovery = real::Discovery {
 /// Credential variable forwarded when the role holds a forge grant.
 const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
-/// Builds the layer-0 request for a `copilot` step: the step contract
-/// JSON as `-p` and on stdin, credentials in env, permissions in argv.
-///
-/// `secrets` is the engine's scrub list; forwarded credential values
-/// are appended to it. Building never fails: agent materialization is
-/// best effort and the CLI surfaces its own errors at spawn time.
-#[must_use]
-pub fn spawn_request(
-    role: &Role,
-    step: &StepDef,
-    request: &StepRequest,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> SpawnRequest {
-    let json = request.to_json().unwrap_or_default();
-    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
-    let found = real::scoped_credentials(&role.permissions, &real::FORGE_GRANTS, &CREDENTIAL_VARS);
-    let (env, secrets) = real::child_env(found, secrets);
-    SpawnRequest {
-        argv: argv(role, &agent, &json),
-        dir: request.worktree.clone(),
-        env,
-        stdin: json,
-        timeout: real::timeout(step),
-        secrets,
-        log,
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default flag instead of silence.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let (write, push) = real::push_boundary(permissions);
+    if !write {
+        return vec!["--deny-tool=shell(*)".to_owned()];
     }
+    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
+    if !push {
+        flags.push("--deny-tool=shell(git push)".to_owned());
+    }
+    flags
 }
 
 /// `copilot -p <json> --agent <name> --model <model>` plus the mirror.
@@ -95,18 +81,41 @@ fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
     argv
 }
 
-/// The push-boundary mirror; see the module table. Without a write
-/// grant the CLI gets a deny-by-default flag instead of silence.
-fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let (write, push) = real::push_boundary(permissions);
-    if !write {
-        return vec!["--deny-tool=shell(*)".to_owned()];
+/// Builds the layer-0 request for a `copilot` step: the step contract
+/// JSON as `-p` and on stdin, credentials in env, permissions in argv.
+///
+/// `secrets` is the engine's scrub list; forwarded credential values
+/// are appended to it. Building never fails: agent materialization is
+/// best effort and the CLI surfaces its own errors at spawn time.
+#[must_use]
+pub fn spawn_request(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    daemon_env: &BTreeMap<String, String>,
+    clock: fn() -> u64,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> SpawnRequest {
+    let json = request.to_json().unwrap_or_default();
+    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let found = real::scoped_credentials(
+        daemon_env,
+        &role.permissions,
+        &real::FORGE_GRANTS,
+        &CREDENTIAL_VARS,
+    );
+    let (env, secrets) = real::child_env(found, secrets);
+    SpawnRequest {
+        argv: argv(role, &agent, &json),
+        dir: request.worktree.clone(),
+        env,
+        stdin: json,
+        timeout: real::timeout(step),
+        secrets,
+        clock,
+        log,
     }
-    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
-    if !push {
-        flags.push("--deny-tool=shell(git push)".to_owned());
-    }
-    flags
 }
 
 /// Runs a `copilot` step and derives the step result.
@@ -118,9 +127,11 @@ pub async fn execute(
     role: &Role,
     step: &StepDef,
     request: &StepRequest,
+    daemon_env: &BTreeMap<String, String>,
+    clock: fn() -> u64,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> StepResult {
-    let built = spawn_request(role, step, request, secrets, log);
+    let built = spawn_request(role, step, request, daemon_env, clock, secrets, log);
     super::result_from_spawn(&crate::process::spawn(built).await)
 }

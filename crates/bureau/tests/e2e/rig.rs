@@ -20,6 +20,13 @@ use super::steps::CHECK;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// A temporary directory removed on drop.
 pub struct TestDir(PathBuf);
 
@@ -105,7 +112,11 @@ impl Rig {
 
     /// An engine writing runs and mirrors under this rig's temp dir.
     pub fn engine(&self) -> Engine {
-        Engine::new(self.dir.path().join("runs"), self.dir.path().join("cache"))
+        Engine::new(
+            self.dir.path().join("runs"),
+            self.dir.path().join("cache"),
+            test_clock,
+        )
     }
 
     /// Lands the run branch on the remote's default branch, as a human
@@ -119,7 +130,7 @@ impl Rig {
     /// A plan running `steps` against this rig's repo and forge.
     pub fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-failing-test"),
+            run_id: new_run_id("fix-failing-test", test_clock()),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix-failing-test".to_owned(),
@@ -133,6 +144,7 @@ impl Rig {
             item: item(),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            daemon_env: BTreeMap::new(),
         }
     }
 }

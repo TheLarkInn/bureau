@@ -1,0 +1,332 @@
+Building workspace metadata entry `rust-lints`
+    Finished `release` profile [optimized] target(s) in 0.12s
+Checking with toolchain `nightly-2026-01-22-x86_64-unknown-linux-gnu`
+   Compiling strsim v0.11.1
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+   Compiling prettyplease v0.2.37
+   Compiling rustversion v1.0.23
+   Compiling syn v2.0.119
+   Compiling synstructure v0.13.2
+   Compiling darling_core v0.21.3
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+    Checking zerofrom v0.1.8
+    Checking yoke v0.8.3
+    Checking zerovec v0.11.7
+    Checking zerotrie v0.2.5
+   Compiling darling_macro v0.21.3
+    Checking tinystr v0.8.4
+    Checking potential_utf v0.1.6
+    Checking icu_collections v2.1.1
+   Compiling darling v0.21.3
+    Checking icu_locale_core v2.1.1
+   Compiling bon-macros v3.9.3
+    Checking icu_provider v2.1.1
+    Checking icu_normalizer v2.1.1
+    Checking icu_properties v2.1.2
+    Checking idna_adapter v1.2.1
+    Checking idna v1.1.0
+    Checking url v2.5.8
+    Checking tower-http v0.6.11
+    Checking reqwest v0.12.28
+    Checking bon v3.9.3
+    Checking bureau v0.1.0 (/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-silver-doodle/crates/bureau)
+error: module `adapters` is not listed in module_dependencies config
+  --> crates/bureau/src/adapters/claude.rs:32:21
+   |
+32 | use crate::config::{Permission, Role, StepDef};
+   |                     ^^^^^^^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+   = note: `#[deny(module_dependencies_unlisted)]` on by default
+
+error: module `config` is not listed in module_dependencies config
+  --> crates/bureau/src/adapters/claude.rs:32:33
+   |
+32 | use crate::config::{Permission, Role, StepDef};
+   |                                 ^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `contract` is not listed in module_dependencies config
+  --> crates/bureau/src/adapters/claude.rs:33:23
+   |
+33 | use crate::contract::{StepRequest, StepResult};
+   |                       ^^^^^^^^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `process` is not listed in module_dependencies config
+  --> crates/bureau/src/adapters/claude.rs:34:22
+   |
+34 | use crate::process::{Secret, SharedLog, SpawnRequest};
+   |                      ^^^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: blocking call to `std::fs::remove_dir_all()` inside async context
+   --> crates/bureau/src/adapters/fake.rs:268:13
+    |
+268 |     let _ = std::fs::remove_dir_all(&scratch);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: use an async-aware alternative, or wrap the blocking call in `tokio::task::spawn_blocking()`
+    = note: `#[deny(blocking_in_async)]` on by default
+
+error: direct call to `std::env::var()`
+   --> crates/bureau/src/adapters/real.rs:144:9
+    |
+144 |         std::env::var(name)
+    |         ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: move this to your application's entry point and pass the value as a parameter
+    = note: `-D global-side-effect-env` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(global_side_effect_env)]`
+
+error: module `ConfigError` is not listed in module_dependencies config
+ --> crates/bureau/src/config/validate.rs:8:1
+  |
+8 | use crate::ConfigError;
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: struct `StepRequest` has 7 fields; consider exposing a `#[builder]` constructor
+   --> crates/bureau/src/contract.rs:101:1
+    |
+101 | / pub struct StepRequest {
+102 | |     /// Must equal [`SCHEMA_VERSION`].
+103 | |     pub schema: String,
+104 | |     /// Owning run.
+...   |
+115 | |     pub artifacts: BTreeMap<String, PathBuf>,
+116 | | }
+    | |_^
+    |
+    = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+    = note: `-D suggest-builder` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(suggest_builder)]`
+
+error: struct `StepResult` has 7 fields; consider exposing a `#[builder]` constructor
+   --> crates/bureau/src/contract.rs:139:1
+    |
+139 | / pub struct StepResult {
+140 | |     /// Must equal [`SCHEMA_VERSION`].
+141 | |     pub schema: String,
+142 | |     /// What the step concluded.
+...   |
+153 | |     pub message: String,
+154 | | }
+    | |_^
+    |
+    = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+
+error: module `engine` is not listed in module_dependencies config
+ --> crates/bureau/src/engine/drive.rs:9:1
+  |
+9 | use crate::contract::StepOutcome;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `git` is not listed in module_dependencies config
+  --> crates/bureau/src/engine/drive.rs:10:18
+   |
+10 | use crate::git::{CheckoutCache, Worktree, credential_for};
+   |                  ^^^^^^^^^^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `runlog` is not listed in module_dependencies config
+  --> crates/bureau/src/engine/drive.rs:12:21
+   |
+12 | use crate::runlog::{self, EventKind};
+   |                     ^^^^
+   |
+   = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `forge` is not listed in module_dependencies config
+ --> crates/bureau/src/engine/finalize.rs:9:20
+  |
+9 | use crate::forge::{Pr, PrRequest};
+  |                    ^^
+  |
+  = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: direct call to `std::time::SystemTime::now()`
+  --> crates/bureau/src/engine/log.rs:18:5
+   |
+18 |     SystemTime::now()
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+   = note: `-D global-side-effect-time` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(global_side_effect_time)]`
+
+error: struct `RunCtx` has 7 fields; consider exposing a `#[builder]` constructor
+  --> crates/bureau/src/engine/machine.rs:64:1
+   |
+64 | / pub(super) struct RunCtx {
+65 | |     /// Everything one run needs.
+66 | |     pub(super) plan: RunPlan,
+67 | |     /// The run log, shared with live step sinks.
+...  |
+78 | |     start: edge::Route,
+79 | | }
+   | |_^
+   |
+   = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+
+error: direct call to `std::time::SystemTime::now()`
+   --> crates/bureau/src/engine/mod.rs:159:18
+    |
+159 |     let millis = SystemTime::now()
+    |                  ^^^^^^^^^^^^^^^^^
+    |
+    = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+
+error: blocking call to `std::fs::create_dir_all()` inside async context
+   --> crates/bureau/src/git.rs:183:13
+    |
+183 |             std::fs::create_dir_all(&self.root)?;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: use an async-aware alternative, or wrap the blocking call in `tokio::task::spawn_blocking()`
+
+error: direct call to `std::env::var()`
+  --> crates/bureau/src/process/credential.rs:56:24
+   |
+56 |     if let Ok(value) = std::env::var(env_var_name(reference)) {
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: move this to your application's entry point and pass the value as a parameter
+
+error: direct call to `std::env::var()`
+  --> crates/bureau/src/process/credential.rs:59:22
+   |
+59 |     if let Ok(dir) = std::env::var(DIR_VAR) {
+   |                      ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: move this to your application's entry point and pass the value as a parameter
+
+error: struct `SpawnResult` has 6 fields; consider exposing a `#[builder]` constructor
+  --> crates/bureau/src/process/spawn.rs:66:1
+   |
+66 | / pub struct SpawnResult {
+67 | |     /// How the process ended.
+68 | |     pub outcome: SpawnOutcome,
+69 | |     /// `Some` only when `outcome == Exited`.
+...  |
+78 | |     pub error: Option<String>,
+79 | | }
+   | |_^
+   |
+   = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+
+error: direct call to `std::time::Instant::now()`
+   --> crates/bureau/src/process/spawn.rs:248:19
+    |
+248 |     let started = Instant::now();
+    |                   ^^^^^^^^^^^^^^
+    |
+    = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+
+error: module `reconcile` is not listed in module_dependencies config
+ --> crates/bureau/src/reconcile/dedup.rs:4:1
+  |
+4 | use crate::contract::StepOutcome;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: module `state` is not listed in module_dependencies config
+ --> crates/bureau/src/reconcile/dedup.rs:6:1
+  |
+6 | use crate::state::Disposition;
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add this module to [module_dependencies.allow] in dylint.toml
+
+error: direct call to `std::time::SystemTime::now()`
+  --> crates/bureau/src/reconcile.rs:71:17
+   |
+71 |     let nanos = SystemTime::now()
+   |                 ^^^^^^^^^^^^^^^^^
+   |
+   = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+
+error: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/reconcile.rs:159:17
+    |
+159 |                 eprintln!("reconcile pass failed: {error}");
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+    = note: `-D debug-remnants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(debug_remnants)]`
+
+error: direct call to `std::time::SystemTime::now()`
+  --> crates/bureau/src/runlog/mod.rs:35:5
+   |
+35 |     SystemTime::now()
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+
+error: direct call to `std::time::SystemTime::now()`
+  --> crates/bureau/src/state.rs:61:18
+   |
+61 |     let millis = SystemTime::now()
+   |                  ^^^^^^^^^^^^^^^^^
+   |
+   = help: accept a time parameter or use a clock trait so callers can control the time source in tests
+
+error: cyclic dependency between sibling modules under `crate`:
+              `adapters` → `config` → `adapters`
+  --> crates/bureau/src/adapters/claude.rs:32:21
+   |
+32 | use crate::config::{Permission, Role, StepDef};
+   |                     ^^^^^^^^^^ `adapters` → `config`
+   |
+  ::: crates/bureau/src/config/files.rs:11:1
+   |
+11 | use crate::adapters::AdapterKind;
+   | --------------------------------- `config` → `adapters`
+   |
+   = help: break this cycle by moving shared items to a module that both `adapters` and `config` can depend on, or restructure so the dependency flows in one direction
+   = note: `#[deny(acyclic_modules)]` on by default
+
+error: cyclic dependency between sibling modules under `config`:
+              `validate` → `validate_pipeline` → `validate`
+  --> crates/bureau/src/config/validate.rs:25:5
+   |
+25 |     super::validate_pipeline::validate_pipelines(config)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `validate` → `validate_pipeline`
+   |
+  ::: crates/bureau/src/config/validate_pipeline.rs:11:23
+   |
+11 | use super::validate::{path_of, push};
+   |                       ------- `validate_pipeline` → `validate`
+   |
+   = help: break this cycle by moving shared items to a module that both `validate` and `validate_pipeline` can depend on, or restructure so the dependency flows in one direction
+
+error: cyclic dependency between sibling modules under `engine`:
+              `execute` → `machine` → `execute`
+ --> crates/bureau/src/engine/execute.rs:9:22
+  |
+9 | use super::machine::{RunCtx, WtCtx};
+  |                      ^^^^^^ `execute` → `machine`
+  |
+ ::: crates/bureau/src/engine/machine.rs:7:28
+  |
+7 | use super::{RunPlan, edge, execute, resume, stream};
+  |                            ------- `machine` → `execute`
+  |
+  = help: break this cycle by moving shared items to a module that both `execute` and `machine` can depend on, or restructure so the dependency flows in one direction
+
+error: could not compile `bureau` (lib) due to 30 previous errors
+Error: Error: Compilation failed with toolchain `nightly-2026-01-22-x86_64-unknown-linux-gnu`
+
+Caused by:
+    command failed: env -u CARGO -u RUSTC CLIPPY_DISABLE_DOCS_LINKS="null" DYLINT_LIBS="[\"/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-silver-doodle/target/dylint/libraries/nightly-2026-01-22-x86_64-unknown-linux-gnu/release/librust_lints@nightly-2026-01-22-x86_64-unknown-linux-gnu.so\"]" DYLINT_METADATA="{\"libraries\":[{\"git\":\"https://github.com/li-kai/rust-lints\",\"rev\":\"3e4427e520f87f638e8b4cc1926cc641fe93d6c8\"}]}" DYLINT_NO_DEPS="0" RUSTC_WORKSPACE_WRAPPER="/home/selarkin/.dylint_drivers/nightly-2026-01-22-x86_64-unknown-linux-gnu/dylint-driver" RUSTUP_TOOLCHAIN="nightly-2026-01-22-x86_64-unknown-linux-gnu" "cargo" "check" "--target-dir" "/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-silver-doodle/target/dylint/target/nightly-2026-01-22-x86_64-unknown-linux-gnu"

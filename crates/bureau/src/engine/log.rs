@@ -9,7 +9,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::process::{ScrubWriter, Secret};
 use crate::runlog::{self, Event, EventKind};
@@ -20,6 +19,8 @@ pub(super) struct Appender {
     writer: ScrubWriter<BufWriter<File>>,
     next_seq: u64,
     dir: PathBuf,
+    /// Wall clock (millis since the Unix epoch) stamping each event.
+    clock: fn() -> u64,
 }
 
 impl Appender {
@@ -28,7 +29,12 @@ impl Appender {
     ///
     /// # Errors
     /// Propagates filesystem failures, including an existing log.
-    pub(super) fn create(runs_dir: &Path, run_id: &str, secrets: &[Secret]) -> io::Result<Self> {
+    pub(super) fn create(
+        runs_dir: &Path,
+        run_id: &str,
+        secrets: &[Secret],
+        clock: fn() -> u64,
+    ) -> io::Result<Self> {
         let dir = runlog::run_dir(runs_dir, run_id);
         std::fs::create_dir_all(dir.join("artifacts"))?;
         std::fs::create_dir_all(dir.join("wt"))?;
@@ -40,6 +46,7 @@ impl Appender {
             writer: ScrubWriter::new(BufWriter::new(file), secrets),
             next_seq: 0,
             dir,
+            clock,
         })
     }
 
@@ -48,7 +55,7 @@ impl Appender {
     ///
     /// # Errors
     /// Propagates filesystem failures and rejects an unparseable log.
-    pub(super) fn resume(dir: &Path, secrets: &[Secret]) -> io::Result<Self> {
+    pub(super) fn resume(dir: &Path, secrets: &[Secret], clock: fn() -> u64) -> io::Result<Self> {
         let events = runlog::read_events(dir)?;
         let next_seq = events.last().map_or(0, |event| event.seq + 1);
         let file = OpenOptions::new()
@@ -58,6 +65,7 @@ impl Appender {
             writer: ScrubWriter::new(BufWriter::new(file), secrets),
             next_seq,
             dir: dir.to_path_buf(),
+            clock,
         })
     }
 
@@ -73,7 +81,7 @@ impl Appender {
     pub(super) fn append(&mut self, kind: EventKind, data: serde_json::Value) -> io::Result<u64> {
         let event = Event {
             seq: self.next_seq,
-            at_ms: now_millis(),
+            at_ms: (self.clock)(),
             kind,
             data,
         };
@@ -94,10 +102,4 @@ impl Appender {
         self.writer.finish()?;
         Ok(())
     }
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

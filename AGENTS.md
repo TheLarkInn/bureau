@@ -1,13 +1,26 @@
 # Agent Instructions
 
-Before you finish any change, run all four gates and fix every finding:
+Before you finish any change, run all five gates and fix every finding:
 
 ```sh
 cargo fmt --all
 bash scripts/check-rust-policy.sh
 cargo clippy --workspace --all-targets --all-features
 cargo test --offline
+LIBRARY_PATH="$(rustc +nightly-2026-01-22 --print sysroot)/lib" RUSTFLAGS="-Dwarnings -A module-dependencies-dead-edge" cargo dylint --all
 ```
+
+The last gate — the custom dylint libraries (`li-kai/rust-lints`, pinned in
+`[workspace.metadata.dylint]`) — is arguably the most important and the
+easiest to forget: it does not run under plain `cargo clippy`. Never skip
+it. If the pinned nightly is missing: `rustup toolchain install
+nightly-2026-01-22 --component rustc-dev`.
+
+The `-A module-dependencies-dead-edge` carve-out is deliberate: the
+dead-edge check runs per crate, so in this lib+bin package every
+lib-internal edge reads as dead in the bin crate. The allowlist in
+`dylint.toml` stays fully enforced. Adding a module edge means editing
+`dylint.toml` — that edit is the architectural decision reviewers check.
 
 ## The spec
 

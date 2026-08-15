@@ -28,6 +28,8 @@
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
+use std::collections::BTreeMap;
+
 use super::real;
 use crate::config::{Permission, Role, StepDef};
 use crate::contract::{StepRequest, StepResult};
@@ -44,48 +46,6 @@ const DISCOVERY: real::Discovery = real::Discovery {
 
 /// Credential variables forwarded when the role holds `model:invoke`.
 const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
-
-/// Builds the layer-0 request for a `claude` step: the step contract
-/// JSON on stdin, credentials in env, permissions in argv.
-///
-/// `secrets` is the engine's scrub list; forwarded credential values
-/// are appended to it. Building never fails: agent materialization is
-/// best effort and the CLI surfaces its own errors at spawn time.
-#[must_use]
-pub fn spawn_request(
-    role: &Role,
-    step: &StepDef,
-    request: &StepRequest,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> SpawnRequest {
-    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
-    let found = real::scoped_credentials(&role.permissions, &real::MODEL_GRANTS, &CREDENTIAL_VARS);
-    let (env, secrets) = real::child_env(found, secrets);
-    SpawnRequest {
-        argv: argv(role, &agent),
-        dir: request.worktree.clone(),
-        env,
-        stdin: request.to_json().unwrap_or_default(),
-        timeout: real::timeout(step),
-        secrets,
-        log,
-    }
-}
-
-/// `claude -p --agent <name> --model <model>` plus the mirror.
-fn argv(role: &Role, agent: &str) -> Vec<String> {
-    let mut argv = vec![
-        BINARY.to_owned(),
-        "-p".to_owned(),
-        "--agent".to_owned(),
-        agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
-    ];
-    argv.extend(permission_flags(&role.permissions));
-    argv
-}
 
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default rule instead of silence.
@@ -104,6 +64,56 @@ fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     flags
 }
 
+/// `claude -p --agent <name> --model <model>` plus the mirror.
+fn argv(role: &Role, agent: &str) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--model".to_owned(),
+        role.model.clone(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
+
+/// Builds the layer-0 request for a `claude` step: the step contract
+/// JSON on stdin, credentials in env, permissions in argv.
+///
+/// `secrets` is the engine's scrub list; forwarded credential values
+/// are appended to it. Building never fails: agent materialization is
+/// best effort and the CLI surfaces its own errors at spawn time.
+#[must_use]
+pub fn spawn_request(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    daemon_env: &BTreeMap<String, String>,
+    clock: fn() -> u64,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> SpawnRequest {
+    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let found = real::scoped_credentials(
+        daemon_env,
+        &role.permissions,
+        &real::MODEL_GRANTS,
+        &CREDENTIAL_VARS,
+    );
+    let (env, secrets) = real::child_env(found, secrets);
+    SpawnRequest {
+        argv: argv(role, &agent),
+        dir: request.worktree.clone(),
+        env,
+        stdin: request.to_json().unwrap_or_default(),
+        timeout: real::timeout(step),
+        secrets,
+        clock,
+        log,
+    }
+}
+
 /// Runs a `claude` step and derives the step result.
 ///
 /// A spawn failure is data: it becomes `StepOutcome::Failure` through
@@ -113,9 +123,11 @@ pub async fn execute(
     role: &Role,
     step: &StepDef,
     request: &StepRequest,
+    daemon_env: &BTreeMap<String, String>,
+    clock: fn() -> u64,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> StepResult {
-    let built = spawn_request(role, step, request, secrets, log);
+    let built = spawn_request(role, step, request, daemon_env, clock, secrets, log);
     super::result_from_spawn(&crate::process::spawn(built).await)
 }

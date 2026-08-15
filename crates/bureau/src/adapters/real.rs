@@ -7,8 +7,8 @@
 //!
 //! Section 10 checks permissions before spawn: each grant maps to a
 //! credential that layer 0 does or does not inject. An adapter reads a
-//! credential variable from the daemon's environment only when the
-//! role holds a grant mapped to it:
+//! credential variable from the daemon's captured environment snapshot
+//! only when the role holds a grant mapped to it:
 //!
 //! | credential variables                           | grants |
 //! |------------------------------------------------|--------|
@@ -36,29 +36,6 @@ pub struct Discovery {
     pub dir: &'static str,
     /// File suffix discovery requires (e.g. `.agent.md`).
     pub suffix: &'static str,
-}
-
-/// Resolves a role's agent reference to the `--agent` value
-/// (DESIGN.md section 6).
-///
-/// A `/plugin:agent` reference resolves from
-/// `.ai/plugins/<plugin>/agents/<name>.agent.md` under the daemon's
-/// current directory; when that file does not resolve, the name alone
-/// is passed through and the plugin is expected to be installed in the
-/// environment (container provisioning, section 10). A direct `.md`
-/// path always materializes. Copies are verbatim and best effort: on
-/// any I/O failure nothing is copied, the CLI resolves the agent name
-/// itself, and its error surfaces as a step `Failure`.
-pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
-    if let Some((plugin, name)) = plugin_parts(agent) {
-        let source = plugin_agent_path(plugin, name);
-        let _copied = copy_agent(&source, worktree, discovery, name);
-        return name.to_owned();
-    }
-    let source = Path::new(agent);
-    let name = agent_name(source);
-    let _copied = copy_agent(source, worktree, discovery, &name);
-    name
 }
 
 /// Splits a `/plugin:agent` reference; anything else is a path.
@@ -104,6 +81,29 @@ fn copy_agent(
     Some(dest)
 }
 
+/// Resolves a role's agent reference to the `--agent` value
+/// (DESIGN.md section 6).
+///
+/// A `/plugin:agent` reference resolves from
+/// `.ai/plugins/<plugin>/agents/<name>.agent.md` under the daemon's
+/// current directory; when that file does not resolve, the name alone
+/// is passed through and the plugin is expected to be installed in the
+/// environment (container provisioning, section 10). A direct `.md`
+/// path always materializes. Copies are verbatim and best effort: on
+/// any I/O failure nothing is copied, the CLI resolves the agent name
+/// itself, and its error surfaces as a step `Failure`.
+pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
+    if let Some((plugin, name)) = plugin_parts(agent) {
+        let source = plugin_agent_path(plugin, name);
+        let _copied = copy_agent(&source, worktree, discovery, name);
+        return name.to_owned();
+    }
+    let source = Path::new(agent);
+    let name = agent_name(source);
+    let _copied = copy_agent(source, worktree, discovery, &name);
+    name
+}
+
 /// The push boundary a role's permissions imply, as `(write, push)`.
 ///
 /// `repo:push` implies `repo:write` — a push is a write that lands.
@@ -132,35 +132,35 @@ pub const FORGE_GRANTS: [Permission; 7] = [
 /// The grant that maps to a model credential (DESIGN.md section 10).
 pub const MODEL_GRANTS: [Permission; 1] = [Permission::ModelInvoke];
 
-/// Reads `names` from the daemon's environment when `permissions` hold
-/// any of `grants`, and reads nothing otherwise — the section-10 check
-/// before spawn, applied at the one place credentials cross over.
+/// Reads credential variables from the daemon's captured environment.
+///
+/// A missing or empty variable is not forwarded; the engine resolves
+/// repo credentials itself, so that is never an error here. Callers
+/// gate through [`scoped_credentials`] so a role without the mapped
+/// grant receives nothing.
+pub fn daemon_credentials(env: &BTreeMap<String, String>, names: &[&str]) -> Vec<(String, String)> {
+    let found = |name: &str| {
+        env.get(name)
+            .filter(|value| !value.is_empty())
+            .map(|value| (name.to_owned(), value.clone()))
+    };
+    names.iter().copied().filter_map(found).collect()
+}
+
+/// Reads `names` from the daemon's environment snapshot when
+/// `permissions` hold any of `grants`, and reads nothing otherwise —
+/// the section-10 check before spawn, applied at the one place
+/// credentials cross over.
 pub fn scoped_credentials(
+    env: &BTreeMap<String, String>,
     permissions: &[Permission],
     grants: &[Permission],
     names: &[&str],
 ) -> Vec<(String, String)> {
     if grants.iter().any(|grant| permissions.contains(grant)) {
-        return daemon_credentials(names);
+        return daemon_credentials(env, names);
     }
     Vec::new()
-}
-
-/// Reads credential variables from the daemon's environment.
-///
-/// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
-/// missing or empty variable is not forwarded; the engine resolves
-/// repo credentials itself, so that is never an error here. Callers
-/// gate through [`scoped_credentials`] so a role without the mapped
-/// grant receives nothing.
-pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
-    let found = |name: &str| {
-        std::env::var(name)
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(|value| (name.to_owned(), value))
-    };
-    names.iter().copied().filter_map(found).collect()
 }
 
 /// Builds the complete child env and scrub list from found credentials.
@@ -179,6 +179,7 @@ pub fn child_env(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     use super::{
@@ -233,12 +234,13 @@ mod tests {
         (Permission::ModelInvoke, false, true),
     ];
 
-    /// `PATH` stands in for a credential variable because a test
-    /// process always has it set and non-empty.
+    /// `PATH` stands in for a credential variable in a synthetic
+    /// snapshot of the daemon's environment.
     #[test]
     fn scoped_credentials_follow_the_permission_mapping() {
+        let env = BTreeMap::from([("PATH".to_owned(), "present".to_owned())]);
         let found = |p: Permission, grants: &[Permission]| {
-            scoped_credentials(&[p], grants, &["PATH"]).len()
+            scoped_credentials(&env, &[p], grants, &["PATH"]).len()
         };
         for (permission, forge, model) in MAPPING {
             let seen = (
@@ -251,7 +253,7 @@ mod tests {
                 "{permission:?}"
             );
         }
-        assert!(scoped_credentials(&[], &FORGE_GRANTS, &["PATH"]).is_empty());
+        assert!(scoped_credentials(&env, &[], &FORGE_GRANTS, &["PATH"]).is_empty());
     }
 
     #[test]

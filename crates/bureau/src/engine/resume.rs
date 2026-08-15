@@ -11,14 +11,6 @@ use crate::config::Pipeline;
 use crate::contract::StepOutcome;
 use crate::runlog::{self, Event, RunState, RunStatus};
 
-/// What a replayed log says about how to proceed.
-pub(super) enum Replay {
-    /// The log holds `run_finished`; return the outcome untouched.
-    Finished(StepOutcome),
-    /// Continue from the replayed history.
-    Resume(History),
-}
-
 /// Replayed step history.
 pub(super) struct History {
     /// Entries per step name, from `step_started` records.
@@ -43,6 +35,14 @@ impl History {
     }
 }
 
+/// What a replayed log says about how to proceed.
+pub(super) enum Replay {
+    /// The log holds `run_finished`; return the outcome untouched.
+    Finished(StepOutcome),
+    /// Continue from the replayed history.
+    Resume(History),
+}
+
 /// The pipeline's entry step.
 pub(super) fn entry(pipeline: &Pipeline) -> Route {
     pipeline.steps.first().map_or_else(
@@ -51,15 +51,17 @@ pub(super) fn entry(pipeline: &Pipeline) -> Route {
     )
 }
 
-/// Replays events into a resume decision.
-pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
-    let Some(state) = runlog::replay(events) else {
-        return Replay::Resume(History::fresh(entry(pipeline), false));
+/// Where a partially-recorded run continues: re-enter an interrupted
+/// step (its start already consumed an attempt), else route the last
+/// finished step's outcome.
+fn next_route(state: &RunState, pipeline: &Pipeline) -> Route {
+    let Some(last) = state.steps.last() else {
+        return entry(pipeline);
     };
-    if let RunStatus::Finished(outcome) = state.status {
-        return Replay::Finished(outcome);
-    }
-    Replay::Resume(history_from(&state, pipeline))
+    last.outcome.map_or_else(
+        || Route::Step(last.step.clone()),
+        |outcome| edge::route_named(pipeline, &last.step, outcome),
+    )
 }
 
 /// Folds step history into attempt counts, outcomes, and the
@@ -81,15 +83,13 @@ fn history_from(state: &RunState, pipeline: &Pipeline) -> History {
     }
 }
 
-/// Where a partially-recorded run continues: re-enter an interrupted
-/// step (its start already consumed an attempt), else route the last
-/// finished step's outcome.
-fn next_route(state: &RunState, pipeline: &Pipeline) -> Route {
-    let Some(last) = state.steps.last() else {
-        return entry(pipeline);
+/// Replays events into a resume decision.
+pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
+    let Some(state) = runlog::replay(events) else {
+        return Replay::Resume(History::fresh(entry(pipeline), false));
     };
-    last.outcome.map_or_else(
-        || Route::Step(last.step.clone()),
-        |outcome| edge::route_named(pipeline, &last.step, outcome),
-    )
+    if let RunStatus::Finished(outcome) = state.status {
+        return Replay::Finished(outcome);
+    }
+    Replay::Resume(history_from(&state, pipeline))
 }

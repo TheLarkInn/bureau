@@ -62,44 +62,6 @@ pub struct Artifact {
     pub path: PathBuf,
 }
 
-/// The input every step receives on stdin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepRequest {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// Owning run.
-    pub run_id: String,
-    /// Step name within the pipeline.
-    pub step: String,
-    /// The run's worktree — the only directory a step may write to.
-    pub worktree: PathBuf,
-    /// Highest provenance grade of any input.
-    pub trust: Trust,
-    /// Named inputs carried from earlier steps.
-    pub inputs: BTreeMap<String, serde_json::Value>,
-    /// Artifacts from earlier steps, by name.
-    pub artifacts: BTreeMap<String, PathBuf>,
-}
-
-/// The answer every step writes to stdout.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StepResult {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// What the step concluded.
-    pub outcome: StepOutcome,
-    /// Named outputs for later steps.
-    pub outputs: BTreeMap<String, serde_json::Value>,
-    /// Artifacts produced by this step.
-    pub artifacts: Vec<Artifact>,
-    /// Provenance grade of the outputs (usually [`Trust::Derived`]).
-    pub trust: Trust,
-    /// What this step cost.
-    pub cost_usd: f64,
-    /// Human-readable detail for the run log.
-    pub message: String,
-}
-
 /// Why a step payload was rejected.
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
@@ -134,6 +96,25 @@ fn checked_value(bytes: &[u8]) -> Result<serde_json::Value, DecodeError> {
     }
 }
 
+/// The input every step receives on stdin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bon::Builder)]
+pub struct StepRequest {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// Owning run.
+    pub run_id: String,
+    /// Step name within the pipeline.
+    pub step: String,
+    /// The run's worktree — the only directory a step may write to.
+    pub worktree: PathBuf,
+    /// Highest provenance grade of any input.
+    pub trust: Trust,
+    /// Named inputs carried from earlier steps.
+    pub inputs: BTreeMap<String, serde_json::Value>,
+    /// Artifacts from earlier steps, by name.
+    pub artifacts: BTreeMap<String, PathBuf>,
+}
+
 impl StepRequest {
     /// Parses a request, rejecting any schema but [`SCHEMA_VERSION`].
     ///
@@ -151,6 +132,25 @@ impl StepRequest {
     pub fn to_json(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
+}
+
+/// The answer every step writes to stdout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
+pub struct StepResult {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// What the step concluded.
+    pub outcome: StepOutcome,
+    /// Named outputs for later steps.
+    pub outputs: BTreeMap<String, serde_json::Value>,
+    /// Artifacts produced by this step.
+    pub artifacts: Vec<Artifact>,
+    /// Provenance grade of the outputs (usually [`Trust::Derived`]).
+    pub trust: Trust,
+    /// What this step cost.
+    pub cost_usd: f64,
+    /// Human-readable detail for the run log.
+    pub message: String,
 }
 
 impl StepResult {

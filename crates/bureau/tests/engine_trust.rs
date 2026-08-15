@@ -13,6 +13,13 @@ use bureau::process::Secret;
 use bureau::runlog::{self, EventKind, RunLog};
 use rig::{Rig, agent_step, decision_step, det_step, fixture, result};
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// draft (agent, `Derived` output) → decide → land, where land gates
 /// on `Maintainer` and consumes the draft.
 fn gated_steps(rig: &Rig) -> Vec<StepDef> {
@@ -108,8 +115,13 @@ async fn a_resumed_run_keeps_the_gate_result() {
 /// A log as if the daemon died right after `draft` succeeded.
 fn seed_draft_finished(rig: &Rig, plan: &RunPlan) {
     let secrets = vec![Secret::new("test-credential")];
-    let mut log = RunLog::create(&rig.dir.path().join("runs"), &plan.run_id, &secrets)
-        .expect("seeded log creates");
+    let mut log = RunLog::create(
+        &rig.dir.path().join("runs"),
+        &plan.run_id,
+        &secrets,
+        test_clock,
+    )
+    .expect("seeded log creates");
     let started = runlog::run_started_for_item(&plan.run_id, "fix-tests", "42");
     log.append(EventKind::RunStarted, started).expect("append");
     log.append(EventKind::StepStarted, runlog::step_started("draft"))

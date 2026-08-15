@@ -8,9 +8,16 @@ use bureau::runlog::{self, EventKind, RunLog, RunStatus, run_finished, run_start
 
 use super::testdir::TestDir;
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// A closed log holding `run_started` and `run_finished` events.
 fn finished_run(runs_dir: &Path) -> PathBuf {
-    let mut log = RunLog::create(runs_dir, "run-1", &[]).expect("create");
+    let mut log = RunLog::create(runs_dir, "run-1", &[], test_clock).expect("create");
     log.append(EventKind::RunStarted, run_started("run-1", "a"))
         .expect("append");
     log.append(EventKind::RunFinished, run_finished(StepOutcome::Success))
@@ -26,7 +33,7 @@ fn close_makes_append_after_close_unrepresentable() {
     // close is a compile error — misuse is impossible by construction,
     // and there is no runtime case to test. This documents that proof.
     let dir = TestDir::new("closed");
-    let log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    let log = RunLog::create(dir.path(), "run-1", &[], test_clock).expect("create");
     log.close().expect("close");
     let events = runlog::read_events(&dir.path().join("run-1")).expect("read");
     assert!(events.is_empty());
@@ -53,7 +60,7 @@ fn blank_lines_between_events_are_tolerated() {
 #[test]
 fn replay_does_not_validate_sequence_numbers() {
     let dir = TestDir::new("dupseq");
-    let mut log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    let mut log = RunLog::create(dir.path(), "run-1", &[], test_clock).expect("create");
     log.append(EventKind::RunStarted, run_started("run-1", "a"))
         .expect("append");
     log.append(EventKind::StepStarted, step_started("propose"))
@@ -76,7 +83,7 @@ fn replay_does_not_validate_sequence_numbers() {
 #[test]
 fn a_state_cache_written_mid_run_is_never_consulted() {
     let dir = TestDir::new("midcache");
-    let mut log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    let mut log = RunLog::create(dir.path(), "run-1", &[], test_clock).expect("create");
     log.append(EventKind::RunStarted, run_started("run-1", "a"))
         .expect("append");
     let run = log.dir().to_path_buf();

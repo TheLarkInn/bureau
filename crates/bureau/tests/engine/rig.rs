@@ -19,6 +19,13 @@ use bureau::process::Secret;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// A temporary directory removed on drop.
 pub struct TestDir(PathBuf);
 
@@ -236,13 +243,17 @@ impl Rig {
     }
 
     pub fn engine(&self) -> Engine {
-        Engine::new(self.dir.path().join("runs"), self.dir.path().join("cache"))
+        Engine::new(
+            self.dir.path().join("runs"),
+            self.dir.path().join("cache"),
+            test_clock,
+        )
     }
 
     /// A plan for `steps`; the repo credential resolves so pushes work.
     pub fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-tests"),
+            run_id: new_run_id("fix-tests", test_clock()),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -253,6 +264,7 @@ impl Rig {
             item: item(),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            daemon_env: BTreeMap::new(),
         }
     }
 }

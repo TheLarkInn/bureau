@@ -1,9 +1,11 @@
 //! Credential references resolved at spawn time (DESIGN.md section 6).
 //!
 //! Config names a credential (`credential: ado-main`); the value is never
-//! in git. Resolution order: the `BUREAU_CREDENTIAL_<NAME>` environment
-//! variable, then a file named `<reference>` under `$BUREAU_CREDENTIALS_DIR`.
+//! in git. Resolution order against the daemon's captured environment:
+//! the `BUREAU_CREDENTIAL_<NAME>` entry, then a file named `<reference>`
+//! under the directory its `BUREAU_CREDENTIALS_DIR` entry names.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::secret::Secret;
@@ -47,17 +49,18 @@ pub fn resolve_file(dir: &Path, reference: &str) -> Result<Secret, CredentialErr
         .map_err(|_| missing(reference))
 }
 
-/// Resolves a credential reference to its value.
+/// Resolves a credential reference against the daemon's captured
+/// environment.
 ///
 /// # Errors
 /// Returns [`CredentialError`] naming the reference when neither the
-/// environment nor `$BUREAU_CREDENTIALS_DIR` provides it.
-pub fn resolve(reference: &str) -> Result<Secret, CredentialError> {
-    if let Ok(value) = std::env::var(env_var_name(reference)) {
+/// environment snapshot nor its `$BUREAU_CREDENTIALS_DIR` provides it.
+pub fn resolve(env: &BTreeMap<String, String>, reference: &str) -> Result<Secret, CredentialError> {
+    if let Some(value) = env.get(&env_var_name(reference)) {
         return Ok(Secret::new(value));
     }
-    if let Ok(dir) = std::env::var(DIR_VAR) {
-        return resolve_file(Path::new(&dir), reference);
+    if let Some(dir) = env.get(DIR_VAR) {
+        return resolve_file(Path::new(dir), reference);
     }
     Err(missing(reference))
 }

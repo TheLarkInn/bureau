@@ -7,15 +7,16 @@
 //! the loop is fully correct with every webhook unplugged.
 
 mod dedup;
+mod pass;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use tokio::task::JoinHandle;
+pub use pass::{PassReport, Started};
 
 use crate::config::{Assignment, Config, ForgeKind, Repo};
-use crate::engine::{Engine, RunOutcome, RunPlan, new_run_id};
+use crate::engine::{Engine, RunPlan, new_run_id};
 use crate::forge::{Forge, Item, Pr};
 use crate::process::Secret;
 use crate::state::{Lease, Store};
@@ -34,14 +35,6 @@ pub enum Error {
     Forge(#[from] crate::forge::Error),
 }
 
-/// A claimed, started run.
-pub struct Started {
-    /// The run id.
-    pub run_id: String,
-    /// The run's task; joining it yields the outcome.
-    pub handle: JoinHandle<RunOutcome>,
-}
-
 /// One assignment's observed world for a pass.
 struct Observed<'a> {
     /// The assignment being reconciled.
@@ -56,6 +49,33 @@ struct Observed<'a> {
     inflight: Vec<Lease>,
     /// How many more runs the assignment may start now.
     headroom: usize,
+}
+
+/// The lease's forge key: the work forge's lowercase name.
+const fn forge_key(forge: ForgeKind) -> &'static str {
+    match forge {
+        ForgeKind::Ado => "ado",
+        ForgeKind::Github => "github",
+    }
+}
+
+/// Desired items with no open PR and no live lease (section 8).
+fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
+    let prs = &observed.open_prs;
+    let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
+    let live = &observed.inflight;
+    let leased: Vec<&str> = live.iter().map(|l| l.external_id.as_str()).collect();
+    let excluded = move |item: &&Item| {
+        let id = item.external_id.as_str();
+        !open.contains(&id) && !leased.contains(&id)
+    };
+    observed.desired.iter().filter(excluded).cloned()
+}
+
+/// An assignment-level config failure, as a forge-shaped error.
+fn bad_assignment(name: &str, reason: &str) -> Error {
+    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
+    Error::Forge(parse)
 }
 
 /// Compares desired and observed state, closing the gap.
@@ -76,33 +96,37 @@ pub struct Reconciler {
     /// Credentials keyed by registry credential name, resolved once at
     /// startup from the daemon's environment.
     pub credentials: BTreeMap<String, Secret>,
+    /// The daemon's environment snapshot, stamped onto every run plan.
+    pub daemon_env: BTreeMap<String, String>,
+    /// Wall clock (millis since the Unix epoch): run ids and the jitter
+    /// between passes.
+    pub clock: fn() -> u64,
 }
 
 impl Reconciler {
     /// One reconcile pass over every assignment: observe, subtract, budget-check, claim, spawn.
-    /// A failing assignment is skipped; the level-triggered loop retries it later.
+    /// A failing assignment is skipped and recorded in the report's
+    /// `failed` list; the level-triggered loop retries it later.
     ///
     /// # Errors
     /// The first assignment's failure, but only when the pass started nothing.
-    pub async fn reconcile_once(&self) -> Result<Vec<Started>, Error> {
+    pub async fn reconcile_once(&self) -> Result<PassReport, Error> {
         let (mut started, mut failed) = (Vec::new(), Vec::new());
         for (name, assignment) in &self.config.assignments {
             match self.observe(name, assignment).await {
                 Ok(observed) => self.claim_pending(&observed, &mut started, &mut failed),
-                Err(error) => failed.push(error),
+                Err(error) => failed.push((name.clone(), error)),
             }
         }
-        settle(failed, started)
+        pass::settle(failed, started)
     }
 
     /// The daemon loop: reconcile, then sleep a jittered interval or
-    /// wake early. Never returns; a failed pass is logged, not fatal.
+    /// wake early. Never returns; a failed pass is dropped, not fatal.
     pub async fn run_loop(&self, interval: Duration, mut wake: tokio::sync::mpsc::Receiver<()>) {
         loop {
-            if let Err(error) = self.reconcile_once().await {
-                eprintln!("reconcile pass failed: {error}");
-            }
-            wait(interval, &mut wake).await;
+            let _ = self.reconcile_once().await;
+            pass::wait(interval, &mut wake, (self.clock)()).await;
         }
     }
 
@@ -152,11 +176,11 @@ impl Reconciler {
         &self,
         observed: &Observed<'_>,
         started: &mut Vec<Started>,
-        failed: &mut Vec<Error>,
+        failed: &mut Vec<(String, Error)>,
     ) {
         for item in pending(observed).take(observed.headroom) {
             if let Err(error) = self.claim_one(observed, item, started) {
-                failed.push(error);
+                failed.push((observed.assignment.name.clone(), error));
                 break;
             }
         }
@@ -199,7 +223,7 @@ impl Reconciler {
             })
             .collect();
         Ok(RunPlan {
-            run_id: new_run_id(&assignment.name),
+            run_id: new_run_id(&assignment.name, (self.clock)()),
             assignment: assignment.clone(),
             pipeline: self.config.pipelines[assignment.pipeline.as_str()].clone(),
             roles: self.config.roles.clone(),
@@ -207,6 +231,7 @@ impl Reconciler {
             item,
             forge: observed.forge.clone(),
             credentials,
+            daemon_env: self.daemon_env.clone(),
         })
     }
 
@@ -241,60 +266,4 @@ impl Reconciler {
         });
         Started { run_id, handle }
     }
-}
-
-/// Desired items with no open PR and no live lease (section 8).
-fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
-    let prs = &observed.open_prs;
-    let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
-    let live = &observed.inflight;
-    let leased: Vec<&str> = live.iter().map(|l| l.external_id.as_str()).collect();
-    let excluded = move |item: &&Item| {
-        let id = item.external_id.as_str();
-        !open.contains(&id) && !leased.contains(&id)
-    };
-    observed.desired.iter().filter(excluded).cloned()
-}
-
-/// An assignment-level config failure, as a forge-shaped error.
-fn bad_assignment(name: &str, reason: &str) -> Error {
-    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
-    Error::Forge(parse)
-}
-
-/// The pass result: the started runs, or the first failure when nothing started.
-fn settle(failed: Vec<Error>, started: Vec<Started>) -> Result<Vec<Started>, Error> {
-    match (failed.into_iter().next(), started.is_empty()) {
-        (Some(first), true) => Err(first),
-        _ => Ok(started),
-    }
-}
-
-/// Sleeps a jittered interval, returning early on a wake; a closed channel degrades to plain sleeps.
-async fn wait(interval: Duration, wake: &mut tokio::sync::mpsc::Receiver<()>) {
-    let Ok(woken) = tokio::time::timeout(jittered(interval), wake.recv()).await else {
-        return; // the jittered interval elapsed
-    };
-    if woken.is_none() {
-        tokio::time::sleep(interval).await;
-    }
-}
-
-/// The lease's forge key: the work forge's lowercase name.
-const fn forge_key(forge: ForgeKind) -> &'static str {
-    match forge {
-        ForgeKind::Ado => "ado",
-        ForgeKind::Github => "github",
-    }
-}
-
-/// The interval ± 25%, derived from the system clock's nanoseconds.
-fn jittered(interval: Duration) -> Duration {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |since| since.subsec_nanos());
-    let base = interval.as_nanos();
-    let spread = (base / 4).max(1);
-    let shifted = base.saturating_sub(spread) + u128::from(nanos) % (2 * spread + 1);
-    Duration::from_nanos(u64::try_from(shifted).unwrap_or(u64::MAX))
 }

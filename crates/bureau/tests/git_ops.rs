@@ -12,6 +12,13 @@ use bureau::process::Secret;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -105,7 +112,10 @@ fn commit_and_push(work: &Path, message: &str) -> String {
 async fn mirrored(tmp: &TestDir, tag: &str) -> (CheckoutCache, PathBuf, Source) {
     let source = make_source(tmp, tag);
     let cache = CheckoutCache::new(tmp.path().join("cache"));
-    let mirror = cache.mirror(&source.url(), None).await.expect("mirror");
+    let mirror = cache
+        .mirror(&source.url(), None, test_clock)
+        .await
+        .expect("mirror");
     (cache, mirror, source)
 }
 
@@ -159,7 +169,10 @@ async fn mirror_fetches_new_commits_and_reuses_the_clone() {
     std::fs::write(mirror.join("SENTINEL"), "keep").expect("sentinel");
     let new_head = commit_and_push(&source.work, "two");
     let url = source.url();
-    let again = cache.mirror(&url, None).await.expect("second mirror");
+    let again = cache
+        .mirror(&url, None, test_clock)
+        .await
+        .expect("second mirror");
     let m = mirror.to_string_lossy().into_owned();
     let head = git_ok(tmp.path(), &["-C", &m, "rev-parse", "refs/heads/main"]);
     let state = (again == mirror, mirror.join("SENTINEL").exists(), head);
@@ -171,7 +184,7 @@ async fn worktree_has_repo_content_on_its_branch() {
     let tmp = TestDir::new("wt");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("run");
-    let wt = Worktree::create(&mirror, &dir, "run/fix-1", false)
+    let wt = Worktree::create(&mirror, &dir, "run/fix-1", false, test_clock)
         .await
         .expect("create");
     let d = dir.to_string_lossy().into_owned();
@@ -190,10 +203,10 @@ async fn two_worktrees_cannot_share_a_branch() {
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let first_dir = tmp.path().join("a");
     let second_dir = tmp.path().join("b");
-    let first = Worktree::create(&mirror, &first_dir, "run/dup", false)
+    let first = Worktree::create(&mirror, &first_dir, "run/dup", false, test_clock)
         .await
         .expect("first");
-    let second = Worktree::create(&mirror, &second_dir, "run/dup", false).await;
+    let second = Worktree::create(&mirror, &second_dir, "run/dup", false, test_clock).await;
     let clean = (second.is_err(), second_dir.exists(), first_dir.exists());
     assert_eq!(clean, (true, false, true));
     drop(first);
@@ -204,7 +217,7 @@ async fn detach_mode_checks_out_no_branch() {
     let tmp = TestDir::new("detach");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("ro");
-    let _wt = Worktree::create(&mirror, &dir, "run/ro", true)
+    let _wt = Worktree::create(&mirror, &dir, "run/ro", true, test_clock)
         .await
         .expect("create");
     let d = dir.to_string_lossy().into_owned();
@@ -220,7 +233,7 @@ async fn push_lands_the_branch_on_a_second_remote() {
     let tmp = TestDir::new("push");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("run");
-    let wt = Worktree::create(&mirror, &dir, "run/push", false)
+    let wt = Worktree::create(&mirror, &dir, "run/push", false, test_clock)
         .await
         .expect("create");
     let target = tmp.path().join("target.git");
@@ -229,7 +242,9 @@ async fn push_lands_the_branch_on_a_second_remote() {
         tmp.path(),
         &["-c", "init.defaultBranch=main", "init", "--bare", &t],
     );
-    wt.push(&format!("file://{t}"), None).await.expect("push");
+    wt.push(&format!("file://{t}"), None, test_clock)
+        .await
+        .expect("push");
     let branches = git_ok(
         tmp.path(),
         &["--git-dir", &t, "branch", "--list", "run/push"],
@@ -242,7 +257,7 @@ async fn drop_removes_the_worktree_and_its_registration() {
     let tmp = TestDir::new("drop");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("run");
-    let wt = Worktree::create(&mirror, &dir, "run/drop", false)
+    let wt = Worktree::create(&mirror, &dir, "run/drop", false, test_clock)
         .await
         .expect("create");
     drop(wt);
@@ -257,7 +272,7 @@ async fn drop_after_external_removal_is_safe() {
     let tmp = TestDir::new("gone");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("run");
-    let wt = Worktree::create(&mirror, &dir, "run/gone", false)
+    let wt = Worktree::create(&mirror, &dir, "run/gone", false, test_clock)
         .await
         .expect("create");
     std::fs::remove_dir_all(&dir).expect("external removal");
@@ -270,7 +285,7 @@ async fn drop_when_the_mirror_is_gone_still_removes_the_dir() {
     let tmp = TestDir::new("nomirror");
     let (_cache, mirror, _source) = mirrored(&tmp, "src").await;
     let dir = tmp.path().join("run");
-    let wt = Worktree::create(&mirror, &dir, "run/solo", false)
+    let wt = Worktree::create(&mirror, &dir, "run/solo", false, test_clock)
         .await
         .expect("create");
     std::fs::remove_dir_all(&mirror).expect("remove mirror");

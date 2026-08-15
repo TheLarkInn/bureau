@@ -13,18 +13,7 @@ use bureau::forge::github::GitHubForge;
 use bureau::forge::{Forge, Item};
 use bureau::process::{self, Secret};
 
-/// Every credential the assignment's repos need, resolved before any
-/// spawn. A missing reference is named on stderr and fails the verb.
-pub fn resolve_credentials(
-    config: &Config,
-    assignment: &Assignment,
-) -> Option<BTreeMap<String, Secret>> {
-    let mut credentials = BTreeMap::new();
-    for reference in credential_refs(config, assignment) {
-        resolve_one(&mut credentials, &reference)?;
-    }
-    Some(credentials)
-}
+use super::Line;
 
 /// The distinct credential references across the assignment's repos,
 /// sorted so the first failure reported is deterministic.
@@ -38,17 +27,46 @@ fn credential_refs(config: &Config, assignment: &Assignment) -> BTreeSet<String>
 }
 
 /// Resolves one reference into the map; a miss names it and fails.
-fn resolve_one(credentials: &mut BTreeMap<String, Secret>, reference: &str) -> Option<()> {
-    match process::resolve(reference) {
+fn resolve_one(
+    credentials: &mut BTreeMap<String, Secret>,
+    reference: &str,
+    env: &BTreeMap<String, String>,
+    lines: &mut Vec<Line>,
+) -> Option<()> {
+    match process::resolve(env, reference) {
         Ok(secret) => {
             credentials.insert(reference.to_owned(), secret);
             Some(())
         }
         Err(error) => {
-            eprintln!("{error}");
+            lines.push(Line::Err(error.to_string()));
             None
         }
     }
+}
+
+/// Every credential the assignment's repos need, resolved before any
+/// spawn. A missing reference is named on stderr and fails the verb.
+pub fn resolve_credentials(
+    config: &Config,
+    assignment: &Assignment,
+    env: &BTreeMap<String, String>,
+    lines: &mut Vec<Line>,
+) -> Option<BTreeMap<String, Secret>> {
+    let mut credentials = BTreeMap::new();
+    for reference in credential_refs(config, assignment) {
+        resolve_one(&mut credentials, &reference, env, lines)?;
+    }
+    Some(credentials)
+}
+
+/// The ADO organization root from the primary repo URL:
+/// `https://dev.azure.com/org/project/_git/repo` becomes
+/// `https://dev.azure.com/org`.
+fn ado_base_url(repo_url: &str) -> String {
+    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
+    head.rsplit_once('/')
+        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
 }
 
 /// The client for the forge the work items live on. v0: its token is the
@@ -75,13 +93,13 @@ pub fn work_forge(
     })
 }
 
-/// The ADO organization root from the primary repo URL:
-/// `https://dev.azure.com/org/project/_git/repo` becomes
-/// `https://dev.azure.com/org`.
-fn ado_base_url(repo_url: &str) -> String {
-    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
-    head.rsplit_once('/')
-        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
+/// Whether an external id names `query`: exactly (a `retry` reuses the
+/// recorded id), or by `#<id>` / `/<id>` suffix — the id's repo context
+/// is embedded (`owner/repo#42`, `project/42`).
+fn matches_item(item: &Item, query: &str) -> bool {
+    item.external_id == query
+        || item.external_id.ends_with(&format!("#{query}"))
+        || item.external_id.ends_with(&format!("/{query}"))
 }
 
 /// Queries the work forge and picks the item `query` names.
@@ -98,15 +116,6 @@ pub async fn find_item(
         .await
         .context("querying the work forge")?;
     Ok(items.into_iter().find(|item| matches_item(item, query)))
-}
-
-/// Whether an external id names `query`: exactly (a `retry` reuses the
-/// recorded id), or by `#<id>` / `/<id>` suffix — the id's repo context
-/// is embedded (`owner/repo#42`, `project/42`).
-fn matches_item(item: &Item, query: &str) -> bool {
-    item.external_id == query
-        || item.external_id.ends_with(&format!("#{query}"))
-        || item.external_id.ends_with(&format!("/{query}"))
 }
 
 /// The registry entries for exactly the assignment's repos.

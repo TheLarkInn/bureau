@@ -1,2 +1,23 @@
+# Custom-lint configuration (li-kai/rust-lints; the libraries are pinned in
+# [workspace.metadata.dylint] in the root Cargo.toml).
+#
+# The module_dependencies allowlist IS the crate's architecture diagram:
+# every top-level module must appear (exhaustive mode), and adding an edge
+# here is the architectural decision — visible in review, enforced by the
+# build. `ConfigError` names the crate-root item used by config.
+
 [module_dependencies]
 exhaustive = true
+
+[module_dependencies.allow]
+ConfigError = []
+contract = []
+process = []
+config = ["ConfigError", "contract"]
+forge = ["contract", "process"]
+git = ["config", "process"]
+runlog = ["contract", "process"]
+state = ["config"]
+adapters = ["config", "contract", "process"]
+engine = ["adapters", "config", "contract", "forge", "git", "process", "runlog"]
+reconcile = ["config", "contract", "engine", "forge", "process", "state"]

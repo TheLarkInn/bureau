@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::RunPlan;
-use super::machine::{RunCtx, WtCtx};
+use super::ctx::{RunCtx, WtCtx};
 use super::stream::LogSink;
 use crate::adapters;
 use crate::config::{StepDef, StepKind};
@@ -16,20 +16,6 @@ use crate::process::{SpawnRequest, SpawnResult, shared_log, spawn};
 /// Default per-step timeout when the pipeline sets none, matching the
 /// `fake` adapter's.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
-
-/// Assembles a step's request: only `inputs_from` steps contribute
-/// inputs and artifacts — no ambient accumulation.
-pub(super) fn build_request(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepRequest {
-    StepRequest {
-        schema: SCHEMA_VERSION.to_owned(),
-        run_id: ctx.plan.run_id.clone(),
-        step: step.name.clone(),
-        worktree: worktree.to_path_buf(),
-        trust: request_trust(ctx, step),
-        inputs: collect_outputs(ctx, step),
-        artifacts: collect_artifacts(ctx, step),
-    }
-}
 
 /// Merged outputs of every `inputs_from` step, later steps winning.
 fn collect_outputs(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, serde_json::Value> {
@@ -58,17 +44,6 @@ fn collect_artifacts(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, PathBuf> 
     merged
 }
 
-/// A request's trust: the item's grade, lowered to the weakest input's
-/// grade. The item seeds the fold because it is an input-less step's
-/// only input; a step is only as trustworthy as its weakest input
-/// (DESIGN.md section 9).
-fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
-    step.inputs_from
-        .iter()
-        .filter_map(|name| input_trust(ctx, name))
-        .fold(ctx.plan.item.trust, Ord::min)
-}
-
 /// One input's grade, when data flowed from it. A step finished in
 /// this run contributes its recorded grade. A step finished before a
 /// resume has no result in memory — the log records outcomes, not
@@ -83,17 +58,29 @@ fn input_trust(ctx: &RunCtx, step: &str) -> Option<Trust> {
     ctx.outcome_of(step).map(|_| Trust::Derived)
 }
 
-/// The trust check: a step whose inputs grade below its minimum
-/// escalates (fail closed), naming both grades.
-pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
-    let minimum = min_trust(plan, step);
-    if request.trust < minimum {
-        return Some(format!(
-            "step `{}` requires {minimum:?} trust but its inputs are {:?}",
-            step.name, request.trust
-        ));
+/// A request's trust: the item's grade, lowered to the weakest input's
+/// grade. The item seeds the fold because it is an input-less step's
+/// only input; a step is only as trustworthy as its weakest input
+/// (DESIGN.md section 9).
+fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
+    step.inputs_from
+        .iter()
+        .filter_map(|name| input_trust(ctx, name))
+        .fold(ctx.plan.item.trust, Ord::min)
+}
+
+/// Assembles a step's request: only `inputs_from` steps contribute
+/// inputs and artifacts — no ambient accumulation.
+pub(super) fn build_request(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepRequest {
+    StepRequest {
+        schema: SCHEMA_VERSION.to_owned(),
+        run_id: ctx.plan.run_id.clone(),
+        step: step.name.clone(),
+        worktree: worktree.to_path_buf(),
+        trust: request_trust(ctx, step),
+        inputs: collect_outputs(ctx, step),
+        artifacts: collect_artifacts(ctx, step),
     }
-    None
 }
 
 /// The step's effective minimum trust: its own `trust`, else the
@@ -112,17 +99,45 @@ fn min_trust(plan: &RunPlan, step: &StepDef) -> Trust {
     Trust::Untrusted
 }
 
-/// Runs one code step and returns its result.
-pub(super) async fn execute(
-    ctx: &RunCtx,
-    wt: &WtCtx,
-    step: &StepDef,
-    request: &StepRequest,
-) -> StepResult {
-    match step.kind {
-        StepKind::Deterministic => deterministic(ctx, wt, step, request).await,
-        StepKind::Agent => agent(ctx, step, request).await,
-        StepKind::Decision => failed_step("decision steps do not run code"),
+/// The trust check: a step whose inputs grade below its minimum
+/// escalates (fail closed), naming both grades.
+pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
+    let minimum = min_trust(plan, step);
+    if request.trust < minimum {
+        return Some(format!(
+            "step `{}` requires {minimum:?} trust but its inputs are {:?}",
+            step.name, request.trust
+        ));
+    }
+    None
+}
+
+/// Derives the step result: a contract document on stdout wins;
+/// otherwise exit 0 is `Success` with the trimmed stdout as the lone
+/// output. Deterministic steps preserve their input trust either way.
+fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
+    let parsed = StepResult::from_json(&spawned.stdout).is_ok();
+    let mut result = adapters::result_from_spawn(spawned);
+    result.trust = trust;
+    if !parsed && result.outcome == StepOutcome::Success {
+        let stdout = String::from_utf8_lossy(&spawned.stdout).trim().to_owned();
+        result
+            .outputs
+            .insert("stdout".to_owned(), serde_json::Value::String(stdout));
+    }
+    result
+}
+
+/// A synthetic failure for a step that cannot run at all.
+fn failed_step(message: &str) -> StepResult {
+    StepResult {
+        schema: SCHEMA_VERSION.to_owned(),
+        outcome: StepOutcome::Failure,
+        outputs: BTreeMap::new(),
+        artifacts: Vec::new(),
+        trust: Trust::Derived,
+        cost_usd: 0.0,
+        message: message.to_owned(),
     }
 }
 
@@ -152,26 +167,11 @@ async fn deterministic(
         stdin: request.to_json().unwrap_or_default(),
         timeout: Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)),
         secrets: ctx.secrets(),
+        clock: ctx.clock,
         log: Some(shared_log(LogSink::new(&step.name, &ctx.log))),
     })
     .await;
     derive_result(request.trust, &spawned)
-}
-
-/// Derives the step result: a contract document on stdout wins;
-/// otherwise exit 0 is `Success` with the trimmed stdout as the lone
-/// output. Deterministic steps preserve their input trust either way.
-fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
-    let parsed = StepResult::from_json(&spawned.stdout).is_ok();
-    let mut result = adapters::result_from_spawn(spawned);
-    result.trust = trust;
-    if !parsed && result.outcome == StepOutcome::Success {
-        let stdout = String::from_utf8_lossy(&spawned.stdout).trim().to_owned();
-        result
-            .outputs
-            .insert("stdout".to_owned(), serde_json::Value::String(stdout));
-    }
-    result
 }
 
 /// An agent step runs through the role's adapter; its outputs grade
@@ -185,20 +185,30 @@ async fn agent(ctx: &RunCtx, step: &StepDef, request: &StepRequest) -> StepResul
         return failed_step(&format!("step `{}` names an unknown role", step.name));
     };
     let sink = shared_log(LogSink::new(&step.name, &ctx.log));
-    let mut result = adapters::execute(role, step, request, ctx.secrets(), Some(sink)).await;
+    let mut result = adapters::execute(
+        role,
+        step,
+        request,
+        &ctx.plan.daemon_env,
+        ctx.clock,
+        ctx.secrets(),
+        Some(sink),
+    )
+    .await;
     result.trust = Trust::Derived;
     result
 }
 
-/// A synthetic failure for a step that cannot run at all.
-fn failed_step(message: &str) -> StepResult {
-    StepResult {
-        schema: SCHEMA_VERSION.to_owned(),
-        outcome: StepOutcome::Failure,
-        outputs: BTreeMap::new(),
-        artifacts: Vec::new(),
-        trust: Trust::Derived,
-        cost_usd: 0.0,
-        message: message.to_owned(),
+/// Runs one code step and returns its result.
+pub(super) async fn execute(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    step: &StepDef,
+    request: &StepRequest,
+) -> StepResult {
+    match step.kind {
+        StepKind::Deterministic => deterministic(ctx, wt, step, request).await,
+        StepKind::Agent => agent(ctx, step, request).await,
+        StepKind::Decision => failed_step("decision steps do not run code"),
     }
 }

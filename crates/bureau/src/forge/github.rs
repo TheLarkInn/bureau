@@ -17,60 +17,6 @@ use crate::process::Secret;
 /// `rel="next"` page limit per list call (no unbounded loops).
 const MAX_PAGES: u32 = 3;
 
-/// GitHub API client; see module docs for the argument forms.
-pub struct GitHubForge {
-    /// API root: `https://api.github.com`, or a local server in tests.
-    pub base_url: String,
-    token: Secret,
-    client: reqwest::Client,
-}
-
-impl GitHubForge {
-    /// A client against `https://api.github.com`.
-    #[must_use]
-    pub fn new(token: Secret) -> Self {
-        Self {
-            base_url: "https://api.github.com".to_owned(),
-            token,
-            client: reqwest::Client::new(),
-        }
-    }
-
-    /// Points the client at another API root (tests, GitHub Enterprise).
-    #[must_use]
-    pub fn with_base_url(mut self, base_url: String) -> Self {
-        self.base_url = base_url;
-        self
-    }
-
-    /// A request carrying the headers every GitHub call needs.
-    fn request(&self, method: Method, url: &str) -> RequestBuilder {
-        self.client
-            .request(method, url)
-            .bearer_auth(self.token.expose())
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "bureau")
-    }
-
-    /// GETs `first`, following up to [`MAX_PAGES`] `rel="next"` links.
-    async fn get_pages<T: Send, P: DeserializeOwned>(
-        &self,
-        first: RequestBuilder,
-        into_items: impl Fn(P) -> Vec<T> + Send + Sync,
-    ) -> Result<Vec<T>, Error> {
-        let mut items = Vec::new();
-        let mut next = Some(first);
-        for _ in 0..MAX_PAGES {
-            let Some(req) = next.take() else { break };
-            let resp = req.send().await?;
-            next = next_page(&resp).map(|url| self.request(Method::GET, &url));
-            items.extend(into_items(json_body(resp).await?));
-        }
-        Ok(items)
-    }
-}
-
 /// `owner/name` parsed from a registry URL or a bare `owner/name`.
 fn repo_name(source: &str) -> Result<String, Error> {
     let trimmed = source.trim_end_matches('/').trim_end_matches(".git");
@@ -84,24 +30,6 @@ fn repo_name(source: &str) -> Result<String, Error> {
             "expected a registry URL or owner/name, got {source:?}"
         ))),
     }
-}
-
-/// Reads a JSON body; a non-2xx status becomes [`Error::Api`].
-async fn json_body<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Error> {
-    let status = resp.status();
-    let bytes = resp.bytes().await?;
-    if !status.is_success() {
-        return Err(api_error(status, &bytes));
-    }
-    serde_json::from_slice(&bytes).map_err(|e| Error::Parse(e.to_string()))
-}
-
-/// Checks the status of a call whose body carries no information.
-async fn ensure_ok(resp: reqwest::Response) -> Result<(), Error> {
-    if resp.status().is_success() {
-        return Ok(());
-    }
-    Err(api_error(resp.status(), &resp.bytes().await?))
 }
 
 /// [`Error::Api`] from a status and body, truncated to 300 chars.
@@ -156,9 +84,33 @@ fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
     parsed().ok_or_else(|| Error::Parse(format!("expected owner/name#number, got {item_id:?}")))
 }
 
+/// Reads a JSON body; a non-2xx status becomes [`Error::Api`].
+async fn json_body<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Error> {
+    let status = resp.status();
+    let bytes = resp.bytes().await?;
+    if !status.is_success() {
+        return Err(api_error(status, &bytes));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| Error::Parse(e.to_string()))
+}
+
+/// Checks the status of a call whose body carries no information.
+async fn ensure_ok(resp: reqwest::Response) -> Result<(), Error> {
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    Err(api_error(resp.status(), &resp.bytes().await?))
+}
+
 #[derive(Deserialize)]
-struct SearchPage {
-    items: Vec<Issue>,
+struct Label {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct Head {
+    #[serde(rename = "ref")]
+    branch: String,
 }
 
 #[derive(Deserialize)]
@@ -185,8 +137,8 @@ impl Issue {
 }
 
 #[derive(Deserialize)]
-struct Label {
-    name: String,
+struct SearchPage {
+    items: Vec<Issue>,
 }
 
 #[derive(Deserialize)]
@@ -211,10 +163,58 @@ impl Pull {
     }
 }
 
-#[derive(Deserialize)]
-struct Head {
-    #[serde(rename = "ref")]
-    branch: String,
+/// GitHub API client; see module docs for the argument forms.
+pub struct GitHubForge {
+    /// API root: `https://api.github.com`, or a local server in tests.
+    pub base_url: String,
+    token: Secret,
+    client: reqwest::Client,
+}
+
+impl GitHubForge {
+    /// A client against `https://api.github.com`.
+    #[must_use]
+    pub fn new(token: Secret) -> Self {
+        Self {
+            base_url: "https://api.github.com".to_owned(),
+            token,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Points the client at another API root (tests, GitHub Enterprise).
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
+    }
+
+    /// A request carrying the headers every GitHub call needs.
+    fn request(&self, method: Method, url: &str) -> RequestBuilder {
+        self.client
+            .request(method, url)
+            .bearer_auth(self.token.expose())
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "bureau")
+    }
+
+    /// GETs `first`, following up to [`MAX_PAGES`] `rel="next"` links.
+    async fn get_pages<T: Send, P: DeserializeOwned>(
+        &self,
+        first: RequestBuilder,
+        into_items: impl Fn(P) -> Vec<T> + Send + Sync,
+    ) -> Result<Vec<T>, Error> {
+        let mut items = Vec::new();
+        let mut next = Some(first);
+        for _ in 0..MAX_PAGES {
+            let Some(req) = next.take() else { break };
+            let resp = req.send().await?;
+            next = next_page(&resp).map(|url| self.request(Method::GET, &url));
+            items.extend(into_items(json_body(resp).await?));
+        }
+        Ok(items)
+    }
 }
 
 #[async_trait]

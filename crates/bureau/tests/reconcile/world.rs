@@ -23,6 +23,13 @@ pub const ASSIGNMENT: &str = "fix-tests";
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 /// A temporary directory removed on drop.
 pub struct TestDir(PathBuf);
 
@@ -151,6 +158,21 @@ fn config(repo: Repo, run: &str, limits: Limits) -> Config {
     }
 }
 
+/// The fixture repo: a local git URL, GitHub kind, push access.
+fn repo(url: String) -> Repo {
+    Repo {
+        url,
+        forge: ForgeKind::Github,
+        access: Access::Push,
+        credential: "git-main".to_owned(),
+    }
+}
+
+/// The reconciler's registry credentials: `git-main` resolves so pushes work.
+fn credentials() -> BTreeMap<String, Secret> {
+    BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))])
+}
+
 /// One test's world: temp dirs, a local repo, a fake forge, the store.
 pub struct World {
     dir: TestDir,
@@ -165,21 +187,18 @@ impl World {
     /// A world whose pipeline runs `run` and whose budget is `limits`.
     pub fn new(ids: &[&str], run: &str, limits: Limits) -> Self {
         let dir = TestDir::new();
-        let repo = Repo {
-            url: make_repo(&dir.0),
-            forge: ForgeKind::Github,
-            access: Access::Push,
-            credential: "git-main".to_owned(),
-        };
         let items = ids.iter().map(|id| item(id)).collect();
         let forge = Arc::new(FakeForge::new(items));
-        let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+        let store = Arc::new(Store::open_in_memory(test_clock).expect("in-memory store"));
+        let (runs, cache) = (dir.0.join("runs"), dir.0.join("cache"));
         let reconciler = Arc::new(Reconciler {
-            config: config(repo, run, limits),
+            config: config(repo(make_repo(&dir.0)), run, limits),
             state: store.clone(),
             forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
-            engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
-            credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            engine: Arc::new(Engine::new(runs, cache, test_clock)),
+            credentials: credentials(),
+            daemon_env: BTreeMap::new(),
+            clock: test_clock,
         });
         Self {
             dir,
@@ -195,6 +214,7 @@ impl World {
             .reconcile_once()
             .await
             .expect("pass succeeds")
+            .started
     }
 
     /// The item ids the assignment holds live leases on, sorted.

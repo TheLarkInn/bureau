@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use super::machine::{self, RunCtx};
+use super::ctx::RunCtx;
+use super::machine;
 use super::{RunOutcome, stream};
 use crate::contract::StepOutcome;
 use crate::forge::Pr;
@@ -25,6 +26,22 @@ pub(super) async fn escalate(ctx: &RunCtx, message: String) -> (StepOutcome, Str
             format!("{message} (comment failed: {error})"),
             None,
         ),
+    }
+}
+
+/// Closes the log and rewrites the derived state cache. Best effort:
+/// the event log is already the source of truth.
+fn teardown(log: stream::Shared) {
+    let Ok(mutex) = Arc::try_unwrap(log) else {
+        return;
+    };
+    let appender = mutex
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = appender.dir().to_path_buf();
+    let _ = appender.close();
+    if let Ok(state) = runlog::replay_state(&dir) {
+        let _ = runlog::write_state_cache(&dir, &state);
     }
 }
 
@@ -50,21 +67,5 @@ pub(super) fn finish(
         cost_usd,
         message,
         pr,
-    }
-}
-
-/// Closes the log and rewrites the derived state cache. Best effort:
-/// the event log is already the source of truth.
-fn teardown(log: stream::Shared) {
-    let Ok(mutex) = Arc::try_unwrap(log) else {
-        return;
-    };
-    let appender = mutex
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let dir = appender.dir().to_path_buf();
-    let _ = appender.close();
-    if let Ok(state) = runlog::replay_state(&dir) {
-        let _ = runlog::write_state_cache(&dir, &state);
     }
 }

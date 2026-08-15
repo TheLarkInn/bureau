@@ -1,5 +1,4 @@
-//! Layer 0 process contract tests: offline, `/bin/sh` only, no model
-//! calls (DESIGN.md section 12).
+//! Layer 0 process contract tests: offline, `/bin/sh` only (DESIGN.md section 12).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -12,6 +11,12 @@ use bureau::process::{
 };
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
+
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
 
 struct TestDir(PathBuf);
 
@@ -66,6 +71,7 @@ fn request(dir: &Path, script: &str, timeout: Duration) -> SpawnRequest {
         stdin: Vec::new(),
         timeout,
         secrets: Vec::new(),
+        clock: test_clock,
         log: None,
     }
 }
@@ -271,7 +277,8 @@ async fn output_streams_to_sink_before_exit() {
 
 #[test]
 fn missing_credential_fails_with_its_name() {
-    let error = process::resolve("no-such-credential").expect_err("must fail");
+    let env = BTreeMap::new();
+    let error = process::resolve(&env, "no-such-credential").expect_err("must fail");
     let message = error.to_string();
     let named = message.contains("no-such-credential")
         && message.contains("BUREAU_CREDENTIAL_NO_SUCH_CREDENTIAL");

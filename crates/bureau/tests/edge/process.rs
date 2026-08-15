@@ -9,6 +9,13 @@ use bureau::process::{SpawnOutcome, SpawnRequest, SpawnResult, spawn};
 
 use super::testdir::TestDir;
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 fn request(dir: &Path, script: &str, timeout: Duration) -> SpawnRequest {
     SpawnRequest {
         argv: vec!["sh".to_owned(), "-c".to_owned(), script.to_owned()],
@@ -17,6 +24,7 @@ fn request(dir: &Path, script: &str, timeout: Duration) -> SpawnRequest {
         stdin: Vec::new(),
         timeout,
         secrets: Vec::new(),
+        clock: test_clock,
         log: None,
     }
 }

@@ -16,6 +16,13 @@ use bureau::runlog::{
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -42,7 +49,7 @@ impl Drop for TestDir {
 
 /// Appends a representative run and closes the log.
 fn write_run(runs_dir: &Path, run_id: &str, secrets: &[Secret]) -> PathBuf {
-    let mut log = RunLog::create(runs_dir, run_id, secrets).expect("create");
+    let mut log = RunLog::create(runs_dir, run_id, secrets, test_clock).expect("create");
     log.append(
         EventKind::RunStarted,
         run_started(run_id, "fix-flaky-tests"),
@@ -77,7 +84,7 @@ fn expected_state(run_id: &str) -> RunState {
 #[test]
 fn events_are_sequence_numbered() {
     let dir = TestDir::new("seq");
-    let mut log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    let mut log = RunLog::create(dir.path(), "run-1", &[], test_clock).expect("create");
     let first = log
         .append(EventKind::RunStarted, run_started("run-1", "a"))
         .expect("append");
@@ -110,7 +117,8 @@ fn replay_rebuilds_identical_state_after_cache_is_deleted() {
 fn secrets_are_scrubbed_on_write() {
     let dir = TestDir::new("scrub");
     let secret = "hunter2hunter2";
-    let mut log = RunLog::create(dir.path(), "run-1", &[Secret::new(secret)]).expect("create");
+    let mut log =
+        RunLog::create(dir.path(), "run-1", &[Secret::new(secret)], test_clock).expect("create");
     log.append(
         EventKind::StepStarted,
         serde_json::json!({ "step": secret }),
@@ -127,7 +135,7 @@ fn secrets_are_scrubbed_on_write() {
 fn a_run_id_is_used_exactly_once() {
     let dir = TestDir::new("dupe");
     write_run(dir.path(), "run-1", &[]);
-    let second = RunLog::create(dir.path(), "run-1", &[]);
+    let second = RunLog::create(dir.path(), "run-1", &[], test_clock);
     assert!(second.is_err());
 }
 
@@ -161,7 +169,7 @@ fn replay_rejects_a_corrupt_line() {
 #[test]
 fn replay_rejects_a_log_without_run_started() {
     let dir = TestDir::new("nostart");
-    let mut log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    let mut log = RunLog::create(dir.path(), "run-1", &[], test_clock).expect("create");
     log.append(EventKind::StepStarted, step_started("propose"))
         .expect("append");
     let run = log.dir().to_path_buf();

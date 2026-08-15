@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -41,6 +41,9 @@ pub struct SpawnRequest {
     pub timeout: Duration,
     /// Values scrubbed from all captured output.
     pub secrets: Vec<Secret>,
+    /// Wall clock (millis since the Unix epoch) measuring the spawn's
+    /// duration; injected so no library code reads the system clock.
+    pub clock: fn() -> u64,
     /// Optional sink receiving scrubbed output as it arrives.
     pub log: Option<SharedLog>,
 }
@@ -60,9 +63,15 @@ pub enum SpawnOutcome {
     SpawnFailed,
 }
 
+/// Wall-clock duration since `started` per `clock`; zero if the clock
+/// ran backwards between the two reads.
+fn elapsed(started: u64, clock: fn() -> u64) -> Duration {
+    Duration::from_millis(clock().saturating_sub(started))
+}
+
 /// The captured result of one subprocess. A struct with an enum
 /// discriminant, so it serializes straight into the run log.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, bon::Builder)]
 pub struct SpawnResult {
     /// How the process ended.
     pub outcome: SpawnOutcome,
@@ -79,13 +88,13 @@ pub struct SpawnResult {
 }
 
 impl SpawnResult {
-    fn failed(error: String, started: Instant) -> Self {
+    fn failed(error: String, started: u64, clock: fn() -> u64) -> Self {
         Self {
             outcome: SpawnOutcome::SpawnFailed,
             exit_code: None,
             stdout: Vec::new(),
             stderr: Vec::new(),
-            duration: started.elapsed(),
+            duration: elapsed(started, clock),
             error: Some(error),
         }
     }
@@ -115,34 +124,6 @@ fn spawn_child(req: &SpawnRequest) -> Result<Child, String> {
     build_command(req)?.spawn().map_err(|e| e.to_string())
 }
 
-/// Runs a subprocess to completion under the contract.
-#[must_use]
-pub async fn spawn(req: SpawnRequest) -> SpawnResult {
-    let started = Instant::now();
-    match spawn_child(&req) {
-        Ok(child) => run_child(req, child, started).await,
-        Err(error) => SpawnResult::failed(error, started),
-    }
-}
-
-async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> SpawnResult {
-    let stdin = write_task(child.stdin.take(), req.stdin);
-    let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
-    let err = drain_task(child.stderr.take(), req.secrets, req.log);
-    let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
-    // A timeout kills the process group, closing the pipes: the drains see
-    // EOF and the writer gets EPIPE, so joining all three never hangs.
-    let (_, stdout, stderr) = tokio::join!(stdin, out, err);
-    SpawnResult {
-        outcome,
-        exit_code,
-        stdout: stdout.unwrap_or_default(),
-        stderr: stderr.unwrap_or_default(),
-        duration: started.elapsed(),
-        error,
-    }
-}
-
 /// Writes `bytes` to the child's stdin in its own task, so a child that
 /// never reads stdin can't block the drains or delay the arming of the
 /// timeout. Dropping the pipe closes the child's stdin.
@@ -167,12 +148,16 @@ where
     )
 }
 
-fn drain_task(
-    reader: Option<impl AsyncRead + Send + Unpin + 'static>,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> tokio::task::JoinHandle<Vec<u8>> {
-    tokio::spawn(drain(stream(reader), secrets, log))
+fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
+    if buf.len() <= *forwarded {
+        return;
+    }
+    if let Some(sink) = log {
+        if let Ok(mut w) = sink.lock() {
+            let _ = w.write_all(&buf[*forwarded..]);
+        }
+    }
+    *forwarded = buf.len();
 }
 
 /// Reads a stream to EOF, scrubbing each chunk as it arrives and
@@ -196,35 +181,12 @@ async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>
     captured
 }
 
-fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
-    if buf.len() <= *forwarded {
-        return;
-    }
-    if let Some(sink) = log {
-        if let Ok(mut w) = sink.lock() {
-            let _ = w.write_all(&buf[*forwarded..]);
-        }
-    }
-    *forwarded = buf.len();
-}
-
-async fn wait_child(
-    child: &mut Child,
-    timeout: Duration,
-) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => classify(status),
-        Ok(Err(e)) => (
-            SpawnOutcome::Signaled,
-            None,
-            Some(format!("wait failed: {e}")),
-        ),
-        Err(_) => {
-            kill_group(child);
-            let _ = child.wait().await; // reap after the group kill
-            (SpawnOutcome::Timeout, None, None)
-        }
-    }
+fn drain_task(
+    reader: Option<impl AsyncRead + Send + Unpin + 'static>,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> tokio::task::JoinHandle<Vec<u8>> {
+    tokio::spawn(drain(stream(reader), secrets, log))
 }
 
 fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
@@ -250,4 +212,51 @@ fn kill_group(child: &Child) {
         return;
     };
     let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
+}
+
+async fn wait_child(
+    child: &mut Child,
+    timeout: Duration,
+) -> (SpawnOutcome, Option<i32>, Option<String>) {
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => classify(status),
+        Ok(Err(e)) => (
+            SpawnOutcome::Signaled,
+            None,
+            Some(format!("wait failed: {e}")),
+        ),
+        Err(_) => {
+            kill_group(child);
+            let _ = child.wait().await; // reap after the group kill
+            (SpawnOutcome::Timeout, None, None)
+        }
+    }
+}
+
+async fn run_child(req: SpawnRequest, mut child: Child, started: u64) -> SpawnResult {
+    let stdin = write_task(child.stdin.take(), req.stdin);
+    let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
+    let err = drain_task(child.stderr.take(), req.secrets, req.log);
+    let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
+    // A timeout kills the process group, closing the pipes: the drains see
+    // EOF and the writer gets EPIPE, so joining all three never hangs.
+    let (_, stdout, stderr) = tokio::join!(stdin, out, err);
+    SpawnResult {
+        outcome,
+        exit_code,
+        stdout: stdout.unwrap_or_default(),
+        stderr: stderr.unwrap_or_default(),
+        duration: elapsed(started, req.clock),
+        error,
+    }
+}
+
+/// Runs a subprocess to completion under the contract.
+#[must_use]
+pub async fn spawn(req: SpawnRequest) -> SpawnResult {
+    let started = (req.clock)();
+    match spawn_child(&req) {
+        Ok(child) => run_child(req, child, started).await,
+        Err(error) => SpawnResult::failed(error, started, req.clock),
+    }
 }

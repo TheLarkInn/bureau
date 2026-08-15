@@ -1,7 +1,5 @@
-//! Engine cost-accounting tests (DESIGN.md section 6): a step's
-//! claimed `cost_usd` is clamped into `0.0..=25.0` before it sums into
-//! the run total that `max_cost_per_day_usd` enforces. Offline only
-//! (DESIGN.md section 12).
+//! Engine cost-accounting tests (DESIGN.md section 6): a step's claimed
+//! `cost_usd` is clamped into `0.0..=25.0` before it sums into the run total.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,6 +18,12 @@ use bureau::forge::fake::FakeForge;
 use bureau::process::Secret;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
+
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
 
 /// A temporary directory removed on drop.
 struct TestDir(PathBuf);
@@ -221,13 +225,14 @@ impl Rig {
     }
 
     fn engine(&self) -> Engine {
-        Engine::new(self.dir.path().join("runs"), self.dir.path().join("cache"))
+        let (runs, cache) = (self.dir.path().join("runs"), self.dir.path().join("cache"));
+        Engine::new(runs, cache, test_clock)
     }
 
     /// A plan for `steps`; the repo credential resolves so pushes work.
     fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-tests"),
+            run_id: new_run_id("fix-tests", test_clock()),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -238,13 +243,12 @@ impl Rig {
             item: item(),
             forge: Arc::new(FakeForge::new(vec![item()])),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            daemon_env: BTreeMap::new(),
         }
     }
 }
 
-/// Bit-exact cost equality: the clamp pins claims to exact bounds or
-/// passes them through unchanged, so bits compare cleanly (and
-/// clippy's `float_cmp` stays quiet).
+/// Bit-exact cost equality: the clamp only pins to exact bounds.
 const fn same_cost(got: f64, want: f64) -> bool {
     got.to_bits() == want.to_bits()
 }

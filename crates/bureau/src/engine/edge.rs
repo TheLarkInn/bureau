@@ -27,35 +27,10 @@ pub(super) const fn outcome_key(outcome: StepOutcome) -> &'static str {
     }
 }
 
-/// Routes a finished code step along its outcome's edge; a missing edge
-/// fails closed to `abort`.
-pub(super) fn route_after(
-    step: &StepDef,
-    outcome: StepOutcome,
-    detail: Option<&str>,
-    pipeline: &Pipeline,
-) -> Route {
-    let edge = match outcome {
-        StepOutcome::Success => step.next.as_deref(),
-        StepOutcome::Failure => step.on_failure.as_deref(),
-        StepOutcome::Blocked => step.on_blocked.as_deref(),
-        StepOutcome::NoWork => step.on_no_work.as_deref(),
-    };
-    resolve(step, edge, outcome, detail, pipeline)
-}
-
-/// Routes a decision step on the outcome of the step it watches.
-pub(super) fn route_decision(step: &StepDef, outcome: StepOutcome, pipeline: &Pipeline) -> Route {
-    let edge = step.on.get(outcome_key(outcome)).map(String::as_str);
-    resolve(step, edge, outcome, None, pipeline)
-}
-
-/// Routes a resumed run's last finished step, looked up by name.
-pub(super) fn route_named(pipeline: &Pipeline, name: &str, outcome: StepOutcome) -> Route {
-    let Some(step) = pipeline.steps.iter().find(|s| s.name == name) else {
-        return Route::Fail(format!("unknown step `{name}`"));
-    };
-    route_after(step, outcome, None, pipeline)
+/// The escalate message for an edge-triggered escalation.
+fn escalate_text(step: &StepDef, key: &str, detail: Option<&str>) -> String {
+    let suffix = detail.map_or_else(String::new, |d| format!(": {d}"));
+    format!("step `{}` ended `{key}` and escalated{suffix}", step.name)
 }
 
 /// Resolves an edge target to a route; anything unknown fails closed.
@@ -86,8 +61,33 @@ fn resolve(
     }
 }
 
-/// The escalate message for an edge-triggered escalation.
-fn escalate_text(step: &StepDef, key: &str, detail: Option<&str>) -> String {
-    let suffix = detail.map_or_else(String::new, |d| format!(": {d}"));
-    format!("step `{}` ended `{key}` and escalated{suffix}", step.name)
+/// Routes a finished code step along its outcome's edge; a missing edge
+/// fails closed to `abort`.
+pub(super) fn route_after(
+    step: &StepDef,
+    outcome: StepOutcome,
+    detail: Option<&str>,
+    pipeline: &Pipeline,
+) -> Route {
+    let edge = match outcome {
+        StepOutcome::Success => step.next.as_deref(),
+        StepOutcome::Failure => step.on_failure.as_deref(),
+        StepOutcome::Blocked => step.on_blocked.as_deref(),
+        StepOutcome::NoWork => step.on_no_work.as_deref(),
+    };
+    resolve(step, edge, outcome, detail, pipeline)
+}
+
+/// Routes a decision step on the outcome of the step it watches.
+pub(super) fn route_decision(step: &StepDef, outcome: StepOutcome, pipeline: &Pipeline) -> Route {
+    let edge = step.on.get(outcome_key(outcome)).map(String::as_str);
+    resolve(step, edge, outcome, None, pipeline)
+}
+
+/// Routes a resumed run's last finished step, looked up by name.
+pub(super) fn route_named(pipeline: &Pipeline, name: &str, outcome: StepOutcome) -> Route {
+    let Some(step) = pipeline.steps.iter().find(|s| s.name == name) else {
+        return Route::Fail(format!("unknown step `{name}`"));
+    };
+    route_after(step, outcome, None, pipeline)
 }

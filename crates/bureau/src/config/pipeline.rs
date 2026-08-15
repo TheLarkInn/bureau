@@ -20,22 +20,6 @@ use crate::contract::Trust;
 /// Terminal edge targets.
 pub const TERMINALS: [&str; 4] = ["done", "abort", "escalate", "join"];
 
-/// A pipeline definition: the file you edit is the file that runs.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Pipeline {
-    /// Must match the file stem.
-    pub name: String,
-    /// The steps, in declaration order. The first step is the entry.
-    pub steps: Vec<StepDef>,
-}
-
-impl Named for Pipeline {
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
 /// The step's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -56,6 +40,37 @@ impl StepKind {
             Self::Deterministic => "deterministic",
             Self::Agent => "agent",
             Self::Decision => "decision",
+        }
+    }
+}
+
+const fn default_max_attempts() -> u32 {
+    1
+}
+
+/// The four outcomes a `decision` step's `on` must cover (kebab-case).
+const OUTCOMES: [&str; 4] = ["success", "failure", "blocked", "no-work"];
+
+fn allowed_on(kind: StepKind, field: &str) -> bool {
+    match kind {
+        StepKind::Deterministic => field == "run",
+        StepKind::Agent => matches!(field, "role" | "fixture" | "trust"),
+        StepKind::Decision => matches!(field, "over" | "on"),
+    }
+}
+
+fn check_missing_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
+    for outcome in OUTCOMES {
+        if !on.contains_key(outcome) {
+            errors.push(format!("`on` is missing a `{outcome}` branch"));
+        }
+    }
+}
+
+fn check_unknown_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
+    for key in on.keys() {
+        if !OUTCOMES.contains(&key.as_str()) {
+            errors.push(format!("`on` has unknown outcome `{key}`"));
         }
     }
 }
@@ -117,13 +132,6 @@ pub struct StepDef {
     #[serde(default)]
     pub timeout_secs: Option<u64>,
 }
-
-const fn default_max_attempts() -> u32 {
-    1
-}
-
-/// The four outcomes a `decision` step's `on` must cover (kebab-case).
-const OUTCOMES: [&str; 4] = ["success", "failure", "blocked", "no-work"];
 
 impl StepDef {
     /// Every edge target this step names.
@@ -212,26 +220,18 @@ impl StepDef {
     }
 }
 
-fn allowed_on(kind: StepKind, field: &str) -> bool {
-    match kind {
-        StepKind::Deterministic => field == "run",
-        StepKind::Agent => matches!(field, "role" | "fixture" | "trust"),
-        StepKind::Decision => matches!(field, "over" | "on"),
-    }
+/// A pipeline definition: the file you edit is the file that runs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Pipeline {
+    /// Must match the file stem.
+    pub name: String,
+    /// The steps, in declaration order. The first step is the entry.
+    pub steps: Vec<StepDef>,
 }
 
-fn check_missing_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
-    for outcome in OUTCOMES {
-        if !on.contains_key(outcome) {
-            errors.push(format!("`on` is missing a `{outcome}` branch"));
-        }
-    }
-}
-
-fn check_unknown_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
-    for key in on.keys() {
-        if !OUTCOMES.contains(&key.as_str()) {
-            errors.push(format!("`on` has unknown outcome `{key}`"));
-        }
+impl Named for Pipeline {
+    fn name(&self) -> &str {
+        &self.name
     }
 }

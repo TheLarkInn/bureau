@@ -20,16 +20,17 @@ pub mod runlog;
 pub mod state;
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// One configuration problem, tied to the file that caused it.
 ///
 /// Loading and validation accumulate these into a `Vec` so
 /// `bureau validate` reports every error in one pass.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{path}: {message}")]
 pub struct ConfigError {
     /// The file (or synthetic `dir/name` path) the error belongs to.
-    pub path: PathBuf,
+    pub path: String,
     /// What is wrong.
     pub message: String,
 }
@@ -39,16 +40,8 @@ impl ConfigError {
     #[must_use]
     pub fn new(path: &Path, message: impl fmt::Display) -> Self {
         Self {
-            path: path.to_path_buf(),
+            path: path.display().to_string(),
             message: message.to_string(),
         }
     }
 }
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.message)
-    }
-}
-
-impl std::error::Error for ConfigError {}

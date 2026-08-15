@@ -12,6 +12,13 @@ use super::testdir::TestDir;
 const ASSIGNMENT: &str = "fix-flaky-tests";
 const HOUR: Duration = Duration::from_secs(3600);
 
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 const fn limits(concurrent: u32, hour: u32, day: u32, prs: u32, cost: f64) -> Limits {
     Limits {
         max_concurrent: concurrent,
@@ -54,7 +61,7 @@ fn disposition_of(path: &Path, hash: &str) -> Option<String> {
 
 #[test]
 fn a_zero_ttl_lease_is_dead_on_arrival() {
-    let store = Store::open_in_memory().expect("open");
+    let store = Store::open_in_memory(test_clock).expect("open");
     // Expiry equals the insert time, so the next claim's reaper
     // (`expires <= now`) collects it even within the same millisecond.
     let outcome = (
@@ -68,13 +75,13 @@ fn a_zero_ttl_lease_is_dead_on_arrival() {
 
 #[test]
 fn headroom_at_limit_minus_one_leaves_exactly_one() {
-    let by_concurrency = Store::open_in_memory().expect("open");
+    let by_concurrency = Store::open_in_memory(test_clock).expect("open");
     assert!(claim(&by_concurrency, "item-1", HOUR));
-    let by_hour = Store::open_in_memory().expect("open");
+    let by_hour = Store::open_in_memory(test_clock).expect("open");
     recorded(&by_hour, 5, 1.0);
-    let by_cost = Store::open_in_memory().expect("open");
+    let by_cost = Store::open_in_memory(test_clock).expect("open");
     recorded(&by_cost, 1, 24.99);
-    let idle = Store::open_in_memory().expect("open");
+    let idle = Store::open_in_memory(test_clock).expect("open");
     let outcome = (
         headroom(&by_concurrency, &limits(2, 9, 9, 9, 25.0), 0),
         headroom(&by_hour, &limits(9, 6, 9, 9, 25.0), 0),
@@ -88,7 +95,7 @@ fn headroom_at_limit_minus_one_leaves_exactly_one() {
 fn a_rejected_marker_is_terminal() {
     let dir = TestDir::new("dedup");
     let path = dir.path().join("state.db");
-    let store = Store::open(&path).expect("open");
+    let store = Store::open(&path, test_clock).expect("open");
     store
         .mark_seen("hash-1", Disposition::Rejected)
         .expect("mark");
@@ -105,7 +112,7 @@ fn a_rejected_marker_is_terminal() {
 
 #[test]
 fn releasing_a_never_claimed_key_is_a_noop() {
-    let store = Store::open_in_memory().expect("open");
+    let store = Store::open_in_memory(test_clock).expect("open");
     assert!(claim(&store, "item-1", HOUR));
     let outcome = (
         store.release(ASSIGNMENT, "ghost").is_ok(),

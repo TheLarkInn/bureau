@@ -21,6 +21,21 @@ use bureau::process::{REDACTED, Secret, SpawnRequest};
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+/// Joins argv for one-line comparisons (unit separator).
+const SEP: &str = "\u{1f}";
+
+/// The process environment, snapshotted as `main` would capture it.
+fn daemon_env() -> BTreeMap<String, String> {
+    std::env::vars().collect()
+}
+
+/// The tests' clock: real millis since the Unix epoch.
+fn test_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -91,8 +106,17 @@ fn request(worktree: &Path) -> StepRequest {
 
 /// Builds a copilot spawn request for a role holding `permissions`.
 fn copilot_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
+    let env = daemon_env();
     let role = role(AdapterKind::Copilot, permissions);
-    copilot::spawn_request(&role, &step(), &request(dir), Vec::new(), None)
+    copilot::spawn_request(
+        &role,
+        &step(),
+        &request(dir),
+        &env,
+        test_clock,
+        Vec::new(),
+        None,
+    )
 }
 
 /// Whether the daemon environment holds any of `names`, non-empty.
@@ -144,9 +168,18 @@ fn gh_token_forwarding_follows_the_forge_grants() {
 fn claude_model_tokens_require_model_invoke() {
     let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
     let dir = TestDir::new("model-gate");
+    let env = daemon_env();
     let secrets = vec![Secret::new("engine-secret")];
     let granted = role(AdapterKind::Claude, &[Permission::ModelInvoke]);
-    let yes = claude::spawn_request(&granted, &step(), &request(dir.path()), secrets, None);
+    let yes = claude::spawn_request(
+        &granted,
+        &step(),
+        &request(dir.path()),
+        &env,
+        test_clock,
+        secrets,
+        None,
+    );
     let no = claude_request(&[Permission::RepoRead], dir.path());
     let seen = (
         yes.env.keys().all(|k| known.contains(&k.as_str())),
@@ -159,8 +192,17 @@ fn claude_model_tokens_require_model_invoke() {
 
 /// Builds a claude spawn request for a role holding `permissions`.
 fn claude_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
+    let env = daemon_env();
     let role = role(AdapterKind::Claude, permissions);
-    claude::spawn_request(&role, &step(), &request(dir), Vec::new(), None)
+    claude::spawn_request(
+        &role,
+        &step(),
+        &request(dir),
+        &env,
+        test_clock,
+        Vec::new(),
+        None,
+    )
 }
 
 /// The fake adapter threads the run's scrub list into the replay
@@ -184,10 +226,46 @@ async fn fake_replay_scrubs_run_credentials() {
     let mut step = step();
     step.fixture = Some(fixture.to_string_lossy().into_owned());
     let secrets = vec![Secret::new("cred-123")];
-    let result = fake::execute(&step, &request(dir.path()), secrets, None).await;
+    let result = fake::execute(&step, &request(dir.path()), test_clock, secrets, None).await;
     let seen = (
         result.message.contains("cred-123"),
         result.message.contains(REDACTED),
     );
     assert_eq!(seen, (false, true));
+}
+
+#[test]
+fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
+    let cases: [(&[Permission], &str); 4] = [
+        (
+            &[Permission::RepoWrite],
+            "--allow-tool=shell(git:*)\u{1f}--deny-tool=shell(git push)",
+        ),
+        (&[Permission::RepoPush], "--allow-tool=shell(git:*)"),
+        (&[Permission::RepoRead], "--deny-tool=shell(*)"),
+        (&[], "--deny-tool=shell(*)"),
+    ];
+    for (permissions, flags) in cases {
+        let dir = TestDir::new("copilot-flags");
+        let req = copilot_request(permissions, dir.path());
+        assert_eq!(req.argv[7..].join(SEP), flags);
+    }
+}
+
+#[test]
+fn claude_mirrors_the_push_boundary_and_denies_by_default() {
+    let cases: [(&[Permission], &str); 4] = [
+        (
+            &[Permission::RepoWrite],
+            "--allowedTools\u{1f}Bash(git:*)\u{1f}--disallowedTools\u{1f}Bash(git push:*)",
+        ),
+        (&[Permission::RepoPush], "--allowedTools\u{1f}Bash(git:*)"),
+        (&[Permission::RepoRead], "--disallowedTools\u{1f}Bash(*)"),
+        (&[], "--disallowedTools\u{1f}Bash(*)"),
+    ];
+    for (permissions, flags) in cases {
+        let dir = TestDir::new("claude-flags");
+        let req = claude_request(permissions, dir.path());
+        assert_eq!(req.argv[6..].join(SEP), flags);
+    }
 }

@@ -23,6 +23,7 @@
 //! worktree. A finished run returns its recorded outcome without
 //! appending anything (idempotent).
 
+mod ctx;
 mod drive;
 mod edge;
 mod execute;
@@ -65,6 +66,9 @@ pub struct RunPlan {
     pub forge: Arc<dyn Forge>,
     /// Credentials keyed by registry credential name, resolved pre-spawn.
     pub credentials: BTreeMap<String, Secret>,
+    /// The daemon's environment snapshot: adapters read credential
+    /// variables from this map, never from the process environment.
+    pub daemon_env: BTreeMap<String, String>,
 }
 
 /// How a run ended. Failures are data, not exceptions.
@@ -96,48 +100,6 @@ impl RunOutcome {
     }
 }
 
-/// The engine: runs pipelines in worktrees, logging every event.
-pub struct Engine {
-    /// Where run directories live.
-    pub runs_dir: PathBuf,
-    /// The bare-mirror cache worktrees are cut from.
-    pub cache: CheckoutCache,
-}
-
-impl Engine {
-    /// An engine writing runs under `runs_dir` and mirrors under
-    /// `cache_dir`.
-    #[must_use]
-    pub const fn new(runs_dir: PathBuf, cache_dir: PathBuf) -> Self {
-        Self {
-            runs_dir,
-            cache: CheckoutCache::new(cache_dir),
-        }
-    }
-
-    /// Runs a pipeline to a terminal. Never panics across the boundary:
-    /// the machine runs in its own task and a join failure becomes a
-    /// [`StepOutcome::Failure`] outcome.
-    ///
-    /// If `runs_dir/plan.run_id` already exists, the run resumes from its
-    /// event log; a finished run returns its recorded outcome untouched.
-    pub async fn run(&self, plan: &RunPlan) -> RunOutcome {
-        let (runs_dir, cache, plan) = (self.runs_dir.clone(), self.cache.clone(), plan.clone());
-        let run_id = plan.run_id.clone();
-        let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            tokio::spawn(async move { drive::run(&runs_dir, &cache, &plan).await })
-        }));
-        match spawned {
-            Ok(task) => joined(run_id, task).await,
-            Err(_) => RunOutcome::bare(
-                &run_id,
-                StepOutcome::Failure,
-                "run task panicked before spawn".to_owned(),
-            ),
-        }
-    }
-}
-
 /// Awaits the machine's task; a panic inside it is data, not an unwind.
 async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> RunOutcome {
     match task.await {
@@ -150,15 +112,62 @@ async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> Ru
     }
 }
 
+/// The engine: runs pipelines in worktrees, logging every event.
+pub struct Engine {
+    /// Where run directories live.
+    pub runs_dir: PathBuf,
+    /// The bare-mirror cache worktrees are cut from.
+    pub cache: CheckoutCache,
+    /// Wall clock (millis since the Unix epoch) threaded into the run
+    /// log, git operations, and step spawns.
+    pub clock: fn() -> u64,
+}
+
+impl Engine {
+    /// An engine writing runs under `runs_dir` and mirrors under
+    /// `cache_dir`, stamping events with `clock`.
+    #[must_use]
+    pub const fn new(runs_dir: PathBuf, cache_dir: PathBuf, clock: fn() -> u64) -> Self {
+        Self {
+            runs_dir,
+            cache: CheckoutCache::new(cache_dir),
+            clock,
+        }
+    }
+
+    /// Runs a pipeline to a terminal. Never panics across the boundary:
+    /// the machine runs in its own task and a join failure becomes a
+    /// [`StepOutcome::Failure`] outcome.
+    ///
+    /// If `runs_dir/plan.run_id` already exists, the run resumes from its
+    /// event log; a finished run returns its recorded outcome untouched.
+    pub async fn run(&self, plan: &RunPlan) -> RunOutcome {
+        let (runs_dir, cache, plan, clock) = (
+            self.runs_dir.clone(),
+            self.cache.clone(),
+            plan.clone(),
+            self.clock,
+        );
+        let run_id = plan.run_id.clone();
+        let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            tokio::spawn(async move { drive::run(&runs_dir, &cache, &plan, clock).await })
+        }));
+        match spawned {
+            Ok(task) => joined(run_id, task).await,
+            Err(_) => RunOutcome::bare(
+                &run_id,
+                StepOutcome::Failure,
+                "run task panicked before spawn".to_owned(),
+            ),
+        }
+    }
+}
+
 /// A filesystem-safe run id: `{assignment}-{millis}-{pid}-{counter}`.
 #[must_use]
-pub fn new_run_id(assignment: &str) -> String {
+pub fn new_run_id(assignment: &str, now_ms: u64) -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
     static NEXT: AtomicU32 = AtomicU32::new(0);
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let safe: String = assignment
         .chars()
         .map(|c| {
@@ -170,7 +179,7 @@ pub fn new_run_id(assignment: &str) -> String {
         })
         .collect();
     format!(
-        "{safe}-{millis}-{}-{}",
+        "{safe}-{now_ms}-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     )

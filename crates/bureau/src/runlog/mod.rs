@@ -21,7 +21,6 @@ pub use state::{RunState, RunStatus, StepRecord, replay};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::process::{ScrubWriter, Secret};
 
@@ -42,6 +41,8 @@ pub struct RunLog {
     writer: ScrubWriter<BufWriter<File>>,
     next_seq: u64,
     dir: PathBuf,
+    /// Wall clock (millis since the Unix epoch) stamping each event.
+    clock: fn() -> u64,
 }
 
 impl RunLog {
@@ -50,7 +51,12 @@ impl RunLog {
     ///
     /// # Errors
     /// Propagates filesystem failures, including an existing log.
-    pub fn create(runs_dir: &Path, run_id: &str, secrets: &[Secret]) -> io::Result<Self> {
+    pub fn create(
+        runs_dir: &Path,
+        run_id: &str,
+        secrets: &[Secret],
+        clock: fn() -> u64,
+    ) -> io::Result<Self> {
         let dir = run_dir(runs_dir, run_id);
         std::fs::create_dir_all(dir.join("artifacts"))?;
         std::fs::create_dir_all(dir.join("wt"))?;
@@ -62,6 +68,7 @@ impl RunLog {
             writer: ScrubWriter::new(BufWriter::new(file), secrets),
             next_seq: 0,
             dir,
+            clock,
         })
     }
 
@@ -78,7 +85,7 @@ impl RunLog {
     pub fn append(&mut self, kind: EventKind, data: serde_json::Value) -> io::Result<u64> {
         let event = Event {
             seq: self.next_seq,
-            at_ms: now_millis(),
+            at_ms: (self.clock)(),
             kind,
             data,
         };
@@ -153,10 +160,4 @@ pub fn write_state_cache(dir: &Path, state: &RunState) -> io::Result<()> {
         dir.join(STATE_FILE),
         serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
     )
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
