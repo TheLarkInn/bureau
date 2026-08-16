@@ -11,6 +11,8 @@
 pub mod adapters;
 pub mod config;
 pub mod contract;
+pub mod credential;
+pub mod doctor;
 pub mod engine;
 pub mod forge;
 pub mod git;
@@ -19,9 +21,11 @@ pub mod mcp;
 pub use bureau_plugin as plugin;
 pub mod process;
 pub mod reconcile;
+pub mod repair;
 pub mod runlog;
 pub mod state;
 pub mod supervise;
+pub use bureau_lifecycle::{home, maintenance, setup};
 
 use std::fmt;
 use std::path::{Path, PathBuf};

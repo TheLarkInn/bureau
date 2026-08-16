@@ -18,9 +18,16 @@ pub fn apply(
     agent: &str,
     worktree: &Path,
     settings: &Settings,
+    run_dir: &Path,
 ) -> Result<Guard, Error> {
     let selection = select(worktree, settings)?;
-    let mut guard = Guard::new();
+    let mut guard = Guard::durable(
+        run_dir,
+        worktree,
+        &snapshot.source.name,
+        &snapshot.source.version,
+        snapshot.source.origin.as_deref(),
+    )?;
     let result = setup(snapshot, agent, worktree, settings, &selection, &mut guard);
     match result {
         Ok(()) => Ok(guard),
@@ -28,8 +35,13 @@ pub fn apply(
     }
 }
 
-pub fn apply_direct(bytes: &[u8], agent: &str, worktree: &Path) -> Result<Guard, Error> {
-    let mut guard = Guard::new();
+pub fn apply_direct(
+    bytes: &[u8],
+    agent: &str,
+    worktree: &Path,
+    run_dir: &Path,
+) -> Result<Guard, Error> {
+    let mut guard = Guard::durable(run_dir, worktree, agent, "pinned", None)?;
     let result = write_direct(bytes, agent, worktree, &mut guard);
     match result {
         Ok(()) => Ok(guard),

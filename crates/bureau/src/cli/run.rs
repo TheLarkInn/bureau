@@ -1,5 +1,6 @@
 //! `run` and `retry`: claim one work item and drive one pipeline run to
 //! a terminal (DESIGN.md sections 11 and 13).
+mod committed;
 mod signal;
 
 use std::collections::BTreeMap;
@@ -29,11 +30,9 @@ struct Prepared {
 /// # Errors
 /// Propagates unexpected failures (state, forge transport, I/O).
 pub async fn run(pipeline: &str, item: &str, paths: &Paths) -> anyhow::Result<i32> {
-    let Some(config) = load_config(&paths.config) else {
-        return Ok(2);
-    };
-    match by_pipeline(&config, pipeline) {
-        Ok(assignment) => execute(&config, assignment, item, paths).await,
+    let loaded = committed::load(&paths.settings, &paths.config_cache).await?;
+    match by_pipeline(&loaded.config, pipeline) {
+        Ok(assignment) => execute(&loaded, assignment, item, paths).await,
         Err(code) => Ok(code),
     }
 }
@@ -46,28 +45,12 @@ pub async fn retry(run_id: &str, paths: &Paths) -> anyhow::Result<i32> {
     let Some((name, item)) = retry_target(&paths.runs, run_id)? else {
         return Ok(2);
     };
-    let Some(config) = load_config(&paths.config) else {
-        return Ok(2);
-    };
-    let Some(assignment) = config.assignments.get(&name) else {
+    let loaded = committed::load(&paths.settings, &paths.config_cache).await?;
+    let Some(assignment) = loaded.config.assignments.get(&name) else {
         eprintln!("assignment `{name}` from run `{run_id}` is no longer in the config");
         return Ok(2);
     };
-    execute(&config, assignment, &item, paths).await
-}
-
-/// Loads the config, printing every error and yielding `None` on any.
-fn load_config(dir: &Path) -> Option<Config> {
-    match Config::load(dir) {
-        Ok(config) => Some(config),
-        Err(errors) => {
-            for error in &errors {
-                eprintln!("{error}");
-            }
-            eprintln!("{} config error(s)", errors.len());
-            None
-        }
-    }
+    execute(&loaded, assignment, &item, paths).await
 }
 
 /// The one assignment bound to `pipeline`; v0 runs exactly one, so zero
@@ -124,30 +107,31 @@ fn retry_target(runs: &Path, run_id: &str) -> anyhow::Result<Option<(String, Str
 /// item, claim it, drive the run. Every failure before the claim prints
 /// its own message and maps to an exit code.
 async fn execute(
-    config: &Config,
+    loaded: &committed::Loaded,
     assignment: &Assignment,
     item_query: &str,
     paths: &Paths,
 ) -> anyhow::Result<i32> {
-    let Some(prepared) = prepare_execution(config, assignment, item_query).await? else {
+    let Some(prepared) =
+        prepare_execution(&loaded.config, assignment, &loaded.settings, item_query).await?
+    else {
         return Ok(2);
     };
-    let direct_agents = Config::load_agent_files(&paths.config, &config.roles)
-        .context("loading direct agent files")?;
     let store = Arc::new(Store::open(&paths.state).context("opening state database")?);
     let run_id = new_run_id(&assignment.name).context("creating run id")?;
     let Some(owner) = claim(store.clone(), assignment, &prepared.item, &run_id)? else {
         return Ok(1);
     };
     let mut plan = plan(
-        config,
+        &loaded.config,
         assignment,
         prepared.item,
         prepared.forge,
         prepared.credentials,
         run_id,
     );
-    plan.direct_agents = direct_agents;
+    plan.config_source = Some(loaded.source.clone());
+    plan.direct_agents.clone_from(&loaded.direct_agents);
     plan.lease = Some(owner);
     finish(plan, paths, store).await
 }
@@ -155,9 +139,10 @@ async fn execute(
 async fn prepare_execution(
     config: &Config,
     assignment: &Assignment,
+    settings: &bureau::setup::Settings,
     item_query: &str,
 ) -> anyhow::Result<Option<Prepared>> {
-    let Some(credentials) = prepare::resolve_credentials(config, assignment) else {
+    let Some(credentials) = prepare::resolve_credentials(config, assignment, settings) else {
         return Ok(None);
     };
     let forge = prepare::work_forge(config, assignment, &credentials)?;
@@ -249,6 +234,7 @@ fn plan(
 }
 
 async fn run_plan(plan: RunPlan, paths: &Paths, store: Arc<Store>) -> anyhow::Result<RunOutcome> {
+    let _maintenance = bureau::maintenance::shared(&paths.maintenance_root)?;
     let engine = Arc::new(Engine::new(paths.runs.clone(), paths.cache.clone()));
     signal::run(engine, store, plan).await
 }

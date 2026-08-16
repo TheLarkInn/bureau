@@ -3,7 +3,7 @@
 See it work in 5 seconds, offline:
 
 ```sh
-cargo test --offline    # 209 tests, ~4s, no network, no model calls
+cargo test --offline    # no network, no model calls
 ```
 
 bureau is a CI runner whose step body can be an LLM agent instead of a
@@ -13,9 +13,40 @@ shell script. It is level-triggered: each pass compares desired state
 git worktrees. Work is claimed off a backlog by lease, never pushed.
 `DESIGN.md` is the authoritative spec.
 
+## Plugins and agent resources
+
+The installable `bureau` plugin is the primary agent surface:
+
+- `/bureau:implementer`
+- `/bureau:reviewer`
+- `/bureau:pipeline-author`
+- `/bureau:run-inspector`
+
+Roles reference these resources directly. Agent files own their model,
+instructions, and tools; bureau owns only pipeline orchestration, permissions,
+trust, durable execution, and forge effects.
+
+## Initialize and reconcile
+
+Local state defaults to `~/.bureau`; set `BUREAU_HOME` to override it.
+
+```sh
+bureau init --from init.yaml       # first-time reviewed config proposal
+bureau setup --from settings.yaml # replace non-secret local settings
+bureau doctor --json              # read-only offline diagnostics
+bureau repair                     # preview, then confirm reversible repairs
+bureau reconcile                  # continuous desired-vs-observed loop
+bureau reconcile --now            # one pass, waiting for started runs
+```
+
+`init` previews and validates the generated config, opens a config PR, waits
+for its forge-owned merge state, validates the exact merged commit, runs one
+foreground reconcile pass, then writes `settings.yaml` as the completion
+marker. It never executes unmerged config.
+
 ## Run one pipeline
 
-1. Write the config repo (its PR review is the entire authorization
+1. Review and commit the config (its PR review is the entire authorization
    model):
 
    ```
@@ -32,7 +63,7 @@ git worktrees. Work is claimed off a backlog by lease, never pushed.
    bureau validate runner-config
    ```
 
-3. Run once for one work item:
+3. Run once for one work item from the configured committed source:
 
    ```sh
    bureau run fix-failing-test --item 42
@@ -45,11 +76,11 @@ git worktrees. Work is claimed off a backlog by lease, never pushed.
 ## Credentials
 
 Config names a reference (`credential: ado-main`); the value is never in
-git. At spawn, bureau checks, in order:
+git. `settings.yaml` declares exactly where each reference resolves:
 
-1. `BUREAU_CREDENTIAL_<NAME>` — reference uppercased, `-` → `_`
-   (`ado-main` → `BUREAU_CREDENTIAL_ADO_MAIN`)
-2. a file named `<reference>` under `$BUREAU_CREDENTIALS_DIR`
+- one environment variable;
+- one exact file; or
+- one credential directory containing a file named after the reference.
 
 Values are scrubbed from everything written to the run log.
 
@@ -62,9 +93,10 @@ bureau cancel <run-id>       # write the run's CANCEL marker
 bureau retry <run-id>        # new run for the item an earlier run targeted
 ```
 
-Filesystem roots and their defaults: `--config runner-config`,
-`--runs runs`, `--state state.db`, `--cache checkout-cache`. `list`,
-`show`, and `cancel` take only `--runs`.
+The fixed home layout contains `settings.yaml`, `credentials/`, `state.db`,
+`runs/`, `checkout-cache/`, and `config-cache/`. Explicit path overrides are
+available for contained deployments; `list`, `show`, and `cancel` take only
+`--runs`.
 
 Each run writes `runs/<run-id>/`: `events.jsonl` (append-only, fsync'd,
 secret-scrubbed — the only source of truth), `state.json` (derived
@@ -83,12 +115,14 @@ cache), `artifacts/`, and the worktree `wt/`.
 
 | Layer | What it is | Code |
 |---|---|---|
-| 0–3 | Process contract · fake adapter · step contract · run log | `src/process/`, `src/adapters/`, `src/contract.rs`, `src/runlog/` |
-| 4 | Engine: the step state machine | `src/engine/` |
-| 5 | Durable state: SQLite leases, budget, dedup | `src/state/` |
-| 6 | Git: mirror cache, one worktree per run | `src/git.rs` |
-| 7 | Forges: GitHub, ADO, in-memory fake | `src/forge/` |
-| 8 | Reconcile loop: desired − observed − in-flight, claimed by CAS | `src/reconcile.rs` |
+| 0–3 | Process contract · fake adapter · step contract · run log | `crates/bureau/src/process/`, `adapters/`, `contract.rs`, `runlog/` |
+| 4 | Engine: the step state machine | `crates/bureau/src/engine/` |
+| 5 | Durable state: SQLite leases, budget, dedup | `crates/bureau/src/state/` |
+| 6 | Git: mirror cache, one worktree per run | `crates/bureau/src/git.rs` |
+| 7 | Forges: GitHub, ADO, in-memory fake | `crates/bureau/src/forge/` |
+| 8 | Reconcile loop: desired − observed − in-flight, claimed by CAS | `crates/bureau/src/reconcile/` |
+| Local lifecycle | Home, settings, init/setup, doctor, repair policy | `crates/bureau-lifecycle/` |
+| Plugin runtime | Package, resolution, snapshots, activation, restoration | `crates/bureau-plugin/` |
 
 ## Rust quality gates
 
@@ -110,10 +144,5 @@ Behavioral departures from the spec as written, each with its reason:
 - Duplicate YAML mapping keys are last-write-wins (`serde_yaml_ng` has
   no rejection) — review config diffs carefully.
 
-Internal departures (no behavior change):
-
-- `engine::log::Appender` mirrors `RunLog`'s wire format; resume needs
-  open-for-append, a future `RunLog::open` cleanup.
-- Run-log `output` events carry `stream: "combined"` — layer 0
-  multiplexes stdout and stderr into one sink.
-- `Reconciler.forges` is a `Vec`, not a map (`ForgeKind` lacks `Ord`).
+Run-log `output` events carry `stream: "combined"` because layer 0
+multiplexes stdout and stderr into one scrubbed sink.

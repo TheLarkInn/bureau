@@ -13,13 +13,15 @@ use bureau::runlog::{ConfigSource, RunSnapshot};
 use bureau::state::{LeaseOwner, Store};
 
 use super::active::Active;
-use super::{Args, build};
+use super::{ResolvedArgs, build};
 
 pub(super) struct Daemon {
     manager: ConfigManager,
     state: Arc<Store>,
     engine: Arc<Engine>,
     active: Active,
+    _maintenance: bureau::maintenance::Guard,
+    settings: Option<bureau::setup::Settings>,
 }
 
 struct Revision {
@@ -31,9 +33,13 @@ struct Revision {
 }
 
 impl Daemon {
-    pub(super) fn new(args: &Args) -> anyhow::Result<Self> {
-        let credential =
-            build::config_credential(args.config_credential.as_deref(), args.config_forge)?;
+    pub(super) fn new(args: &ResolvedArgs) -> anyhow::Result<Self> {
+        let credential = build::config_credential(
+            args.config_credential.as_deref(),
+            args.config_forge,
+            args.settings.as_ref(),
+        )?;
+        let maintenance = bureau::maintenance::shared(&args.maintenance_root)?;
         let source = GitSource::new(
             args.config_remote.clone(),
             args.config_ref.clone(),
@@ -48,6 +54,8 @@ impl Daemon {
             state,
             engine,
             active: Active::new(args.runs.clone()),
+            _maintenance: maintenance,
+            settings: args.settings.clone(),
         })
     }
 
@@ -55,7 +63,7 @@ impl Daemon {
         let active = self.refresh().await?;
         self.project_finished()?;
         self.resume_unfinished()?;
-        let revision = revision(active);
+        let revision = revision(active, self.settings.as_ref());
         let reconciler = self.reconciler(&revision);
         let started = reconciler.reconcile_once().await?;
         self.active.extend(started);
@@ -122,10 +130,11 @@ impl Daemon {
         snapshot: RunSnapshot,
         owner: LeaseOwner,
     ) -> anyhow::Result<Option<bureau::reconcile::Started>> {
-        let credentials = match build::credentials_for_repos(&snapshot.repos) {
-            Ok(credentials) => credentials,
-            Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
-        };
+        let credentials =
+            match build::credentials_for_repos(&snapshot.repos, self.settings.as_ref()) {
+                Ok(credentials) => credentials,
+                Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
+            };
         let forge = match build::forge(&snapshot.assignment, &snapshot.repos, &credentials) {
             Ok(forge) => forge,
             Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
@@ -174,8 +183,8 @@ impl Daemon {
     }
 }
 
-fn revision(active: ActivatedConfig) -> Revision {
-    let credentials = build::credentials(&active.config);
+fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>) -> Revision {
+    let credentials = build::credentials(&active.config, settings);
     let forges = build::forges(&active.config, &credentials);
     Revision {
         config: active.config,

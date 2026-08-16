@@ -1,49 +1,44 @@
 //! Exact restoration guard for temporary worktree activation files.
 
+mod durable;
+
 use std::fs::{self, Permissions};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
-use super::Error;
+use super::{Error, restoration};
 
 #[derive(Debug)]
 pub struct Guard {
     files: Vec<SavedFile>,
     directories: Vec<PathBuf>,
     temporary_roots: Vec<PathBuf>,
+    restoration: Option<restoration::Record>,
     active: bool,
 }
 
 #[derive(Debug)]
-struct SavedFile {
-    path: PathBuf,
-    original: Option<Original>,
-    injected: Vec<u8>,
+pub struct SavedFile {
+    pub(super) path: PathBuf,
+    pub(super) original: Option<Original>,
+    pub(super) injected: Vec<u8>,
 }
 
 #[derive(Debug)]
-struct Original {
-    bytes: Vec<u8>,
-    permissions: Permissions,
+pub struct Original {
+    pub(super) bytes: Vec<u8>,
+    pub(super) permissions: Permissions,
 }
 
 impl Guard {
-    pub const fn new() -> Self {
-        Self {
-            files: Vec::new(),
-            directories: Vec::new(),
-            temporary_roots: Vec::new(),
-            active: true,
-        }
-    }
-
     pub fn create_dir_all(&mut self, path: &Path) -> Result<(), Error> {
         let mut missing = missing_directories(path)?;
         missing.reverse();
         for directory in missing {
+            self.directories.push(directory.clone());
+            self.persist()?;
             fs::create_dir(&directory)
                 .map_err(|error| Error::io("create directory", &directory, error))?;
-            self.directories.push(directory);
         }
         Ok(())
     }
@@ -61,14 +56,16 @@ impl Guard {
         }
         self.create_dir_all(path)?;
         self.temporary_roots.push(path.to_path_buf());
+        self.persist()?;
         Ok(())
     }
 
     pub fn write(&mut self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
         let index = self.saved_index(path)?;
+        self.files[index].injected = bytes.to_vec();
+        self.persist()?;
         verify_ancestors(path)?;
         fs::write(path, bytes).map_err(|error| Error::io("write", path, error))?;
-        self.files[index].injected = bytes.to_vec();
         Ok(())
     }
 
@@ -85,6 +82,13 @@ impl Guard {
         let mut failures = self.restore_files();
         failures.extend(self.remove_temporary_roots());
         failures.extend(self.remove_directories());
+        if failures.is_empty() {
+            if let Some(restoration) = &self.restoration {
+                if let Err(error) = restoration.remove() {
+                    failures.push(error.to_string());
+                }
+            }
+        }
         self.active = false;
         restoration_result(conflicts, failures)
     }

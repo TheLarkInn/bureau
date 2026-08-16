@@ -14,9 +14,11 @@ pub(crate) mod error;
 pub(crate) mod global;
 pub(crate) mod guard;
 pub(crate) mod json;
+pub(crate) mod package;
 pub(crate) mod paths;
 pub(crate) mod reference;
 pub(crate) mod resolve;
+pub(crate) mod restoration;
 pub(crate) mod settings;
 pub(crate) mod snapshot;
 pub(crate) mod tree;
@@ -27,6 +29,9 @@ use serde::{Deserialize, Serialize};
 
 pub use error::Error;
 
+/// Metadata from a validated plugin package.
+pub use package::{InstallCommand, PackageInfo};
+
 use reference::AgentReference;
 use settings::Settings;
 use snapshot::Snapshot;
@@ -35,6 +40,30 @@ use snapshot::Snapshot;
 #[must_use]
 pub fn is_plugin_reference(value: &str) -> bool {
     AgentReference::parse(value).is_ok()
+}
+
+/// Validates the bundled package and bureau-io MCP definition.
+///
+/// # Errors
+/// Rejects missing, unsafe, or malformed package files.
+pub fn inspect_package(root: &Path) -> Result<PackageInfo, Error> {
+    package::inspect(root)
+}
+
+/// Returns the process-contract commands for user-global installation.
+///
+/// # Errors
+/// Rejects a non-UTF-8 source path.
+pub fn install_commands(source_root: &Path) -> Result<[InstallCommand; 2], Error> {
+    package::install_commands(source_root)
+}
+
+/// Classifies one installer command result, accepting idempotent responses.
+///
+/// # Errors
+/// Returns the scrubbed Copilot command failure.
+pub fn validate_install_result(success: bool, stderr: &[u8]) -> Result<(), Error> {
+    package::validate_install_result(success, stderr)
 }
 
 /// Exact identity of one durable plugin snapshot.
@@ -48,6 +77,9 @@ pub struct PluginSource {
     pub version: String,
     /// Content digest of the materialized plugin.
     pub digest: String,
+    /// Original installed or target-repository package path, when available.
+    #[serde(default)]
+    pub origin: Option<PathBuf>,
 }
 
 /// One active direct agent file installation.
@@ -65,9 +97,12 @@ pub fn activate_direct(
     agent_path: &str,
     bytes: &[u8],
     worktree: &Path,
+    run_dir: &Path,
 ) -> Result<DirectActivation, Error> {
     let agent_name = direct_agent_name(agent_path)?;
-    let guard = activation::apply_direct(bytes, &agent_name, worktree)?;
+    let worktree =
+        std::fs::canonicalize(worktree).map_err(|error| Error::io("resolve", worktree, error))?;
+    let guard = activation::apply_direct(bytes, &agent_name, &worktree, run_dir)?;
     Ok(DirectActivation { agent_name, guard })
 }
 
@@ -123,9 +158,17 @@ impl Resolver {
     pub fn activate(&self, agent_reference: &str, worktree: &Path) -> Result<Activation, Error> {
         let reference = AgentReference::parse(agent_reference)?;
         paths::ensure_outside(&self.run_dir, worktree)?;
-        let settings = Settings::read(worktree)?;
-        let snapshot = self.snapshot(&reference, worktree, &settings)?;
-        let guard = activation::apply(&snapshot, &reference.agent, worktree, &settings)?;
+        let worktree = std::fs::canonicalize(worktree)
+            .map_err(|error| Error::io("resolve", worktree, error))?;
+        let settings = Settings::read(&worktree)?;
+        let snapshot = self.snapshot(&reference, &worktree, &settings)?;
+        let guard = activation::apply(
+            &snapshot,
+            &reference.agent,
+            &worktree,
+            &settings,
+            &self.run_dir,
+        )?;
         Ok(Activation {
             source: snapshot.source,
             agent_name: reference.agent,
@@ -142,6 +185,7 @@ impl Resolver {
         if let Some(snapshot) = snapshot::load(&self.run_dir, &reference.plugin)? {
             return Ok(snapshot);
         }
+
         let resolved = resolve::find(
             &reference.plugin,
             worktree,
@@ -150,6 +194,61 @@ impl Resolver {
         )?;
         snapshot::create(&self.run_dir, &reference.plugin, &resolved)
     }
+}
+
+/// Read-only identity of one interrupted temporary activation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestorationInfo {
+    /// Stable activation record identity.
+    pub activation_id: String,
+    /// Plugin or direct-agent name.
+    pub plugin: String,
+    /// Exact version recorded before activation.
+    pub recorded_version: String,
+    /// Version observed at the original plugin source.
+    pub installed_version: String,
+}
+
+/// Reads every interrupted activation record without changing a worktree.
+///
+/// # Errors
+/// Rejects unsafe or malformed restoration records.
+pub fn restoration_infos(run_dir: &Path) -> Result<Vec<RestorationInfo>, Error> {
+    restoration::infos(run_dir).map(|infos| {
+        infos
+            .into_iter()
+            .map(|value| RestorationInfo {
+                activation_id: value.activation_id,
+                plugin: value.plugin,
+                recorded_version: value.recorded_version,
+                installed_version: value.installed_version,
+            })
+            .collect()
+    })
+}
+
+/// Restores exact pre-activation bytes after an interrupted run.
+///
+/// # Errors
+/// Rejects identity mismatches, unsafe paths, activation conflicts, and
+/// incomplete restoration.
+pub fn restore_stale(
+    run_dir: &Path,
+    activation_id: &str,
+    plugin: &str,
+    version: &str,
+) -> Result<(), Error> {
+    let loaded = restoration::load(run_dir, activation_id)?;
+    let matches = loaded.info.plugin == plugin
+        && loaded.info.recorded_version == version
+        && loaded.info.installed_version == version;
+    if !matches {
+        return Err(Error::invalid(
+            run_dir,
+            "restoration identity does not match the repair plan",
+        ));
+    }
+    guard::Guard::from_loaded(loaded).restore()
 }
 
 /// One active worktree-local plugin installation.

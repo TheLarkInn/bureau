@@ -99,6 +99,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bureau-lifecycle",
  "bureau-plugin",
  "clap",
  "nix",
@@ -109,6 +110,17 @@ dependencies = [
  "serde_yaml_ng",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "bureau-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "thiserror",
 ]
 
 [[package]]

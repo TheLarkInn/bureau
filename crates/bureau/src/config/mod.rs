@@ -32,7 +32,7 @@ use crate::ConfigError;
 
 /// The loaded runner configuration: the repo registry plus every role
 /// and assignment.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Every repo the runner may touch, by short name.
     pub repos: BTreeMap<String, Repo>,

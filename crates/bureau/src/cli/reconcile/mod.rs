@@ -1,71 +1,21 @@
 //! `reconcile`: committed config refresh, recovery, and level-triggered work.
 
 pub(super) mod active;
+mod args;
 mod build;
 mod daemon;
 
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
-use clap::{Args as ClapArgs, ValueEnum};
-
 use daemon::Daemon;
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ForgeArg {
-    Github,
-    Ado,
-}
-
-impl From<ForgeArg> for bureau::config::ForgeKind {
-    fn from(value: ForgeArg) -> Self {
-        match value {
-            ForgeArg::Github => Self::Github,
-            ForgeArg::Ado => Self::Ado,
-        }
-    }
-}
-
-#[derive(Debug, ClapArgs)]
-pub struct Args {
-    /// Git URL/path holding committed configuration.
-    #[arg(long)]
-    pub config_remote: String,
-    /// Branch/ref to fetch.
-    #[arg(long, default_value = "main")]
-    pub config_ref: String,
-    /// Config directory inside the committed tree (`.` or `.bureau`).
-    #[arg(long, default_value = ".bureau")]
-    pub config_subdir: PathBuf,
-    /// Optional credential reference for fetching config.
-    #[arg(long)]
-    pub config_credential: Option<String>,
-    /// Forge shape of the config Git credential.
-    #[arg(long, value_enum, default_value_t = ForgeArg::Github)]
-    pub config_forge: ForgeArg,
-    /// Disposable committed-config cache.
-    #[arg(long, default_value = "config-cache")]
-    pub config_cache: PathBuf,
-    /// Run-log root.
-    #[arg(long, default_value = "runs")]
-    pub runs: PathBuf,
-    /// Durable scheduler state.
-    #[arg(long, default_value = "state.db")]
-    pub state: PathBuf,
-    /// Work-repository checkout cache.
-    #[arg(long, default_value = "checkout-cache")]
-    pub cache: PathBuf,
-    /// Poll interval (`30s`, `5m`, `1h`, or seconds).
-    #[arg(long, default_value = "5m")]
-    pub interval: String,
-    /// Perform one pass, wait for its runs, and exit.
-    #[arg(long)]
-    pub now: bool,
-}
+use args::ResolvedArgs;
+pub use args::{Args, ForgeArg};
 
 pub(super) async fn run(args: Args) -> anyhow::Result<i32> {
+    let args = args.resolve()?;
     let interval = parse_interval(&args.interval)?;
     let once = args.now;
     let daemon = Daemon::new(&args)?;

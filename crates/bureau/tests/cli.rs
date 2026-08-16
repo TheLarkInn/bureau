@@ -96,6 +96,25 @@ fn reconcile_drains_when_signalled_during_observation() {
 }
 
 #[test]
+fn reconcile_defaults_source_and_paths_from_bureau_home() {
+    let dir = TestDir::new("reconcile-home");
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).expect("repo");
+    init_empty_config_repo(&repo);
+    let settings = format!(
+        "config:\n  kind: single_repository\n  remote: '{}'\n  reference: main\ncredentials: {{}}\n",
+        repo.display()
+    );
+    std::fs::write(dir.path().join("settings.yaml"), settings).expect("settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(["reconcile", "--now"])
+        .env("BUREAU_HOME", dir.path())
+        .output()
+        .expect("reconcile");
+    assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
 fn validate_accepts_a_valid_config() {
     let dir = TestDir::new("cli-valid");
     write_minimal_config(dir.path());

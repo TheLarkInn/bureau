@@ -10,7 +10,6 @@ mod world;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use bureau::config::Limits;
 use bureau::contract::StepOutcome;
@@ -18,7 +17,7 @@ use bureau::engine::RunOutcome;
 use bureau::process::{REDACTED, Secret};
 use bureau::reconcile::Started;
 use bureau::runlog::{self, Event, EventKind};
-use fixtures::{ASSIGNMENT, TestDir, generous};
+use fixtures::{ASSIGNMENT, generous};
 use world::{EngineRig, World};
 
 /// The credential the scrub test has a step print, as a leaked token
@@ -157,116 +156,4 @@ async fn join_all(started: Vec<Started>) -> Vec<RunOutcome> {
         outcomes.push(run.handle.await.expect("run joins"));
     }
     outcomes
-}
-
-/// §13: a step missing a required credential fails before spawn, naming it.
-#[test]
-fn a_missing_credential_fails_before_any_run_dir_exists() {
-    let dir = TestDir::new("cli");
-    write_minimal_config(dir.path());
-    let output = bureau_run(dir.path());
-    let err = stderr(&output);
-    let runs = dir.path().join("runs");
-    let spawned = runs.is_dir() && std::fs::read_dir(&runs).expect("reads").next().is_some();
-    let verdict = (
-        output.status.code(),
-        err.contains("gh-main"),
-        spawned,
-        dir.path().join("state.db").exists(),
-    );
-    assert_eq!(verdict, (Some(2), true, false, false), "{err}");
-}
-
-/// `bureau run` against the config in `dir`, every root inside `dir`,
-/// with the credential environment unset.
-fn bureau_run(dir: &Path) -> Output {
-    let args = run_args(dir);
-    Command::new(env!("CARGO_BIN_EXE_bureau"))
-        .args(&args)
-        .current_dir(dir)
-        .env_remove("BUREAU_CREDENTIAL_GH_MAIN")
-        .env_remove("BUREAU_CREDENTIALS_DIR")
-        .output()
-        .expect("run bureau")
-}
-
-/// The run verb's argv, with every filesystem root inside `dir`.
-fn run_args(dir: &Path) -> Vec<String> {
-    let lead = ["run", "fix-failing-test", "--item", "42", "--config"];
-    let mut args: Vec<String> = lead.into_iter().map(str::to_owned).collect();
-    args.push(dir.to_string_lossy().into_owned());
-    for (flag, name) in [
-        ("--runs", "runs"),
-        ("--state", "state.db"),
-        ("--cache", "cache"),
-    ] {
-        args.push(flag.to_owned());
-        args.push(dir.join(name).to_string_lossy().into_owned());
-    }
-    args
-}
-
-/// The process's stderr as text.
-fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
-const MINIMAL_REPO: &str = r"
-repos:
-  code:
-    url: https://github.com/example/code
-    forge: github
-    access: push
-    credential: gh-main
-";
-
-const MINIMAL_ROLE: &str = r"
-name: worker
-agent: agents/worker.md
-adapter: fake
-permissions: [repo:read, repo:write, pr:write]
-min_trust: untrusted
-";
-
-const MINIMAL_PIPELINE: &str = r#"
-name: fix-failing-test
-steps:
-  - name: work
-    type: deterministic
-    run: "true"
-    next: done
-"#;
-
-const MINIMAL_ASSIGNMENT: &str = r#"
-name: job
-work:
-  forge: github
-  source: "example/code"
-  filter: "label:agent-eligible"
-repos: [code]
-pipeline: fix-failing-test
-role: worker
-verify: "make test"
-branch_prefix: runner/
-limits:
-  max_concurrent: 1
-  max_runs_per_hour: 4
-  max_runs_per_day: 20
-  max_open_prs: 3
-  max_cost_per_day_usd: 10
-"#;
-
-/// A config whose one repo credential nothing in the env can resolve.
-fn write_minimal_config(dir: &Path) {
-    write(dir, "repos.yaml", MINIMAL_REPO);
-    write(dir, "roles/worker.yaml", MINIMAL_ROLE);
-    write(dir, "assignments/job.yaml", MINIMAL_ASSIGNMENT);
-    write(dir, "pipelines/fix-failing-test.yaml", MINIMAL_PIPELINE);
-}
-
-/// Writes `text` to `name` under `dir`, creating parents.
-fn write(dir: &Path, name: &str, text: &str) {
-    let path = dir.join(name);
-    std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir");
-    std::fs::write(path, text).expect("write fixture");
 }

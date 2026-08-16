@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bureau::plugin::{Error, Resolver};
+use bureau_plugin::{Error, Resolver};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -21,8 +21,8 @@ impl Fixture {
         let root = PathBuf::from("target/plugin-activation-tests")
             .join(format!("{label}-{}-{next}", std::process::id()));
         let fixture = Self {
-            worktree: root.join("worktree"),
             run: root.join("run"),
+            worktree: root.join("run/wt"),
             home: root.join("copilot"),
             root,
         };

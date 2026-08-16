@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bureau::plugin::Resolver;
+use bureau_plugin::Resolver;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -20,8 +20,8 @@ impl Fixture {
         let next = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = PathBuf::from("target/plugin-activation-tests")
             .join(format!("{label}-{}-{next}", std::process::id()));
-        let worktree = root.join("worktree");
         let run = root.join("run");
+        let worktree = run.join("wt");
         let home = root.join("copilot");
         for path in [&worktree, &run, &home] {
             fs::create_dir_all(path).expect("create fixture");
@@ -136,7 +136,7 @@ fn durable_snapshot_is_reused_after_source_disappears() {
         .expect("first activation");
     let first_source = first.restore().expect("first restore");
     fs::remove_dir_all(&fixture.home).expect("remove original source");
-    let second_worktree = fixture.root.join("second-worktree");
+    let second_worktree = fixture.run.join("second-worktree");
     fs::create_dir(&second_worktree).expect("second worktree");
     let second = fixture
         .resolver()

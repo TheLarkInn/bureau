@@ -70,7 +70,7 @@ pub(super) fn activate(
         .direct_agents
         .get(&role.name)
         .ok_or_else(|| format!("direct agent for role `{}` was not pinned", role.name))?;
-    crate::plugin::activate_direct(&role.agent, bytes, worktree)
+    crate::plugin::activate_direct(&role.agent, bytes, worktree, run_dir)
         .map(ActiveAgent::Direct)
         .map(Some)
         .map_err(|error| format!("activating `{}` failed: {error}", role.agent))

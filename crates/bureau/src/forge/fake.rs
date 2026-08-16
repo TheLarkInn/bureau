@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 
-use super::{Error, Forge, Item, Pr, PrRequest};
+use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
 
 /// Lock that survives a poisoned mutex: a panicking test must not cascade
 /// into misleading secondary failures.
@@ -85,6 +85,10 @@ impl Forge for FakeForge {
         };
         lock(&self.prs).push(pr.clone());
         Ok(pr)
+    }
+
+    async fn pr_status(&self, _: &str, _: u64) -> Result<PrStatus, Error> {
+        Ok(PrStatus::Open)
     }
 
     async fn comment(&self, item_id: &str, body: &str) -> Result<(), Error> {

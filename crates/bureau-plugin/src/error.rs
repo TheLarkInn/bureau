@@ -36,6 +36,8 @@ pub enum Error {
     },
     /// Exact restoration failed without an activation conflict.
     Restore(Vec<String>),
+    /// Copilot plugin installation failed.
+    Install(String),
 }
 
 impl Error {
@@ -73,6 +75,9 @@ impl fmt::Display for Error {
                 restore_failures,
             } => conflict(formatter, paths, restore_failures),
             Self::Restore(failures) => restore(formatter, failures),
+            Self::Install(message) => {
+                write!(formatter, "Copilot plugin installation failed: {message}")
+            }
         }
     }
 }

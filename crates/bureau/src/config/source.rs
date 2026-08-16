@@ -8,7 +8,7 @@ use crate::git::{CheckoutCache, Credential};
 use super::Config;
 
 /// One validated committed config revision.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Activated {
     /// Loaded configuration.
     pub config: Config,
@@ -37,6 +37,7 @@ pub struct GitSource {
     subdir: PathBuf,
     cache: CheckoutCache,
     snapshot_root: PathBuf,
+    active_path: PathBuf,
     credential: Option<Credential>,
 }
 
@@ -56,6 +57,7 @@ impl GitSource {
             subdir,
             cache: CheckoutCache::new(cache_root.join("mirrors")),
             snapshot_root: cache_root.join("snapshots"),
+            active_path: cache_root.join("active.json"),
             credential,
         }
     }
@@ -78,13 +80,52 @@ impl GitSource {
             )
             .await?;
         let (config, direct_agents) = Self::loaded(worktree.path(), &self.subdir)?;
-        Ok(Activated {
+        let active = Activated {
             config,
             remote: self.remote.clone(),
             reference: self.reference.clone(),
             commit,
             direct_agents,
-        })
+        };
+        Self::persist_active(&self.active_path, &active)?;
+        Ok(active)
+    }
+
+    fn persist_active(path: &Path, active: &Activated) -> Result<(), Error> {
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let temporary = parent.join(format!(
+            ".active-{}.json.tmp",
+            crate::identity::random_hex()?
+        ));
+        let bytes = serde_json::to_vec_pretty(active).map_err(std::io::Error::other)?;
+        let result = Self::commit_active(&temporary, path, parent, &bytes);
+        if result.is_err() {
+            let _removed = std::fs::remove_file(&temporary);
+        }
+        result.map_err(Error::from)
+    }
+
+    fn write_active(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+        use std::io::Write as _;
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
+
+    fn commit_active(
+        temporary: &Path,
+        path: &Path,
+        parent: &Path,
+        bytes: &[u8],
+    ) -> Result<(), std::io::Error> {
+        Self::write_active(temporary, bytes)?;
+        std::fs::rename(temporary, path)?;
+        std::fs::File::open(parent)?.sync_all()
     }
 
     fn snapshot_directory(&self) -> Result<PathBuf, Error> {

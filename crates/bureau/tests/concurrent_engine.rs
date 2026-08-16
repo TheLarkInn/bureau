@@ -41,6 +41,31 @@ async fn group_limit_one_serializes_member_starts() {
     assert_eq!((outcome.outcome, kinds), (StepOutcome::Success, expected));
 }
 
+#[tokio::test]
+async fn concurrent_plugin_agents_activate_independently() {
+    let rig = rig::Rig::new();
+    let result = rig::result(StepOutcome::Success, "evidence");
+    let first = rig::fixture(rig.dir.path(), "plugin-a.json", &result);
+    let second = rig::fixture(rig.dir.path(), "plugin-b.json", &result);
+    let prepare = rig::det_step("prepare", "echo changed >> file.txt", Some("inspect"));
+    let group = group(
+        &["plugin-a", "plugin-b"],
+        Completion::All,
+        None,
+        Some("done"),
+    );
+    let steps = vec![
+        prepare,
+        group,
+        rig::agent_step("plugin-a", &first, None),
+        rig::agent_step("plugin-b", &second, None),
+    ];
+    let mut plan = rig.plan(steps);
+    plan.roles.get_mut("worker").expect("worker role").agent = "/bureau:reviewer".to_owned();
+    let outcome = rig.engine().run(&plan).await;
+    assert_eq!(outcome.outcome, StepOutcome::Success);
+}
+
 fn member_kinds(events: Vec<runlog::Event>) -> Vec<EventKind> {
     events
         .into_iter()

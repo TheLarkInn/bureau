@@ -16,6 +16,7 @@
 //! visible in the container's process table for the duration of the
 //! push; the container is the sandbox boundary (DESIGN.md section 10).
 
+mod commit;
 mod snapshot;
 
 use std::collections::BTreeMap;

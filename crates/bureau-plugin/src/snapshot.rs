@@ -34,7 +34,11 @@ pub fn create(run_dir: &Path, plugin: &str, resolved: &Resolved) -> Result<Snaps
     sync_dir(run_dir)?;
     ensure_absent(&paths)?;
     let tree = Tree::inspect(&resolved.path)?;
-    let source = metadata(plugin, &resolved.description, &tree, &resolved.path)?;
+    let mut source = metadata(plugin, &resolved.description, &tree, &resolved.path)?;
+    source.origin = Some(
+        fs::canonicalize(&resolved.path)
+            .map_err(|error| Error::io("resolve plugin source", &resolved.path, error))?,
+    );
     commit_snapshot(&paths, &tree, &source)?;
     validated(paths)
 }
@@ -78,11 +82,13 @@ fn metadata(
         source: description.to_owned(),
         version: version.to_owned(),
         digest: tree.digest()?,
+        origin: None,
     })
 }
 
 fn validate_source(source: &PluginSource, tree: &Tree, root: &Path) -> Result<(), Error> {
-    let current = metadata(&source.name, &source.source, tree, root)?;
+    let mut current = metadata(&source.name, &source.source, tree, root)?;
+    current.origin.clone_from(&source.origin);
     if current.version == source.version && current.digest == source.digest {
         return Ok(());
     }

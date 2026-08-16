@@ -82,6 +82,20 @@ pub struct PrRequest {
     pub item_id: Option<String>,
 }
 
+/// Current forge-owned pull-request state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrStatus {
+    /// Review is still open.
+    Open,
+    /// Pull request closed without merge.
+    Closed,
+    /// Pull request merged, with an exact commit when the forge reports it.
+    Merged {
+        /// Merge commit or completed source commit.
+        commit: Option<String>,
+    },
+}
+
 /// A forge operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -113,6 +127,9 @@ pub trait Forge: Send + Sync {
 
     /// Opens a pull request.
     async fn create_pr(&self, req: &PrRequest) -> Result<Pr, Error>;
+
+    /// Current state of one pull request.
+    async fn pr_status(&self, repo: &str, number: u64) -> Result<PrStatus, Error>;
 
     /// Comments on a work item.
     async fn comment(&self, item_id: &str, body: &str) -> Result<(), Error>;

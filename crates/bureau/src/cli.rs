@@ -1,6 +1,8 @@
 //! The command line; verbs are verbs and the hard cap is 15.
 
+mod command;
 mod inspect;
+mod lifecycle;
 mod mcp;
 mod prepare;
 mod reconcile;
@@ -11,15 +13,21 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 use bureau::config::Config;
 use bureau::contract::StepOutcome;
 
+pub use command::{FakeAction, McpAction, Verb};
+
 /// The four filesystem roots the run-side verbs work against.
 struct Paths {
-    /// Config repository checkout.
-    config: PathBuf,
+    /// Root holding the cross-process maintenance lock.
+    maintenance_root: PathBuf,
+    /// Non-secret local settings.
+    settings: PathBuf,
+    /// Committed config cache.
+    config_cache: PathBuf,
     /// Directory holding run directories.
     runs: PathBuf,
     /// Durable state database path.
@@ -47,119 +55,6 @@ pub struct Cli {
     pub verb: Verb,
 }
 
-/// CLI verbs.
-#[derive(Debug, Subcommand)]
-pub enum Verb {
-    /// Checks a config directory and reports every error in one pass.
-    Validate {
-        /// Path to the config repository checkout.
-        #[arg(default_value = "runner-config")]
-        dir: PathBuf,
-    },
-    /// Prints the version.
-    Version,
-    /// Runs a pipeline once for one work item.
-    Run {
-        /// Pipeline name from the config repo.
-        pipeline: String,
-        /// Work item id on the assignment's forge.
-        #[arg(long)]
-        item: String,
-        /// Path to the config repository checkout.
-        #[arg(long, default_value = "runner-config")]
-        config: PathBuf,
-        /// Directory holding run directories.
-        #[arg(long, default_value = "runs")]
-        runs: PathBuf,
-        /// Durable state database path.
-        #[arg(long, default_value = "state.db")]
-        state: PathBuf,
-        /// Checkout cache directory.
-        #[arg(long, default_value = "checkout-cache")]
-        cache: PathBuf,
-    },
-    /// Lists runs.
-    List {
-        /// Directory holding run directories.
-        #[arg(long, default_value = "runs")]
-        runs: PathBuf,
-    },
-    /// Shows one run's replayed state.
-    Show {
-        /// The run id.
-        run_id: String,
-        /// Directory holding run directories.
-        #[arg(long, default_value = "runs")]
-        runs: PathBuf,
-    },
-    /// Cancels a running run by writing its CANCEL marker.
-    Cancel {
-        /// The run id.
-        run_id: String,
-        /// Directory holding run directories.
-        #[arg(long, default_value = "runs")]
-        runs: PathBuf,
-    },
-    /// Starts a new run for the item an earlier run targeted.
-    Retry {
-        /// The earlier run id.
-        run_id: String,
-        /// Path to the config repository checkout.
-        #[arg(long, default_value = "runner-config")]
-        config: PathBuf,
-        /// Directory holding run directories.
-        #[arg(long, default_value = "runs")]
-        runs: PathBuf,
-        /// Durable state database path.
-        #[arg(long, default_value = "state.db")]
-        state: PathBuf,
-        /// Checkout cache directory.
-        #[arg(long, default_value = "checkout-cache")]
-        cache: PathBuf,
-    },
-    /// Continuously reconciles committed config with forge state.
-    Reconcile(reconcile::Args),
-    /// Serves the adapter step I/O protocol.
-    #[command(hide = true)]
-    Mcp {
-        /// MCP operation.
-        #[command(subcommand)]
-        action: McpAction,
-    },
-    /// Replays or records adapter transcripts — the testing seam.
-    Fake {
-        /// What to do with the fixture.
-        #[command(subcommand)]
-        action: FakeAction,
-    },
-}
-
-/// `fake` adapter operations.
-#[derive(Debug, Subcommand)]
-pub enum FakeAction {
-    /// Replays a transcript fixture with its recorded exit code.
-    Replay {
-        /// Fixture path.
-        fixture: PathBuf,
-    },
-    /// Records a command under the layer-0 contract.
-    Record {
-        /// Fixture path to write.
-        fixture: PathBuf,
-        /// The command to run, after `--`.
-        #[arg(last = true, required = true)]
-        argv: Vec<String>,
-    },
-}
-
-/// MCP protocol operations.
-#[derive(Debug, Subcommand)]
-pub enum McpAction {
-    /// Serves MCP over standard input and output.
-    #[command(hide = true)]
-    Serve,
-}
-
 /// Runs the CLI and returns the process exit code.
 ///
 /// # Errors
@@ -175,6 +70,13 @@ fn dispatch(verb: Verb) -> CliFuture {
         Verb::Version => Box::pin(async { Ok(version()) }),
         Verb::Validate { dir } => Box::pin(async move { Ok(validate(&dir)) }),
         Verb::Reconcile(args) => Box::pin(reconcile::run(args)),
+        Verb::Init { from } => Box::pin(async move { lifecycle::init(&from).await }),
+        Verb::Setup { from } => Box::pin(async move { lifecycle::setup(&from).await }),
+        Verb::Doctor { json } => Box::pin(async move { lifecycle::doctor(json) }),
+        Verb::Repair {
+            clear_checkout_cache,
+            clear_config_cache,
+        } => Box::pin(async move { lifecycle::repair(clear_checkout_cache, clear_config_cache) }),
         Verb::Mcp { action } => Box::pin(async move { mcp::run(&action) }),
         Verb::Fake { action } => Box::pin(transcript::run(action)),
         verb => Box::pin(run_side(verb)),
@@ -186,12 +88,16 @@ async fn run_side(verb: Verb) -> anyhow::Result<i32> {
     match verb {
         Verb::Run { .. } => run_command(verb).await,
         Verb::Retry { .. } => retry_command(verb).await,
-        Verb::List { runs } => Ok(inspect::list(&runs)),
-        Verb::Show { run_id, runs } => inspect::show(&runs, &run_id),
-        Verb::Cancel { run_id, runs } => inspect::cancel(&runs, &run_id),
+        Verb::List { runs } => Ok(inspect::list(&runs_path(runs)?)),
+        Verb::Show { run_id, runs } => inspect::show(&runs_path(runs)?, &run_id),
+        Verb::Cancel { run_id, runs } => inspect::cancel(&runs_path(runs)?, &run_id),
         Verb::Version
         | Verb::Validate { .. }
         | Verb::Reconcile(_)
+        | Verb::Init { .. }
+        | Verb::Setup { .. }
+        | Verb::Doctor { .. }
+        | Verb::Repair { .. }
         | Verb::Mcp { .. }
         | Verb::Fake { .. } => {
             unreachable!("handled by the caller")
@@ -203,7 +109,8 @@ async fn run_command(verb: Verb) -> anyhow::Result<i32> {
     let Verb::Run {
         pipeline,
         item,
-        config,
+        settings,
+        config_cache,
         runs,
         state,
         cache,
@@ -211,13 +118,19 @@ async fn run_command(verb: Verb) -> anyhow::Result<i32> {
     else {
         unreachable!("run command called with another verb")
     };
-    run::run(&pipeline, &item, &paths(config, runs, state, cache)).await
+    run::run(
+        &pipeline,
+        &item,
+        &paths(settings, config_cache, runs, state, cache)?,
+    )
+    .await
 }
 
 async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
     let Verb::Retry {
         run_id,
-        config,
+        settings,
+        config_cache,
         runs,
         state,
         cache,
@@ -225,17 +138,70 @@ async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
     else {
         unreachable!("retry command called with another verb")
     };
-    run::retry(&run_id, &paths(config, runs, state, cache)).await
+    run::retry(&run_id, &paths(settings, config_cache, runs, state, cache)?).await
 }
 
 /// Bundles the four filesystem roots a run-side verb destructures to.
-const fn paths(config: PathBuf, runs: PathBuf, state: PathBuf, cache: PathBuf) -> Paths {
+fn paths(
+    settings: Option<PathBuf>,
+    config_cache: Option<PathBuf>,
+    runs: Option<PathBuf>,
+    state: Option<PathBuf>,
+    cache: Option<PathBuf>,
+) -> anyhow::Result<Paths> {
+    let values = (settings, config_cache, runs, state, cache);
+    let (settings, config_cache, runs, state, cache) = match values {
+        (Some(settings), Some(config_cache), Some(runs), Some(state), Some(cache)) => {
+            return Ok(explicit_paths(settings, config_cache, runs, state, cache));
+        }
+        values => values,
+    };
+    let home = bureau::home::Home::discover()?;
+    let layout = home.layout();
+    Ok(Paths {
+        maintenance_root: layout.root().to_path_buf(),
+        settings: settings.unwrap_or_else(|| layout.settings().to_path_buf()),
+        config_cache: config_cache.unwrap_or_else(|| layout.config_cache().to_path_buf()),
+        runs: runs.unwrap_or_else(|| layout.runs().to_path_buf()),
+        state: state.unwrap_or_else(|| layout.state_db().to_path_buf()),
+        cache: cache.unwrap_or_else(|| layout.checkout_cache().to_path_buf()),
+    })
+}
+
+fn explicit_paths(
+    settings: PathBuf,
+    config_cache: PathBuf,
+    runs: PathBuf,
+    state: PathBuf,
+    cache: PathBuf,
+) -> Paths {
+    let maintenance_root = bureau::home::Home::discover().map_or_else(
+        |_| parent(&settings),
+        |home| home.layout().root().to_path_buf(),
+    );
     Paths {
-        config,
+        maintenance_root,
+        settings,
+        config_cache,
         runs,
         state,
         cache,
     }
+}
+
+fn parent(path: &std::path::Path) -> PathBuf {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf()
+}
+
+fn runs_path(path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    if let Some(path) = path {
+        return Ok(path);
+    }
+    let home = bureau::home::Home::discover()?;
+    Ok(home.layout().runs().to_path_buf())
 }
 
 /// Prints the version line.

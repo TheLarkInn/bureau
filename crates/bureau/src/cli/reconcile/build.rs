@@ -16,17 +16,21 @@ use super::ForgeArg;
 pub(super) fn config_credential(
     reference: Option<&str>,
     forge: ForgeArg,
+    settings: Option<&bureau::setup::Settings>,
 ) -> anyhow::Result<Option<Credential>> {
     reference
         .map(|reference| {
-            let secret = resolve(reference)
+            let secret = resolve_reference(settings, reference)
                 .with_context(|| format!("resolving config credential reference `{reference}`"))?;
             Ok(credential_for(forge.into(), secret))
         })
         .transpose()
 }
 
-pub(super) fn credentials(config: &Config) -> BTreeMap<String, Secret> {
+pub(super) fn credentials(
+    config: &Config,
+    settings: Option<&bureau::setup::Settings>,
+) -> BTreeMap<String, Secret> {
     let references: BTreeSet<_> = config
         .repos
         .values()
@@ -34,12 +38,13 @@ pub(super) fn credentials(config: &Config) -> BTreeMap<String, Secret> {
         .collect();
     references
         .into_iter()
-        .filter_map(resolve_optional)
+        .filter_map(|reference| resolve_optional(settings, reference))
         .collect()
 }
 
 pub(super) fn credentials_for_repos(
     repos: &BTreeMap<String, Repo>,
+    settings: Option<&bureau::setup::Settings>,
 ) -> anyhow::Result<BTreeMap<String, Secret>> {
     let references: BTreeSet<_> = repos
         .values()
@@ -48,7 +53,7 @@ pub(super) fn credentials_for_repos(
     references
         .into_iter()
         .map(|reference| {
-            let secret = resolve(reference)
+            let secret = resolve_reference(settings, reference)
                 .with_context(|| format!("resolving credential reference `{reference}`"))?;
             Ok((reference.to_owned(), secret))
         })
@@ -73,14 +78,27 @@ pub(super) fn forges(
         .collect()
 }
 
-fn resolve_optional(reference: &str) -> Option<(String, Secret)> {
-    match resolve(reference) {
+fn resolve_optional(
+    settings: Option<&bureau::setup::Settings>,
+    reference: &str,
+) -> Option<(String, Secret)> {
+    match resolve_reference(settings, reference) {
         Ok(secret) => Some((reference.to_owned(), secret)),
         Err(error) => {
             eprintln!("credential `{reference}` is unavailable: {error}");
             None
         }
     }
+}
+
+fn resolve_reference(
+    settings: Option<&bureau::setup::Settings>,
+    reference: &str,
+) -> anyhow::Result<Secret> {
+    settings.map_or_else(
+        || resolve(reference).map_err(anyhow::Error::from),
+        |settings| bureau::credential::resolve(settings, reference).map_err(anyhow::Error::from),
+    )
 }
 
 pub(super) fn forge(
