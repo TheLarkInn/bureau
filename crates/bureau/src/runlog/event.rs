@@ -1,12 +1,10 @@
 //! Run-log events and their typed payloads (DESIGN.md layer 3).
 
-use serde::{Deserialize, Serialize};
-
+use super::RunSnapshot;
 use crate::adapters::{Execution, Usage};
 use crate::contract::{StepOutcome, StepResult};
 use crate::forge::Pr;
-
-use super::RunSnapshot;
+use serde::{Deserialize, Serialize};
 
 /// The kind of a run-log event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +18,16 @@ pub enum EventKind {
     Output,
     /// A pipeline step finished with an outcome.
     StepFinished,
+    /// A concurrent group began from an internal Git snapshot.
+    GroupStarted,
+    /// A concurrent group member began an attempt.
+    GroupMemberStarted,
+    /// A concurrent group member finished with a result.
+    GroupMemberFinished,
+    /// A concurrent group member was cancelled.
+    GroupMemberCancelled,
+    /// A concurrent group finished with its aggregate result.
+    GroupFinished,
     /// The run branch was checkpointed after a step.
     Checkpoint,
     /// The final branch commit was pushed.
@@ -29,7 +37,6 @@ pub enum EventKind {
     /// The run finished with an outcome.
     RunFinished,
 }
-
 /// One append-only, sequence-numbered run-log record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -42,7 +49,6 @@ pub struct Event {
     /// Kind-specific payload.
     pub data: serde_json::Value,
 }
-
 /// Payload of a `run_started` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunStartedData {
@@ -58,7 +64,6 @@ pub struct RunStartedData {
     #[serde(default)]
     pub snapshot: Option<RunSnapshot>,
 }
-
 /// Payload of an `output` event: one scrubbed chunk of a stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputData {
@@ -69,14 +74,12 @@ pub struct OutputData {
     /// The scrubbed bytes (UTF-8).
     pub data: String,
 }
-
 /// Payload of a `step_started` event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepStartedData {
     /// Step name within the pipeline.
     pub step: String,
 }
-
 /// Payload of a `step_finished` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepFinishedData {

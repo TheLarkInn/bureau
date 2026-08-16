@@ -37,7 +37,12 @@ fn collect_outputs(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, serde_json:
     let mut merged = BTreeMap::new();
     for name in &step.inputs_from {
         if let Some(result) = ctx.result_of(name) {
-            merged.extend(result.outputs.clone());
+            if input_kind(ctx, name) == Some(StepKind::Concurrent) {
+                let value = serde_json::to_value(&result.outputs).unwrap_or_default();
+                merged.insert(name.clone(), value);
+            } else {
+                merged.extend(result.outputs.clone());
+            }
         }
     }
     merged
@@ -48,15 +53,27 @@ fn collect_artifacts(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, PathBuf> 
     let mut merged = BTreeMap::new();
     for name in &step.inputs_from {
         if let Some(result) = ctx.result_of(name) {
-            merged.extend(
-                result
-                    .artifacts
-                    .iter()
-                    .map(|a| (a.name.clone(), a.path.clone())),
-            );
+            let concurrent = input_kind(ctx, name) == Some(StepKind::Concurrent);
+            merged.extend(result.artifacts.iter().map(|artifact| {
+                let key = if concurrent {
+                    format!("{name}.{}", artifact.name)
+                } else {
+                    artifact.name.clone()
+                };
+                (key, artifact.path.clone())
+            }));
         }
     }
     merged
+}
+
+fn input_kind(ctx: &RunCtx, name: &str) -> Option<StepKind> {
+    ctx.plan
+        .pipeline
+        .steps
+        .iter()
+        .find(|step| step.name == name)
+        .map(|step| step.kind)
 }
 
 /// A request's trust: the item's grade, lowered to the weakest input's
@@ -128,7 +145,9 @@ pub(super) async fn execute(
     match step.kind {
         StepKind::Deterministic => deterministic(ctx, wt, step, request, timeout).await,
         StepKind::Agent => agent(ctx, step, request, agent_timeout(ctx, step)).await,
-        StepKind::Decision => failed_step("decision steps do not run code"),
+        StepKind::Decision | StepKind::Concurrent => {
+            failed_step("routing and concurrent steps do not run through this path")
+        }
     }
 }
 
@@ -160,7 +179,7 @@ async fn deterministic(
         timeout,
         secrets: ctx.secrets(),
         log: Some(shared_log(LogSink::new(&step.name, &ctx.log))),
-        cancel: Some(ctx.cancel_path()),
+        cancel: adapters::cancel_path(request),
     })
     .await;
     Execution::new(

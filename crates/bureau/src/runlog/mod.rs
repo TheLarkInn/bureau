@@ -9,6 +9,8 @@
 //! ```
 
 mod event;
+mod group;
+mod group_state;
 mod snapshot;
 mod state;
 
@@ -18,6 +20,12 @@ pub use event::{
     checkpoint, output, pr_created, run_finished, run_finished_full, run_started,
     run_started_for_item, run_started_snapshot, step_finished, step_finished_full, step_started,
 };
+pub use group::{
+    GroupFinishedData, GroupMemberCancelledData, GroupMemberFinishedData, GroupMemberStartedData,
+    GroupStartedData, group_finished, group_member_cancelled, group_member_finished,
+    group_member_started, group_started,
+};
+pub use group_state::{GroupMemberRecord, GroupRecord};
 pub use snapshot::{ConfigSource, PluginSource, RunSnapshot};
 pub use state::{RunState, RunStatus, StepRecord, replay};
 

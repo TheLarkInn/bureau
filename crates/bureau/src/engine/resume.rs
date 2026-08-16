@@ -11,6 +11,7 @@ use crate::adapters::Usage;
 use crate::config::Pipeline;
 use crate::contract::{StepOutcome, StepResult};
 use crate::forge::Pr;
+use crate::runlog::GroupRecord;
 use crate::runlog::{self, Event, RunFinishedData, RunState, RunStatus};
 
 /// What a replayed log says about how to proceed.
@@ -31,6 +32,8 @@ pub(super) struct History {
     pub(super) results: BTreeMap<String, StepResult>,
     /// Adapter usage from completed steps.
     pub(super) usages: BTreeMap<String, Usage>,
+    /// Partial or finished concurrent groups.
+    pub(super) groups: BTreeMap<String, GroupRecord>,
     /// Latest durable branch checkpoint.
     pub(super) checkpoint: Option<String>,
     /// Run branch base before step changes.
@@ -55,6 +58,7 @@ impl History {
             outcomes: BTreeMap::new(),
             results: BTreeMap::new(),
             usages: BTreeMap::new(),
+            groups: BTreeMap::new(),
             checkpoint: None,
             base_commit: None,
             pushed_commit: None,
@@ -99,6 +103,7 @@ fn history_from(state: &RunState, pipeline: &Pipeline) -> History {
         outcomes: steps.outcomes,
         results: steps.results,
         usages: steps.usages,
+        groups: state.groups.clone(),
         checkpoint: state.checkpoint.clone(),
         base_commit: state.base_commit.clone(),
         pushed_commit: state.pushed_commit.clone(),

@@ -8,12 +8,13 @@
 mod files;
 mod pipeline;
 mod validate;
+mod validate_concurrent;
 mod validate_pipeline;
 
 pub use files::{
     Access, Assignment, ForgeKind, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };
-pub use pipeline::{Pipeline, StepDef, StepKind, TERMINALS};
+pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
 pub use validate::{validate, validate_pipelines};
 
 use std::collections::BTreeMap;

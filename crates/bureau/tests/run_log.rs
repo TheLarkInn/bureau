@@ -74,6 +74,7 @@ fn expected_state(run_id: &str, started_at_ms: u64) -> RunState {
             result: None,
             usage: None,
         }],
+        groups: std::collections::BTreeMap::new(),
         status: RunStatus::Finished(StepOutcome::Success),
         checkpoint: None,
         base_commit: None,

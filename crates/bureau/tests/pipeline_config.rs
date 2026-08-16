@@ -186,7 +186,7 @@ fn an_unknown_edge_target_is_an_error() {
 }
 
 #[test]
-fn the_join_terminal_is_rejected() {
+fn old_join_vocabulary_is_rejected() {
     let dir = TestDir::new("join");
     let pipeline = PIPELINE.replace("next: done", "next: join");
     write_files(&dir, &base_files(&pipeline));
@@ -194,7 +194,7 @@ fn the_join_terminal_is_rejected() {
     assert!(
         found
             .iter()
-            .any(|e| e.contains("join is reserved for fan-out and is not supported in v0")),
+            .any(|e| e.contains("targets unknown step `join`")),
         "{found:?}"
     );
 }

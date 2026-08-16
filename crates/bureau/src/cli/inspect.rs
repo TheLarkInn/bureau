@@ -8,8 +8,10 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use bureau::runlog::{
-    self, BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData,
-    RunFinishedData, RunStartedData, RunState, RunStatus, StepFinishedData, StepStartedData,
+    self, BranchPushedData, CheckpointData, Event, EventKind, GroupFinishedData,
+    GroupMemberCancelledData, GroupMemberFinishedData, GroupMemberStartedData, GroupStartedData,
+    OutputData, PrCreatedData, RunFinishedData, RunStartedData, RunState, RunStatus,
+    StepFinishedData, StepStartedData,
 };
 
 use super::outcome_name;
@@ -108,6 +110,11 @@ const fn kind_name(kind: EventKind) -> &'static str {
         EventKind::StepStarted => "step_started",
         EventKind::Output => "output",
         EventKind::StepFinished => "step_finished",
+        EventKind::GroupStarted => "group_started",
+        EventKind::GroupMemberStarted => "group_member_started",
+        EventKind::GroupMemberFinished => "group_member_finished",
+        EventKind::GroupMemberCancelled => "group_member_cancelled",
+        EventKind::GroupFinished => "group_finished",
         EventKind::Checkpoint => "checkpoint",
         EventKind::BranchPushed => "branch_pushed",
         EventKind::PrCreated => "pr_created",
@@ -130,12 +137,41 @@ fn gist(event: &Event) -> String {
         EventKind::Output => {
             payload::<OutputData>(event).map_or_else(String::new, |d| output_gist(&d))
         }
+        EventKind::GroupStarted
+        | EventKind::GroupMemberStarted
+        | EventKind::GroupMemberFinished
+        | EventKind::GroupMemberCancelled
+        | EventKind::GroupFinished => group_gist(event),
         EventKind::Checkpoint | EventKind::BranchPushed | EventKind::PrCreated => {
             durable_gist(event)
         }
         EventKind::RunFinished => {
             payload::<RunFinishedData>(event).map_or_else(String::new, |d| run_gist(&d))
         }
+    }
+}
+
+fn group_gist(event: &Event) -> String {
+    match event.kind {
+        EventKind::GroupStarted => {
+            payload::<GroupStartedData>(event).map_or_else(String::new, |data| data.group)
+        }
+        EventKind::GroupMemberStarted => payload::<GroupMemberStartedData>(event)
+            .map_or_else(String::new, |data| {
+                format!("{}:{}", data.group, data.member)
+            }),
+        EventKind::GroupMemberFinished => payload::<GroupMemberFinishedData>(event)
+            .map_or_else(String::new, |data| {
+                format!("{}:{}", data.group, data.member)
+            }),
+        EventKind::GroupMemberCancelled => payload::<GroupMemberCancelledData>(event)
+            .map_or_else(String::new, |data| {
+                format!("{}:{}", data.group, data.member)
+            }),
+        EventKind::GroupFinished => {
+            payload::<GroupFinishedData>(event).map_or_else(String::new, |data| data.group)
+        }
+        _ => String::new(),
     }
 }
 

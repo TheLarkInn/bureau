@@ -48,6 +48,7 @@ fn check_pipeline(errors: &mut Vec<ConfigError>, config: &Config, name: &str, pi
     for (index, step) in pipeline.steps.iter().enumerate() {
         check_step(errors, config, name, index, step, &order, &path);
     }
+    super::validate_concurrent::check(errors, config, name, pipeline, &path);
     check_reachable(errors, name, pipeline, &path);
 }
 
@@ -109,7 +110,7 @@ fn check_references(
     match step.kind {
         StepKind::Agent => check_agent(errors, config, name, step, path),
         StepKind::Decision => check_over(errors, name, index, step, order, path),
-        StepKind::Deterministic => {}
+        StepKind::Deterministic | StepKind::Concurrent => {}
     }
 }
 
@@ -222,11 +223,7 @@ fn check_edge(
         return;
     }
     let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
-    if target == "join" {
-        err(&format!(
-            "edge `{field}`: join is reserved for fan-out and is not supported in v0"
-        ));
-    } else if !TERMINALS.contains(&target) {
+    if !TERMINALS.contains(&target) {
         err(&format!("edge `{field}` targets unknown step `{target}`"));
     }
 }
@@ -275,9 +272,20 @@ fn visit<'a>(current: &'a str, pipeline: &'a Pipeline, seen: &mut BTreeSet<&'a s
     for target in step.edge_targets() {
         visit(target, pipeline, seen);
     }
+    if step.kind == StepKind::Concurrent {
+        for member in &step.steps {
+            visit(member, pipeline, seen);
+        }
+    }
 }
 
-fn step_err(errors: &mut Vec<ConfigError>, path: &Path, name: &str, step: &str, detail: &str) {
+pub(super) fn step_err(
+    errors: &mut Vec<ConfigError>,
+    path: &Path,
+    name: &str,
+    step: &str,
+    detail: &str,
+) {
     let message = format!("pipeline `{name}` step `{step}`: {detail}");
     push(errors, path.to_path_buf(), message);
 }

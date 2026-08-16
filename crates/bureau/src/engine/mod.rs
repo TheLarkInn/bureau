@@ -26,6 +26,7 @@
 mod approval;
 mod artifact;
 mod checkpoint;
+mod concurrent;
 mod control;
 mod deadline;
 mod drive;

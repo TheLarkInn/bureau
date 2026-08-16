@@ -4,14 +4,18 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::{RunPlan, approval, checkpoint, control, deadline, edge, execute, resume, stream};
+use super::{RunPlan, checkpoint, deadline, edge, execute, resume, stream};
 use crate::adapters::{Execution, Usage};
-use crate::config::{Repo, StepDef, StepKind};
+use crate::config::{Repo, StepDef};
 use crate::contract::{StepOutcome, StepRequest, StepResult};
 use crate::git::Worktree;
+use crate::runlog::GroupRecord;
+
+mod route;
 use crate::runlog::{self, EventKind};
 
 /// Mutable run state threaded through the machine.
+#[derive(Clone)]
 pub(super) struct RunCtx {
     /// Everything one run needs.
     pub(super) plan: RunPlan,
@@ -27,6 +31,8 @@ pub(super) struct RunCtx {
     results: BTreeMap<String, StepResult>,
     /// Adapter-measured usage per step.
     usages: BTreeMap<String, Usage>,
+    /// Partial or finished concurrent group state.
+    pub(super) groups: BTreeMap<String, GroupRecord>,
     /// Latest durable branch checkpoint.
     pub(super) checkpoint: Option<String>,
     /// Run branch base before step changes.
@@ -57,6 +63,7 @@ impl RunCtx {
             outcomes: history.outcomes,
             results: history.results,
             usages: history.usages,
+            groups: history.groups,
             checkpoint: history.checkpoint,
             base_commit: history.base_commit,
             pushed_commit: history.pushed_commit,
@@ -67,7 +74,7 @@ impl RunCtx {
     }
 
     /// Records a finished step's result for routing and data flow.
-    fn record(&mut self, step: &str, execution: Execution) {
+    pub(super) fn record(&mut self, step: &str, execution: Execution) {
         let Execution { result, usage } = execution;
         self.cost_usd += measured_cost(&usage);
         self.outcomes.insert(step.to_owned(), result.outcome);
@@ -96,6 +103,10 @@ impl RunCtx {
 
     pub(super) fn cancel_path(&self) -> PathBuf {
         stream::lock(&self.log).dir().join("CANCEL")
+    }
+
+    pub(super) fn begin_attempt(&mut self, step: &str) {
+        *self.attempts.entry(step.to_owned()).or_insert(0) += 1;
     }
 }
 
@@ -128,107 +139,19 @@ pub(super) enum Stop {
     Escalate(String),
 }
 
-/// One loop iteration's verdict.
-enum Turn {
-    /// Keep routing.
-    Next(edge::Route),
-    /// The run stops.
-    Stop(Stop),
-}
-
 /// The machine loop: route, check CANCEL, run steps, stop at terminals.
 pub(super) async fn run_loop(ctx: &mut RunCtx, wt: &WtCtx) -> Stop {
     let mut route = ctx.start.clone();
     loop {
-        match advance(ctx, wt, route).await {
-            Turn::Next(next) => route = next,
-            Turn::Stop(stop) => return stop,
+        match route::advance(ctx, wt, route).await {
+            route::Turn::Next(next) => route = next,
+            route::Turn::Stop(stop) => return stop,
         }
     }
 }
 
-/// One iteration: the between-steps CANCEL check, then the route.
-async fn advance(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
-    if let Some(stop) = boundary_stop(ctx).await {
-        return Turn::Stop(stop);
-    }
-    route_turn(ctx, wt, route).await
-}
-
-async fn route_turn(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
-    match route {
-        edge::Route::Step(name) => step_turn(ctx, wt, &name).await,
-        edge::Route::Done => Turn::Stop(Stop::Done),
-        edge::Route::Fail(message) => Turn::Stop(Stop::Fail(message)),
-        edge::Route::Escalate(message) => Turn::Stop(Stop::Escalate(message)),
-    }
-}
-
-async fn boundary_stop(ctx: &RunCtx) -> Option<Stop> {
-    if let Some(reason) = control::cancel_reason(ctx) {
-        return Some(Stop::Fail(reason));
-    }
-    if ctx.remaining().is_zero() {
-        return Some(Stop::Escalate(control::deadline_message(ctx)));
-    }
-    approval::check(ctx).await.err().map(Stop::Escalate)
-}
-
-/// Enters one step: decisions route for free, code steps run.
-async fn step_turn(ctx: &mut RunCtx, wt: &WtCtx, name: &str) -> Turn {
-    let Some(step) = ctx
-        .plan
-        .pipeline
-        .steps
-        .iter()
-        .find(|s| s.name == name)
-        .cloned()
-    else {
-        return Turn::Stop(Stop::Fail(format!("unknown step `{name}`")));
-    };
-    if step.kind == StepKind::Decision {
-        return Turn::Next(decision_route(ctx, &step));
-    }
-    code_route(ctx, wt, &step).await
-}
-
-/// Runs one code step: attempts check, trust check, execute, record.
-async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
-    if let Some(reason) = attempts_check(ctx, step) {
-        return Turn::Stop(Stop::Escalate(reason));
-    }
-    let request = execute::build_request(ctx, step, wt.worktree.path());
-    if let Some(reason) = execute::trust_check(&ctx.plan, step, &request) {
-        return Turn::Stop(Stop::Escalate(reason));
-    }
-    let execution = run_step(ctx, wt, step, &request).await;
-    let (outcome, detail) = (execution.result.outcome, execution.result.message.clone());
-    ctx.record(&step.name, execution);
-    if let Some(reason) = control::cancel_reason(ctx) {
-        return Turn::Stop(Stop::Fail(reason));
-    }
-    if ctx.remaining().is_zero() {
-        return Turn::Stop(Stop::Escalate(control::deadline_message(ctx)));
-    }
-    Turn::Next(edge::route_after(
-        step,
-        outcome,
-        Some(&detail),
-        &ctx.plan.pipeline,
-    ))
-}
-
-/// The attempts check: a step entered `max_attempts` times escalates.
-fn attempts_check(ctx: &RunCtx, step: &StepDef) -> Option<String> {
-    let entries = ctx.attempts.get(&step.name).copied().unwrap_or(0);
-    if entries >= step.max_attempts {
-        return Some(format!("step `{}` exceeded max attempts", step.name));
-    }
-    None
-}
-
 /// Executes a step between its started and finished events.
-async fn run_step(
+pub(super) async fn run_step(
     ctx: &mut RunCtx,
     wt: &WtCtx,
     step: &StepDef,
@@ -247,24 +170,14 @@ async fn run_step(
     result
 }
 
-/// Routes a decision step on the outcome of the step it watches.
-fn decision_route(ctx: &RunCtx, step: &StepDef) -> edge::Route {
-    let Some(over) = step.over.as_deref() else {
-        return edge::Route::Fail(format!("decision `{}` names no `over` step", step.name));
-    };
-    let Some(outcome) = ctx.outcome_of(over) else {
-        return edge::Route::Fail(format!(
-            "decision `{}` has no recorded outcome for `{over}`",
-            step.name
-        ));
-    };
-    edge::route_decision(step, outcome, &ctx.plan.pipeline)
-}
-
 /// Appends an event, ignoring failures: a run never crashes over its
 /// own bookkeeping.
 pub(super) fn append(ctx: &RunCtx, kind: EventKind, data: serde_json::Value) {
     let _ = stream::lock(&ctx.log).append(kind, data);
+}
+
+pub(super) fn run_dir(ctx: &RunCtx) -> PathBuf {
+    stream::lock(&ctx.log).dir().to_path_buf()
 }
 
 /// The assignment's primary repo, by registry name.
