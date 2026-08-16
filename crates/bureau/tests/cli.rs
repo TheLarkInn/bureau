@@ -2,8 +2,9 @@
 //! testing seam, driven through the built `bureau` binary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use bureau::adapters::fake::Transcript;
 
@@ -60,6 +61,41 @@ fn version_prints_name_and_version() {
 }
 
 #[test]
+fn reconcile_help_documents_committed_source_and_loop_controls() {
+    let output = bureau(&["reconcile", "--help"]);
+    let text = stdout(&output);
+    let expected = ["--config-remote", "--config-ref", "--interval", "--now"];
+    assert!(
+        ok(&output) && expected.iter().all(|option| text.contains(option)),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn reconcile_drains_when_signalled_during_observation() {
+    let dir = TestDir::new("reconcile-signal");
+    init_empty_config_repo(dir.path());
+    let child = Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(reconcile_args(dir.path()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn reconcile");
+    std::thread::sleep(Duration::from_millis(500));
+    let interrupted = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT");
+    let output = child.wait_with_output().expect("wait for reconcile");
+    let text = stdout(&output);
+    assert!(
+        interrupted.success() && output.status.success() && text.contains("draining active runs"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn validate_accepts_a_valid_config() {
     let dir = TestDir::new("cli-valid");
     write_minimal_config(dir.path());
@@ -88,6 +124,54 @@ fn write(dir: &Path, name: &str, text: &str) {
     let path = dir.join(name);
     std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir");
     std::fs::write(path, text).expect("write fixture");
+}
+
+fn init_empty_config_repo(dir: &Path) {
+    let config = dir.join(".bureau");
+    std::fs::create_dir_all(&config).expect("config dir");
+    std::fs::write(config.join("repos.yaml"), "repos: {}\n").expect("repos");
+    git(dir, &["init", "-b", "main"]);
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test",
+            "commit",
+            "-m",
+            "config",
+        ],
+    );
+}
+
+fn reconcile_args(dir: &Path) -> Vec<String> {
+    let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    vec![
+        "reconcile".to_owned(),
+        "--config-remote".to_owned(),
+        dir.to_string_lossy().into_owned(),
+        "--config-cache".to_owned(),
+        path("config-cache"),
+        "--runs".to_owned(),
+        path("runs"),
+        "--state".to_owned(),
+        path("state.db"),
+        "--cache".to_owned(),
+        path("checkout-cache"),
+        "--interval".to_owned(),
+        "1h".to_owned(),
+    ]
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .expect("git");
+    assert!(status.success(), "git {args:?}");
 }
 
 const MINIMAL_REPO: &str = r"

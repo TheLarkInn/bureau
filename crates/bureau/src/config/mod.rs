@@ -7,6 +7,8 @@
 
 mod files;
 mod pipeline;
+mod source;
+mod source_tree;
 mod validate;
 mod validate_concurrent;
 mod validate_pipeline;
@@ -15,6 +17,10 @@ pub use files::{
     Access, Assignment, ForgeKind, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };
 pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
+pub use source::{
+    Activated as ActivatedConfig, Error as SourceError, GitSource, Manager as ConfigManager,
+    Refresh as ConfigRefresh,
+};
 pub use validate::{validate, validate_pipelines};
 
 use std::collections::BTreeMap;
@@ -67,6 +73,17 @@ impl Config {
         } else {
             Err(errors)
         }
+    }
+
+    /// Loads direct-agent files relative to a local config directory.
+    ///
+    /// # Errors
+    /// Rejects unsafe, missing, symlinked, or non-file agent paths.
+    pub fn load_agent_files(
+        dir: &Path,
+        roles: &BTreeMap<String, Role>,
+    ) -> Result<BTreeMap<String, Vec<u8>>, SourceError> {
+        source_tree::load_agent_files(dir, dir, roles)
     }
 }
 

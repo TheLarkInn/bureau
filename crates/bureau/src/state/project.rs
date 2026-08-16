@@ -13,9 +13,10 @@ use super::{Disposition, Error, Store};
 /// Propagates durable-state failures.
 pub fn run(store: &Store, runs_dir: &Path, run_id: &str) -> Result<bool, Error> {
     let directory = runlog::run_dir(runs_dir, run_id);
-    let Ok(state) = runlog::replay_state(&directory) else {
+    if !directory.is_dir() {
         return Ok(false);
-    };
+    }
+    let state = runlog::replay_state(&directory)?;
     let (Some(snapshot), Some(finished)) = (state.snapshot, state.finished) else {
         return Ok(false);
     };
@@ -37,7 +38,11 @@ pub fn terminal(store: &Store, record: &TerminalRecord) -> Result<(), Error> {
     if let Some(disposition) = disposition(record.finished.disposition) {
         store.mark_seen(&snapshot.item.content_hash(), disposition)?;
     }
-    store.release(&snapshot.assignment.name, &snapshot.item.external_id)
+    store.release_terminal(
+        &snapshot.assignment.name,
+        &snapshot.item.external_id,
+        &snapshot.run_id,
+    )
 }
 
 const fn disposition(value: Option<TerminalDisposition>) -> Option<Disposition> {

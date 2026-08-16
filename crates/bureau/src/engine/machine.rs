@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use super::{RunPlan, checkpoint, deadline, edge, execute, resume, stream};
+use super::{RunPlan, checkpoint, control, deadline, edge, execute, resume, stream};
 use crate::adapters::{Execution, Usage};
 use crate::config::{Repo, StepDef};
 use crate::contract::{StepOutcome, StepRequest, StepResult};
@@ -45,6 +45,8 @@ pub(super) struct RunCtx {
     deadline: tokio::time::Instant,
     /// Where the machine starts or resumes.
     start: edge::Route,
+    /// Whether the immutable run snapshot is already durable.
+    pub(super) started: bool,
 }
 
 impl RunCtx {
@@ -70,12 +72,13 @@ impl RunCtx {
             pr: history.pr,
             deadline,
             start: history.start,
+            started: history.started,
         }
     }
 
     /// Records a finished step's result for routing and data flow.
     pub(super) fn record(&mut self, step: &str, execution: Execution) {
-        let Execution { result, usage } = execution;
+        let Execution { result, usage, .. } = execution;
         self.cost_usd += measured_cost(&usage);
         self.outcomes.insert(step.to_owned(), result.outcome);
         self.results.insert(step.to_owned(), result);
@@ -164,6 +167,9 @@ pub(super) async fn run_step(
     );
     *ctx.attempts.entry(step.name.clone()).or_insert(0) += 1;
     let mut result = execute::execute(ctx, wt, step, request).await;
+    if result.is_halted() || control::ownership_reason(ctx).is_some() {
+        return result.halt();
+    }
     checkpoint::save_result(ctx, wt, step, &mut result).await;
     let finished = runlog::step_finished_full(&step.name, &result);
     append(ctx, EventKind::StepFinished, finished);
@@ -173,6 +179,9 @@ pub(super) async fn run_step(
 /// Appends an event, ignoring failures: a run never crashes over its
 /// own bookkeeping.
 pub(super) fn append(ctx: &RunCtx, kind: EventKind, data: serde_json::Value) {
+    if control::ownership_reason(ctx).is_some() {
+        return;
+    }
     let _ = stream::lock(&ctx.log).append(kind, data);
 }
 

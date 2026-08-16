@@ -3,41 +3,27 @@
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::Duration;
 
-use super::Store;
+use super::LeaseOwner;
 
 pub async fn maintain<T>(
-    store: Arc<Store>,
-    assignment: &str,
-    external_id: &str,
+    owner: LeaseOwner,
     ttl: Duration,
     cancel: &Path,
     future: impl Future<Output = T>,
-) -> T {
+) -> Option<T> {
     let interval = (ttl / 3).max(Duration::from_millis(10));
     let mut future = Box::pin(future);
-    if let Some(output) = renewal_loop(
-        &store,
-        assignment,
-        external_id,
-        ttl,
-        interval,
-        future.as_mut(),
-    )
-    .await
-    {
-        return output;
+    if let Some(output) = renewal_loop(&owner, ttl, interval, future.as_mut()).await {
+        return Some(output);
     }
-    cancel_for_lost_lease(cancel, assignment, external_id);
-    future.await
+    cancel_for_lost_lease(cancel, &owner);
+    None
 }
 
 async fn renewal_loop<T, F>(
-    store: &Store,
-    assignment: &str,
-    external_id: &str,
+    owner: &LeaseOwner,
     ttl: Duration,
     interval: Duration,
     mut future: Pin<&mut F>,
@@ -49,7 +35,7 @@ where
         if let Some(output) = tick(future.as_mut(), interval).await {
             return Some(output);
         }
-        if !matches!(store.renew(assignment, external_id, ttl), Ok(true)) {
+        if !matches!(owner.renew(ttl), Ok(true)) {
             return None;
         }
     }
@@ -62,9 +48,13 @@ where
     tokio::time::timeout(interval, future).await.ok()
 }
 
-fn cancel_for_lost_lease(path: &Path, assignment: &str, external_id: &str) {
+fn cancel_for_lost_lease(path: &Path, owner: &LeaseOwner) {
     let reason = format!(
-        "lease renewal failed for assignment `{assignment}` item `{external_id}`; this run stopped before continuing without ownership"
+        "lease renewal failed for assignment `{}` item `{}`; this run stopped before continuing without ownership",
+        owner.assignment(),
+        owner.external_id()
     );
-    let _ = std::fs::write(path, reason);
+    if let Err(error) = std::fs::write(path, reason) {
+        eprintln!("failed to cancel run after lease loss: {error}");
+    }
 }

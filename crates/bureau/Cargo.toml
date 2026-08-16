@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+bureau-plugin = { path = "../bureau-plugin" }
 clap.workspace = true
 nix.workspace = true
 reqwest.workspace = true

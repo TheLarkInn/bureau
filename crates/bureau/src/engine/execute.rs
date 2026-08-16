@@ -1,134 +1,18 @@
-//! Running one step: request assembly, the trust check, and the two
-//! code-running kinds (DESIGN.md layer 4 and section 9).
+//! Step requests, trust gates, deterministic commands, and agent adapters.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::RunPlan;
 use super::machine::{RunCtx, WtCtx};
 use super::stream::{self, LogSink};
-use super::{artifact, deadline};
+use super::{artifact, deadline, plugins};
 use crate::adapters::{self, Execution, Usage};
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
 use crate::process::{SpawnRequest, SpawnResult, shared_log, spawn};
 
-/// Default per-step timeout when the pipeline sets none, matching the
-/// `fake` adapter's.
+/// Default per-step timeout, matching the `fake` adapter.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
-
-/// Assembles a step's request: only `inputs_from` steps contribute
-/// inputs and artifacts — no ambient accumulation.
-pub(super) fn build_request(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepRequest {
-    StepRequest {
-        schema: SCHEMA_VERSION.to_owned(),
-        run_id: ctx.plan.run_id.clone(),
-        step: step.name.clone(),
-        worktree: worktree.to_path_buf(),
-        trust: request_trust(ctx, step),
-        inputs: collect_outputs(ctx, step),
-        artifacts: collect_artifacts(ctx, step),
-    }
-}
-
-/// Merged outputs of every `inputs_from` step, later steps winning.
-fn collect_outputs(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, serde_json::Value> {
-    let mut merged = BTreeMap::new();
-    for name in &step.inputs_from {
-        if let Some(result) = ctx.result_of(name) {
-            if input_kind(ctx, name) == Some(StepKind::Concurrent) {
-                let value = serde_json::to_value(&result.outputs).unwrap_or_default();
-                merged.insert(name.clone(), value);
-            } else {
-                merged.extend(result.outputs.clone());
-            }
-        }
-    }
-    merged
-}
-
-/// Merged artifacts of every `inputs_from` step, by artifact name.
-fn collect_artifacts(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, PathBuf> {
-    let mut merged = BTreeMap::new();
-    for name in &step.inputs_from {
-        if let Some(result) = ctx.result_of(name) {
-            let concurrent = input_kind(ctx, name) == Some(StepKind::Concurrent);
-            merged.extend(result.artifacts.iter().map(|artifact| {
-                let key = if concurrent {
-                    format!("{name}.{}", artifact.name)
-                } else {
-                    artifact.name.clone()
-                };
-                (key, artifact.path.clone())
-            }));
-        }
-    }
-    merged
-}
-
-fn input_kind(ctx: &RunCtx, name: &str) -> Option<StepKind> {
-    ctx.plan
-        .pipeline
-        .steps
-        .iter()
-        .find(|step| step.name == name)
-        .map(|step| step.kind)
-}
-
-/// A request's trust: the item's grade, lowered to the weakest input's
-/// grade. The item seeds the fold because it is an input-less step's
-/// only input; a step is only as trustworthy as its weakest input
-/// (DESIGN.md section 9).
-fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
-    step.inputs_from
-        .iter()
-        .filter_map(|name| input_trust(ctx, name))
-        .fold(ctx.plan.item.trust, Ord::min)
-}
-
-/// One input's grade, when data flowed from it. A step finished in
-/// this run contributes its recorded grade. A step finished before a
-/// resume has no result in memory — the log records outcomes, not
-/// grades — so it conservatively counts as `Derived`, the weakest
-/// grade a finished step can claim; the item-grade seed then keeps a
-/// resumed request at or below the fresh run's grade. A step that
-/// never ran contributes nothing: no data flowed from it.
-fn input_trust(ctx: &RunCtx, step: &str) -> Option<Trust> {
-    if let Some(result) = ctx.result_of(step) {
-        return Some(result.trust);
-    }
-    ctx.outcome_of(step).map(|_| Trust::Derived)
-}
-
-/// The trust check: a step whose inputs grade below its minimum
-/// escalates (fail closed), naming both grades.
-pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
-    let minimum = min_trust(plan, step);
-    if request.trust < minimum {
-        return Some(format!(
-            "step `{}` requires {minimum:?} trust but its inputs are {:?}",
-            step.name, request.trust
-        ));
-    }
-    None
-}
-
-/// The step's effective minimum trust: its own `trust`, else the
-/// role's `min_trust` for agent steps. Deterministic steps are code and
-/// default to `Untrusted`.
-fn min_trust(plan: &RunPlan, step: &StepDef) -> Trust {
-    if let Some(trust) = step.trust {
-        return trust;
-    }
-    if step.kind == StepKind::Agent {
-        return plan
-            .roles
-            .get(step.role.as_deref().unwrap_or_default())
-            .map_or(Trust::Untrusted, |role| role.min_trust);
-    }
-    Trust::Untrusted
-}
 
 /// Runs one code step and returns its result.
 pub(super) async fn execute(
@@ -178,7 +62,11 @@ async fn deterministic(
         stdin: request.to_json().unwrap_or_default(),
         timeout,
         secrets: ctx.secrets(),
-        log: Some(shared_log(LogSink::new(&step.name, &ctx.log))),
+        log: Some(shared_log(LogSink::new(
+            &step.name,
+            &ctx.log,
+            ctx.plan.lease.clone(),
+        ))),
         cancel: adapters::cancel_path(request),
     })
     .await;
@@ -204,21 +92,60 @@ fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
     result
 }
 
-/// An agent step runs through the role's adapter; its outputs grade
-/// `Derived` downstream no matter what the process claimed.
+/// Runs the role adapter and grades its output `Derived`.
 async fn agent(
     ctx: &RunCtx,
     step: &StepDef,
     request: &StepRequest,
     timeout: Duration,
 ) -> Execution {
-    let Some(role) = role_for(ctx, step) else {
-        return failed_step(&format!("step `{}` names an unknown role", step.name));
+    let prepared = match prepare_agent(ctx, step, request) {
+        Ok(prepared) => prepared,
+        Err(message) => {
+            return blocked_step(&message).halt();
+        }
     };
-    let sink = shared_log(LogSink::new(&step.name, &ctx.log));
-    let mut execution =
-        adapters::execute(role, step, request, timeout, ctx.secrets(), Some(sink)).await;
+    let sink = shared_log(LogSink::new(&step.name, &ctx.log, ctx.plan.lease.clone()));
+    let execution = adapters::execute(
+        &prepared.0,
+        step,
+        request,
+        timeout,
+        ctx.secrets(),
+        Some(sink),
+    )
+    .await;
+    finish_agent(ctx, step, request, prepared.1, execution).await
+}
+
+fn prepare_agent(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+) -> Result<(crate::config::Role, Option<plugins::ActiveAgent>), String> {
+    let role =
+        role_for(ctx, step).ok_or_else(|| format!("step `{}` names an unknown role", step.name))?;
+    let run_dir = stream::lock(&ctx.log).dir().to_path_buf();
+    let activation = plugins::activate(&ctx.plan, role, &run_dir, &request.worktree)?;
+    let mut runtime_role = role.clone();
+    if let Some(active) = activation.as_ref() {
+        active.agent_name().clone_into(&mut runtime_role.agent);
+    }
+    Ok((runtime_role, activation))
+}
+
+async fn finish_agent(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    activation: Option<plugins::ActiveAgent>,
+    mut execution: Execution,
+) -> Execution {
     execution.result.trust = Trust::Derived;
+    if let Err(message) = plugins::restore(activation) {
+        execution.result = blocked_result(&message);
+        return execution.halt();
+    }
     enforce_measured_cost(ctx, &mut execution);
     publish_artifacts(ctx, step, request, &mut execution).await;
     execution
@@ -270,10 +197,22 @@ fn failed_step(message: &str) -> Execution {
     Execution::new(failure_result(message), Usage::zero("engine"))
 }
 
+fn blocked_step(message: &str) -> Execution {
+    Execution::new(blocked_result(message), Usage::zero("engine"))
+}
+
 fn failure_result(message: &str) -> StepResult {
+    synthetic_result(StepOutcome::Failure, message)
+}
+
+fn blocked_result(message: &str) -> StepResult {
+    synthetic_result(StepOutcome::Blocked, message)
+}
+
+fn synthetic_result(outcome: StepOutcome, message: &str) -> StepResult {
     StepResult {
         schema: SCHEMA_VERSION.to_owned(),
-        outcome: StepOutcome::Failure,
+        outcome,
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,

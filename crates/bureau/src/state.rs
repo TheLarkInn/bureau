@@ -10,6 +10,7 @@
 //! - **dedup markers** — content hashes of proposed output, so a
 //!   scheduled pipeline never re-proposes an identical change.
 
+mod claim;
 mod disposition;
 mod lease;
 mod limits;
@@ -22,6 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
+pub use claim::LeaseOwner;
 pub use disposition::Disposition;
 pub use lease::maintain as maintain_lease;
 pub use project::{run as project_run, terminal as project_terminal};
@@ -45,6 +47,9 @@ pub enum Error {
     /// A stored dedup token this build does not recognize.
     #[error("unknown stored disposition: {0}")]
     UnknownDisposition(String),
+    /// A supervised run returned without a durable terminal event.
+    #[error("run `{0}` has no durable terminal event")]
+    MissingTerminal(String),
 }
 
 /// A claim on one work item, with expiry. A crashed run releases
@@ -57,6 +62,10 @@ pub struct Lease {
     pub forge: String,
     /// The item's id on that forge.
     pub external_id: String,
+    /// Run that owns renewal/release rights.
+    pub run_id: String,
+    /// Unique supervisor generation holding this run.
+    pub owner_id: String,
     /// Expiry, milliseconds since the Unix epoch.
     pub expires_at_ms: u64,
 }
@@ -85,63 +94,6 @@ impl Store {
     /// Propagates `SQLite` failures.
     pub fn open_in_memory() -> Result<Self, Error> {
         Self::init(Connection::open_in_memory()?)
-    }
-
-    /// Attempts to claim an item. Compare-and-swap: returns `Ok(false)`
-    /// when another live lease holds the item. Expired leases are
-    /// reclaimed by the caller of this method.
-    ///
-    /// # Errors
-    /// Propagates `SQLite` failures.
-    pub fn try_claim(
-        &self,
-        assignment: &str,
-        forge: &str,
-        external_id: &str,
-        ttl: Duration,
-    ) -> Result<bool, Error> {
-        let now = now_millis();
-        let expires = now.saturating_add(duration_millis(ttl));
-        claim_tx(
-            &mut self.lock(),
-            assignment,
-            forge,
-            external_id,
-            now,
-            expires,
-        )
-    }
-
-    /// Releases a claim. Idempotent.
-    ///
-    /// # Errors
-    /// Propagates `SQLite` failures.
-    pub fn release(&self, assignment: &str, external_id: &str) -> Result<(), Error> {
-        self.lock()
-            .execute(sql::RELEASE, (assignment, external_id))?;
-        Ok(())
-    }
-
-    /// Extends a live lease. Returns `Ok(false)` when the lease is gone
-    /// or already expired.
-    ///
-    /// # Errors
-    /// Propagates `SQLite` failures.
-    pub fn renew(&self, assignment: &str, external_id: &str, ttl: Duration) -> Result<bool, Error> {
-        let now = now_millis();
-        let expires = now.saturating_add(duration_millis(ttl));
-        let changed = self
-            .lock()
-            .execute(sql::RENEW, (expires, assignment, external_id, now))?;
-        Ok(changed > 0)
-    }
-
-    /// Live leases for an assignment (expired ones excluded).
-    ///
-    /// # Errors
-    /// Propagates `SQLite` failures.
-    pub fn active(&self, assignment: &str) -> Result<Vec<Lease>, Error> {
-        active_leases(&self.lock(), assignment)
     }
 
     /// How many more runs the assignment may start now: the minimum
@@ -215,6 +167,7 @@ impl Store {
     fn init(conn: Connection) -> Result<Self, Error> {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.execute_batch(sql::SCHEMA)?;
+        sql::migrate_leases(&conn)?;
         sql::migrate_runs(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -241,28 +194,6 @@ fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32
     let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
     let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
     Ok((live, hour, day, spent))
-}
-
-/// One claim transaction: reap the key's expired lease, then insert.
-/// The unique index makes exactly one concurrent claimant win.
-fn claim_tx(
-    conn: &mut Connection,
-    assignment: &str,
-    forge: &str,
-    external_id: &str,
-    now: i64,
-    expires: i64,
-) -> Result<bool, Error> {
-    let tx = conn.transaction()?;
-    tx.execute(sql::REAP_EXPIRED, (assignment, forge, external_id, now))?;
-    match tx.execute(sql::INSERT_LEASE, (assignment, forge, external_id, expires)) {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(true)
-        }
-        Err(err) if sql::is_unique_violation(&err) => Ok(false),
-        Err(err) => Err(err.into()),
-    }
 }
 
 /// Milliseconds since the Unix epoch, clamped into `i64`.

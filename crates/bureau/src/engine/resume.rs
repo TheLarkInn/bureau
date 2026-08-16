@@ -168,6 +168,17 @@ fn next_route(state: &RunState, pipeline: &Pipeline) -> Route {
     let Some(last) = state.steps.last() else {
         return entry(pipeline);
     };
+    if state
+        .groups
+        .get(&last.step)
+        .is_some_and(|group| group.halted)
+    {
+        let message = last.result.as_ref().map_or_else(
+            || "concurrent group halted".to_owned(),
+            |result| result.message.clone(),
+        );
+        return Route::Escalate(message);
+    }
     last.outcome.map_or_else(
         || Route::Step(last.step.clone()),
         |outcome| edge::route_named(pipeline, &last.step, outcome),

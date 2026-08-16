@@ -872,7 +872,8 @@ Before every pass:
 Single-repository reconcile reads committed `.bureau/` from the configured
 work-repo remote/ref. Multi-repository reconcile reads the separate config
 remote/ref. Local config paths are caches only. `bureau validate` may inspect
-uncommitted local authoring changes.
+uncommitted local authoring changes. Committed config loading rejects symlinks
+and any path that escapes the exact detached snapshot.
 
 ### 15.4 Long-running correctness
 
@@ -881,6 +882,13 @@ run deadline is 24 hours; an assignment may set a different positive
 `max_run_hours`. Agent steps without `timeout_secs` inherit the remaining run
 deadline. Deterministic steps keep their short default.
 
+Each lease carries both the durable run ID and a unique owner token for the
+current supervisor process. Run IDs and owner tokens include operating-system
+random entropy so independent hosts cannot collide. Recovery may replace an
+owner token only after expiry.
+Event appends, commits, pushes, comments, and PR creation fail closed unless the
+current token still owns the live lease.
+
 Recheck `approval_label` at every step boundary and before publication. At
 deadline or approval revocation, preserve evidence, restore temporary plugin
 activation, tear down, release the lease, comment with the exact retry action,
@@ -888,7 +896,8 @@ and escalate.
 
 The run log must persist enough to resume the same run ID:
 
-- immutable plan, source commit, item snapshot, plugin digest;
+- immutable plan, source commit, item snapshot, pinned direct-agent bytes, and
+  SHA-256 plugin digests covering paths, bytes, and file permissions;
 - full scrubbed step and concurrent-member results;
 - adapter usage;
 - internal Git snapshot SHAs;
@@ -901,7 +910,9 @@ terminal budget/dedup state from the log with unique `run_id` accounting so a
 crash cannot double count. Release is idempotent.
 
 First SIGINT/SIGTERM drains while renewing leases. A second signal cancels
-process groups, records cancellation, cleans, releases, and exits.
+process groups, records cancellation, cleans, releases, and exits. Lease loss
+uses the same hard process-group cancellation path; detached descendants do not
+survive a completed or cancelled step.
 
 ### 15.5 Concurrent evidence
 

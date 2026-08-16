@@ -14,6 +14,7 @@ mod group_state;
 mod snapshot;
 mod state;
 
+pub use bureau_plugin::PluginSource;
 pub use event::{
     BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData, RunFinishedData,
     RunStartedData, StepFinishedData, StepStartedData, TerminalDisposition, branch_pushed,
@@ -26,7 +27,7 @@ pub use group::{
     group_member_started, group_started,
 };
 pub use group_state::{GroupMemberRecord, GroupRecord};
-pub use snapshot::{ConfigSource, PluginSource, RunSnapshot};
+pub use snapshot::{ConfigSource, RunSnapshot};
 pub use state::{RunState, RunStatus, StepRecord, replay};
 
 use std::fs::{File, OpenOptions};

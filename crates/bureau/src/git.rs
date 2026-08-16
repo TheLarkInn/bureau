@@ -16,6 +16,8 @@
 //! visible in the container's process table for the duration of the
 //! push; the container is the sandbox boundary (DESIGN.md section 10).
 
+mod snapshot;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -46,6 +48,7 @@ pub enum Error {
 }
 
 /// A resolved credential for git-over-HTTPS auth.
+#[derive(Clone)]
 pub struct Credential {
     user: &'static str,
     secret: Secret,

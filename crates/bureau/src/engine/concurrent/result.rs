@@ -9,15 +9,9 @@ pub(super) fn aggregate(
     results: &BTreeMap<String, Execution>,
     cancelled: &BTreeMap<String, String>,
 ) -> Execution {
-    let outcome = outcome(
-        results.values().map(|execution| execution.result.outcome),
-        !cancelled.is_empty(),
-    );
-    let trust = results
-        .values()
-        .map(|execution| execution.result.trust)
-        .min()
-        .unwrap_or(Trust::Derived);
+    let halted = results.values().find(|execution| execution.is_halted());
+    let outcome = aggregate_outcome(results, cancelled, halted);
+    let trust = aggregate_trust(results);
     let result = StepResult {
         schema: SCHEMA_VERSION.to_owned(),
         outcome,
@@ -26,7 +20,36 @@ pub(super) fn aggregate(
         trust,
         message: message(results, cancelled, outcome),
     };
-    Execution::new(result, usage(results))
+    let execution = Execution::new(result, usage(results));
+    if halted.is_some() {
+        execution.halt()
+    } else {
+        execution
+    }
+}
+
+fn aggregate_outcome(
+    results: &BTreeMap<String, Execution>,
+    cancelled: &BTreeMap<String, String>,
+    halted: Option<&Execution>,
+) -> StepOutcome {
+    halted.map_or_else(
+        || {
+            outcome(
+                results.values().map(|value| value.result.outcome),
+                !cancelled.is_empty(),
+            )
+        },
+        |execution| execution.result.outcome,
+    )
+}
+
+fn aggregate_trust(results: &BTreeMap<String, Execution>) -> Trust {
+    results
+        .values()
+        .map(|execution| execution.result.trust)
+        .min()
+        .unwrap_or(Trust::Derived)
 }
 
 fn outcome(outcomes: impl Iterator<Item = StepOutcome>, cancelled: bool) -> StepOutcome {

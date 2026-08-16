@@ -1,11 +1,9 @@
 //! The `claude` adapter: runs the Anthropic Claude Code CLI as the
 //! agent.
 //!
-//! Same agent pass-through contract as `copilot` (DESIGN.md section
-//! 6): a `/plugin:agent` reference is copied verbatim from
-//! `.ai/plugins/<plugin>/agents/<name>.agent.md` when it resolves
-//! locally and otherwise passed through by name; a direct `.md` path
-//! is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
+//! Same resource contract as `copilot` (DESIGN.md section 6): the engine
+//! pins and temporarily activates `/plugin:agent` before spawn; a direct
+//! `.md` path is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
 //!
 //! argv is `claude -p --agent <name>`: `claude -p`
 //! reads the prompt from stdin, which carries the request JSON per the

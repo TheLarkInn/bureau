@@ -86,9 +86,14 @@ fn resumed_results(record: &GroupRecord) -> BTreeMap<String, Execution> {
         .members
         .iter()
         .filter_map(|(name, member)| {
+            let execution = Execution::new(member.result.clone()?, member.usage.clone()?);
             Some((
                 name.clone(),
-                Execution::new(member.result.clone()?, member.usage.clone()?),
+                if member.halted {
+                    execution.halt()
+                } else {
+                    execution
+                },
             ))
         })
         .collect()
@@ -186,6 +191,7 @@ fn finish_member(
         return;
     }
     let outcome = execution.result.outcome;
+    let halted = execution.is_halted();
     let data = runlog::group_member_finished(&group.name, name, &execution);
     machine::append(ctx, EventKind::GroupMemberFinished, data);
     state.results.insert(name.to_owned(), execution);
@@ -193,7 +199,7 @@ fn finish_member(
         "group `{}` stopped after member `{name}` failed",
         group.name
     );
-    for cancelled in schedule.cancel_after_failure(outcome, &reason) {
+    for cancelled in schedule.cancel_after_failure(outcome, halted, &reason) {
         state.cancelled.insert(cancelled.clone(), reason.clone());
         let data = runlog::group_member_cancelled(&group.name, &cancelled, &reason);
         machine::append(ctx, EventKind::GroupMemberCancelled, data);

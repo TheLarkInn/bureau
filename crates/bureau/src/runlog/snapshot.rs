@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use bureau_plugin::PluginSource;
+
 use crate::config::{Assignment, Pipeline, Repo, Role};
 use crate::forge::Item;
 
@@ -16,19 +18,6 @@ pub struct ConfigSource {
     pub reference: String,
     /// Exact activated commit.
     pub commit: String,
-}
-
-/// Plugin identity selected for one run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginSource {
-    /// Plugin name.
-    pub name: String,
-    /// Target-repo, user-global, or development source description.
-    pub source: String,
-    /// Declared semantic version.
-    pub version: String,
-    /// Content digest of the materialized plugin.
-    pub digest: String,
 }
 
 /// Everything serializable from a run plan; credentials are references only.
@@ -49,7 +38,10 @@ pub struct RunSnapshot {
     /// Committed config identity when available.
     #[serde(default)]
     pub config_source: Option<ConfigSource>,
-    /// Selected plugin identity when available.
+    /// Selected plugin identities keyed by plugin name.
     #[serde(default)]
-    pub plugin_source: Option<PluginSource>,
+    pub plugin_sources: BTreeMap<String, PluginSource>,
+    /// Pinned direct-agent bytes keyed by role name.
+    #[serde(default)]
+    pub direct_agents: BTreeMap<String, Vec<u8>>,
 }

@@ -17,6 +17,17 @@ pub(super) fn cancel_reason(ctx: &RunCtx) -> Option<String> {
     })
 }
 
+pub(super) fn ownership_reason(ctx: &RunCtx) -> Option<String> {
+    let owner = ctx.plan.lease.as_ref()?;
+    match owner.owns() {
+        Ok(true) => None,
+        Ok(false) => Some("run lease ownership was lost".to_owned()),
+        Err(error) => Some(format!(
+            "run lease ownership could not be confirmed: {error}"
+        )),
+    }
+}
+
 pub(super) fn deadline_message(ctx: &RunCtx) -> String {
     let hours = ctx
         .plan

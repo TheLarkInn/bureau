@@ -7,6 +7,70 @@ use tokio::process::Child;
 
 use super::SpawnOutcome;
 
+pub(super) const TOKEN_VAR: &str = "BUREAU_PROCESS_TOKEN";
+
+pub(super) struct KillOnDrop {
+    pgid: Option<nix::unistd::Pid>,
+    token: String,
+}
+
+impl KillOnDrop {
+    pub(super) fn new(child: &Child, token: &str) -> Self {
+        let pgid = child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .map(nix::unistd::Pid::from_raw);
+        Self {
+            pgid,
+            token: token.to_owned(),
+        }
+    }
+
+    pub(super) fn kill(&mut self) {
+        kill_token(&self.token);
+        if let Some(pgid) = self.pgid.take() {
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL);
+        }
+    }
+
+    pub(super) fn finish(&mut self) {
+        kill_token(&self.token);
+        self.pgid = None;
+    }
+}
+
+fn kill_token(token: &str) {
+    let expected = format!("{TOKEN_VAR}={token}");
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let environ = std::fs::read(entry.path().join("environ")).unwrap_or_default();
+        if environ
+            .split(|byte| *byte == 0)
+            .any(|value| value == expected.as_bytes())
+        {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 pub(super) async fn wait_child(
     child: &mut Child,
     timeout: Duration,
@@ -83,6 +147,11 @@ async fn stop(
 fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
     use std::os::unix::process::ExitStatusExt;
     match (status.code(), status.signal()) {
+        (Some(code @ 129..=255), _) => (
+            SpawnOutcome::Signaled,
+            None,
+            Some(format!("signal {}", code - 128)),
+        ),
         (Some(code), _) => (SpawnOutcome::Exited, Some(code), None),
         (None, signal) => (
             SpawnOutcome::Signaled,

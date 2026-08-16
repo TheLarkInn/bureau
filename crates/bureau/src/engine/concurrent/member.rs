@@ -8,9 +8,9 @@ use crate::config::StepDef;
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepResult, Trust};
 use crate::git::Worktree;
 
-use super::super::execute;
 use super::super::gitcmd;
 use super::super::machine::{RunCtx, WtCtx};
+use super::super::{execute, request};
 
 pub(super) async fn run(
     ctx: RunCtx,
@@ -38,8 +38,8 @@ async fn run_inner(
         Ok(worktree) => worktree,
         Err(error) => return failed(&format!("creating concurrent worktree failed: {error}")),
     };
-    let request = execute::build_request(ctx, step, worktree.worktree.path());
-    if let Some(reason) = execute::trust_check(&ctx.plan, step, &request) {
+    let request = request::build(ctx, step, worktree.worktree.path());
+    if let Some(reason) = request::trust_check(&ctx.plan, step, &request) {
         return blocked(&reason);
     }
     execute::execute(ctx, &worktree, step, &request).await

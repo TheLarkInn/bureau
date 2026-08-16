@@ -1,10 +1,10 @@
 //! `run` and `retry`: claim one work item and drive one pipeline run to
 //! a terminal (DESIGN.md sections 11 and 13).
+mod signal;
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context as _;
 
@@ -14,13 +14,15 @@ use bureau::engine::{Engine, RunOutcome, RunPlan, new_run_id};
 use bureau::forge::{Forge, Item};
 use bureau::process::Secret;
 use bureau::runlog::{self, EventKind, RunStartedData};
-use bureau::state::Store;
+use bureau::state::{LeaseOwner, Store};
 
 use super::{Paths, prepare};
 
-/// A claimed item's lease lasts 30 minutes; expiry is the crash release
-/// (DESIGN.md layer 5).
-const LEASE_TTL: Duration = Duration::from_secs(30 * 60);
+struct Prepared {
+    forge: Arc<dyn Forge>,
+    item: Item,
+    credentials: BTreeMap<String, Secret>,
+}
 
 /// `run <pipeline> --item <id>`: the one-shot entry point.
 ///
@@ -127,82 +129,95 @@ async fn execute(
     item_query: &str,
     paths: &Paths,
 ) -> anyhow::Result<i32> {
-    let Some(credentials) = prepare::resolve_credentials(config, assignment) else {
+    let Some(prepared) = prepare_execution(config, assignment, item_query).await? else {
         return Ok(2);
     };
-    let forge = prepare::work_forge(config, assignment, &credentials)?;
-    let Some(item) = prepare::find_item(&*forge, assignment, item_query).await? else {
-        eprintln!("no item `{item_query}` in `{}`", assignment.work.source);
-        return Ok(2);
-    };
+    let direct_agents = Config::load_agent_files(&paths.config, &config.roles)
+        .context("loading direct agent files")?;
     let store = Arc::new(Store::open(&paths.state).context("opening state database")?);
-    if !claim(&store, assignment, &item)? {
+    let run_id = new_run_id(&assignment.name).context("creating run id")?;
+    let Some(owner) = claim(store.clone(), assignment, &prepared.item, &run_id)? else {
         return Ok(1);
-    }
-    finish(config, assignment, item, forge, credentials, paths, store).await
+    };
+    let mut plan = plan(
+        config,
+        assignment,
+        prepared.item,
+        prepared.forge,
+        prepared.credentials,
+        run_id,
+    );
+    plan.direct_agents = direct_agents;
+    plan.lease = Some(owner);
+    finish(plan, paths, store).await
 }
 
-/// Claims the item for 30 minutes; on loss, says so and exits 1.
-fn claim(store: &Store, assignment: &Assignment, item: &Item) -> anyhow::Result<bool> {
-    let won = store
-        .try_claim(
-            &assignment.name,
-            prepare::forge_name(assignment.work.forge),
-            &item.external_id,
-            LEASE_TTL,
-        )
+async fn prepare_execution(
+    config: &Config,
+    assignment: &Assignment,
+    item_query: &str,
+) -> anyhow::Result<Option<Prepared>> {
+    let Some(credentials) = prepare::resolve_credentials(config, assignment) else {
+        return Ok(None);
+    };
+    let forge = prepare::work_forge(config, assignment, &credentials)?;
+    let Some(item) = approved(&*forge, assignment, item_query).await? else {
+        return Ok(None);
+    };
+    Ok(Some(Prepared {
+        forge,
+        item,
+        credentials,
+    }))
+}
+
+async fn approved(
+    forge: &dyn Forge,
+    assignment: &Assignment,
+    item_query: &str,
+) -> anyhow::Result<Option<Item>> {
+    let Some(item) = prepare::find_item(forge, assignment, item_query).await? else {
+        eprintln!("no item `{item_query}` in `{}`", assignment.work.source);
+        return Ok(None);
+    };
+    let Some(item) = bureau::reconcile::approved_item(assignment, item) else {
+        eprintln!("item `{item_query}` is missing the required approval label");
+        return Ok(None);
+    };
+    Ok(Some(item))
+}
+
+/// Claims the item under the shared renewable lease policy.
+fn claim(
+    store: Arc<Store>,
+    assignment: &Assignment,
+    item: &Item,
+    run_id: &str,
+) -> anyhow::Result<Option<LeaseOwner>> {
+    let owner = LeaseOwner::new(
+        store,
+        &assignment.name,
+        prepare::forge_name(assignment.work.forge),
+        &item.external_id,
+        run_id,
+    )
+    .context("creating lease owner")?;
+    let won = owner
+        .claim(bureau::supervise::LEASE_TTL)
         .context("claiming work item")?;
     if !won {
         println!("item `{}` is already claimed", item.external_id);
+        return Ok(None);
     }
-    Ok(won)
+    Ok(Some(owner))
 }
 
 /// Drives the run, then records its cost and releases the lease — the
 /// release happens on every path back out.
-async fn finish(
-    config: &Config,
-    assignment: &Assignment,
-    item: Item,
-    forge: Arc<dyn Forge>,
-    credentials: BTreeMap<String, Secret>,
-    paths: &Paths,
-    store: Arc<Store>,
-) -> anyhow::Result<i32> {
-    let outcome = drive(
-        config,
-        assignment,
-        item.clone(),
-        forge,
-        credentials,
-        paths,
-        store.clone(),
-    )
-    .await;
-    let projected = bureau::state::project_run(&store, &paths.runs, &outcome.run_id)
-        .context("projecting terminal run state")?;
-    if !projected {
-        store
-            .release(&assignment.name, &item.external_id)
-            .context("releasing lease")?;
-    }
+async fn finish(plan: RunPlan, paths: &Paths, store: Arc<Store>) -> anyhow::Result<i32> {
+    let outcome = run_plan(plan, paths, store).await?;
     print_outcome(&outcome);
     Ok(exit_code(&outcome))
-}
-
-/// Builds the plan and runs the engine (which never panics across its
-/// boundary).
-async fn drive(
-    config: &Config,
-    assignment: &Assignment,
-    item: Item,
-    forge: Arc<dyn Forge>,
-    credentials: BTreeMap<String, Secret>,
-    paths: &Paths,
-    store: Arc<Store>,
-) -> RunOutcome {
-    let plan = plan(config, assignment, item, forge, credentials);
-    run_plan(plan, assignment, paths, store).await
 }
 
 fn plan(
@@ -211,9 +226,10 @@ fn plan(
     item: Item,
     forge: Arc<dyn Forge>,
     credentials: BTreeMap<String, Secret>,
+    run_id: String,
 ) -> RunPlan {
     RunPlan {
-        run_id: new_run_id(&assignment.name),
+        run_id,
         assignment: assignment.clone(),
         pipeline: config
             .pipelines
@@ -225,27 +241,16 @@ fn plan(
         item,
         forge,
         credentials,
+        config_source: None,
+        plugin_sources: BTreeMap::new(),
+        direct_agents: BTreeMap::new(),
+        lease: None,
     }
 }
 
-async fn run_plan(
-    plan: RunPlan,
-    assignment: &Assignment,
-    paths: &Paths,
-    store: Arc<Store>,
-) -> RunOutcome {
-    let engine = Engine::new(paths.runs.clone(), paths.cache.clone());
-    let cancel = runlog::run_dir(&paths.runs, &plan.run_id).join("CANCEL");
-    let future = engine.run(&plan);
-    bureau::state::maintain_lease(
-        store,
-        &assignment.name,
-        &plan.item.external_id,
-        LEASE_TTL,
-        &cancel,
-        future,
-    )
-    .await
+async fn run_plan(plan: RunPlan, paths: &Paths, store: Arc<Store>) -> anyhow::Result<RunOutcome> {
+    let engine = Arc::new(Engine::new(paths.runs.clone(), paths.cache.clone()));
+    signal::run(engine, store, plan).await
 }
 
 /// The one-line outcome: `<run_id> <outcome> cost=$X.XX message [pr]`.

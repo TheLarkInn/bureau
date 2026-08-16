@@ -29,6 +29,9 @@ pub struct GroupRecord {
     pub result: Option<StepResult>,
     /// Aggregate usage after the group finishes.
     pub usage: Option<Usage>,
+    /// Aggregate must stop instead of following pipeline edges.
+    #[serde(default)]
+    pub halted: bool,
 }
 
 /// Durable state for one concurrent group member.
@@ -40,6 +43,9 @@ pub struct GroupMemberRecord {
     pub result: Option<StepResult>,
     /// Adapter-owned usage after the member finishes.
     pub usage: Option<Usage>,
+    /// Member encountered a non-routable control failure.
+    #[serde(default)]
+    pub halted: bool,
     /// Why the unfinished member was cancelled.
     pub cancellation_reason: Option<String>,
 }
@@ -92,6 +98,7 @@ impl RunState {
         }
         member.result = Some(data.result);
         member.usage = Some(data.usage);
+        member.halted = data.halted;
     }
 
     pub(super) fn cancel_group_member(&mut self, event: &Event) {
@@ -127,6 +134,7 @@ impl RunState {
         step.usage = Some(data.usage.clone());
         group.result = Some(data.result);
         group.usage = Some(data.usage);
+        group.halted = data.halted;
     }
 
     pub(super) fn has_active_group(&self) -> bool {
@@ -181,6 +189,7 @@ impl GroupRecord {
             snapshot: data.snapshot.clone(),
             result: None,
             usage: None,
+            halted: false,
         })
     }
 }

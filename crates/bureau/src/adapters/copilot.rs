@@ -1,13 +1,9 @@
 //! The `copilot` adapter: runs the GitHub Copilot CLI as the agent.
 //!
 //! The agent file a developer invokes locally runs unmodified in
-//! automation (DESIGN.md section 6): a `/plugin:agent` reference is
-//! copied verbatim from `.ai/plugins/<plugin>/agents/<name>.agent.md`
-//! when it resolves locally and otherwise passed through by name — the
-//! plugin is expected in the environment (container provisioning,
-//! section 10). A direct `.md` path is copied verbatim into
-//! `<worktree>/.github/agents/<name>.agent.md`: discovery needs the
-//! suffix, so only the file is renamed, never the content.
+//! automation (DESIGN.md section 6): the engine pins and temporarily
+//! activates `/plugin:agent` resources before spawn. A direct `.md` path
+//! is copied verbatim into `<worktree>/.github/agents/<name>.agent.md`.
 //!
 //! argv is `copilot -p <request-json> --agent <name>`;
 //! the request JSON also arrives on stdin per the layer-2 contract.

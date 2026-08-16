@@ -6,7 +6,9 @@ pub(super) async fn check(ctx: &RunCtx) -> Result<(), String> {
     let Some(label) = ctx.plan.assignment.work.approval_label.as_deref() else {
         return Ok(());
     };
-    let items = query(ctx, label).await?;
+    let items = tokio::time::timeout(ctx.remaining(), query(ctx, label))
+        .await
+        .map_err(|_| super::control::deadline_message(ctx))??;
     let approved = items
         .iter()
         .find(|item| item.external_id == ctx.plan.item.external_id)

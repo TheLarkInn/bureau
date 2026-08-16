@@ -61,7 +61,6 @@ impl Schedule {
         let name = step.name.clone();
         self.active
             .insert(name.clone(), member::cancel_path(root, &name));
-        let task_name = name.clone();
         let future = member::run(
             ctx.clone(),
             mirror.to_path_buf(),
@@ -69,14 +68,7 @@ impl Schedule {
             snapshot.to_owned(),
             step,
         );
-        self.tasks.spawn(async move {
-            tokio::spawn(future).await.unwrap_or_else(|error| {
-                (
-                    task_name,
-                    member::failed(&format!("concurrent member task failed: {error}")),
-                )
-            })
-        });
+        self.tasks.spawn(future);
         name
     }
 
@@ -96,9 +88,12 @@ impl Schedule {
     pub(super) fn cancel_after_failure(
         &mut self,
         outcome: StepOutcome,
+        halted: bool,
         reason: &str,
     ) -> Vec<String> {
-        if self.completion != Completion::StopOnFailure || outcome != StepOutcome::Failure {
+        let stop = halted
+            || (self.completion == Completion::StopOnFailure && outcome == StepOutcome::Failure);
+        if !stop {
             return Vec::new();
         }
         let mut names: Vec<_> = self.pending.drain(..).map(|step| step.name).collect();

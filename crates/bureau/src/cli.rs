@@ -1,25 +1,20 @@
-//! The command line. Verbs are verbs; the hard cap is 15 (DESIGN.md
-//! sections 2–3).
-//!
-//! Shipped: `run`, `list`, `show`, `cancel`, `retry`, `validate`,
-//! `version`, and the `fake` adapter testing seam.
+//! The command line; verbs are verbs and the hard cap is 15.
 
 mod inspect;
 mod mcp;
 mod prepare;
+mod reconcile;
 mod run;
+mod transcript;
 
-use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::pin::Pin;
 
-use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 
-use bureau::adapters::fake::{self, Transcript};
 use bureau::config::Config;
 use bureau::contract::StepOutcome;
-use bureau::process::SpawnRequest;
 
 /// The four filesystem roots the run-side verbs work against.
 struct Paths {
@@ -42,9 +37,6 @@ const fn outcome_name(outcome: StepOutcome) -> &'static str {
         StepOutcome::NoWork => "no-work",
     }
 }
-
-/// How long `fake record` lets a subprocess run before killing it.
-const RECORD_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// `bureau` — a local agent work runner.
 #[derive(Debug, Parser)]
@@ -125,6 +117,8 @@ pub enum Verb {
         #[arg(long, default_value = "checkout-cache")]
         cache: PathBuf,
     },
+    /// Continuously reconciles committed config with forge state.
+    Reconcile(reconcile::Args),
     /// Serves the adapter step I/O protocol.
     #[command(hide = true)]
     Mcp {
@@ -143,14 +137,12 @@ pub enum Verb {
 /// `fake` adapter operations.
 #[derive(Debug, Subcommand)]
 pub enum FakeAction {
-    /// Replays a transcript fixture to stdout/stderr, exiting with the
-    /// recorded exit code.
+    /// Replays a transcript fixture with its recorded exit code.
     Replay {
         /// Fixture path.
         fixture: PathBuf,
     },
-    /// Runs a command under the layer-0 contract and writes the captured
-    /// transcript fixture, passing output through.
+    /// Records a command under the layer-0 contract.
     Record {
         /// Fixture path to write.
         fixture: PathBuf,
@@ -173,41 +165,67 @@ pub enum McpAction {
 /// # Errors
 /// Propagates unexpected failures (fixture I/O, serialization).
 pub async fn run(cli: Cli) -> anyhow::Result<i32> {
-    match cli.verb {
-        Verb::Version => Ok(version()),
-        Verb::Validate { dir } => Ok(validate(&dir)),
-        Verb::Mcp { action } => mcp::run(&action),
-        Verb::Fake { action } => fake_action(action).await,
-        verb => run_side(verb).await,
+    dispatch(cli.verb).await
+}
+
+type CliFuture = Pin<Box<dyn Future<Output = anyhow::Result<i32>> + Send>>;
+
+fn dispatch(verb: Verb) -> CliFuture {
+    match verb {
+        Verb::Version => Box::pin(async { Ok(version()) }),
+        Verb::Validate { dir } => Box::pin(async move { Ok(validate(&dir)) }),
+        Verb::Reconcile(args) => Box::pin(reconcile::run(args)),
+        Verb::Mcp { action } => Box::pin(async move { mcp::run(&action) }),
+        Verb::Fake { action } => Box::pin(transcript::run(action)),
+        verb => Box::pin(run_side(verb)),
     }
 }
 
-/// The verbs that work against run directories: run, retry, list, show,
-/// cancel.
+/// Dispatches verbs that work against run directories.
 async fn run_side(verb: Verb) -> anyhow::Result<i32> {
     match verb {
-        Verb::Run {
-            pipeline,
-            item,
-            config,
-            runs,
-            state,
-            cache,
-        } => run::run(&pipeline, &item, &paths(config, runs, state, cache)).await,
-        Verb::Retry {
-            run_id,
-            config,
-            runs,
-            state,
-            cache,
-        } => run::retry(&run_id, &paths(config, runs, state, cache)).await,
+        Verb::Run { .. } => run_command(verb).await,
+        Verb::Retry { .. } => retry_command(verb).await,
         Verb::List { runs } => Ok(inspect::list(&runs)),
         Verb::Show { run_id, runs } => inspect::show(&runs, &run_id),
         Verb::Cancel { run_id, runs } => inspect::cancel(&runs, &run_id),
-        Verb::Version | Verb::Validate { .. } | Verb::Mcp { .. } | Verb::Fake { .. } => {
+        Verb::Version
+        | Verb::Validate { .. }
+        | Verb::Reconcile(_)
+        | Verb::Mcp { .. }
+        | Verb::Fake { .. } => {
             unreachable!("handled by the caller")
         }
     }
+}
+
+async fn run_command(verb: Verb) -> anyhow::Result<i32> {
+    let Verb::Run {
+        pipeline,
+        item,
+        config,
+        runs,
+        state,
+        cache,
+    } = verb
+    else {
+        unreachable!("run command called with another verb")
+    };
+    run::run(&pipeline, &item, &paths(config, runs, state, cache)).await
+}
+
+async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
+    let Verb::Retry {
+        run_id,
+        config,
+        runs,
+        state,
+        cache,
+    } = verb
+    else {
+        unreachable!("retry command called with another verb")
+    };
+    run::retry(&run_id, &paths(config, runs, state, cache)).await
 }
 
 /// Bundles the four filesystem roots a run-side verb destructures to.
@@ -245,31 +263,4 @@ fn validate(dir: &std::path::Path) -> i32 {
             1
         }
     }
-}
-
-async fn fake_action(action: FakeAction) -> anyhow::Result<i32> {
-    match action {
-        FakeAction::Replay { fixture } => {
-            let transcript = Transcript::load(&fixture).context("loading fixture")?;
-            Ok(fake::replay(&transcript).await)
-        }
-        FakeAction::Record { fixture, argv } => record(&fixture, argv).await,
-    }
-}
-
-async fn record(fixture: &std::path::Path, argv: Vec<String>) -> anyhow::Result<i32> {
-    let dir = std::env::current_dir().context("reading current directory")?;
-    let request = SpawnRequest {
-        argv,
-        dir,
-        env: BTreeMap::new(),
-        stdin: Vec::new(),
-        timeout: RECORD_TIMEOUT,
-        secrets: Vec::new(),
-        log: None,
-        cancel: None,
-    };
-    let transcript = fake::record(request).await;
-    transcript.save(fixture).context("writing fixture")?;
-    Ok(fake::replay(&transcript).await)
 }

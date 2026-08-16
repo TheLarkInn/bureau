@@ -35,7 +35,9 @@ mod execute;
 mod finalize;
 mod gitcmd;
 mod machine;
+mod plugins;
 mod recovery;
+mod request;
 mod resume;
 mod settle;
 mod stream;
@@ -81,6 +83,14 @@ pub struct RunPlan {
     pub forge: Arc<dyn Forge>,
     /// Credentials keyed by registry credential name, resolved pre-spawn.
     pub credentials: BTreeMap<String, Secret>,
+    /// Exact committed config source for this run.
+    pub config_source: Option<crate::runlog::ConfigSource>,
+    /// Exact plugin snapshots keyed by plugin name.
+    pub plugin_sources: BTreeMap<String, crate::runlog::PluginSource>,
+    /// Pinned direct-agent bytes keyed by role name.
+    pub direct_agents: BTreeMap<String, Vec<u8>>,
+    /// Runtime-only fenced lease generation.
+    pub lease: Option<crate::state::LeaseOwner>,
 }
 
 impl RunPlan {
@@ -94,8 +104,9 @@ impl RunPlan {
             roles: self.roles.clone(),
             repos: self.repos.clone(),
             item: self.item.clone(),
-            config_source: None,
-            plugin_source: None,
+            config_source: self.config_source.clone(),
+            plugin_sources: self.plugin_sources.clone(),
+            direct_agents: self.direct_agents.clone(),
         }
     }
 
@@ -115,6 +126,10 @@ impl RunPlan {
             item: snapshot.item,
             forge,
             credentials,
+            config_source: snapshot.config_source,
+            plugin_sources: snapshot.plugin_sources,
+            direct_agents: snapshot.direct_agents,
+            lease: None,
         }
     }
 }
@@ -137,7 +152,7 @@ pub struct RunOutcome {
 impl RunOutcome {
     /// An outcome with no PR and no recorded cost, for runs that never
     /// reached (or never re-entered) the machine.
-    fn bare(run_id: &str, outcome: StepOutcome, message: String) -> Self {
+    pub(crate) fn bare(run_id: &str, outcome: StepOutcome, message: String) -> Self {
         Self {
             run_id: run_id.to_owned(),
             outcome,
@@ -190,7 +205,7 @@ impl Engine {
             tokio::spawn(async move { drive::run(&runs_dir, &cache, &plan).await })
         }));
         match spawned {
-            Ok(task) => joined(run_id, task).await,
+            Ok(task) => joined(run_id, AbortTask(task)).await,
             Err(_) => RunOutcome::bare(
                 &run_id,
                 StepOutcome::Failure,
@@ -214,11 +229,27 @@ impl Engine {
     pub fn finished(&self) -> std::io::Result<Vec<TerminalRecord>> {
         recovery::finished(&self.runs_dir)
     }
+
+    /// Marks an unfinished durable snapshot blocked without executing it.
+    ///
+    /// # Errors
+    /// Propagates run-log open, append, and close failures.
+    pub fn block(&self, snapshot: &RunSnapshot, message: &str) -> std::io::Result<()> {
+        recovery::block(&self.runs_dir, snapshot, message)
+    }
 }
 
 /// Awaits the machine's task; a panic inside it is data, not an unwind.
-async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> RunOutcome {
-    match task.await {
+struct AbortTask(tokio::task::JoinHandle<RunOutcome>);
+
+impl Drop for AbortTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn joined(run_id: String, mut task: AbortTask) -> RunOutcome {
+    match (&mut task.0).await {
         Ok(outcome) => outcome,
         Err(error) => RunOutcome::bare(
             &run_id,
@@ -228,12 +259,12 @@ async fn joined(run_id: String, task: tokio::task::JoinHandle<RunOutcome>) -> Ru
     }
 }
 
-/// A filesystem-safe run id: `{assignment}-{millis}-{pid}-{counter}`.
-#[must_use]
-pub fn new_run_id(assignment: &str) -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
+/// A filesystem-safe run id with operating-system random entropy.
+///
+/// # Errors
+/// Fails when the operating system random source is unavailable.
+pub fn new_run_id(assignment: &str) -> std::io::Result<String> {
     use std::time::{SystemTime, UNIX_EPOCH};
-    static NEXT: AtomicU32 = AtomicU32::new(0);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
@@ -247,9 +278,8 @@ pub fn new_run_id(assignment: &str) -> String {
             }
         })
         .collect();
-    format!(
-        "{safe}-{millis}-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
+    Ok(format!(
+        "{safe}-{millis}-{}",
+        crate::identity::random_hex()?
+    ))
 }

@@ -2,7 +2,7 @@
 //!
 //! `spawn_request` is pure — it builds a [`SpawnRequest`] without
 //! spawning — so these tests assert on the request: argv, env, stdin,
-//! and the materialized agent file. `execute` is not smoke-tested
+//! and direct-path agent materialization. `execute` is not smoke-tested
 //! here: a stub binary on `PATH` would need `std::env::set_var`,
 //! which is `unsafe` on edition 2024 and forbidden in this workspace.
 //! The `fake` adapter covers the spawn path end to end.
@@ -43,28 +43,6 @@ impl TestDir {
 impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// A fake plugin cache under the test's working directory (agent
-/// resolution is relative to it), removed on drop.
-struct PluginDir(PathBuf);
-
-impl PluginDir {
-    fn new(plugin: &str, file: &str, content: &str) -> Self {
-        let dir = Path::new(".ai").join("plugins").join(plugin).join("agents");
-        std::fs::create_dir_all(&dir).expect("create plugin dir");
-        std::fs::write(dir.join(file), content).expect("write plugin agent");
-        Self(Path::new(".ai").join("plugins").join(plugin))
-    }
-}
-
-impl Drop for PluginDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-        // Remove the ancestor dirs only while they are empty.
-        let _ = std::fs::remove_dir(Path::new(".ai").join("plugins"));
-        let _ = std::fs::remove_dir(".ai");
     }
 }
 
@@ -171,14 +149,14 @@ fn unresolvable_plugin_reference_passes_the_name_through() {
 }
 
 #[test]
-fn resolvable_plugin_agent_is_copied_verbatim() {
-    let plugin = format!("test-plugin-{}", std::process::id());
-    let _guard = PluginDir::new(&plugin, "helper.agent.md", AGENT_BODY);
-    let dir = TestDir::new("plugin-copy");
-    let role = role(&format!("/{plugin}:helper"), AdapterKind::Copilot, &[]);
+fn plugin_reference_uses_the_pre_activated_discovery_file() {
+    let dir = TestDir::new("plugin-activation");
+    let activated = dir.path().join(".github/agents/helper.agent.md");
+    std::fs::create_dir_all(activated.parent().expect("parent")).expect("agent dir");
+    std::fs::write(&activated, AGENT_BODY).expect("activated agent");
+    let role = role("/demo:helper", AdapterKind::Copilot, &[]);
     let req = copilot_request(&role, &step(None), dir.path());
-    let copied = dir.path().join(".github/agents/helper.agent.md");
-    let readback = std::fs::read_to_string(copied).expect("materialized agent");
+    let readback = std::fs::read_to_string(activated).expect("activated agent");
     let seen = (readback.as_str(), value_after(&req.argv, "--agent"));
     assert_eq!(seen, (AGENT_BODY, "helper"));
 }
@@ -204,6 +182,28 @@ fn md_agent_paths_materialize_verbatim_for_both_adapters() {
     );
     let seen = (bodies.0 == AGENT_BODY, bodies.1 == AGENT_BODY, agents);
     assert_eq!(seen, (true, true, ("notes", "notes")));
+}
+
+#[cfg(unix)]
+#[test]
+fn absolute_agent_path_with_colon_remains_a_path() {
+    let dir = TestDir::new("colon-path");
+    let agent = dir.path().join("reviewer:v2.md");
+    std::fs::write(&agent, AGENT_BODY).expect("write agent");
+    let role = role(
+        agent.to_str().expect("utf8 path"),
+        AdapterKind::Copilot,
+        &[],
+    );
+    let request = copilot_request(&role, &step(None), dir.path());
+    let copied = dir.path().join(".github/agents/reviewer:v2.agent.md");
+    assert_eq!(
+        (
+            value_after(&request.argv, "--agent"),
+            std::fs::read_to_string(copied).expect("copy"),
+        ),
+        ("reviewer:v2", AGENT_BODY.to_owned())
+    );
 }
 
 #[test]

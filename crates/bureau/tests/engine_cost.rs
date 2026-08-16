@@ -158,7 +158,7 @@ fn agent_step(name: &str, fixture: &str) -> StepDef {
 fn role() -> Role {
     Role {
         name: "worker".to_owned(),
-        agent: "/fake:worker".to_owned(),
+        agent: "agents/worker.md".to_owned(),
         adapter: AdapterKind::Fake,
         permissions: Vec::new(),
         min_trust: Trust::Untrusted,
@@ -233,7 +233,7 @@ impl Rig {
     /// A plan for `steps`; the repo credential resolves so pushes work.
     fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-tests"),
+            run_id: new_run_id("fix-tests").expect("run id"),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -244,6 +244,10 @@ impl Rig {
             item: item(),
             forge: Arc::new(FakeForge::new(vec![item()])),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }

@@ -14,11 +14,14 @@ pub mod contract;
 pub mod engine;
 pub mod forge;
 pub mod git;
+mod identity;
 pub mod mcp;
+pub use bureau_plugin as plugin;
 pub mod process;
 pub mod reconcile;
 pub mod runlog;
 pub mod state;
+pub mod supervise;
 
 use std::fmt;
 use std::path::{Path, PathBuf};

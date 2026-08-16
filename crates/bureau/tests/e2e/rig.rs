@@ -119,7 +119,7 @@ impl Rig {
     /// A plan running `steps` against this rig's repo and forge.
     pub fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-failing-test"),
+            run_id: new_run_id("fix-failing-test").expect("run id"),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix-failing-test".to_owned(),
@@ -133,6 +133,10 @@ impl Rig {
             item: item(),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }
@@ -141,7 +145,7 @@ impl Rig {
 fn role(name: &str) -> Role {
     Role {
         name: name.to_owned(),
-        agent: format!("/fake:{name}"),
+        agent: format!("agents/{name}.md"),
         adapter: AdapterKind::Fake,
         permissions: Vec::new(),
         min_trust: Trust::Untrusted,

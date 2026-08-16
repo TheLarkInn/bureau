@@ -2,8 +2,9 @@
 
 use crate::adapters::Execution;
 use crate::config::{StepDef, StepKind};
+use crate::contract::StepOutcome;
 
-use super::super::{approval, concurrent, control, edge, execute};
+use super::super::{approval, concurrent, control, edge, request};
 use super::{RunCtx, Stop, WtCtx, run_step};
 
 pub(super) enum Turn {
@@ -28,6 +29,9 @@ async fn route_turn(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
 }
 
 async fn boundary_stop(ctx: &RunCtx) -> Option<Stop> {
+    if let Some(reason) = control::ownership_reason(ctx) {
+        return Some(Stop::Fail(reason));
+    }
     if let Some(reason) = control::cancel_reason(ctx) {
         return Some(Stop::Fail(reason));
     }
@@ -71,8 +75,8 @@ async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
     if let Some(reason) = attempts_check(ctx, step) {
         return Turn::Stop(Stop::Escalate(reason));
     }
-    let request = execute::build_request(ctx, step, wt.worktree.path());
-    if let Some(reason) = execute::trust_check(&ctx.plan, step, &request) {
+    let request = request::build(ctx, step, wt.worktree.path());
+    if let Some(reason) = request::trust_check(&ctx.plan, step, &request) {
         return Turn::Stop(Stop::Escalate(reason));
     }
     let execution = run_step(ctx, wt, step, &request).await;
@@ -82,7 +86,15 @@ async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
 fn route_execution(ctx: &mut RunCtx, step: &StepDef, execution: Execution) -> Turn {
     let outcome = execution.result.outcome;
     let detail = execution.result.message.clone();
+    let halted = execution.is_halted();
     ctx.record(&step.name, execution);
+    if halted {
+        return if outcome == StepOutcome::Blocked {
+            Turn::Stop(Stop::Escalate(detail))
+        } else {
+            Turn::Stop(Stop::Fail(detail))
+        };
+    }
     if let Some(reason) = control::cancel_reason(ctx) {
         return Turn::Stop(Stop::Fail(reason));
     }

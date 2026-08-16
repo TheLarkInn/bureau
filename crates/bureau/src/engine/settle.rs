@@ -4,25 +4,35 @@
 use std::sync::Arc;
 
 use super::machine::{self, RunCtx};
-use super::{RunOutcome, stream};
+use super::{RunOutcome, control, stream};
 use crate::contract::StepOutcome;
 use crate::forge::Pr;
 use crate::runlog::{self, EventKind};
 
+const COMMENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The `escalate` terminal: comment on the item (best effort), then
 /// Blocked. A failed comment is noted in the message, never retried.
 pub(super) async fn escalate(ctx: &RunCtx, message: String) -> (StepOutcome, String, Option<Pr>) {
+    if let Some(reason) = control::ownership_reason(ctx) {
+        return (StepOutcome::Failure, reason, None);
+    }
     let comment = format!("run `{}`: {message}", ctx.plan.run_id);
-    let result = ctx
-        .plan
-        .forge
-        .comment(&ctx.plan.item.external_id, &comment)
-        .await;
+    let result = tokio::time::timeout(
+        COMMENT_TIMEOUT,
+        ctx.plan.forge.comment(&ctx.plan.item.external_id, &comment),
+    )
+    .await;
     match result {
-        Ok(()) => (StepOutcome::Blocked, message, None),
-        Err(error) => (
+        Ok(Ok(())) => (StepOutcome::Blocked, message, None),
+        Ok(Err(error)) => (
             StepOutcome::Blocked,
             format!("{message} (comment failed: {error})"),
+            None,
+        ),
+        Err(_) => (
+            StepOutcome::Blocked,
+            format!("{message} (comment timed out)"),
             None,
         ),
     }

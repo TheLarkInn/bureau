@@ -16,6 +16,7 @@ use bureau::forge::fake::FakeForge;
 use bureau::forge::{Forge, Item};
 use bureau::process::Secret;
 use bureau::reconcile::{Reconciler, Started};
+use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 
 /// The one assignment every fixture uses.
@@ -201,7 +202,7 @@ impl Rig {
     /// while a longer one exercises the torn-tail shape.
     pub fn plan(&self, secret: &str, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id(ASSIGNMENT),
+            run_id: new_run_id(ASSIGNMENT).expect("run id"),
             assignment: assignment(generous()),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -212,6 +213,10 @@ impl Rig {
             item: item("42"),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new(secret))]),
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }
@@ -221,9 +226,15 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
     Reconciler {
         config: config.clone(),
         state: Arc::new(Store::open(db).expect("store opens")),
-        forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
+        forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+        config_source: ConfigSource {
+            remote: "fixture".to_owned(),
+            reference: "main".to_owned(),
+            commit: "0000000000000000000000000000000000000000".to_owned(),
+        },
+        direct_agents: BTreeMap::new(),
     }
 }
 

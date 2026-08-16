@@ -207,12 +207,30 @@ pub struct Execution {
     pub result: StepResult,
     /// Usage measured by the adapter.
     pub usage: Usage,
+    halt: bool,
 }
 
 impl Execution {
     /// Pairs a result with measured usage.
     #[must_use]
     pub const fn new(result: StepResult, usage: Usage) -> Self {
-        Self { result, usage }
+        Self {
+            result,
+            usage,
+            halt: false,
+        }
+    }
+
+    /// Marks a control failure that must not checkpoint or route.
+    #[must_use]
+    pub const fn halt(mut self) -> Self {
+        self.halt = true;
+        self
+    }
+
+    /// Whether execution must stop before checkpointing.
+    #[must_use]
+    pub const fn is_halted(&self) -> bool {
+        self.halt
     }
 }

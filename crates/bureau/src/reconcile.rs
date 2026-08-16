@@ -6,6 +6,7 @@
 //! A webhook or `bureau reconcile --now` only shortens the interval;
 //! the loop is fully correct with every webhook unplugged.
 
+mod observe;
 mod start;
 
 use std::collections::BTreeMap;
@@ -16,12 +17,11 @@ use tokio::task::JoinHandle;
 
 use crate::config::{Assignment, Config, ForgeKind, Repo};
 use crate::engine::{Engine, RunOutcome, RunPlan, new_run_id};
-use crate::forge::{Forge, Item, Pr};
+use crate::forge::{Forge, Item};
 use crate::process::Secret;
-use crate::state::{Lease, Store};
+use crate::state::{LeaseOwner, Store};
 
-/// How long a claim lives before a crashed run's lease may be reclaimed.
-pub(super) const LEASE_TTL: Duration = Duration::from_secs(3600);
+use observe::Observed;
 
 /// Reconcile-pass failure.
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +32,9 @@ pub enum Error {
     /// Forge failure.
     #[error(transparent)]
     Forge(#[from] crate::forge::Error),
+    /// Run identity generation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 /// A claimed, started run.
@@ -40,22 +43,8 @@ pub struct Started {
     pub run_id: String,
     /// The run's task; joining it yields the outcome.
     pub handle: JoinHandle<RunOutcome>,
-}
-
-/// One assignment's observed world for a pass.
-struct Observed<'a> {
-    /// The assignment being reconciled.
-    assignment: &'a Assignment,
-    /// The forge its work items live on.
-    forge: Arc<dyn Forge>,
-    /// Work items matching the assignment's filter.
-    desired: Vec<Item>,
-    /// Open PRs on the primary repo carrying its branch prefix.
-    open_prs: Vec<Pr>,
-    /// The assignment's live leases.
-    inflight: Vec<Lease>,
-    /// How many more runs the assignment may start now.
-    headroom: usize,
+    /// Fenced lease generation to release after forced task abortion.
+    pub owner: Option<crate::state::LeaseOwner>,
 }
 
 /// Compares desired and observed state, closing the gap.
@@ -67,15 +56,17 @@ pub struct Reconciler {
     pub config: Config,
     /// Leases, budget, and dedup.
     pub state: Arc<Store>,
-    /// Forge clients by kind — a vec, as `ForgeKind` is neither `Ord`
-    /// nor `Hash`. Config forge ≠ work forge: each assignment names the
-    /// forge its work items live on.
-    pub forges: Vec<(ForgeKind, Arc<dyn Forge>)>,
+    /// Forge client per assignment; credentials and ADO organizations differ.
+    pub forges: BTreeMap<String, Arc<dyn Forge>>,
     /// The pipeline engine.
     pub engine: Arc<Engine>,
     /// Credentials keyed by registry credential name, resolved once at
     /// startup from the daemon's environment.
     pub credentials: BTreeMap<String, Secret>,
+    /// Exact committed config revision for newly claimed runs.
+    pub config_source: crate::runlog::ConfigSource,
+    /// Pinned direct-agent bytes keyed by role name.
+    pub direct_agents: BTreeMap<String, Vec<u8>>,
 }
 
 impl Reconciler {
@@ -85,12 +76,10 @@ impl Reconciler {
     /// # Errors
     /// The first assignment's failure, but only when the pass started nothing.
     pub async fn reconcile_once(&self) -> Result<Vec<Started>, Error> {
-        let (mut started, mut failed) = (Vec::new(), Vec::new());
-        for (name, assignment) in &self.config.assignments {
-            match self.observe(name, assignment).await {
-                Ok(observed) => self.claim_pending(&observed, &mut started, &mut failed),
-                Err(error) => failed.push(error),
-            }
+        let (observed, mut failed) = self.observe_all().await;
+        let mut started = Vec::new();
+        for assignment in &observed {
+            self.claim_pending(assignment, &mut started, &mut failed);
         }
         settle(failed, started)
     }
@@ -104,47 +93,6 @@ impl Reconciler {
             }
             wait(interval, &mut wake).await;
         }
-    }
-
-    /// Queries the assignment's forge and reads its budget; a failure fails this assignment's pass only.
-    async fn observe<'a>(
-        &'a self,
-        name: &str,
-        assignment: &'a Assignment,
-    ) -> Result<Observed<'a>, Error> {
-        let forge = self.work_forge(name, assignment)?;
-        // PRs are observed by registry name, matching engine finalize.
-        let repo = assignment
-            .primary_repo()
-            .ok_or_else(|| bad_assignment(name, "lists no repos"))?;
-        let desired = forge
-            .query(&assignment.work.source, &assignment.work.filter)
-            .await?;
-        let open_prs = forge.open_prs(repo, &assignment.branch_prefix).await?;
-        let inflight = self.state.active(name)?;
-        let headroom = self
-            .state
-            .headroom(name, &assignment.limits, open_prs.len())?;
-        Ok(Observed {
-            assignment,
-            forge: forge.clone(),
-            desired,
-            open_prs,
-            inflight,
-            headroom,
-        })
-    }
-
-    /// The forge the assignment's work items live on.
-    fn work_forge(&self, name: &str, assignment: &Assignment) -> Result<&Arc<dyn Forge>, Error> {
-        let kind = assignment.work.forge;
-        let client = self
-            .forges
-            .iter()
-            .find_map(|(k, v)| (*k == kind).then_some(v));
-        client.ok_or_else(|| {
-            bad_assignment(name, &format!("forge `{}` has no client", forge_key(kind)))
-        })
     }
 
     /// Claims and spawns the pending items the budget allows.
@@ -172,23 +120,39 @@ impl Reconciler {
         let name = observed.assignment.name.as_str();
         let external_id = item.external_id.clone();
         let key = forge_key(observed.assignment.work.forge);
-        if !self.state.try_claim(name, key, &external_id, LEASE_TTL)? {
+        let run_id = new_run_id(name)?;
+        let owner = LeaseOwner::new(self.state.clone(), name, key, &external_id, &run_id)?;
+        if !owner.claim(crate::supervise::LEASE_TTL)? {
             return Ok(()); // CAS lost; another daemon holds the item
         }
+        self.start_claimed(observed, item, &run_id, owner, started)
+    }
+
+    fn start_claimed(
+        &self,
+        observed: &Observed<'_>,
+        item: Item,
+        run_id: &str,
+        owner: LeaseOwner,
+        started: &mut Vec<Started>,
+    ) -> Result<(), Error> {
         if self.state.seen(&item.content_hash())? {
-            self.state.release(name, &external_id)?;
+            owner.release()?;
             return Ok(());
         }
-        match self.run_plan(observed, item) {
-            Ok(plan) => started.push(self.spawn(plan)),
-            Err(()) => self.state.release(name, &external_id)?,
+        match self.run_plan(observed, item, run_id) {
+            Ok(mut plan) => {
+                plan.lease = Some(owner);
+                started.push(self.spawn(plan));
+            }
+            Err(()) => owner.release()?,
         }
         Ok(())
     }
 
     /// Assembles the run's plan; a dangling repo name skips the item (the caller releases its claim).
     /// Unresolvable credentials are left out: the engine escalates at push time instead.
-    fn run_plan(&self, observed: &Observed<'_>, item: Item) -> Result<RunPlan, ()> {
+    fn run_plan(&self, observed: &Observed<'_>, item: Item, run_id: &str) -> Result<RunPlan, ()> {
         let assignment = observed.assignment;
         let repos = self.registry_repos(assignment)?;
         let credentials = repos
@@ -199,7 +163,7 @@ impl Reconciler {
             })
             .collect();
         Ok(RunPlan {
-            run_id: new_run_id(&assignment.name),
+            run_id: run_id.to_owned(),
             assignment: assignment.clone(),
             pipeline: self.config.pipelines[assignment.pipeline.as_str()].clone(),
             roles: self.config.roles.clone(),
@@ -207,6 +171,10 @@ impl Reconciler {
             item,
             forge: observed.forge.clone(),
             credentials,
+            config_source: Some(self.config_source.clone()),
+            plugin_sources: BTreeMap::new(),
+            direct_agents: self.direct_agents.clone(),
+            lease: None,
         })
     }
 
@@ -230,6 +198,25 @@ impl Reconciler {
     }
 }
 
+/// Restarts one already-owned durable plan through the standard run wrapper.
+#[must_use]
+pub fn resume(engine: Arc<Engine>, state: Arc<Store>, plan: RunPlan) -> Started {
+    start::spawn(engine, state, plan)
+}
+
+/// Applies approval-label admission and trust promotion before a claim.
+#[must_use]
+pub fn approved_item(assignment: &Assignment, mut item: Item) -> Option<Item> {
+    let Some(label) = assignment.work.approval_label.as_deref() else {
+        return Some(item);
+    };
+    if !item.labels.iter().any(|item_label| item_label == label) {
+        return None;
+    }
+    item.trust = item.trust.max(crate::contract::Trust::Maintainer);
+    Some(item)
+}
+
 /// Desired items with no open PR and no live lease (section 8).
 fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
     let prs = &observed.open_prs;
@@ -241,12 +228,6 @@ fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
         !open.contains(&id) && !leased.contains(&id)
     };
     observed.desired.iter().filter(excluded).cloned()
-}
-
-/// An assignment-level config failure, as a forge-shaped error.
-fn bad_assignment(name: &str, reason: &str) -> Error {
-    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
-    Error::Forge(parse)
 }
 
 /// The pass result: the started runs, or the first failure when nothing started.

@@ -43,6 +43,9 @@ pub struct GroupMemberFinishedData {
     pub result: StepResult,
     /// Adapter-owned member usage.
     pub usage: Usage,
+    /// Member encountered a non-routable control failure.
+    #[serde(default)]
+    pub halted: bool,
 }
 
 /// Payload of a `group_member_cancelled` event.
@@ -65,6 +68,9 @@ pub struct GroupFinishedData {
     pub result: StepResult,
     /// Aggregate adapter usage.
     pub usage: Usage,
+    /// Aggregate must stop instead of following pipeline edges.
+    #[serde(default)]
+    pub halted: bool,
 }
 
 fn to_value<T: Serialize>(data: &T) -> serde_json::Value {
@@ -111,6 +117,7 @@ pub fn group_member_finished(
         member: member.to_owned(),
         result: execution.result.clone(),
         usage: execution.usage.clone(),
+        halted: execution.is_halted(),
     })
 }
 
@@ -131,5 +138,6 @@ pub fn group_finished(group: &str, execution: &Execution) -> serde_json::Value {
         group: group.to_owned(),
         result: execution.result.clone(),
         usage: execution.usage.clone(),
+        halted: execution.is_halted(),
     })
 }
