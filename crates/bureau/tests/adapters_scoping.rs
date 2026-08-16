@@ -50,10 +50,8 @@ fn role(adapter: AdapterKind, permissions: &[Permission]) -> Role {
         name: "reviewer".to_owned(),
         agent: "/no-such-plugin:a".to_owned(),
         adapter,
-        model: "test-model".to_owned(),
         permissions: permissions.to_vec(),
         min_trust: Trust::Derived,
-        concurrency: 1,
     }
 }
 
@@ -67,6 +65,9 @@ fn step() -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: None,
         on_failure: None,
         on_blocked: None,
@@ -143,18 +144,27 @@ fn gh_token_forwarding_follows_the_forge_grants() {
 #[test]
 fn claude_model_tokens_require_model_invoke() {
     let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+    let runtime = [
+        "PATH",
+        "HOME",
+        "COPILOT_HOME",
+        "CLAUDE_CONFIG_DIR",
+        "XDG_CONFIG_HOME",
+    ];
     let dir = TestDir::new("model-gate");
     let secrets = vec![Secret::new("engine-secret")];
     let granted = role(AdapterKind::Claude, &[Permission::ModelInvoke]);
     let yes = claude::spawn_request(&granted, &step(), &request(dir.path()), secrets, None);
     let no = claude_request(&[Permission::RepoRead], dir.path());
     let seen = (
-        yes.env.keys().all(|k| known.contains(&k.as_str())),
-        yes.env.is_empty() == daemon_has(&known),
+        yes.env
+            .keys()
+            .all(|key| known.contains(&key.as_str()) || runtime.contains(&key.as_str())),
+        known.iter().any(|name| yes.env.contains_key(*name)) == daemon_has(&known),
         yes.secrets.contains(&Secret::new("engine-secret")),
-        no.env.is_empty(),
+        known.iter().all(|name| !no.env.contains_key(*name)),
     );
-    assert_eq!(seen, (true, false, true, true));
+    assert_eq!(seen, (true, true, true, true));
 }
 
 /// Builds a claude spawn request for a role holding `permissions`.
@@ -169,6 +179,24 @@ fn claude_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
 #[tokio::test]
 async fn fake_replay_scrubs_run_credentials() {
     let dir = TestDir::new("fake-scrub");
+    let step = scrub_step(&dir);
+    let secrets = vec![Secret::new("cred-123")];
+    let result = fake::execute(
+        &step,
+        &request(dir.path()),
+        std::time::Duration::from_secs(300),
+        secrets,
+        None,
+    )
+    .await;
+    let seen = (
+        result.result.message.contains("cred-123"),
+        result.result.message.contains(REDACTED),
+    );
+    assert_eq!(seen, (false, true));
+}
+
+fn scrub_step(dir: &TestDir) -> StepDef {
     let fixture = dir.path().join("fixture.json");
     let chunk = Chunk {
         delay_ms: 0,
@@ -179,15 +207,10 @@ async fn fake_replay_scrubs_run_credentials() {
         schema: SCHEMA_VERSION.to_owned(),
         chunks: vec![chunk],
         exit_code: 1,
+        usage: bureau::adapters::Usage::zero("fake"),
     };
     transcript.save(&fixture).expect("save fixture");
     let mut step = step();
     step.fixture = Some(fixture.to_string_lossy().into_owned());
-    let secrets = vec![Secret::new("cred-123")];
-    let result = fake::execute(&step, &request(dir.path()), secrets, None).await;
-    let seen = (
-        result.message.contains("cred-123"),
-        result.message.contains(REDACTED),
-    );
-    assert_eq!(seen, (false, true));
+    step
 }

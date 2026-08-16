@@ -16,6 +16,7 @@ use bureau::forge::fake::FakeForge;
 use bureau::forge::{Forge, Item, PrRequest};
 use bureau::process::Secret;
 use bureau::reconcile::{Reconciler, Started};
+use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 
 /// The one assignment every fixture uses.
@@ -98,6 +99,9 @@ fn det_step(run: &str) -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: Some("done".to_owned()),
         on_failure: None,
         on_blocked: None,
@@ -111,11 +115,12 @@ fn det_step(run: &str) -> StepDef {
 /// Budget limits that never constrain a test unless overridden.
 pub const fn generous() -> Limits {
     Limits {
-        max_concurrent: 5,
-        max_runs_per_hour: 10,
-        max_runs_per_day: 20,
-        max_open_prs: 5,
-        max_cost_per_day_usd: 50.0,
+        max_concurrent: Some(5),
+        max_runs_per_hour: Some(10),
+        max_runs_per_day: Some(20),
+        max_open_prs: Some(5),
+        max_cost_per_day_usd: Some(50.0),
+        max_run_hours: None,
     }
 }
 
@@ -127,6 +132,7 @@ fn assignment(limits: Limits) -> Assignment {
             forge: ForgeKind::Github,
             source: "fake".to_owned(),
             filter: "*".to_owned(),
+            approval_label: None,
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),
@@ -161,6 +167,14 @@ pub struct World {
     pub reconciler: Arc<Reconciler>,
 }
 
+fn config_source() -> ConfigSource {
+    ConfigSource {
+        remote: "fixture".to_owned(),
+        reference: "main".to_owned(),
+        commit: "0000000000000000000000000000000000000000".to_owned(),
+    }
+}
+
 impl World {
     /// A world whose pipeline runs `run` and whose budget is `limits`.
     pub fn new(ids: &[&str], run: &str, limits: Limits) -> Self {
@@ -177,9 +191,11 @@ impl World {
         let reconciler = Arc::new(Reconciler {
             config: config(repo, run, limits),
             state: store.clone(),
-            forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
+            forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            config_source: config_source(),
+            direct_agents: BTreeMap::new(),
         });
         Self {
             dir,
@@ -229,6 +245,26 @@ impl World {
             item_id: Some(id.to_owned()),
         };
         self.forge.create_pr(&request).await.expect("create_pr");
+    }
+
+    /// Requires a label for this assignment before its items may be claimed.
+    pub fn require_approval(&mut self, label: &str) {
+        let reconciler = Arc::get_mut(&mut self.reconciler).expect("sole reconciler owner");
+        let assignment = reconciler
+            .config
+            .assignments
+            .get_mut(ASSIGNMENT)
+            .expect("fixture assignment");
+        assignment.work.approval_label = Some(label.to_owned());
+    }
+
+    /// Replaces one fixture item's labels.
+    pub async fn set_labels(&self, id: &str, labels: &[&str]) {
+        let labels: Vec<String> = labels.iter().map(ToString::to_string).collect();
+        self.forge
+            .set_labels(id, &labels)
+            .await
+            .expect("set_labels");
     }
 
     /// Open PRs the assignment's observation would see.

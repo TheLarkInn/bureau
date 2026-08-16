@@ -1,7 +1,0 @@
-{
-  "name": "atomic",
-  "description": "Single-purpose agents for bureau runs. Each agent is authored here and referenced unmodified by a role (`agent: /atomic:<name>`).",
-  "version": "0.1.0",
-  "license": "MIT",
-  "agents": "agents/"
-}

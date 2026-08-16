@@ -2,7 +2,7 @@
 //!
 //! `spawn_request` is pure — it builds a [`SpawnRequest`] without
 //! spawning — so these tests assert on the request: argv, env, stdin,
-//! and the materialized agent file. `execute` is not smoke-tested
+//! and direct-path agent materialization. `execute` is not smoke-tested
 //! here: a stub binary on `PATH` would need `std::env::set_var`,
 //! which is `unsafe` on edition 2024 and forbidden in this workspace.
 //! The `fake` adapter covers the spawn path end to end.
@@ -15,7 +15,7 @@ use std::time::Duration;
 use bureau::adapters::{AdapterKind, claude, copilot};
 use bureau::config::{Permission, Role, StepDef, StepKind};
 use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust};
-use bureau::process::{Secret, SpawnRequest};
+use bureau::process::SpawnRequest;
 
 /// Joins argv for one-line comparisons (unit separator).
 const SEP: &str = "\u{1f}";
@@ -46,28 +46,6 @@ impl Drop for TestDir {
     }
 }
 
-/// A fake plugin cache under the test's working directory (agent
-/// resolution is relative to it), removed on drop.
-struct PluginDir(PathBuf);
-
-impl PluginDir {
-    fn new(plugin: &str, file: &str, content: &str) -> Self {
-        let dir = Path::new(".ai").join("plugins").join(plugin).join("agents");
-        std::fs::create_dir_all(&dir).expect("create plugin dir");
-        std::fs::write(dir.join(file), content).expect("write plugin agent");
-        Self(Path::new(".ai").join("plugins").join(plugin))
-    }
-}
-
-impl Drop for PluginDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-        // Remove the ancestor dirs only while they are empty.
-        let _ = std::fs::remove_dir(Path::new(".ai").join("plugins"));
-        let _ = std::fs::remove_dir(".ai");
-    }
-}
-
 const AGENT_BODY: &str = "---\nname: helper\ndescription: test\n---\nYou help.\n";
 
 fn role(agent: &str, adapter: AdapterKind, permissions: &[Permission]) -> Role {
@@ -75,10 +53,8 @@ fn role(agent: &str, adapter: AdapterKind, permissions: &[Permission]) -> Role {
         name: "reviewer".to_owned(),
         agent: agent.to_owned(),
         adapter,
-        model: "test-model".to_owned(),
         permissions: permissions.to_vec(),
         min_trust: Trust::Derived,
-        concurrency: 1,
     }
 }
 
@@ -92,6 +68,9 @@ fn step(timeout_secs: Option<u64>) -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: None,
         on_failure: None,
         on_blocked: None,
@@ -128,18 +107,17 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
     &argv[at + 1]
 }
 
-/// Asserts copilot's argv carries the JSON prompt, agent, and model.
+/// Asserts copilot's argv carries the JSON prompt and selected agent.
 /// This grant-less role also gets the deny-by-default flag, so argv
-/// has 8 elements.
+/// has 7 elements including the bureau-io grant.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
         value_after(&req.argv, "-p"),
         value_after(&req.argv, "--agent"),
-        value_after(&req.argv, "--model"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", "test-model", 8);
+    let expected = (Some(copilot::BINARY), json, "analyzer", 7);
     assert_eq!(parts, expected);
 }
 
@@ -171,14 +149,14 @@ fn unresolvable_plugin_reference_passes_the_name_through() {
 }
 
 #[test]
-fn resolvable_plugin_agent_is_copied_verbatim() {
-    let plugin = format!("test-plugin-{}", std::process::id());
-    let _guard = PluginDir::new(&plugin, "helper.agent.md", AGENT_BODY);
-    let dir = TestDir::new("plugin-copy");
-    let role = role(&format!("/{plugin}:helper"), AdapterKind::Copilot, &[]);
+fn plugin_reference_uses_the_pre_activated_discovery_file() {
+    let dir = TestDir::new("plugin-activation");
+    let activated = dir.path().join(".github/agents/helper.agent.md");
+    std::fs::create_dir_all(activated.parent().expect("parent")).expect("agent dir");
+    std::fs::write(&activated, AGENT_BODY).expect("activated agent");
+    let role = role("/demo:helper", AdapterKind::Copilot, &[]);
     let req = copilot_request(&role, &step(None), dir.path());
-    let copied = dir.path().join(".github/agents/helper.agent.md");
-    let readback = std::fs::read_to_string(copied).expect("materialized agent");
+    let readback = std::fs::read_to_string(activated).expect("activated agent");
     let seen = (readback.as_str(), value_after(&req.argv, "--agent"));
     assert_eq!(seen, (AGENT_BODY, "helper"));
 }
@@ -206,6 +184,28 @@ fn md_agent_paths_materialize_verbatim_for_both_adapters() {
     assert_eq!(seen, (true, true, ("notes", "notes")));
 }
 
+#[cfg(unix)]
+#[test]
+fn absolute_agent_path_with_colon_remains_a_path() {
+    let dir = TestDir::new("colon-path");
+    let agent = dir.path().join("reviewer:v2.md");
+    std::fs::write(&agent, AGENT_BODY).expect("write agent");
+    let role = role(
+        agent.to_str().expect("utf8 path"),
+        AdapterKind::Copilot,
+        &[],
+    );
+    let request = copilot_request(&role, &step(None), dir.path());
+    let copied = dir.path().join(".github/agents/reviewer:v2.agent.md");
+    assert_eq!(
+        (
+            value_after(&request.argv, "--agent"),
+            std::fs::read_to_string(copied).expect("copy"),
+        ),
+        ("reviewer:v2", AGENT_BODY.to_owned())
+    );
+}
+
 #[test]
 fn claude_carries_the_request_on_stdin_only() {
     let dir = TestDir::new("claude-stdin");
@@ -216,10 +216,12 @@ fn claude_carries_the_request_on_stdin_only() {
     let argv = [
         claude::BINARY,
         "-p",
+        "--output-format",
+        "json",
         "--agent",
         "a",
-        "--model",
-        "test-model",
+        "--allowedTools",
+        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result",
         "--disallowedTools",
         "Bash(*)",
     ]
@@ -248,7 +250,7 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("copilot-flags");
         let role = role("/p:a", AdapterKind::Copilot, permissions);
         let req = copilot_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[7..].join(SEP), flags);
+        assert_eq!(req.argv[6..].join(SEP), flags);
     }
 }
 
@@ -267,33 +269,9 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("claude-flags");
         let role = role("/p:a", AdapterKind::Claude, permissions);
         let req = claude_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[6..].join(SEP), flags);
+        assert_eq!(req.argv[8..].join(SEP), flags);
     }
 }
 
-// Reading env is safe; setting it is `unsafe` on edition 2024, so the
-// forwarding assertion adapts to whatever the test process has.
-#[test]
-fn copilot_env_forwards_and_scrubs_only_gh_token() {
-    let dir = TestDir::new("env");
-    let role = role("/p:a", AdapterKind::Copilot, &[Permission::RepoRead]);
-    let req = copilot_request(&role, &step(None), dir.path());
-    let token = std::env::var("GH_TOKEN").unwrap_or_default();
-    let expected = !token.is_empty();
-    let hygiene = req.env.keys().all(|k| k == "GH_TOKEN");
-    let forwarded = req.env.contains_key("GH_TOKEN");
-    let scrubbed = req.secrets.contains(&Secret::new(&token));
-    assert_eq!((hygiene, forwarded, scrubbed), (true, expected, expected));
-}
-
-#[test]
-fn claude_env_and_scrub_list_carry_only_credentials() {
-    let dir = TestDir::new("claude-env");
-    let role = role("/p:a", AdapterKind::Claude, &[Permission::ModelInvoke]);
-    let secrets = vec![Secret::new("engine-secret")];
-    let req = claude::spawn_request(&role, &step(None), &request(dir.path()), secrets, None);
-    let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
-    let hygiene = req.env.keys().all(|k| known.contains(&k.as_str()));
-    let scrubbed = req.secrets.contains(&Secret::new("engine-secret"));
-    assert_eq!((hygiene, scrubbed), (true, true));
-}
+#[path = "adapters_real/env.rs"]
+mod env;

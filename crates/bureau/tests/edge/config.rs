@@ -21,12 +21,10 @@ repos:
 
 const ROLE: &str = r"
 name: implementer
-agent: /atomic:codebase-analyzer
+agent: /bureau:implementer
 adapter: copilot
-model: claude-opus-5
 permissions: [repo:read, repo:write, repo:push, pr:write]
 min_trust: maintainer
-concurrency: 2
 ";
 
 const PIPELINE: &str = r#"
@@ -76,7 +74,7 @@ fn errors(dir: &TestDir) -> Vec<String> {
 #[test]
 fn a_duplicate_key_in_a_role_is_rejected() {
     let dir = TestDir::new("dupfield");
-    let role = ROLE.replace("model: claude-opus-5", "model: a\nmodel: b");
+    let role = ROLE.replace("adapter: copilot", "adapter: copilot\nadapter: fake");
     write_files(
         &dir,
         &[("repos.yaml", REPOS), ("roles/implementer.yaml", &role)],
@@ -108,12 +106,16 @@ fn a_duplicate_repo_key_is_silently_last_write_wins() {
 #[test]
 fn anchors_and_aliases_in_a_role_file_load() {
     let dir = TestDir::new("anchors");
-    let role = ROLE
-        .replace("name: implementer", "name: &n implementer")
-        .replace("model: claude-opus-5", "model: *n");
+    let repos = REPOS
+        .replacen(
+            "credential: ado-main",
+            "credential: &credential ado-main",
+            1,
+        )
+        .replacen("credential: ado-main", "credential: *credential", 1);
     let files: [(&str, &str); 4] = [
-        ("repos.yaml", REPOS),
-        ("roles/implementer.yaml", &role),
+        ("repos.yaml", &repos),
+        ("roles/implementer.yaml", ROLE),
         ("assignments/fix-flaky-tests.yaml", ASSIGNMENT),
         ("pipelines/fix-failing-test.yaml", PIPELINE),
     ];
@@ -121,7 +123,7 @@ fn anchors_and_aliases_in_a_role_file_load() {
     // serde_yaml_ng resolves YAML anchors/aliases; nothing in DESIGN.md
     // restricts YAML features, and PR review sees the aliased source.
     let config = Config::load(dir.path()).expect("aliases resolve");
-    assert_eq!(config.roles["implementer"].model, "implementer");
+    assert_eq!(config.repos["augloop"].credential, "ado-main");
 }
 
 #[test]

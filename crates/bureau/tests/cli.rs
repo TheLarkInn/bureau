@@ -2,8 +2,9 @@
 //! testing seam, driven through the built `bureau` binary.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use bureau::adapters::fake::Transcript;
 
@@ -60,6 +61,60 @@ fn version_prints_name_and_version() {
 }
 
 #[test]
+fn reconcile_help_documents_committed_source_and_loop_controls() {
+    let output = bureau(&["reconcile", "--help"]);
+    let text = stdout(&output);
+    let expected = ["--config-remote", "--config-ref", "--interval", "--now"];
+    assert!(
+        ok(&output) && expected.iter().all(|option| text.contains(option)),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn reconcile_drains_when_signalled_during_observation() {
+    let dir = TestDir::new("reconcile-signal");
+    init_empty_config_repo(dir.path());
+    let child = Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(reconcile_args(dir.path()))
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn reconcile");
+    std::thread::sleep(Duration::from_millis(500));
+    let interrupted = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("send SIGINT");
+    let output = child.wait_with_output().expect("wait for reconcile");
+    let text = stdout(&output);
+    assert!(
+        interrupted.success() && output.status.success() && text.contains("draining active runs"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn reconcile_defaults_source_and_paths_from_bureau_home() {
+    let dir = TestDir::new("reconcile-home");
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).expect("repo");
+    init_empty_config_repo(&repo);
+    let settings = format!(
+        "config:\n  kind: single_repository\n  remote: '{}'\n  reference: main\ncredentials: {{}}\n",
+        repo.display()
+    );
+    std::fs::write(dir.path().join("settings.yaml"), settings).expect("settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(["reconcile", "--now"])
+        .env("BUREAU_HOME", dir.path())
+        .output()
+        .expect("reconcile");
+    assert!(output.status.success(), "{}", stderr(&output));
+}
+
+#[test]
 fn validate_accepts_a_valid_config() {
     let dir = TestDir::new("cli-valid");
     write_minimal_config(dir.path());
@@ -90,6 +145,54 @@ fn write(dir: &Path, name: &str, text: &str) {
     std::fs::write(path, text).expect("write fixture");
 }
 
+fn init_empty_config_repo(dir: &Path) {
+    let config = dir.join(".bureau");
+    std::fs::create_dir_all(&config).expect("config dir");
+    std::fs::write(config.join("repos.yaml"), "repos: {}\n").expect("repos");
+    git(dir, &["init", "-b", "main"]);
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test",
+            "commit",
+            "-m",
+            "config",
+        ],
+    );
+}
+
+fn reconcile_args(dir: &Path) -> Vec<String> {
+    let path = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    vec![
+        "reconcile".to_owned(),
+        "--config-remote".to_owned(),
+        dir.to_string_lossy().into_owned(),
+        "--config-cache".to_owned(),
+        path("config-cache"),
+        "--runs".to_owned(),
+        path("runs"),
+        "--state".to_owned(),
+        path("state.db"),
+        "--cache".to_owned(),
+        path("checkout-cache"),
+        "--interval".to_owned(),
+        "1h".to_owned(),
+    ]
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .expect("git");
+    assert!(status.success(), "git {args:?}");
+}
+
 const MINIMAL_REPO: &str = r"
 repos:
   code:
@@ -103,10 +206,8 @@ const MINIMAL_ROLE: &str = r"
 name: worker
 agent: agents/worker.md
 adapter: fake
-model: none
 permissions: [repo:read, repo:write, pr:write]
 min_trust: untrusted
-concurrency: 1
 ";
 
 const MINIMAL_PIPELINE: &str = r#"
@@ -148,7 +249,7 @@ fn write_minimal_config(dir: &Path) {
 fn fake_replay_emits_chunks_and_exit_code() {
     let dir = TestDir::new("cli-replay");
     let fixture = dir.path().join("fixture.json");
-    let text = r#"{"schema":"v1","chunks":[
+    let text = r#"{"schema":"v2","chunks":[
         {"delay_ms":0,"stream":"stdout","data":"hello\n"},
         {"delay_ms":0,"stream":"stderr","data":"oops\n"}],"exit_code":7}"#;
     std::fs::write(&fixture, text).expect("write fixture");
@@ -186,8 +287,8 @@ fn fake_record_captures_a_replayable_transcript() {
 fn fake_replay_rejects_a_bad_schema() {
     let dir = TestDir::new("cli-badschema");
     let fixture = dir.path().join("fixture.json");
-    std::fs::write(&fixture, r#"{"schema":"v2","chunks":[],"exit_code":0}"#).expect("write");
+    std::fs::write(&fixture, r#"{"schema":"v1","chunks":[],"exit_code":0}"#).expect("write");
     let output = bureau(&["fake", "replay", &fixture.to_string_lossy()]);
     assert_eq!(output.status.code(), Some(2));
-    assert!(stderr(&output).contains("\"v2\""), "{}", stderr(&output));
+    assert!(stderr(&output).contains("\"v1\""), "{}", stderr(&output));
 }

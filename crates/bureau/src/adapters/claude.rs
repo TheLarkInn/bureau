@@ -1,13 +1,11 @@
 //! The `claude` adapter: runs the Anthropic Claude Code CLI as the
 //! agent.
 //!
-//! Same agent pass-through contract as `copilot` (DESIGN.md section
-//! 6): a `/plugin:agent` reference is copied verbatim from
-//! `.ai/plugins/<plugin>/agents/<name>.agent.md` when it resolves
-//! locally and otherwise passed through by name; a direct `.md` path
-//! is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
+//! Same resource contract as `copilot` (DESIGN.md section 6): the engine
+//! pins and temporarily activates `/plugin:agent` before spawn; a direct
+//! `.md` path is copied verbatim into `<worktree>/.claude/agents/<name>.md`.
 //!
-//! argv is `claude -p --agent <name> --model <model>`: `claude -p`
+//! argv is `claude -p --agent <name>`: `claude -p`
 //! reads the prompt from stdin, which carries the request JSON per the
 //! layer-2 contract. The push boundary is mirrored in argv (section
 //! 10), one flag per rule, and a role without a write grant is denied
@@ -29,9 +27,12 @@
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
 use super::real;
+use super::{Execution, Usage};
 use crate::config::{Permission, Role, StepDef};
-use crate::contract::{StepRequest, StepResult};
+use crate::contract::StepRequest;
+use crate::mcp::Session;
 use crate::process::{Secret, SharedLog, SpawnRequest};
+use std::time::Duration;
 
 /// The adapter's working binary name.
 pub const BINARY: &str = "claude";
@@ -70,18 +71,21 @@ pub fn spawn_request(
         timeout: real::timeout(step),
         secrets,
         log,
+        cancel: None,
     }
 }
 
-/// `claude -p --agent <name> --model <model>` plus the mirror.
+/// `claude -p --agent <name>` plus the permission mirror.
 fn argv(role: &Role, agent: &str) -> Vec<String> {
     let mut argv = vec![
         BINARY.to_owned(),
         "-p".to_owned(),
+        "--output-format".to_owned(),
+        "json".to_owned(),
         "--agent".to_owned(),
         agent.to_owned(),
-        "--model".to_owned(),
-        role.model.clone(),
+        "--allowedTools".to_owned(),
+        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result".to_owned(),
     ];
     argv.extend(permission_flags(&role.permissions));
     argv
@@ -113,9 +117,60 @@ pub async fn execute(
     role: &Role,
     step: &StepDef,
     request: &StepRequest,
+    timeout: Duration,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
-) -> StepResult {
-    let built = spawn_request(role, step, request, secrets, log);
-    super::result_from_spawn(&crate::process::spawn(built).await)
+) -> Execution {
+    let (session, built) = match prepare(role, step, request, timeout, secrets, log) {
+        Ok(prepared) => prepared,
+        Err(message) => return super::failed(&message),
+    };
+    let spawned = crate::process::spawn(built).await;
+    let response = super::usage::claude_result(&spawned.stdout).unwrap_or_default();
+    let published = match session.published() {
+        Ok(result) => result,
+        Err(error) => return super::failed(&format!("reading published result failed: {error}")),
+    };
+    let result = super::result_from_agent(&spawned, published, &response);
+    let usage = Usage::from_claude_json(&spawned.stdout);
+    Execution::new(result, usage)
+}
+
+fn prepare(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> Result<(Session, SpawnRequest), String> {
+    let session = Session::create(request).map_err(|error| error.to_string())?;
+    let config = session.dir().join("mcp.json");
+    write_mcp_config(&config).map_err(|error| error.to_string())?;
+    let mut built = spawn_request(role, step, request, secrets, log);
+    built.timeout = timeout;
+    built.cancel = super::cancel_path(request);
+    built.env.extend(session.env().clone());
+    built.argv.extend([
+        "--mcp-config".to_owned(),
+        config.to_string_lossy().into_owned(),
+        "--strict-mcp-config".to_owned(),
+    ]);
+    Ok((session, built))
+}
+
+fn write_mcp_config(path: &std::path::Path) -> std::io::Result<()> {
+    let config = serde_json::json!({
+        "mcpServers": {
+            "bureau-io": {
+                "type": "stdio",
+                "command": "bureau",
+                "args": ["mcp", "serve"]
+            }
+        }
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&config).map_err(std::io::Error::other)?,
+    )
 }

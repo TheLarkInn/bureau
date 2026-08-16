@@ -1,0 +1,33 @@
+{
+  "name": "bureau",
+  "owner": {
+    "name": "TheLarkInn"
+  },
+  "metadata": {
+    "description": "Installable agent resources and development guidance for bureau.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "bureau",
+      "description": "Agents, skills, and structured step I/O for bureau runs.",
+      "version": "0.1.0",
+      "source": "plugins/bureau",
+      "keywords": ["agents", "automation", "workflows"]
+    },
+    {
+      "name": "language-behaviors",
+      "description": "Output-shaping language behaviors for actionable explanations.",
+      "version": "0.1.0",
+      "source": "plugins/language-behaviors",
+      "keywords": ["output-style", "formatting", "explanations", "productivity"]
+    },
+    {
+      "name": "rust-design-patterns",
+      "description": "Rust workspace modularity guidance and review.",
+      "version": "1.0.0",
+      "source": "plugins/rust-design-patterns",
+      "keywords": ["rust", "design-patterns", "small-crates", "modularity"]
+    }
+  ]
+}

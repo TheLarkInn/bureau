@@ -14,11 +14,12 @@ const HOUR: Duration = Duration::from_secs(3600);
 
 const fn limits(concurrent: u32, hour: u32, day: u32, prs: u32, cost: f64) -> Limits {
     Limits {
-        max_concurrent: concurrent,
-        max_runs_per_hour: hour,
-        max_runs_per_day: day,
-        max_open_prs: prs,
-        max_cost_per_day_usd: cost,
+        max_concurrent: Some(concurrent),
+        max_runs_per_hour: Some(hour),
+        max_runs_per_day: Some(day),
+        max_open_prs: Some(prs),
+        max_cost_per_day_usd: Some(cost),
+        max_run_hours: None,
     }
 }
 
@@ -35,8 +36,10 @@ fn headroom(store: &Store, limits: &Limits, open_prs: usize) -> usize {
 }
 
 fn recorded(store: &Store, runs: u32, cost_usd: f64) {
-    for _ in 0..runs {
-        store.record_run(ASSIGNMENT, cost_usd).expect("record run");
+    for run in 0..runs {
+        store
+            .record_run(&format!("edge-run-{run}"), ASSIGNMENT, cost_usd)
+            .expect("record run");
     }
 }
 

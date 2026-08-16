@@ -62,15 +62,31 @@ fn write_run(runs_dir: &Path, run_id: &str, secrets: &[Secret]) -> PathBuf {
     dir
 }
 
-fn expected_state(run_id: &str) -> RunState {
+fn expected_state(run_id: &str, started_at_ms: u64) -> RunState {
     RunState {
         run_id: run_id.to_owned(),
         assignment: "fix-flaky-tests".to_owned(),
+        started_at_ms,
+        snapshot: None,
         steps: vec![StepRecord {
             step: "propose".to_owned(),
             outcome: Some(StepOutcome::Success),
+            result: None,
+            usage: None,
         }],
+        groups: std::collections::BTreeMap::new(),
         status: RunStatus::Finished(StepOutcome::Success),
+        checkpoint: None,
+        base_commit: None,
+        pushed_commit: None,
+        pr: None,
+        finished: Some(runlog::RunFinishedData {
+            outcome: StepOutcome::Success,
+            message: String::new(),
+            cost_usd: 0.0,
+            pr: None,
+            disposition: None,
+        }),
     }
 }
 
@@ -89,11 +105,33 @@ fn events_are_sequence_numbered() {
 }
 
 #[test]
+fn short_secret_scrubbing_never_changes_json_keys() {
+    let dir = TestDir::new("structural-scrub");
+    let secrets = [Secret::new("x")];
+    let mut log = RunLog::create(dir.path(), "run-1", &secrets).expect("create");
+    log.append(
+        EventKind::Output,
+        serde_json::json!({"max_cost": "x", "message": "prefix-x"}),
+    )
+    .expect("append");
+    let run_dir = log.dir().to_path_buf();
+    log.close().expect("close");
+    let event = runlog::read_events(&run_dir).expect("events").remove(0);
+    assert_eq!(
+        (
+            event.data.get("max_cost").is_some(),
+            event.data["max_cost"].as_str()
+        ),
+        (true, Some(REDACTED))
+    );
+}
+
+#[test]
 fn replay_rebuilds_identical_state_after_cache_is_deleted() {
     let dir = TestDir::new("replay");
     let run = write_run(dir.path(), "run-1", &[]);
     let state = runlog::replay_state(&run).expect("replay");
-    assert_eq!(state, expected_state("run-1"));
+    assert_eq!(state, expected_state("run-1", state.started_at_ms));
     runlog::write_state_cache(&run, &state).expect("write cache");
     let cached = std::fs::read(run.join(runlog::STATE_FILE)).expect("read cache");
     std::fs::remove_file(run.join(runlog::STATE_FILE)).expect("delete cache");

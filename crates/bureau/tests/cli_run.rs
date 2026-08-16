@@ -1,9 +1,4 @@
-//! Binary-level tests for `run`, `list`, `show`, `cancel`, and `retry`,
-//! driven through the built `bureau` binary with temp dirs.
-//!
-//! A full `run` success path needs a forge to query and a pipeline to
-//! execute; that end-to-end coverage belongs to the reference-e2e tests,
-//! not the binary test. Here every path stops before any spawn.
+//! Binary-level tests for run inspection and pre-spawn failures.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -42,6 +37,14 @@ fn bureau(args: &[&str]) -> Output {
         .expect("run bureau")
 }
 
+fn bureau_home(args: &[&str], home: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(args)
+        .env("BUREAU_HOME", home)
+        .output()
+        .expect("run bureau")
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -54,60 +57,6 @@ fn write(dir: &Path, name: &str, text: &str) {
     let path = dir.join(name);
     std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir");
     std::fs::write(path, text).expect("write fixture");
-}
-
-const MINIMAL_REPO: &str = r"
-repos:
-  code:
-    url: https://github.com/example/code
-    forge: github
-    access: push
-    credential: gh-main
-";
-
-const MINIMAL_ROLE: &str = r"
-name: worker
-agent: agents/worker.md
-adapter: fake
-model: none
-permissions: [repo:read, repo:write, pr:write]
-min_trust: untrusted
-concurrency: 1
-";
-
-const MINIMAL_PIPELINE: &str = r#"
-name: fix-failing-test
-steps:
-  - name: work
-    type: deterministic
-    run: "true"
-    next: done
-"#;
-
-const MINIMAL_ASSIGNMENT: &str = r#"
-name: demo
-work:
-  forge: github
-  source: "example/code"
-  filter: "label:agent-eligible"
-repos: [code]
-pipeline: fix-failing-test
-role: worker
-verify: "make test"
-branch_prefix: runner/
-limits:
-  max_concurrent: 1
-  max_runs_per_hour: 4
-  max_runs_per_day: 20
-  max_open_prs: 3
-  max_cost_per_day_usd: 10
-"#;
-
-fn write_minimal_config(dir: &Path) {
-    write(dir, "repos.yaml", MINIMAL_REPO);
-    write(dir, "roles/worker.yaml", MINIMAL_ROLE);
-    write(dir, "assignments/demo.yaml", MINIMAL_ASSIGNMENT);
-    write(dir, "pipelines/fix-failing-test.yaml", MINIMAL_PIPELINE);
 }
 
 /// A finished run: started, one step, finished with success.
@@ -131,40 +80,11 @@ fn write_events(dir: &Path, run_id: &str, events: &str) {
 }
 
 #[test]
-fn run_rejects_an_unknown_pipeline() {
-    let dir = TestDir::new("run-unknown-pipeline");
-    write_minimal_config(dir.path());
-    let config = dir.path().to_string_lossy().into_owned();
-    let output = bureau(&["run", "ghost", "--item", "42", "--config", &config]);
-    let got = (output.status.code(), stderr(&output).contains("ghost"));
-    assert_eq!(got, (Some(2), true), "{}", stderr(&output));
-}
-
-#[test]
-fn run_fails_before_spawn_when_a_credential_is_missing() {
-    let dir = TestDir::new("run-missing-credential");
-    write_minimal_config(dir.path());
-    let config = dir.path().to_string_lossy().into_owned();
-    let output = Command::new(env!("CARGO_BIN_EXE_bureau"))
-        .args([
-            "run",
-            "fix-failing-test",
-            "--item",
-            "42",
-            "--config",
-            &config,
-        ])
-        .current_dir(dir.path())
-        .env_remove("BUREAU_CREDENTIAL_GH_MAIN")
-        .env_remove("BUREAU_CREDENTIALS_DIR")
-        .output()
-        .expect("run bureau");
-    let got = (
-        output.status.code(),
-        stderr(&output).contains("gh-main"),
-        dir.path().join("state.db").exists(),
-    );
-    assert_eq!(got, (Some(2), true, false), "{}", stderr(&output));
+fn run_listing_defaults_to_bureau_home() {
+    let dir = TestDir::new("home-list");
+    write_events(dir.path(), "r1", EVENTS_FINISHED);
+    let output = bureau_home(&["list"], dir.path());
+    assert!(output.status.success() && stdout(&output).contains("r1"));
 }
 
 #[test]

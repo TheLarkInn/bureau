@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,18 @@ use tokio::process::{Child, ChildStdin, Command};
 
 use super::scrub::ScrubWriter;
 use super::secret::Secret;
+
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const UNSHARE_ARGS: [&str; 7] = [
+    "--user",
+    "--map-root-user",
+    "--pid",
+    "--fork",
+    "--kill-child=SIGKILL",
+    "--mount-proc",
+    "--",
+];
+const INIT_SCRIPT: &str = r#""$@"; exit $?"#;
 
 /// Where captured output goes besides the result buffers: the run log.
 pub type SharedLog = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -43,6 +55,8 @@ pub struct SpawnRequest {
     pub secrets: Vec<Secret>,
     /// Optional sink receiving scrubbed output as it arrives.
     pub log: Option<SharedLog>,
+    /// Optional durable cancellation marker.
+    pub cancel: Option<PathBuf>,
 }
 
 /// How a spawned process ended. These four outcomes are genuinely
@@ -91,28 +105,65 @@ impl SpawnResult {
     }
 }
 
-fn build_command(req: &SpawnRequest) -> Result<Command, String> {
+fn build_command(req: &SpawnRequest, token: &str) -> Result<Command, String> {
     let Some(program) = req.argv.first() else {
         return Err("argv is empty".to_owned());
     };
-    let mut command = std::process::Command::new(program);
+    let program = resolve_program(program, req)?;
+    let mut command = std::process::Command::new("unshare");
     command
+        .args(UNSHARE_ARGS)
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(INIT_SCRIPT)
+        .arg("bureau-init")
+        .arg(program)
         .args(&req.argv[1..])
         .current_dir(&req.dir)
         .env_clear()
         .envs(&req.env)
+        .env(super::wait::TOKEN_VAR, token)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // A new process group per child (pgid == child pid) so a timeout can
-    // kill the whole tree, backgrounded grandchildren included. Both
-    // `process_group` and nix's `killpg` are safe APIs; no `unsafe` here.
+    // A process group supplements the unescapable PID namespace.
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     Ok(Command::from(command))
 }
 
-fn spawn_child(req: &SpawnRequest) -> Result<Child, String> {
-    build_command(req)?.spawn().map_err(|e| e.to_string())
+fn resolve_program(program: &str, req: &SpawnRequest) -> Result<PathBuf, String> {
+    let path = std::path::Path::new(program);
+    if path.components().count() > 1 {
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            req.dir.join(path)
+        };
+        return executable(path, program);
+    }
+    let search = req
+        .env
+        .get("PATH")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("PATH"))
+        .unwrap_or_default();
+    std::env::split_paths(&search)
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| format!("program `{program}` was not found"))
+}
+
+fn executable(path: PathBuf, program: &str) -> Result<PathBuf, String> {
+    path.is_file()
+        .then_some(path)
+        .ok_or_else(|| format!("program `{program}` was not found"))
+}
+
+fn spawn_child(req: &SpawnRequest) -> Result<(Child, String), String> {
+    let token = crate::identity::random_hex().map_err(|error| error.to_string())?;
+    let child = build_command(req, &token)
+        .and_then(|mut command| command.spawn().map_err(|error| error.to_string()))?;
+    Ok((child, token))
 }
 
 /// Runs a subprocess to completion under the contract.
@@ -120,27 +171,53 @@ fn spawn_child(req: &SpawnRequest) -> Result<Child, String> {
 pub async fn spawn(req: SpawnRequest) -> SpawnResult {
     let started = Instant::now();
     match spawn_child(&req) {
-        Ok(child) => run_child(req, child, started).await,
+        Ok((child, token)) => run_child(req, child, &token, started).await,
         Err(error) => SpawnResult::failed(error, started),
     }
 }
 
-async fn run_child(req: SpawnRequest, mut child: Child, started: Instant) -> SpawnResult {
+async fn run_child(
+    req: SpawnRequest,
+    mut child: Child,
+    token: &str,
+    started: Instant,
+) -> SpawnResult {
+    let mut kill_on_drop = super::wait::KillOnDrop::new(&child, token);
     let stdin = write_task(child.stdin.take(), req.stdin);
     let out = drain_task(child.stdout.take(), req.secrets.clone(), req.log.clone());
     let err = drain_task(child.stderr.take(), req.secrets, req.log);
-    let (outcome, exit_code, error) = wait_child(&mut child, req.timeout).await;
+    let (outcome, exit_code, error) =
+        super::wait::wait_child(&mut child, req.timeout, req.cancel.as_deref()).await;
+    kill_on_drop.finish();
     // A timeout kills the process group, closing the pipes: the drains see
     // EOF and the writer gets EPIPE, so joining all three never hangs.
-    let (_, stdout, stderr) = tokio::join!(stdin, out, err);
+    let (stdout, stderr) = finish_drains(stdin, out, err).await;
     SpawnResult {
         outcome,
         exit_code,
-        stdout: stdout.unwrap_or_default(),
-        stderr: stderr.unwrap_or_default(),
+        stdout,
+        stderr,
         duration: started.elapsed(),
         error,
     }
+}
+
+async fn finish_drains(
+    mut stdin: tokio::task::JoinHandle<()>,
+    mut out: tokio::task::JoinHandle<Vec<u8>>,
+    mut err: tokio::task::JoinHandle<Vec<u8>>,
+) -> (Vec<u8>, Vec<u8>) {
+    let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
+        tokio::join!(&mut stdin, &mut out, &mut err)
+    })
+    .await;
+    if let Ok((_, stdout, stderr)) = drained {
+        return (stdout.unwrap_or_default(), stderr.unwrap_or_default());
+    }
+    stdin.abort();
+    out.abort();
+    err.abort();
+    (Vec::new(), Vec::new())
 }
 
 /// Writes `bytes` to the child's stdin in its own task, so a child that
@@ -206,48 +283,4 @@ fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
         }
     }
     *forwarded = buf.len();
-}
-
-async fn wait_child(
-    child: &mut Child,
-    timeout: Duration,
-) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => classify(status),
-        Ok(Err(e)) => (
-            SpawnOutcome::Signaled,
-            None,
-            Some(format!("wait failed: {e}")),
-        ),
-        Err(_) => {
-            kill_group(child);
-            let _ = child.wait().await; // reap after the group kill
-            (SpawnOutcome::Timeout, None, None)
-        }
-    }
-}
-
-fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    use std::os::unix::process::ExitStatusExt;
-    match (status.code(), status.signal()) {
-        (Some(code), _) => (SpawnOutcome::Exited, Some(code), None),
-        (None, signal) => (
-            SpawnOutcome::Signaled,
-            None,
-            signal.map(|s| format!("signal {s}")),
-        ),
-    }
-}
-
-fn kill_group(child: &Child) {
-    use nix::sys::signal::{Signal, killpg};
-    use nix::unistd::Pid;
-
-    let Some(id) = child.id() else {
-        return;
-    };
-    let Ok(pgid) = i32::try_from(id) else {
-        return;
-    };
-    let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
 }

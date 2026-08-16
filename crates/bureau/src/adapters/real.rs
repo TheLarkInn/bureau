@@ -25,6 +25,15 @@ use crate::process::Secret;
 /// Default per-step timeout, in seconds, when the pipeline sets none.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
 
+/// Non-secret runtime variables agent CLIs and plugin subprocesses need.
+const RUNTIME_VARS: [&str; 5] = [
+    "PATH",
+    "HOME",
+    "COPILOT_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+];
+
 /// The step's spawn timeout.
 pub fn timeout(step: &StepDef) -> Duration {
     Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS))
@@ -41,19 +50,15 @@ pub struct Discovery {
 /// Resolves a role's agent reference to the `--agent` value
 /// (DESIGN.md section 6).
 ///
-/// A `/plugin:agent` reference resolves from
-/// `.ai/plugins/<plugin>/agents/<name>.agent.md` under the daemon's
-/// current directory; when that file does not resolve, the name alone
-/// is passed through and the plugin is expected to be installed in the
-/// environment (container provisioning, section 10). A direct `.md`
-/// path always materializes. Copies are verbatim and best effort: on
-/// any I/O failure nothing is copied, the CLI resolves the agent name
-/// itself, and its error surfaces as a step `Failure`.
+/// The engine activates a pinned `/plugin:agent` before this call, so a
+/// plugin reference only contributes its agent name. A direct `.md` path
+/// is materialized verbatim for adapter discovery.
 pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
-    if let Some((plugin, name)) = plugin_parts(agent) {
-        let source = plugin_agent_path(plugin, name);
-        let _copied = copy_agent(&source, worktree, discovery, name);
+    if let Some((_, name)) = plugin_parts(agent) {
         return name.to_owned();
+    }
+    if !agent.to_ascii_lowercase().ends_with(".md") {
+        return agent.to_owned();
     }
     let source = Path::new(agent);
     let name = agent_name(source);
@@ -63,16 +68,10 @@ pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> Str
 
 /// Splits a `/plugin:agent` reference; anything else is a path.
 fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
+    if !crate::plugin::is_plugin_reference(agent) {
+        return None;
+    }
     agent.strip_prefix('/')?.split_once(':')
-}
-
-/// The local plugin cache location of an agent file.
-fn plugin_agent_path(plugin: &str, name: &str) -> PathBuf {
-    Path::new(".ai")
-        .join("plugins")
-        .join(plugin)
-        .join("agents")
-        .join(format!("{name}.agent.md"))
 }
 
 /// The agent name a path implies: file name minus discovery suffixes.
@@ -172,7 +171,8 @@ pub fn child_env(
     found: Vec<(String, String)>,
     mut secrets: Vec<Secret>,
 ) -> (BTreeMap<String, String>, Vec<Secret>) {
-    let env = found.iter().cloned().collect();
+    let mut env: BTreeMap<String, String> = daemon_credentials(&RUNTIME_VARS).into_iter().collect();
+    env.extend(found.iter().cloned());
     secrets.extend(found.into_iter().map(|(_, value)| Secret::new(value)));
     (env, secrets)
 }
@@ -182,7 +182,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        FORGE_GRANTS, MODEL_GRANTS, agent_name, child_env, push_boundary, scoped_credentials,
+        FORGE_GRANTS, MODEL_GRANTS, RUNTIME_VARS, agent_name, child_env, push_boundary,
+        scoped_credentials,
     };
     use crate::config::Permission;
     use crate::process::Secret;
@@ -200,9 +201,17 @@ mod tests {
     }
 
     #[test]
-    fn child_env_without_credentials_leaves_env_empty() {
+    fn child_env_without_credentials_carries_no_secrets() {
         let (env, secrets) = child_env(Vec::new(), Vec::new());
-        assert_eq!((env.is_empty(), secrets.is_empty()), (true, true));
+        let expected: std::collections::BTreeSet<_> = RUNTIME_VARS
+            .into_iter()
+            .filter(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            (env.keys().cloned().collect(), secrets.is_empty()),
+            (expected, true)
+        );
     }
 
     #[test]

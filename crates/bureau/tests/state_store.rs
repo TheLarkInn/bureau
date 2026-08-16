@@ -42,11 +42,12 @@ const HOUR: Duration = Duration::from_secs(3600);
 
 const fn limits(concurrent: u32, hour: u32, day: u32, prs: u32, cost: f64) -> Limits {
     Limits {
-        max_concurrent: concurrent,
-        max_runs_per_hour: hour,
-        max_runs_per_day: day,
-        max_open_prs: prs,
-        max_cost_per_day_usd: cost,
+        max_concurrent: Some(concurrent),
+        max_runs_per_hour: Some(hour),
+        max_runs_per_day: Some(day),
+        max_open_prs: Some(prs),
+        max_cost_per_day_usd: Some(cost),
+        max_run_hours: None,
     }
 }
 
@@ -63,8 +64,10 @@ fn headroom(store: &Store, limits: &Limits, open_prs: usize) -> usize {
 }
 
 fn recorded(store: &Store, runs: u32, cost_usd: f64) {
-    for _ in 0..runs {
-        store.record_run(ASSIGNMENT, cost_usd).expect("record run");
+    for run in 0..runs {
+        store
+            .record_run(&format!("run-{run}"), ASSIGNMENT, cost_usd)
+            .expect("record run");
     }
 }
 
@@ -195,6 +198,15 @@ fn state_survives_reopen() {
 fn headroom_is_the_tightest_limit_when_idle() {
     let store = Store::open_in_memory().expect("open");
     assert_eq!(headroom(&store, &limits(2, 6, 40, 5, 25.0), 0), 2);
+}
+
+#[test]
+fn omitted_limits_leave_unlimited_headroom() {
+    let store = Store::open_in_memory().expect("open");
+    store
+        .record_run("unlimited-run", ASSIGNMENT, 1_000.0)
+        .expect("record");
+    assert_eq!(headroom(&store, &Limits::default(), usize::MAX), usize::MAX);
 }
 
 #[test]

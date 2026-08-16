@@ -88,6 +88,7 @@ pub fn fixture(dir: &Path, name: &str, result: &StepResult) -> String {
             data,
         }],
         exit_code: 0,
+        usage: bureau::adapters::Usage::zero("fake"),
     };
     let path = dir.join(name);
     transcript.save(&path).expect("fixture saves");
@@ -105,6 +106,9 @@ pub fn step(name: &str, kind: StepKind) -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: None,
         on_failure: None,
         on_blocked: None,
@@ -153,7 +157,6 @@ pub fn result(outcome: StepOutcome, message: &str) -> StepResult {
         outputs: BTreeMap::new(),
         artifacts: Vec::new(),
         trust: Trust::Derived,
-        cost_usd: 0.0,
         message: message.to_owned(),
     }
 }
@@ -161,12 +164,10 @@ pub fn result(outcome: StepOutcome, message: &str) -> StepResult {
 fn role() -> Role {
     Role {
         name: "worker".to_owned(),
-        agent: "/fake:worker".to_owned(),
+        agent: "agents/worker.md".to_owned(),
         adapter: AdapterKind::Fake,
-        model: "fake".to_owned(),
         permissions: Vec::new(),
         min_trust: Trust::Untrusted,
-        concurrency: 1,
     }
 }
 
@@ -181,11 +182,12 @@ fn repo(url: &str) -> Repo {
 
 const fn limits() -> Limits {
     Limits {
-        max_concurrent: 1,
-        max_runs_per_hour: 10,
-        max_runs_per_day: 20,
-        max_open_prs: 5,
-        max_cost_per_day_usd: 50.0,
+        max_concurrent: Some(1),
+        max_runs_per_hour: Some(10),
+        max_runs_per_day: Some(20),
+        max_open_prs: Some(5),
+        max_cost_per_day_usd: Some(50.0),
+        max_run_hours: None,
     }
 }
 
@@ -196,6 +198,7 @@ fn assignment() -> Assignment {
             forge: ForgeKind::Github,
             source: "fake".to_owned(),
             filter: "*".to_owned(),
+            approval_label: None,
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),
@@ -242,7 +245,7 @@ impl Rig {
     /// A plan for `steps`; the repo credential resolves so pushes work.
     pub fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id("fix-tests"),
+            run_id: new_run_id("fix-tests").expect("run id"),
             assignment: assignment(),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -253,6 +256,10 @@ impl Rig {
             item: item(),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }

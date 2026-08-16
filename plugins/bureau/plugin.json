@@ -1,0 +1,14 @@
+{
+  "name": "bureau",
+  "description": "Agents, skills, and structured step I/O for bureau runs.",
+  "version": "0.1.0",
+  "author": {
+    "name": "TheLarkInn"
+  },
+  "repository": "https://github.com/TheLarkInn/bureau",
+  "license": "MIT",
+  "keywords": ["agents", "automation", "workflows"],
+  "agents": "agents/",
+  "skills": "skills/",
+  "mcpServers": ".mcp.json"
+}

@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use bureau::config::Limits;
 use bureau::contract::StepOutcome;
+use bureau::contract::Trust;
+use bureau::runlog;
 use bureau::state::Disposition;
 use world::{World, generous, item};
 
@@ -25,7 +27,7 @@ async fn pending_subtracts_open_prs_and_active_leases() {
 #[tokio::test]
 async fn zero_headroom_starts_nothing_and_claims_nothing() {
     let limits = Limits {
-        max_open_prs: 0,
+        max_open_prs: Some(0),
         ..generous()
     };
     let world = World::new(&["1"], "true", limits);
@@ -51,6 +53,50 @@ async fn a_lost_cas_starts_nothing() {
     world.claim("1");
     let started = world.pass().await;
     assert_eq!(started.len(), 0);
+}
+
+#[tokio::test]
+async fn approval_label_filters_before_claim() {
+    let mut world = World::new(&["1", "2"], "sleep 1", generous());
+    world.require_approval("approved");
+    world.set_labels("2", &["approved"]).await;
+    let started = world.pass().await;
+    let state = (started.len(), world.leased());
+    for run in started {
+        run.handle.await.expect("run joins");
+    }
+    assert_eq!(state, (1, vec!["2".to_owned()]));
+}
+
+#[test]
+fn approval_admission_is_shared_and_promotes_trust() {
+    let mut world = World::new(&[], "true", generous());
+    world.require_approval("approved");
+    let assignment = &world.reconciler.config.assignments[world::ASSIGNMENT];
+    let mut approved = item("1");
+    approved.labels.push("approved".to_owned());
+    let admitted = bureau::reconcile::approved_item(assignment, approved);
+    let rejected = bureau::reconcile::approved_item(assignment, item("2"));
+    assert!(
+        matches!(admitted, Some(item) if item.trust == Trust::Maintainer) && rejected.is_none()
+    );
+}
+
+#[tokio::test]
+async fn reconciled_run_pins_its_committed_config_source() {
+    let world = World::new(&["1"], "true", generous());
+    let mut started = world.pass().await;
+    let run = started.pop().expect("one run");
+    let run_id = run.run_id.clone();
+    run.handle.await.expect("run joins");
+    let directory = runlog::run_dir(&world.reconciler.engine.runs_dir, &run_id);
+    let source = runlog::replay_state(&directory)
+        .expect("replay")
+        .snapshot
+        .expect("snapshot")
+        .config_source
+        .expect("config source");
+    assert_eq!(source.commit, "0000000000000000000000000000000000000000");
 }
 
 #[tokio::test]

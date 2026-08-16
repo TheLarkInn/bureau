@@ -1,27 +1,24 @@
 //! `pipelines/<name>.yaml` — the step state machine (DESIGN.md layer 4).
 //!
-//! Exactly two step types run code: `deterministic` (a shell command via
-//! the layer-0 contract) and `agent` (an adapter). A `decision` step
-//! names one edge per outcome and never runs code. Edges are explicit; a
-//! missing branch fails closed — validation rejects an incomplete
-//! decision, and a step without an edge for an outcome aborts.
+//! `deterministic` and `agent` run code, `decision` routes, and
+//! `concurrent` runs a fixed set of evidence-only members.
 //!
 //! Edge targets are step names or a terminal: `done` (finalize: push the
 //! branch and open a PR), `abort` (stop; failure), `escalate` (stop;
-//! comment for a human). `join` is reserved and rejected in v0.
+//! comment for a human).
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::files::Named;
 use crate::contract::Trust;
 
 /// Terminal edge targets.
-pub const TERMINALS: [&str; 4] = ["done", "abort", "escalate", "join"];
+pub const TERMINALS: [&str; 3] = ["done", "abort", "escalate"];
 
 /// A pipeline definition: the file you edit is the file that runs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pipeline {
     /// Must match the file stem.
@@ -37,7 +34,7 @@ impl Named for Pipeline {
 }
 
 /// The step's kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepKind {
     /// Runs code: a shell command through the layer-0 contract.
@@ -46,6 +43,8 @@ pub enum StepKind {
     Agent,
     /// Branches on a previous step's outcome; runs no code.
     Decision,
+    /// Runs fixed evidence-only steps concurrently.
+    Concurrent,
 }
 
 impl StepKind {
@@ -56,8 +55,19 @@ impl StepKind {
             Self::Deterministic => "deterministic",
             Self::Agent => "agent",
             Self::Decision => "decision",
+            Self::Concurrent => "concurrent",
         }
     }
+}
+
+/// When a concurrent group stops launching or waiting for members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Completion {
+    /// Let every member finish and collect all evidence.
+    All,
+    /// Cancel unfinished members after the first failure.
+    StopOnFailure,
 }
 
 /// One step. Which fields apply depends on `kind`:
@@ -66,7 +76,7 @@ impl StepKind {
 /// - `agent`: `role` required; `fixture` only with the `fake` adapter;
 ///   `trust` overrides the role's `min_trust`.
 /// - `decision`: `over` and a complete `on` (all four outcomes) required.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDef {
     /// Step name, unique within the pipeline.
@@ -95,6 +105,15 @@ pub struct StepDef {
     /// `success`, `failure`, `blocked`, `no-work`.
     #[serde(default)]
     pub on: BTreeMap<String, String>,
+    /// Fixed member step names (`concurrent`).
+    #[serde(default)]
+    pub steps: Vec<String>,
+    /// Concurrent completion policy; omitted means `all`.
+    #[serde(default)]
+    pub completion: Option<Completion>,
+    /// Active members in this group; omitted means every listed member.
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
     /// Successor on success. Absent means `abort` (fail closed).
     #[serde(default)]
     pub next: Option<String>,
@@ -155,6 +174,7 @@ impl StepDef {
             StepKind::Deterministic => self.check_run(errors),
             StepKind::Agent => self.check_role(errors),
             StepKind::Decision => self.check_over(errors),
+            StepKind::Concurrent => self.check_members(errors),
         }
     }
 
@@ -176,6 +196,12 @@ impl StepDef {
         }
     }
 
+    fn check_members(&self, errors: &mut Vec<String>) {
+        if self.steps.len() < 2 {
+            errors.push("`steps` must list at least two concurrent members".to_owned());
+        }
+    }
+
     fn check_misplaced(&self, errors: &mut Vec<String>) {
         let fields = [
             ("run", self.run.is_some()),
@@ -184,6 +210,9 @@ impl StepDef {
             ("trust", self.trust.is_some()),
             ("over", self.over.is_some()),
             ("on", !self.on.is_empty()),
+            ("steps", !self.steps.is_empty()),
+            ("completion", self.completion.is_some()),
+            ("max_concurrent", self.max_concurrent.is_some()),
         ];
         for (field, present) in fields {
             if present && !allowed_on(self.kind, field) {
@@ -196,11 +225,29 @@ impl StepDef {
     }
 
     fn check_limits(&self, errors: &mut Vec<String>) {
+        self.check_attempt_limit(errors);
+        self.check_timeout(errors);
+        self.check_concurrent_limit(errors);
+    }
+
+    fn check_attempt_limit(&self, errors: &mut Vec<String>) {
         if self.max_attempts == 0 {
             errors.push("`max_attempts` must be at least 1".to_owned());
         }
+    }
+
+    fn check_timeout(&self, errors: &mut Vec<String>) {
         if self.timeout_secs == Some(0) {
             errors.push("`timeout_secs` must be positive".to_owned());
+        }
+        if self.kind == StepKind::Concurrent && self.timeout_secs.is_some() {
+            errors.push("`timeout_secs` belongs on concurrent member steps".to_owned());
+        }
+    }
+
+    fn check_concurrent_limit(&self, errors: &mut Vec<String>) {
+        if self.max_concurrent == Some(0) {
+            errors.push("`max_concurrent` must be positive".to_owned());
         }
     }
 
@@ -213,11 +260,13 @@ impl StepDef {
 }
 
 fn allowed_on(kind: StepKind, field: &str) -> bool {
-    match kind {
-        StepKind::Deterministic => field == "run",
-        StepKind::Agent => matches!(field, "role" | "fixture" | "trust"),
-        StepKind::Decision => matches!(field, "over" | "on"),
-    }
+    let allowed: &[&str] = match kind {
+        StepKind::Deterministic => &["run"],
+        StepKind::Agent => &["role", "fixture", "trust"],
+        StepKind::Decision => &["over", "on"],
+        StepKind::Concurrent => &["steps", "completion", "max_concurrent"],
+    };
+    allowed.contains(&field)
 }
 
 fn check_missing_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {

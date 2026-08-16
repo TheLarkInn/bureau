@@ -11,17 +11,18 @@ use bureau::config::{Assignment, Config, ForgeKind, Repo};
 use bureau::forge::ado::AdoForge;
 use bureau::forge::github::GitHubForge;
 use bureau::forge::{Forge, Item};
-use bureau::process::{self, Secret};
+use bureau::process::Secret;
 
 /// Every credential the assignment's repos need, resolved before any
 /// spawn. A missing reference is named on stderr and fails the verb.
 pub fn resolve_credentials(
     config: &Config,
     assignment: &Assignment,
+    settings: &bureau::setup::Settings,
 ) -> Option<BTreeMap<String, Secret>> {
     let mut credentials = BTreeMap::new();
     for reference in credential_refs(config, assignment) {
-        resolve_one(&mut credentials, &reference)?;
+        resolve_one(&mut credentials, settings, &reference)?;
     }
     Some(credentials)
 }
@@ -38,8 +39,12 @@ fn credential_refs(config: &Config, assignment: &Assignment) -> BTreeSet<String>
 }
 
 /// Resolves one reference into the map; a miss names it and fails.
-fn resolve_one(credentials: &mut BTreeMap<String, Secret>, reference: &str) -> Option<()> {
-    match process::resolve(reference) {
+fn resolve_one(
+    credentials: &mut BTreeMap<String, Secret>,
+    settings: &bureau::setup::Settings,
+    reference: &str,
+) -> Option<()> {
+    match bureau::credential::resolve(settings, reference) {
         Ok(secret) => {
             credentials.insert(reference.to_owned(), secret);
             Some(())

@@ -3,10 +3,13 @@
 //! `query` takes `project/repo`; `open_prs`/`create_pr` take the registry
 //! URL or bare `project/repo`; `comment`/`set_labels` take `{project}/{id}`.
 
+mod status;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::{Error, Forge, Item, Pr, PrRequest};
+use self::status::RawPr;
+use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
 use crate::contract::Trust;
 use crate::process::Secret;
 
@@ -49,15 +52,6 @@ struct WorkItemFields {
     description: String,
     #[serde(rename = "System.Tags")]
     tags: String,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct RawPr {
-    pull_request_id: u64,
-    source_ref_name: String,
-    title: String,
-    url: String,
 }
 
 /// Azure DevOps API client. `source` uses `project/repo` form; `filter`
@@ -162,6 +156,10 @@ impl Forge for AdoForge {
         });
         let raw: RawPr = decode(self.post(&url, &body).send().await?).await?;
         Ok(pull_request(&project, &repo, raw))
+    }
+
+    async fn pr_status(&self, repo: &str, number: u64) -> Result<PrStatus, Error> {
+        status::get(self, repo, number).await
     }
 
     async fn comment(&self, item_id: &str, body: &str) -> Result<(), Error> {

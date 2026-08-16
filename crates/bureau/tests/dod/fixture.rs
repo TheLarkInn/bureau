@@ -16,6 +16,7 @@ use bureau::forge::fake::FakeForge;
 use bureau::forge::{Forge, Item};
 use bureau::process::Secret;
 use bureau::reconcile::{Reconciler, Started};
+use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 
 /// The one assignment every fixture uses.
@@ -104,6 +105,9 @@ pub fn det_step(name: &str, run: &str, next: Option<&str>) -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: next.map(str::to_owned),
         on_failure: None,
         on_blocked: None,
@@ -117,11 +121,12 @@ pub fn det_step(name: &str, run: &str, next: Option<&str>) -> StepDef {
 /// Budget limits that never gate a test.
 const fn generous() -> Limits {
     Limits {
-        max_concurrent: 5,
-        max_runs_per_hour: 10,
-        max_runs_per_day: 20,
-        max_open_prs: 5,
-        max_cost_per_day_usd: 50.0,
+        max_concurrent: Some(5),
+        max_runs_per_hour: Some(10),
+        max_runs_per_day: Some(20),
+        max_open_prs: Some(5),
+        max_cost_per_day_usd: Some(50.0),
+        max_run_hours: None,
     }
 }
 
@@ -133,6 +138,7 @@ fn assignment(limits: Limits) -> Assignment {
             forge: ForgeKind::Github,
             source: "fake".to_owned(),
             filter: "*".to_owned(),
+            approval_label: None,
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),
@@ -196,7 +202,7 @@ impl Rig {
     /// while a longer one exercises the torn-tail shape.
     pub fn plan(&self, secret: &str, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id(ASSIGNMENT),
+            run_id: new_run_id(ASSIGNMENT).expect("run id"),
             assignment: assignment(generous()),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -207,6 +213,10 @@ impl Rig {
             item: item("42"),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new(secret))]),
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }
@@ -216,9 +226,15 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
     Reconciler {
         config: config.clone(),
         state: Arc::new(Store::open(db).expect("store opens")),
-        forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
+        forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+        config_source: ConfigSource {
+            remote: "fixture".to_owned(),
+            reference: "main".to_owned(),
+            commit: "0000000000000000000000000000000000000000".to_owned(),
+        },
+        direct_agents: BTreeMap::new(),
     }
 }
 

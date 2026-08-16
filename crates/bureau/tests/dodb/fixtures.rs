@@ -91,11 +91,12 @@ pub fn item(id: &str) -> Item {
 /// Budget limits that never gate a test unless overridden.
 pub const fn generous() -> Limits {
     Limits {
-        max_concurrent: 5,
-        max_runs_per_hour: 10,
-        max_runs_per_day: 20,
-        max_open_prs: 5,
-        max_cost_per_day_usd: 50.0,
+        max_concurrent: Some(5),
+        max_runs_per_hour: Some(10),
+        max_runs_per_day: Some(20),
+        max_open_prs: Some(5),
+        max_cost_per_day_usd: Some(50.0),
+        max_run_hours: None,
     }
 }
 
@@ -110,6 +111,9 @@ pub fn det_step(run: &str) -> StepDef {
         trust: None,
         over: None,
         on: BTreeMap::new(),
+        steps: Vec::new(),
+        completion: None,
+        max_concurrent: None,
         next: Some("done".to_owned()),
         on_failure: None,
         on_blocked: None,
@@ -138,6 +142,7 @@ pub fn assignment(limits: Limits) -> Assignment {
             forge: ForgeKind::Github,
             source: "fake".to_owned(),
             filter: "*".to_owned(),
+            approval_label: None,
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),

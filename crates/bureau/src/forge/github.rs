@@ -1,16 +1,13 @@
-//! GitHub forge: REST over reqwest with rustls. Never shells out to
-//! `gh` (DESIGN.md layer 7).
-//!
-//! `source`/`repo` arguments are the registry URL
-//! (`https://github.com/owner/repo`) or a bare `owner/name`; item ids are
-//! `owner/name#number`; `query` passes `filter` verbatim plus `repo:`.
+//! GitHub REST forge; registry arguments accept URLs or bare `owner/name`.
+
+mod status;
 
 use async_trait::async_trait;
 use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use super::{Error, Forge, Item, Pr, PrRequest};
+use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
 use crate::contract::Trust;
 use crate::process::Secret;
 
@@ -271,6 +268,10 @@ impl Forge for GitHubForge {
             .send()
             .await?;
         Ok(json_body::<Pull>(resp).await?.into_pr(&repo))
+    }
+
+    async fn pr_status(&self, repo: &str, number: u64) -> Result<PrStatus, Error> {
+        status::get(self, repo, number).await
     }
 
     async fn comment(&self, item_id: &str, body: &str) -> Result<(), Error> {

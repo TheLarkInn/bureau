@@ -3,11 +3,12 @@
     "bureau": {
       "source": {
         "source": "directory",
-        "path": ".ai"
+        "path": "."
       }
     }
   },
   "enabledPlugins": {
+    "bureau@bureau": true,
     "rust-design-patterns@bureau": true,
     "language-behaviors@bureau": true
   }

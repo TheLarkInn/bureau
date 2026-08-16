@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bureau::config::{ForgeKind, Limits, Pipeline};
+use bureau::config::{Limits, Pipeline};
 use bureau::engine::{Engine, RunOutcome, RunPlan, new_run_id};
 use bureau::forge::Forge;
 use bureau::forge::fake::FakeForge;
 use bureau::process::Secret;
 use bureau::reconcile::{Reconciler, Started};
+use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 
 use crate::fixtures::{self, ASSIGNMENT, TestDir};
@@ -25,6 +26,14 @@ pub struct World {
     pub reconciler: Arc<Reconciler>,
 }
 
+fn config_source() -> ConfigSource {
+    ConfigSource {
+        remote: "fixture".to_owned(),
+        reference: "main".to_owned(),
+        commit: "0000000000000000000000000000000000000000".to_owned(),
+    }
+}
+
 impl World {
     /// A world whose pipeline runs `run` and whose budget is `limits`.
     pub fn new(ids: &[&str], run: &str, limits: Limits) -> Self {
@@ -36,12 +45,14 @@ impl World {
         let reconciler = Arc::new(Reconciler {
             config: fixtures::config(&url, run, limits),
             state: store.clone(),
-            forges: vec![(ForgeKind::Github, forge.clone() as Arc<dyn Forge>)],
+            forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
             engine: Arc::new(Engine::new(
                 dir.path().join("runs"),
                 dir.path().join("cache"),
             )),
             credentials: credentials(),
+            config_source: config_source(),
+            direct_agents: BTreeMap::new(),
         });
         Self {
             dir,
@@ -123,7 +134,7 @@ impl EngineRig {
     /// The run's plan: the `fix` pipeline's one step, this rig's repo.
     fn plan(&self, run: &str, credentials: BTreeMap<String, Secret>) -> RunPlan {
         RunPlan {
-            run_id: new_run_id(ASSIGNMENT),
+            run_id: new_run_id(ASSIGNMENT).expect("run id"),
             assignment: fixtures::assignment(fixtures::generous()),
             pipeline: Pipeline {
                 name: "fix".to_owned(),
@@ -134,6 +145,10 @@ impl EngineRig {
             item: fixtures::item("42"),
             forge: self.forge.clone(),
             credentials,
+            config_source: None,
+            plugin_sources: BTreeMap::new(),
+            direct_agents: BTreeMap::new(),
+            lease: None,
         }
     }
 }

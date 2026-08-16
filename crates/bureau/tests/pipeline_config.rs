@@ -50,9 +50,9 @@ fn errors(dir: &TestDir) -> Vec<String> {
 }
 
 const REPOS: &str = "repos:\n  odsp-web:\n    url: https://dev.azure.com/microsoft/Odsp/_git/odsp-web\n    forge: ado\n    access: push\n    credential: ado-main\n";
-const ROLE_IMPLEMENTER: &str = "name: implementer\nagent: /atomic:implement\nadapter: copilot\nmodel: opus\npermissions: [repo:read, repo:write, repo:push, pr:write]\nmin_trust: maintainer\nconcurrency: 1\n";
-const ROLE_REVIEWER: &str = "name: reviewer\nagent: /atomic:review\nadapter: copilot\nmodel: opus\npermissions: [repo:read, pr:write]\nmin_trust: derived\nconcurrency: 1\n";
-const ROLE_FAKE: &str = "name: test-double\nagent: /testing:double\nadapter: fake\nmodel: none\npermissions: [repo:read]\nmin_trust: untrusted\nconcurrency: 1\n";
+const ROLE_IMPLEMENTER: &str = "name: implementer\nagent: /bureau:implementer\nadapter: copilot\npermissions: [repo:read, repo:write, repo:push, pr:write]\nmin_trust: maintainer\n";
+const ROLE_REVIEWER: &str = "name: reviewer\nagent: /bureau:reviewer\nadapter: copilot\npermissions: [repo:read, pr:write]\nmin_trust: derived\n";
+const ROLE_FAKE: &str = "name: test-double\nagent: /testing:double\nadapter: fake\npermissions: [repo:read]\nmin_trust: untrusted\n";
 
 const ASSIGNMENT: &str = r#"
 name: fix-flaky-tests
@@ -60,6 +60,7 @@ work:
   forge: ado
   source: "Odsp/odsp-web"
   filter: "[System.Tags] CONTAINS 'agent-eligible'"
+  approval_label: agent-approved
 repos: [odsp-web]
 pipeline: fix-failing-test
 role: implementer
@@ -185,7 +186,7 @@ fn an_unknown_edge_target_is_an_error() {
 }
 
 #[test]
-fn the_join_terminal_is_rejected() {
+fn old_join_vocabulary_is_rejected() {
     let dir = TestDir::new("join");
     let pipeline = PIPELINE.replace("next: done", "next: join");
     write_files(&dir, &base_files(&pipeline));
@@ -193,7 +194,7 @@ fn the_join_terminal_is_rejected() {
     assert!(
         found
             .iter()
-            .any(|e| e.contains("join is reserved for fan-out and is not supported in v0")),
+            .any(|e| e.contains("targets unknown step `join`")),
         "{found:?}"
     );
 }

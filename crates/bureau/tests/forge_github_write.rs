@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use bureau::forge::github::GitHubForge;
-use bureau::forge::{Error, Forge as _, PrRequest};
+use bureau::forge::{Error, Forge as _, PrRequest, PrStatus};
 use bureau::process::Secret;
 
 /// A canned-response HTTP server that records each raw request.
@@ -140,6 +140,27 @@ async fn create_pr_links_the_work_item() {
         request.contains(r"did work\n\nCloses #7"),
     );
     assert_eq!(got, (true, true, true));
+}
+
+#[tokio::test]
+async fn pr_status_reports_the_merge_commit() {
+    let body = concat!(
+        r#"{"number":5,"title":"Fix","html_url":"https://x/5","body":null,"#,
+        r#""head":{"ref":"bureau/fix"},"state":"closed","merged_at":"now","#,
+        r#""merge_commit_sha":"abc123"}"#,
+    );
+    let server = TestServer::start(|_| vec![response(200, body)]);
+    let status = server.forge().pr_status("o/r", 5).await.expect("status");
+    let request = only_request(server);
+    assert_eq!(
+        (status, request.starts_with("GET /repos/o/r/pulls/5 ")),
+        (
+            PrStatus::Merged {
+                commit: Some("abc123".to_owned())
+            },
+            true
+        )
+    );
 }
 
 #[tokio::test]

@@ -3,12 +3,12 @@
 
 use std::path::{Path, PathBuf};
 
-use super::log::Appender;
 use super::machine::{RunCtx, Stop, WtCtx, primary_repo, run_loop};
-use super::{RunOutcome, RunPlan, edge, finalize, gitcmd, resume, settle, stream};
+use super::{RunOutcome, RunPlan, control, finalize, gitcmd, plugins, resume, settle, stream};
 use crate::contract::StepOutcome;
 use crate::git::{CheckoutCache, Worktree, credential_for};
 use crate::process::Secret;
+use crate::runlog::RunLog;
 use crate::runlog::{self, EventKind};
 
 /// Runs a pipeline to a terminal, creating or resuming the run's log.
@@ -41,24 +41,45 @@ fn open(dir: &Path, runs_dir: &Path, plan: &RunPlan) -> Result<Open, String> {
 
 /// Creates a run's log and records `run_started` first.
 fn fresh_open(runs_dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
-    let mut log = Appender::create(runs_dir, &plan.run_id, secrets)
+    let log = RunLog::create(runs_dir, &plan.run_id, secrets)
         .map_err(|e| format!("creating run log: {e}"))?;
-    append_started(&mut log, plan)?;
-    let history = resume::History::fresh(resume::entry(&plan.pipeline), true);
+    let history = resume::History::fresh(resume::entry(&plan.pipeline), false);
     Ok(Open::Running(Box::new(RunCtx::new(plan, log, history))))
 }
 
 /// Replays an existing run's log into a finished outcome or a resume.
 fn resume_open(dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
     let events = runlog::read_events(dir).map_err(|e| format!("reading run log: {e}"))?;
-    match resume::replay(events, &plan.pipeline) {
-        resume::Replay::Finished(outcome) => Ok(Open::Finished(RunOutcome::bare(
-            &plan.run_id,
-            outcome,
-            format!("run already finished: {}", edge::outcome_key(outcome)),
-        ))),
-        resume::Replay::Resume(history) => resume_ctx(dir, plan, secrets, history),
+    let pinned = pinned_plan(&events, plan);
+    match resume::replay(events, &pinned.pipeline) {
+        resume::Replay::Finished(data) => {
+            Ok(Open::Finished(RunOutcome::finished(&pinned.run_id, data)))
+        }
+        resume::Replay::Resume(history) => resume_ctx(dir, &pinned, secrets, history),
     }
+}
+
+fn pinned_plan(events: &[runlog::Event], fallback: &RunPlan) -> RunPlan {
+    let snapshot = events
+        .iter()
+        .find(|event| event.kind == EventKind::RunStarted)
+        .and_then(|event| serde_json::from_value::<runlog::RunStartedData>(event.data.clone()).ok())
+        .and_then(|started| started.snapshot);
+    let Some(snapshot) = snapshot else {
+        return fallback.clone();
+    };
+    if fallback.config_source.is_some() {
+        let mut plan = RunPlan::from_snapshot(
+            snapshot,
+            fallback.forge.clone(),
+            fallback.credentials.clone(),
+        );
+        plan.lease.clone_from(&fallback.lease);
+        return plan;
+    }
+    let mut plan = fallback.clone();
+    plan.plugin_sources = snapshot.plugin_sources;
+    plan
 }
 
 /// Opens a log for appending and assembles the resume context.
@@ -68,19 +89,23 @@ fn resume_ctx(
     secrets: &[Secret],
     history: resume::History,
 ) -> Result<Open, String> {
-    let mut log = Appender::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
-    if !history.started {
-        append_started(&mut log, plan)?;
-    }
+    let log = RunLog::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
     Ok(Open::Running(Box::new(RunCtx::new(plan, log, history))))
 }
 
 /// Appends the `run_started` event every run begins with.
-fn append_started(log: &mut Appender, plan: &RunPlan) -> Result<(), String> {
-    let data =
-        runlog::run_started_for_item(&plan.run_id, &plan.assignment.name, &plan.item.external_id);
-    log.append(EventKind::RunStarted, data)
+fn append_started(ctx: &mut RunCtx) -> Result<(), String> {
+    if ctx.started {
+        return Ok(());
+    }
+    if let Some(reason) = control::ownership_reason(ctx) {
+        return Err(reason);
+    }
+    let data = runlog::run_started_snapshot(&ctx.plan.snapshot());
+    stream::lock(&ctx.log)
+        .append(EventKind::RunStarted, data)
         .map_err(|e| format!("appending run_started: {e}"))?;
+    ctx.started = true;
     Ok(())
 }
 
@@ -88,14 +113,55 @@ fn append_started(log: &mut Appender, plan: &RunPlan) -> Result<(), String> {
 async fn run_to_terminal(cache: &CheckoutCache, ctx: RunCtx) -> RunOutcome {
     match worktree_phase(cache, &ctx).await {
         Ok(wt) => with_worktree(ctx, wt).await,
-        Err(message) => settle::finish(ctx, StepOutcome::Failure, message, None),
+        Err(message) => setup_failure(ctx, message),
     }
+}
+
+fn setup_failure(mut ctx: RunCtx, message: String) -> RunOutcome {
+    if let Err(error) = append_started(&mut ctx) {
+        return RunOutcome::bare(&ctx.plan.run_id, StepOutcome::Failure, error);
+    }
+    settle::finish(ctx, StepOutcome::Failure, message, None)
 }
 
 /// Drives the machine loop with its worktree, then settles.
 async fn with_worktree(mut ctx: RunCtx, wt: WtCtx) -> RunOutcome {
+    let prepared = prepare_plugins(&mut ctx, &wt);
+    if let Err(error) = append_started(&mut ctx) {
+        return RunOutcome::bare(&ctx.plan.run_id, StepOutcome::Failure, error);
+    }
+    start_prepared(ctx, wt, prepared).await
+}
+
+async fn start_prepared(
+    ctx: RunCtx,
+    wt: WtCtx,
+    prepared: Result<(), plugins::PrepareError>,
+) -> RunOutcome {
+    let Some(error) = prepared.err() else {
+        return run_prepared(ctx, wt).await;
+    };
+    end_run(ctx, wt, prepare_stop(error)).await
+}
+
+async fn run_prepared(mut ctx: RunCtx, wt: WtCtx) -> RunOutcome {
     let stop = run_loop(&mut ctx, &wt).await;
     end_run(ctx, wt, stop).await
+}
+
+fn prepare_stop(error: plugins::PrepareError) -> Stop {
+    match error {
+        plugins::PrepareError::Failure(message) => Stop::Fail(message),
+        plugins::PrepareError::Blocked(message) => Stop::Escalate(message),
+    }
+}
+
+fn prepare_plugins(ctx: &mut RunCtx, wt: &WtCtx) -> Result<(), plugins::PrepareError> {
+    if ctx.started {
+        return Ok(());
+    }
+    let run_dir = stream::lock(&ctx.log).dir().to_path_buf();
+    plugins::prepare(&mut ctx.plan, &run_dir, wt.worktree.path())
 }
 
 /// Resolves the machine's stop reason into the run's outcome. The
@@ -113,18 +179,38 @@ async fn end_run(ctx: RunCtx, wt: WtCtx, stop: Stop) -> RunOutcome {
 /// Cuts (or re-cuts) the worktree and records its start commit.
 async fn worktree_phase(cache: &CheckoutCache, ctx: &RunCtx) -> Result<WtCtx, String> {
     let (mirror, branch, wt_dir) = prepare(cache, ctx).await?;
-    let worktree = Worktree::create(&mirror, &wt_dir, &branch, false)
-        .await
-        .map_err(|e| format!("creating worktree failed: {e}"))?;
-    let start_head = gitcmd::git(&["rev-parse", "HEAD"], worktree.path(), &[])
-        .await
-        .map_err(|e| format!("reading worktree HEAD failed: {e}"))?;
+    let (worktree, created_head) = create_worktree(&mirror, &wt_dir, &branch).await?;
+    restore_checkpoint(&worktree, ctx.checkpoint.as_deref()).await?;
+    let start_head = ctx.base_commit.clone().unwrap_or(created_head);
     Ok(WtCtx {
         worktree,
         mirror,
         branch,
         start_head,
     })
+}
+
+async fn create_worktree(
+    mirror: &Path,
+    directory: &Path,
+    branch: &str,
+) -> Result<(Worktree, String), String> {
+    let worktree = Worktree::create(mirror, directory, branch, false)
+        .await
+        .map_err(|error| format!("creating worktree failed: {error}"))?;
+    let head = gitcmd::git(&["rev-parse", "HEAD"], worktree.path(), &[])
+        .await
+        .map_err(|error| format!("reading worktree HEAD failed: {error}"))?;
+    Ok((worktree, head))
+}
+
+async fn restore_checkpoint(worktree: &Worktree, commit: Option<&str>) -> Result<(), String> {
+    if let Some(commit) = commit {
+        gitcmd::git(&["reset", "--hard", commit], worktree.path(), &[])
+            .await
+            .map_err(|error| format!("restoring checkpoint failed: {error}"))?;
+    }
+    Ok(())
 }
 
 /// Ensures the mirror is fresh and clears stale worktree state for the

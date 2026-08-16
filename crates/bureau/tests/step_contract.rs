@@ -30,7 +30,6 @@ fn sample_result() -> StepResult {
             path: PathBuf::from("artifacts/diff.patch"),
         }],
         trust: Trust::Derived,
-        cost_usd: 0.42,
         message: String::new(),
     }
 }

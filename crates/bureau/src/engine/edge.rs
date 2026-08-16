@@ -77,7 +77,6 @@ fn resolve(
         "done" => Route::Done,
         "abort" => Route::Fail(format!("step `{}` routed to abort on `{key}`", step.name)),
         "escalate" => Route::Escalate(escalate_text(step, key, detail)),
-        "join" => Route::Fail("terminal `join` is reserved".to_owned()),
         name if pipeline.steps.iter().any(|s| s.name == name) => Route::Step(name.to_owned()),
         other => Route::Fail(format!(
             "step `{}` routes to unknown target `{other}`; aborting",

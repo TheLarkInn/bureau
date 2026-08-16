@@ -7,6 +7,14 @@ use std::path::Path;
 
 use crate::process::{SpawnOutcome, SpawnRequest, SpawnResult, spawn};
 
+/// Commit identity inside worktrees; no host Git config is consulted.
+pub(super) const IDENTITY: [(&str, &str); 4] = [
+    ("GIT_AUTHOR_NAME", "bureau"),
+    ("GIT_AUTHOR_EMAIL", "bureau@localhost"),
+    ("GIT_COMMITTER_NAME", "bureau"),
+    ("GIT_COMMITTER_EMAIL", "bureau@localhost"),
+];
+
 /// Runs `git args` in `dir` through the layer-0 contract and returns
 /// trimmed stdout. `extra_env` carries the commit identity.
 ///
@@ -34,6 +42,7 @@ pub(super) async fn git(
         timeout: crate::git::GIT_TIMEOUT,
         secrets: Vec::new(),
         log: None,
+        cancel: None,
     })
     .await;
     checked(args, &result)
