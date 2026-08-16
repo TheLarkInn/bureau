@@ -1,5 +1,7 @@
 pub use bureau_lifecycle::setup;
 
+use std::path::PathBuf;
+
 #[path = "init_flow/support.rs"]
 mod support;
 
@@ -50,6 +52,24 @@ fn ai_authored_separate_repository_uses_injected_author() {
         })),
     );
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn explicit_migration_precedes_config_preparation() {
+    let mut request = request(source(true), FirstPipeline::Fixed, false);
+    request.settings.migration.source = Some(PathBuf::from("/old/bureau"));
+    let mut flow = InitFlow::new(request);
+    let mut effects = FakeEffects::new(false);
+    flow.run(&mut effects).expect("complete migrated init");
+    let migration = effects
+        .events
+        .iter()
+        .position(|event| event == "migrate_local_state");
+    let preparation = effects
+        .events
+        .iter()
+        .position(|event| event == "prepare_config:fixed");
+    assert!(migration.is_some() && migration < preparation);
 }
 
 #[test]

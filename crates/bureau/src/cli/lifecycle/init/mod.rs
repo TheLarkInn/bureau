@@ -15,12 +15,15 @@ use anyhow::Context as _;
 
 pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
     let request = load(from)?;
-    let flow_request = request.flow_request();
     let home = bureau::home::Home::discover()?;
     let layout = home.layout().clone();
     let runtime = tokio::runtime::Handle::current();
     let outcome = tokio::task::spawn_blocking(move || {
-        let mut effects = effects::LocalEffects::new(layout, request, runtime);
+        let mut request = request;
+        let maintenance = bureau::maintenance::exclusive(layout.root())?;
+        super::migrate::recover_pending(&layout, Some(&mut request.settings))?;
+        let flow_request = request.flow_request();
+        let mut effects = effects::LocalEffects::new(layout, request, runtime, maintenance);
         bureau::setup::InitFlow::new(flow_request)
             .run(&mut effects)
             .map_err(anyhow::Error::new)

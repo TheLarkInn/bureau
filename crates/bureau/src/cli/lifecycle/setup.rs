@@ -20,11 +20,13 @@ pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
 }
 
 fn apply(
-    settings: Settings,
+    mut settings: Settings,
     layout: &bureau::home::Layout,
     runtime: tokio::runtime::Handle,
 ) -> Result<(), Error> {
-    let mut effects = LocalEffects::new(layout, runtime);
+    let maintenance = bureau::maintenance::exclusive(layout.root())?;
+    super::migrate::recover_pending(layout, Some(&mut settings))?;
+    let mut effects = LocalEffects::new(layout, runtime, maintenance);
     let mut flow = bureau::setup::SetupFlow::new(settings);
     flow.run(&mut effects).map_err(|error| match error {
         bureau::setup::FlowError::Effect(error) => error,
@@ -35,13 +37,21 @@ fn apply(
 struct LocalEffects {
     layout: bureau::home::Layout,
     runtime: tokio::runtime::Handle,
+    _maintenance: bureau::maintenance::Guard,
+    migration: Option<super::migrate::Prepared>,
 }
 
 impl LocalEffects {
-    fn new(layout: &bureau::home::Layout, runtime: tokio::runtime::Handle) -> Self {
+    fn new(
+        layout: &bureau::home::Layout,
+        runtime: tokio::runtime::Handle,
+        maintenance: bureau::maintenance::Guard,
+    ) -> Self {
         Self {
             layout: layout.clone(),
             runtime,
+            _maintenance: maintenance,
+            migration: None,
         }
     }
 }
@@ -54,8 +64,8 @@ impl bureau::setup::SettingsEffects for LocalEffects {
     }
 
     fn write_settings_atomically(&mut self, settings: &Settings) -> Result<(), Self::Error> {
-        bureau::setup::save_settings(self.layout.settings(), settings)?;
-        Ok(())
+        super::migrate::save_settings(&mut self.migration, &self.layout, settings)
+            .map_err(Error::from)
     }
 }
 
@@ -64,6 +74,15 @@ impl bureau::setup::PluginEffects for LocalEffects {
 
     fn install_user_plugin(&mut self, _: &PluginSettings) -> Result<(), Self::Error> {
         install_user_plugin(&self.runtime)
+    }
+}
+
+impl bureau::setup::MigrationEffects for LocalEffects {
+    type Error = Error;
+
+    fn migrate_local_state(&mut self, settings: &Settings) -> Result<(), Self::Error> {
+        self.migration = super::migrate::prepare(&self.layout, settings)?;
+        Ok(())
     }
 }
 
@@ -113,6 +132,10 @@ pub(super) enum Error {
     File(#[from] bureau::setup::FileError),
     #[error(transparent)]
     Plugin(#[from] bureau::plugin::Error),
+    #[error(transparent)]
+    Migration(#[from] anyhow::Error),
+    #[error(transparent)]
+    Maintenance(#[from] bureau::maintenance::Error),
     #[error("{0}")]
     Flow(String),
 }

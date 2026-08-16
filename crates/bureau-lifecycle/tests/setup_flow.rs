@@ -5,8 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use bureau_lifecycle::setup::{
-    ConfigSource, CredentialSource, FlowError, MigrationSettings, PluginEffects, PluginSettings,
-    Settings, SettingsEffects, SetupFlow, SetupState,
+    ConfigSource, CredentialSource, FlowError, MigrationEffects, MigrationSettings, PluginEffects,
+    PluginSettings, Settings, SettingsEffects, SetupFlow, SetupState,
 };
 
 #[derive(Default)]
@@ -36,6 +36,15 @@ impl PluginEffects for FakeEffects {
 
     fn install_user_plugin(&mut self, _: &PluginSettings) -> io::Result<()> {
         self.events.push("install_user_plugin");
+        Ok(())
+    }
+}
+
+impl MigrationEffects for FakeEffects {
+    type Error = io::Error;
+
+    fn migrate_local_state(&mut self, _: &Settings) -> Result<(), Self::Error> {
+        self.events.push("migrate_local_state");
         Ok(())
     }
 }
@@ -104,10 +113,13 @@ fn setup_changes_existing_settings_atomically() {
         [
             "settings_exist",
             "install_user_plugin",
+            "migrate_local_state",
             "write_settings_atomically"
         ]
     );
-    assert_eq!(effects.written, Some(changed));
+    let mut expected = changed;
+    expected.migration.source = None;
+    assert_eq!(effects.written, Some(expected));
     assert_eq!(flow.state(), SetupState::Complete);
 }
 
@@ -137,7 +149,11 @@ fn plugin_installation_is_optional() {
     flow.run(&mut effects).expect("setup succeeds");
     assert_eq!(
         effects.events,
-        ["settings_exist", "write_settings_atomically"]
+        [
+            "settings_exist",
+            "migrate_local_state",
+            "write_settings_atomically"
+        ]
     );
 }
 

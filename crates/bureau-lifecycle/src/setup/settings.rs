@@ -1,4 +1,4 @@
-use super::{FlowError, PluginEffects, Settings, SettingsEffects};
+use super::{FlowError, MigrationEffects, PluginEffects, Settings, SettingsEffects};
 
 /// Observable setup state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,6 +7,8 @@ pub enum SetupState {
     CheckingSettings,
     /// Optionally install the user-global plugin.
     InstallingPlugin,
+    /// Optionally import explicitly selected prior local state.
+    MigratingState,
     /// Replace non-secret settings atomically.
     WritingSettings,
     /// Setup finished.
@@ -44,11 +46,14 @@ impl SetupFlow {
         effects: &mut E,
     ) -> Result<SetupState, FlowError<<E as SettingsEffects>::Error>>
     where
-        E: SettingsEffects + PluginEffects<Error = <E as SettingsEffects>::Error>,
+        E: SettingsEffects
+            + PluginEffects<Error = <E as SettingsEffects>::Error>
+            + MigrationEffects<Error = <E as SettingsEffects>::Error>,
     {
         let next = match self.state {
             SetupState::CheckingSettings => Self::check(effects)?,
             SetupState::InstallingPlugin => self.install(effects)?,
+            SetupState::MigratingState => self.migrate(effects)?,
             SetupState::WritingSettings => self.write(effects)?,
             SetupState::Complete => SetupState::Complete,
         };
@@ -65,7 +70,9 @@ impl SetupFlow {
         effects: &mut E,
     ) -> Result<(), FlowError<<E as SettingsEffects>::Error>>
     where
-        E: SettingsEffects + PluginEffects<Error = <E as SettingsEffects>::Error>,
+        E: SettingsEffects
+            + PluginEffects<Error = <E as SettingsEffects>::Error>
+            + MigrationEffects<Error = <E as SettingsEffects>::Error>,
     {
         while self.state != SetupState::Complete {
             self.advance(effects)?;
@@ -96,12 +103,30 @@ impl SetupFlow {
         effects: &mut E,
     ) -> Result<SetupState, FlowError<<E as SettingsEffects>::Error>>
     where
-        E: SettingsEffects + PluginEffects<Error = <E as SettingsEffects>::Error>,
+        E: SettingsEffects
+            + PluginEffects<Error = <E as SettingsEffects>::Error>
+            + MigrationEffects<Error = <E as SettingsEffects>::Error>,
     {
         if self.settings.plugin.install_user_global {
             effects
                 .install_user_plugin(&self.settings.plugin)
                 .map_err(FlowError::Effect)?;
+        }
+        Ok(SetupState::MigratingState)
+    }
+
+    fn migrate<E>(
+        &mut self,
+        effects: &mut E,
+    ) -> Result<SetupState, FlowError<<E as SettingsEffects>::Error>>
+    where
+        E: SettingsEffects + MigrationEffects<Error = <E as SettingsEffects>::Error>,
+    {
+        if self.settings.migration.source.is_some() {
+            effects
+                .migrate_local_state(&self.settings)
+                .map_err(FlowError::Effect)?;
+            self.settings.migration.source = None;
         }
         Ok(SetupState::WritingSettings)
     }

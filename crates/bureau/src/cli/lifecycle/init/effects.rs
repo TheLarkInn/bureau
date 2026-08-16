@@ -1,7 +1,7 @@
 use bureau::setup::{
     ConfigDraft, ConfigPullRequest, ConfigSource, FirstPipeline, InitEffects, Merge,
-    OutcomeSummary, PluginEffects, PluginSettings, ReconcilePass, Settings, SettingsEffects,
-    ValidatedConfig,
+    MigrationEffects, OutcomeSummary, PluginEffects, PluginSettings, ReconcilePass, Settings,
+    SettingsEffects, ValidatedConfig,
 };
 
 use super::model::Request;
@@ -12,6 +12,8 @@ pub(super) struct LocalEffects {
     layout: bureau::home::Layout,
     request: Request,
     runtime: tokio::runtime::Handle,
+    _maintenance: bureau::maintenance::Guard,
+    migration: Option<super::super::migrate::Prepared>,
     proposal: Option<Proposal>,
     outcomes: Option<OutcomeSummary>,
 }
@@ -21,11 +23,14 @@ impl LocalEffects {
         layout: bureau::home::Layout,
         request: Request,
         runtime: tokio::runtime::Handle,
+        maintenance: bureau::maintenance::Guard,
     ) -> Self {
         Self {
             layout,
             request,
             runtime,
+            _maintenance: maintenance,
+            migration: None,
             proposal: None,
             outcomes: None,
         }
@@ -40,8 +45,8 @@ impl SettingsEffects for LocalEffects {
     }
 
     fn write_settings_atomically(&mut self, settings: &Settings) -> Result<(), Self::Error> {
-        bureau::setup::save_settings(self.layout.settings(), settings)?;
-        Ok(())
+        super::super::migrate::save_settings(&mut self.migration, &self.layout, settings)
+            .map_err(Error::from)
     }
 }
 
@@ -51,6 +56,15 @@ impl PluginEffects for LocalEffects {
     fn install_user_plugin(&mut self, _: &PluginSettings) -> Result<(), Self::Error> {
         super::super::setup::install_user_plugin(&self.runtime)
             .map_err(|error| Error(anyhow::Error::new(error)))
+    }
+}
+
+impl MigrationEffects for LocalEffects {
+    type Error = Error;
+
+    fn migrate_local_state(&mut self, settings: &Settings) -> Result<(), Self::Error> {
+        self.migration = super::super::migrate::prepare(&self.layout, settings)?;
+        Ok(())
     }
 }
 
@@ -129,10 +143,15 @@ impl InitEffects for LocalEffects {
         &mut self,
         config: &ValidatedConfig,
     ) -> Result<ReconcilePass, <Self as SettingsEffects>::Error> {
+        if self.migration.is_some() {
+            super::super::migrate::Prepared::before_effects(&self.layout)?;
+        }
+        let migration = self.migration.as_ref();
         let outcomes = self.runtime.block_on(first_pass::run(
             &self.layout,
             &self.request.settings,
             config,
+            migration,
         ))?;
         self.outcomes = Some(outcomes);
         Ok(ReconcilePass {
@@ -144,10 +163,12 @@ impl InitEffects for LocalEffects {
         &mut self,
         _: &ReconcilePass,
     ) -> Result<OutcomeSummary, <Self as SettingsEffects>::Error> {
-        self.outcomes
+        let outcomes = self
+            .outcomes
             .take()
             .context("reconcile outcomes are missing")
-            .map_err(Error::from)
+            .map_err(Error::from)?;
+        Ok(outcomes)
     }
 }
 
@@ -165,6 +186,12 @@ impl From<std::io::Error> for Error {
 
 impl From<bureau::setup::FileError> for Error {
     fn from(value: bureau::setup::FileError) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<bureau::maintenance::Error> for Error {
+    fn from(value: bureau::maintenance::Error) -> Self {
         Self(value.into())
     }
 }

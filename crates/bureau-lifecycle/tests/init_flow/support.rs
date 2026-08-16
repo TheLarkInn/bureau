@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use crate::setup::{
     ConfigDraft, ConfigPullRequest, ConfigSource, FirstPipeline, InitEffects, InitRequest, Merge,
-    MigrationSettings, Outcome, OutcomeSummary, PluginEffects, PluginSettings, ReconcilePass,
-    RunSummary, Settings, SettingsEffects, ValidatedConfig,
+    MigrationEffects, MigrationSettings, Outcome, OutcomeSummary, PluginEffects, PluginSettings,
+    ReconcilePass, RunSummary, Settings, SettingsEffects, ValidatedConfig,
 };
 
 pub struct FakeEffects {
@@ -54,6 +54,14 @@ impl PluginEffects for FakeEffects {
 
     fn install_user_plugin(&mut self, _: &PluginSettings) -> io::Result<()> {
         self.record("install_user_plugin")
+    }
+}
+
+impl MigrationEffects for FakeEffects {
+    type Error = io::Error;
+
+    fn migrate_local_state(&mut self, _: &Settings) -> io::Result<()> {
+        self.record("migrate_local_state")
     }
 }
 

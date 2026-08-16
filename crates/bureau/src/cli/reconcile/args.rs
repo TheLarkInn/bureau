@@ -22,6 +22,8 @@ impl From<ForgeArg> for bureau::config::ForgeKind {
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
+    #[arg(skip)]
+    pub maintenance_guarded: bool,
     #[arg(long, hide = true)]
     pub maintenance_root: Option<PathBuf>,
     /// Local settings file override.
@@ -52,6 +54,7 @@ pub struct Args {
 }
 
 pub(super) struct ResolvedArgs {
+    pub(super) maintenance_guarded: bool,
     pub(super) maintenance_root: PathBuf,
     pub(super) config_remote: String,
     pub(super) config_ref: String,
@@ -184,6 +187,7 @@ fn resolved(
     maintenance_root: PathBuf,
 ) -> ResolvedArgs {
     ResolvedArgs {
+        maintenance_guarded: args.maintenance_guarded,
         maintenance_root,
         config_remote: remote,
         config_ref: reference,

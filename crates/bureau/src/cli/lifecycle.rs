@@ -1,6 +1,7 @@
 //! Local lifecycle command adapters.
 mod doctor;
 mod init;
+mod migrate;
 mod repair;
 mod setup;
 

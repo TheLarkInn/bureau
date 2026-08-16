@@ -19,7 +19,8 @@ impl LocalEffects {
     pub(super) fn inspect_recovery(&self) -> Result<Observation, String> {
         let runs = inspect_runs(self.layout.runs())?;
         let leases = lease_counts(self.layout.state_db())?;
-        Ok(recovery_observation(&runs, &leases))
+        let migration_pending = self.layout.root().join("migration.json").exists();
+        Ok(recovery_observation(&runs, &leases, migration_pending))
     }
 }
 
@@ -97,13 +98,23 @@ fn derived_matches(directory: &Path, expected: &RunState) -> bool {
         .is_some_and(|state| state == *expected)
 }
 
-fn recovery_observation(runs: &RunCounts, leases: &LeaseCounts) -> Observation {
+fn recovery_observation(
+    runs: &RunCounts,
+    leases: &LeaseCounts,
+    migration_pending: bool,
+) -> Observation {
     let attention = runs.stale_derived + runs.orphan_worktrees + leases.expired;
     let message = format!(
         "{} runs replayed; {} running; {} active leases; {} repairable findings",
         runs.runs, runs.running, leases.active, attention
     );
-    if attention == 0 {
+    if migration_pending {
+        Observation::new(
+            Status::Error,
+            "migration_recovery_required",
+            "an interrupted migration must be recovered with init, setup, or repair",
+        )
+    } else if attention == 0 {
         Observation::new(Status::Ok, "recovery_state_ok", message)
     } else {
         Observation::new(Status::Warning, "recovery_repairs_available", message)

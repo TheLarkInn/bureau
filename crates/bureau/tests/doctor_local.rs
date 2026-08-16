@@ -47,6 +47,15 @@ fn recovery_replay_is_read_only_even_with_a_torn_final_line() {
 }
 
 #[test]
+fn pending_migration_is_a_recovery_error() {
+    let fixture = healthy_fixture("doctor-migration");
+    fs::write(fixture.layout().root().join("migration.json"), "{}").expect("marker");
+    let effects = LocalEffects::new(fixture.layout()).search_path(fixture.bin.as_os_str());
+    let status = diagnostic(&doctor::run(&effects), Area::RecoveryState).status;
+    assert_eq!(status, Status::Error);
+}
+
+#[test]
 fn configured_adapter_and_settings_failures_are_diagnostic_errors() {
     let fixture = Fixture::new("doctor-errors");
     let credential = fixture.credential_file();

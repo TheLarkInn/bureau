@@ -10,7 +10,7 @@ mod init;
 mod model;
 mod settings;
 
-pub use effects::{InitEffects, PluginEffects, SettingsEffects};
+pub use effects::{InitEffects, MigrationEffects, PluginEffects, SettingsEffects};
 pub use error::FlowError;
 pub use file::{FileEffects, FileError, load_settings, save_settings};
 pub use init::{InitFlow, InitState};

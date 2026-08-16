@@ -20,7 +20,7 @@ pub(super) struct Daemon {
     state: Arc<Store>,
     engine: Arc<Engine>,
     active: Active,
-    _maintenance: bureau::maintenance::Guard,
+    _maintenance: Option<bureau::maintenance::Guard>,
     settings: Option<bureau::setup::Settings>,
 }
 
@@ -39,7 +39,7 @@ impl Daemon {
             args.config_forge,
             args.settings.as_ref(),
         )?;
-        let maintenance = bureau::maintenance::shared(&args.maintenance_root)?;
+        let maintenance = Self::maintenance(args)?;
         let source = GitSource::new(
             args.config_remote.clone(),
             args.config_ref.clone(),
@@ -57,6 +57,14 @@ impl Daemon {
             _maintenance: maintenance,
             settings: args.settings.clone(),
         })
+    }
+
+    fn maintenance(args: &ResolvedArgs) -> anyhow::Result<Option<bureau::maintenance::Guard>> {
+        if args.maintenance_guarded {
+            Ok(None)
+        } else {
+            Ok(Some(bureau::maintenance::shared(&args.maintenance_root)?))
+        }
     }
 
     pub(super) async fn pass(&mut self) -> anyhow::Result<()> {

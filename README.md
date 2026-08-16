@@ -44,6 +44,13 @@ for its forge-owned merge state, validates the exact merged commit, runs one
 foreground reconcile pass, then writes `settings.yaml` as the completion
 marker. It never executes unmerged config.
 
+`setup` may explicitly migrate a prior local-state root. Migration rejects
+overlapping paths, active leases, symlinks, hard links, corrupt or newer
+database schemas, and non-empty targets. It imports only durable state and run
+history; worktrees, activation records, credentials, and disposable caches are
+not copied. A durable migration marker blocks normal workers and makes setup
+retries resume or roll back safely after interruption.
+
 ## Run one pipeline
 
 1. Review and commit the config (its PR review is the entire authorization

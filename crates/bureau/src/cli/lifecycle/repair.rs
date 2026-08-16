@@ -7,6 +7,7 @@ use std::io::{BufRead as _, Write as _};
 pub(super) fn run(checkout: bool, config: bool) -> anyhow::Result<i32> {
     let home = bureau::home::Home::discover()?;
     let _maintenance = bureau::maintenance::exclusive(home.layout().root())?;
+    super::migrate::recover_pending(home.layout(), None)?;
     let candidates = discover::candidates(home.layout(), checkout, config)?;
     let plan = bureau::repair::plan(candidates);
     println!("{}", serde_json::to_string_pretty(&plan)?);

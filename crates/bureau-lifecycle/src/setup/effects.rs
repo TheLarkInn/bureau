@@ -33,9 +33,23 @@ pub trait PluginEffects {
     fn install_user_plugin(&mut self, settings: &PluginSettings) -> Result<(), Self::Error>;
 }
 
+/// Explicit local-state migration effects.
+pub trait MigrationEffects {
+    /// Effect failure type.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Imports only the explicitly selected prior local state.
+    ///
+    /// # Errors
+    /// Rejects unsafe, newer, overlapping, or non-empty migration targets.
+    fn migrate_local_state(&mut self, settings: &Settings) -> Result<(), Self::Error>;
+}
+
 /// First-time initialization side effects.
 pub trait InitEffects:
-    SettingsEffects + PluginEffects<Error = <Self as SettingsEffects>::Error>
+    SettingsEffects
+    + PluginEffects<Error = <Self as SettingsEffects>::Error>
+    + MigrationEffects<Error = <Self as SettingsEffects>::Error>
 {
     /// Prepares the complete reference or AI-authored configuration draft.
     ///

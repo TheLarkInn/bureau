@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bureau_lifecycle::home::Home;
 use bureau_lifecycle::setup::{
-    ConfigSource, FileEffects, FileError, MigrationSettings, PluginEffects, PluginSettings,
-    Settings, SettingsEffects, SetupFlow, load_settings, save_settings,
+    ConfigSource, FileEffects, FileError, MigrationEffects, MigrationSettings, PluginEffects,
+    PluginSettings, Settings, SettingsEffects, SetupFlow, load_settings, save_settings,
 };
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
@@ -65,6 +65,14 @@ impl PluginEffects for SetupFileEffects<'_> {
     type Error = FileError;
 
     fn install_user_plugin(&mut self, _: &PluginSettings) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+impl MigrationEffects for SetupFileEffects<'_> {
+    type Error = FileError;
+
+    fn migrate_local_state(&mut self, _: &Settings) -> Result<(), Self::Error> {
         Ok(())
     }
 }

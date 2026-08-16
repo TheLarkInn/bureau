@@ -15,7 +15,18 @@ pub struct Guard {
 /// # Errors
 /// Fails when maintenance is active or the lock file cannot be opened.
 pub fn shared(home: &Path) -> Result<Guard, Error> {
+    if migration_pending(home)? {
+        return Err(Error::MigrationPending);
+    }
     lock(home, FlockArg::LockSharedNonblock)
+}
+
+fn migration_pending(home: &Path) -> Result<bool, std::io::Error> {
+    match std::fs::symlink_metadata(home.join("migration.json")) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Acquires an exclusive maintenance lock without waiting.
@@ -49,4 +60,7 @@ pub enum Error {
     /// Another process holds an incompatible lock.
     #[error("local maintenance lock is busy: {0}")]
     Busy(String),
+    /// An interrupted migration must be recovered before work resumes.
+    #[error("local migration is pending; rerun `bureau init` or `bureau setup`")]
+    MigrationPending,
 }

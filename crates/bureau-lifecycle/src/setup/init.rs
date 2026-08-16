@@ -2,7 +2,7 @@ mod data;
 
 use super::{
     ConfigDraft, ConfigPullRequest, FlowError, InitEffects, InitOutcome, InitRequest, Merge,
-    OutcomeSummary, ReconcilePass, SettingsEffects, ValidatedConfig,
+    MigrationEffects, OutcomeSummary, ReconcilePass, SettingsEffects, ValidatedConfig,
 };
 
 type EffectError<E> = <E as SettingsEffects>::Error;
@@ -28,6 +28,8 @@ pub enum InitState {
     WritingSettings,
     /// Optionally install the user-global plugin.
     InstallingPlugin,
+    /// Optionally import explicitly selected prior local state.
+    MigratingState,
     /// Run one pass against the validated commit.
     Reconciling,
     /// Wait for runs started by the pass.
@@ -113,6 +115,7 @@ impl InitFlow {
             InitState::ValidatingMergedCommit => self.validate_merged(effects),
             InitState::WritingSettings => self.write_settings(effects),
             InitState::InstallingPlugin => self.install_plugin(effects),
+            InitState::MigratingState => self.migrate(effects),
             InitState::Reconciling => self.reconcile(effects),
             InitState::WaitingForOutcomes => self.wait_for_outcomes(effects),
             InitState::Complete => Ok(InitState::Complete),
@@ -215,6 +218,18 @@ impl InitFlow {
             effects
                 .install_user_plugin(&self.request.settings.plugin)
                 .map_err(FlowError::Effect)?;
+        }
+        Ok(InitState::MigratingState)
+    }
+
+    fn migrate<E: InitEffects>(
+        &mut self,
+        effects: &mut E,
+    ) -> Result<InitState, FlowError<EffectError<E>>> {
+        if self.request.settings.migration.source.is_some() {
+            MigrationEffects::migrate_local_state(effects, &self.request.settings)
+                .map_err(FlowError::Effect)?;
+            self.request.settings.migration.source = None;
         }
         Ok(InitState::PreparingConfig)
     }
