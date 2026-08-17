@@ -113,6 +113,36 @@ Values are injected into step environments scoped by the role's permissions
 and are scrubbed from everything written to the run log. A step missing a
 required credential fails *before* spawn, naming the reference.
 
+### No token in git, no clicking
+
+The reference lives in `settings.yaml` under `BUREAU_HOME` (`~/.bureau`), which
+is **not** your repo — so the credential configuration is never committed. The
+token value likewise never touches the repo. To reuse the GitHub CLI token you
+already have (one `gh auth login` device flow, once per machine), point the
+reference at it instead of hand-making a PAT:
+
+```yaml
+credentials:
+  github-main:
+    source: file
+    path: /home/you/.config/bureau/github-main
+```
+
+```sh
+mkdir -p ~/.config/bureau
+gh auth token > ~/.config/bureau/github-main   # one-time, non-interactive
+chmod 600 ~/.config/bureau/github-main
+```
+
+Or skip the file entirely and read it straight from the environment:
+
+```yaml
+credentials:
+  github-main:
+    source: environment
+    variable: GH_TOKEN                  # export GH_TOKEN="$(gh auth token)"
+```
+
 ## First-time setup: `bureau init`
 
 `init` is driven by one YAML file. It previews and validates the config it
