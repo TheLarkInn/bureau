@@ -49,7 +49,7 @@ impl Effects for LocalEffects {
             return Err(format!("run `{run_id}` still has live evidence"));
         }
         let run = files::safe_run_directory(&self.layout, run_id)?;
-        crate::plugin::restore_stale(&run, activation_id, plugin, version)
+        bureau_plugin::restore_stale(&run, activation_id, plugin, version)
             .map_err(|error| error.to_string())
     }
 

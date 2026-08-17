@@ -10,31 +10,38 @@ use super::tools;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Serves newline-delimited MCP JSON-RPC messages.
-///
-/// Path validation completes before the first message is read.
-///
-/// # Errors
-/// Returns an error for invalid session paths or stream I/O failures.
-pub fn serve<R: BufRead, W: io::Write>(paths: Paths, mut reader: R, writer: W) -> io::Result<()> {
-    let request = paths.validate()?;
-    let mut server = Server {
-        paths,
-        request,
-        writer,
-    };
-    read_messages(&mut reader, &mut server)
+fn optional_string<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a str>, Failure> {
+    object.get(field).map_or(Ok(None), |value| {
+        value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| Failure::invalid_params(format!("{field} must be a string")))
+    })
 }
 
-/// Serves MCP using environment-provided paths and process stdio.
-///
-/// # Errors
-/// Returns an error for missing environment, invalid paths, or stdio failures.
-pub fn serve_stdio() -> io::Result<()> {
-    let paths = Paths::from_env()?;
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    serve(paths, stdin.lock(), stdout.lock())
+fn protocol_version(params: Option<&Value>) -> Result<&str, Failure> {
+    let Some(value) = params else {
+        return Ok(PROTOCOL_VERSION);
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| Failure::invalid_params("initialize params must be an object"))?;
+    optional_string(object, "protocolVersion").map(|value| value.unwrap_or(PROTOCOL_VERSION))
+}
+
+fn initialize(params: Option<&Value>) -> Result<Value, Failure> {
+    let protocol_version = protocol_version(params)?;
+    Ok(json!({
+        "protocolVersion": protocol_version,
+        "capabilities": {"tools": {}},
+        "serverInfo": {
+            "name": "bureau-io",
+            "version": env!("CARGO_PKG_VERSION")
+        }
+    }))
 }
 
 struct Server<W> {
@@ -87,36 +94,29 @@ fn read_messages<R: BufRead, W: io::Write>(
     }
 }
 
-fn initialize(params: Option<&Value>) -> Result<Value, Failure> {
-    let protocol_version = protocol_version(params)?;
-    Ok(json!({
-        "protocolVersion": protocol_version,
-        "capabilities": {"tools": {}},
-        "serverInfo": {
-            "name": "bureau-io",
-            "version": env!("CARGO_PKG_VERSION")
-        }
-    }))
-}
-
-fn protocol_version(params: Option<&Value>) -> Result<&str, Failure> {
-    let Some(value) = params else {
-        return Ok(PROTOCOL_VERSION);
+/// Serves newline-delimited MCP JSON-RPC messages.
+///
+/// Path validation completes before the first message is read.
+///
+/// # Errors
+/// Returns an error for invalid session paths or stream I/O failures.
+pub fn serve<R: BufRead, W: io::Write>(paths: Paths, mut reader: R, writer: W) -> io::Result<()> {
+    let request = paths.validate()?;
+    let mut server = Server {
+        paths,
+        request,
+        writer,
     };
-    let object = value
-        .as_object()
-        .ok_or_else(|| Failure::invalid_params("initialize params must be an object"))?;
-    optional_string(object, "protocolVersion").map(|value| value.unwrap_or(PROTOCOL_VERSION))
+    read_messages(&mut reader, &mut server)
 }
 
-fn optional_string<'a>(
-    object: &'a Map<String, Value>,
-    field: &str,
-) -> Result<Option<&'a str>, Failure> {
-    object.get(field).map_or(Ok(None), |value| {
-        value
-            .as_str()
-            .map(Some)
-            .ok_or_else(|| Failure::invalid_params(format!("{field} must be a string")))
-    })
+/// Serves MCP using environment-provided paths and process stdio.
+///
+/// # Errors
+/// Returns an error for missing environment, invalid paths, or stdio failures.
+pub fn serve_stdio() -> io::Result<()> {
+    let paths = Paths::from_env()?;
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    serve(paths, stdin.lock(), stdout.lock())
 }

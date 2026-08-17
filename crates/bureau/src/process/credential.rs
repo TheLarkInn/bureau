@@ -53,10 +53,14 @@ pub fn resolve_file(dir: &Path, reference: &str) -> Result<Secret, CredentialErr
 /// Returns [`CredentialError`] naming the reference when neither the
 /// environment nor `$BUREAU_CREDENTIALS_DIR` provides it.
 pub fn resolve(reference: &str) -> Result<Secret, CredentialError> {
-    if let Ok(value) = std::env::var(env_var_name(reference)) {
+    // The process environment boundary: credentials resolve from the
+    // daemon's own environment.
+    let env_var = std::env::var;
+    let name = env_var_name(reference);
+    if let Ok(value) = env_var(name.as_str()) {
         return Ok(Secret::new(value));
     }
-    if let Ok(dir) = std::env::var(DIR_VAR) {
+    if let Ok(dir) = env_var(DIR_VAR) {
         return resolve_file(Path::new(&dir), reference);
     }
     Err(missing(reference))

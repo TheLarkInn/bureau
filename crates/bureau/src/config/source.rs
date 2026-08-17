@@ -5,7 +5,53 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::git::{CheckoutCache, Credential};
 
-use super::Config;
+use super::{Config, SourceError};
+
+fn validate_subdir(path: &Path) -> Result<(), SourceError> {
+    let unsafe_component = path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::RootDir));
+    if unsafe_component {
+        Err(SourceError::UnsafeSubdir)
+    } else {
+        Ok(())
+    }
+}
+
+fn messages(errors: &[crate::ConfigError]) -> String {
+    errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn create_dirs(path: &Path) -> Result<(), SourceError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || std::fs::create_dir_all(path))
+        .await
+        .map_err(std::io::Error::other)??;
+    Ok(())
+}
+
+/// On-disk locations under the cache root: the git mirror cache, the
+/// materialized snapshots, and the last-known-good pointer.
+struct Cache {
+    mirrors: CheckoutCache,
+    snapshots: PathBuf,
+    active: PathBuf,
+}
+
+impl Cache {
+    fn new(root: &Path) -> Self {
+        Self {
+            mirrors: CheckoutCache::new(root.join("mirrors")),
+            snapshots: root.join("snapshots"),
+            active: root.join("active.json"),
+        }
+    }
+}
 
 /// One validated committed config revision.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -35,9 +81,7 @@ pub struct GitSource {
     remote: String,
     reference: String,
     subdir: PathBuf,
-    cache: CheckoutCache,
-    snapshot_root: PathBuf,
-    active_path: PathBuf,
+    cache: Cache,
     credential: Option<Credential>,
 }
 
@@ -55,9 +99,7 @@ impl GitSource {
             remote,
             reference,
             subdir,
-            cache: CheckoutCache::new(cache_root.join("mirrors")),
-            snapshot_root: cache_root.join("snapshots"),
-            active_path: cache_root.join("active.json"),
+            cache: Cache::new(cache_root),
             credential,
         }
     }
@@ -66,12 +108,13 @@ impl GitSource {
     ///
     /// # Errors
     /// Rejects unsafe subdirectories and propagates Git/config failures.
-    pub async fn load(&self) -> Result<Activated, Error> {
+    pub async fn load(&self) -> Result<Activated, SourceError> {
         validate_subdir(&self.subdir)?;
-        std::fs::create_dir_all(&self.snapshot_root)?;
+        create_dirs(&self.cache.snapshots).await?;
         let directory = self.snapshot_directory()?;
         let (worktree, commit) = self
             .cache
+            .mirrors
             .snapshot(
                 &self.remote,
                 self.credential.as_ref(),
@@ -87,11 +130,11 @@ impl GitSource {
             commit,
             direct_agents,
         };
-        Self::persist_active(&self.active_path, &active)?;
+        Self::persist_active(&self.cache.active, &active)?;
         Ok(active)
     }
 
-    fn persist_active(path: &Path, active: &Activated) -> Result<(), Error> {
+    fn persist_active(path: &Path, active: &Activated) -> Result<(), SourceError> {
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent)?;
         let temporary = parent.join(format!(
@@ -103,7 +146,7 @@ impl GitSource {
         if result.is_err() {
             let _removed = std::fs::remove_file(&temporary);
         }
-        result.map_err(Error::from)
+        result.map_err(SourceError::from)
     }
 
     fn write_active(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
@@ -128,20 +171,21 @@ impl GitSource {
         std::fs::File::open(parent)?.sync_all()
     }
 
-    fn snapshot_directory(&self) -> Result<PathBuf, Error> {
+    fn snapshot_directory(&self) -> Result<PathBuf, SourceError> {
         Ok(self
-            .snapshot_root
+            .cache
+            .snapshots
             .join(format!("config-{}", crate::identity::random_hex()?)))
     }
 
     fn loaded(
         snapshot: &Path,
         subdir: &Path,
-    ) -> Result<(Config, BTreeMap<String, Vec<u8>>), Error> {
+    ) -> Result<(Config, BTreeMap<String, Vec<u8>>), SourceError> {
         let config_dir = snapshot.join(subdir);
         super::source_tree::validate(snapshot, &config_dir)?;
-        let config =
-            Config::load(&config_dir).map_err(|errors| Error::Validation(messages(&errors)))?;
+        let config = Config::load(&config_dir)
+            .map_err(|errors| SourceError::Validation(messages(&errors)))?;
         let agents = super::source_tree::load_agent_files(snapshot, &config_dir, &config.roles)?;
         Ok((config, agents))
     }
@@ -164,7 +208,7 @@ impl Manager {
     ///
     /// # Errors
     /// Returns the source error when no valid revision has ever loaded.
-    pub async fn refresh(&mut self) -> Result<Refresh, Error> {
+    pub async fn refresh(&mut self) -> Result<Refresh, SourceError> {
         match self.source.load().await {
             Ok(active) => {
                 self.last = Some(active.clone());
@@ -182,44 +226,4 @@ impl Manager {
             },
         }
     }
-}
-
-/// Committed-source failure.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// Git cache/snapshot failure.
-    #[error(transparent)]
-    Git(#[from] crate::git::Error),
-    /// Filesystem failure.
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    /// Loaded config failed validation.
-    #[error("config revision is invalid:\n{0}")]
-    Validation(String),
-    /// Subdirectory escaped the config snapshot.
-    #[error("config subdirectory must be relative and must not contain `..`")]
-    UnsafeSubdir,
-    /// A committed config path is a symlink, special file, or escape.
-    #[error("committed config path is unsafe: {0}")]
-    UnsafeConfig(String),
-}
-
-fn validate_subdir(path: &Path) -> Result<(), Error> {
-    let unsafe_component = path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir | Component::RootDir));
-    if unsafe_component {
-        Err(Error::UnsafeSubdir)
-    } else {
-        Ok(())
-    }
-}
-
-fn messages(errors: &[crate::ConfigError]) -> String {
-    errors
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("\n")
 }

@@ -18,7 +18,6 @@ pub mod forge;
 pub mod git;
 mod identity;
 pub mod mcp;
-pub use bureau_plugin as plugin;
 pub mod process;
 pub mod reconcile;
 pub mod repair;
@@ -27,14 +26,14 @@ pub mod state;
 pub mod supervise;
 pub use bureau_lifecycle::{home, maintenance, setup};
 
-use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// One configuration problem, tied to the file that caused it.
 ///
 /// Loading and validation accumulate these into a `Vec` so
 /// `bureau validate` reports every error in one pass.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{}: {message}", .path.display())]
 pub struct ConfigError {
     /// The file (or synthetic `dir/name` path) the error belongs to.
     pub path: PathBuf,
@@ -45,18 +44,10 @@ pub struct ConfigError {
 impl ConfigError {
     /// Creates an error for `path` with a displayable `message`.
     #[must_use]
-    pub fn new(path: &Path, message: impl fmt::Display) -> Self {
+    pub fn new(path: &Path, message: impl std::fmt::Display) -> Self {
         Self {
             path: path.to_path_buf(),
             message: message.to_string(),
         }
     }
 }
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.message)
-    }
-}
-
-impl std::error::Error for ConfigError {}

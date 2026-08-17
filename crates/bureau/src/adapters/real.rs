@@ -34,11 +34,6 @@ const RUNTIME_VARS: [&str; 5] = [
     "XDG_CONFIG_HOME",
 ];
 
-/// The step's spawn timeout.
-pub fn timeout(step: &StepDef) -> Duration {
-    Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS))
-}
-
 /// Where an adapter discovers agent files inside a worktree.
 pub struct Discovery {
     /// Discovery directory under the worktree (e.g. `.github/agents`).
@@ -47,28 +42,9 @@ pub struct Discovery {
     pub suffix: &'static str,
 }
 
-/// Resolves a role's agent reference to the `--agent` value
-/// (DESIGN.md section 6).
-///
-/// The engine activates a pinned `/plugin:agent` before this call, so a
-/// plugin reference only contributes its agent name. A direct `.md` path
-/// is materialized verbatim for adapter discovery.
-pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
-    if let Some((_, name)) = plugin_parts(agent) {
-        return name.to_owned();
-    }
-    if !agent.to_ascii_lowercase().ends_with(".md") {
-        return agent.to_owned();
-    }
-    let source = Path::new(agent);
-    let name = agent_name(source);
-    let _copied = copy_agent(source, worktree, discovery, &name);
-    name
-}
-
 /// Splits a `/plugin:agent` reference; anything else is a path.
 fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
-    if !crate::plugin::is_plugin_reference(agent) {
+    if !bureau_plugin::is_plugin_reference(agent) {
         return None;
     }
     agent.strip_prefix('/')?.split_once(':')
@@ -103,6 +79,25 @@ fn copy_agent(
     Some(dest)
 }
 
+/// Resolves a role's agent reference to the `--agent` value
+/// (DESIGN.md section 6).
+///
+/// The engine activates a pinned `/plugin:agent` before this call, so a
+/// plugin reference only contributes its agent name. A direct `.md` path
+/// is materialized verbatim for adapter discovery.
+pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
+    if let Some((_, name)) = plugin_parts(agent) {
+        return name.to_owned();
+    }
+    if !agent.to_ascii_lowercase().ends_with(".md") {
+        return agent.to_owned();
+    }
+    let source = Path::new(agent);
+    let name = agent_name(source);
+    let _copied = copy_agent(source, worktree, discovery, &name);
+    name
+}
+
 /// The push boundary a role's permissions imply, as `(write, push)`.
 ///
 /// `repo:push` implies `repo:write` — a push is a write that lands.
@@ -131,6 +126,32 @@ pub const FORGE_GRANTS: [Permission; 7] = [
 /// The grant that maps to a model credential (DESIGN.md section 10).
 pub const MODEL_GRANTS: [Permission; 1] = [Permission::ModelInvoke];
 
+/// Reads one variable from the daemon's environment; a non-Unicode
+/// value counts as missing, matching `std::env::var` semantics. This
+/// is the module's one process-environment boundary.
+fn env_value(name: &str) -> Option<String> {
+    use crate::home::{Environment, ProcessEnvironment};
+    ProcessEnvironment
+        .value(name)
+        .and_then(|value| value.into_string().ok())
+}
+
+/// Reads credential variables from the daemon's environment.
+///
+/// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
+/// missing or empty variable is not forwarded; the engine resolves
+/// repo credentials itself, so that is never an error here. Callers
+/// gate through [`scoped_credentials`] so a role without the mapped
+/// grant receives nothing.
+pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
+    let found = |name: &str| {
+        env_value(name)
+            .filter(|value| !value.is_empty())
+            .map(|value| (name.to_owned(), value))
+    };
+    names.iter().copied().filter_map(found).collect()
+}
+
 /// Reads `names` from the daemon's environment when `permissions` hold
 /// any of `grants`, and reads nothing otherwise — the section-10 check
 /// before spawn, applied at the one place credentials cross over.
@@ -145,21 +166,9 @@ pub fn scoped_credentials(
     Vec::new()
 }
 
-/// Reads credential variables from the daemon's environment.
-///
-/// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
-/// missing or empty variable is not forwarded; the engine resolves
-/// repo credentials itself, so that is never an error here. Callers
-/// gate through [`scoped_credentials`] so a role without the mapped
-/// grant receives nothing.
-pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
-    let found = |name: &str| {
-        std::env::var(name)
-            .ok()
-            .filter(|value| !value.is_empty())
-            .map(|value| (name.to_owned(), value))
-    };
-    names.iter().copied().filter_map(found).collect()
+/// The step's spawn timeout.
+pub fn timeout(step: &StepDef) -> Duration {
+    Duration::from_secs(step.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS))
 }
 
 /// Builds the complete child env and scrub list from found credentials.

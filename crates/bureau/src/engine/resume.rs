@@ -14,14 +14,6 @@ use crate::forge::Pr;
 use crate::runlog::GroupRecord;
 use crate::runlog::{self, Event, RunFinishedData, RunState, RunStatus};
 
-/// What a replayed log says about how to proceed.
-pub(super) enum Replay {
-    /// The log holds `run_finished`; return the outcome untouched.
-    Finished(RunFinishedData),
-    /// Continue from the replayed history.
-    Resume(History),
-}
-
 /// Replayed step history.
 pub(super) struct History {
     /// Entries per step name, from `step_started` records.
@@ -50,23 +42,21 @@ pub(super) struct History {
     pub(super) started: bool,
 }
 
-impl History {
-    /// Empty history starting at `start`.
-    pub(super) const fn fresh(start: Route, started: bool) -> Self {
-        Self {
-            attempts: BTreeMap::new(),
-            outcomes: BTreeMap::new(),
-            results: BTreeMap::new(),
-            usages: BTreeMap::new(),
-            groups: BTreeMap::new(),
-            checkpoint: None,
-            base_commit: None,
-            pushed_commit: None,
-            pr: None,
-            started_at_ms: 0,
-            start,
-            started,
-        }
+/// Empty history starting at `start`.
+pub(super) const fn fresh(start: Route, started: bool) -> History {
+    History {
+        attempts: BTreeMap::new(),
+        outcomes: BTreeMap::new(),
+        results: BTreeMap::new(),
+        usages: BTreeMap::new(),
+        groups: BTreeMap::new(),
+        checkpoint: None,
+        base_commit: None,
+        pushed_commit: None,
+        pr: None,
+        started_at_ms: 0,
+        start,
+        started,
     }
 }
 
@@ -78,60 +68,11 @@ pub(super) fn entry(pipeline: &Pipeline) -> Route {
     )
 }
 
-/// Replays events into a resume decision.
-pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
-    let Some(state) = runlog::replay(events) else {
-        return Replay::Resume(History::fresh(entry(pipeline), false));
-    };
-    if let RunStatus::Finished(_) = state.status {
-        return Replay::Finished(
-            state
-                .finished
-                .clone()
-                .unwrap_or_else(|| legacy_finished(&state)),
-        );
-    }
-    Replay::Resume(history_from(&state, pipeline))
-}
-
-/// Folds step history into attempt counts, outcomes, and the
-/// continuation route.
-fn history_from(state: &RunState, pipeline: &Pipeline) -> History {
-    let steps = step_history(state);
-    History {
-        attempts: steps.attempts,
-        outcomes: steps.outcomes,
-        results: steps.results,
-        usages: steps.usages,
-        groups: state.groups.clone(),
-        checkpoint: state.checkpoint.clone(),
-        base_commit: state.base_commit.clone(),
-        pushed_commit: state.pushed_commit.clone(),
-        pr: state.pr.clone(),
-        started_at_ms: state.started_at_ms,
-        start: next_route(state, pipeline),
-        started: true,
-    }
-}
-
 struct StepHistory {
     attempts: BTreeMap<String, u32>,
     outcomes: BTreeMap<String, StepOutcome>,
     results: BTreeMap<String, StepResult>,
     usages: BTreeMap<String, Usage>,
-}
-
-fn step_history(state: &RunState) -> StepHistory {
-    let mut history = StepHistory {
-        attempts: BTreeMap::new(),
-        outcomes: BTreeMap::new(),
-        results: BTreeMap::new(),
-        usages: BTreeMap::new(),
-    };
-    for record in &state.steps {
-        add_record(&mut history, record);
-    }
-    history
 }
 
 fn add_record(history: &mut StepHistory, record: &crate::runlog::StepRecord) {
@@ -147,18 +88,17 @@ fn add_record(history: &mut StepHistory, record: &crate::runlog::StepRecord) {
     }
 }
 
-fn legacy_finished(state: &RunState) -> RunFinishedData {
-    let outcome = match state.status {
-        RunStatus::Finished(outcome) => outcome,
-        RunStatus::Running => StepOutcome::Failure,
+fn step_history(state: &RunState) -> StepHistory {
+    let mut history = StepHistory {
+        attempts: BTreeMap::new(),
+        outcomes: BTreeMap::new(),
+        results: BTreeMap::new(),
+        usages: BTreeMap::new(),
     };
-    RunFinishedData {
-        outcome,
-        message: format!("run already finished: {}", edge::outcome_key(outcome)),
-        cost_usd: 0.0,
-        pr: state.pr.clone(),
-        disposition: None,
+    for record in &state.steps {
+        add_record(&mut history, record);
     }
+    history
 }
 
 /// Where a partially-recorded run continues: re-enter an interrupted
@@ -183,4 +123,62 @@ fn next_route(state: &RunState, pipeline: &Pipeline) -> Route {
         || Route::Step(last.step.clone()),
         |outcome| edge::route_named(pipeline, &last.step, outcome),
     )
+}
+
+fn legacy_finished(state: &RunState) -> RunFinishedData {
+    let outcome = match state.status {
+        RunStatus::Finished(outcome) => outcome,
+        RunStatus::Running => StepOutcome::Failure,
+    };
+    RunFinishedData {
+        outcome,
+        message: format!("run already finished: {}", edge::outcome_key(outcome)),
+        cost_usd: 0.0,
+        pr: state.pr.clone(),
+        disposition: None,
+    }
+}
+
+/// Folds step history into attempt counts, outcomes, and the
+/// continuation route.
+fn history_from(state: &RunState, pipeline: &Pipeline) -> History {
+    let steps = step_history(state);
+    History {
+        attempts: steps.attempts,
+        outcomes: steps.outcomes,
+        results: steps.results,
+        usages: steps.usages,
+        groups: state.groups.clone(),
+        checkpoint: state.checkpoint.clone(),
+        base_commit: state.base_commit.clone(),
+        pushed_commit: state.pushed_commit.clone(),
+        pr: state.pr.clone(),
+        started_at_ms: state.started_at_ms,
+        start: next_route(state, pipeline),
+        started: true,
+    }
+}
+
+/// What a replayed log says about how to proceed.
+pub(super) enum Replay {
+    /// The log holds `run_finished`; return the outcome untouched.
+    Finished(RunFinishedData),
+    /// Continue from the replayed history.
+    Resume(History),
+}
+
+/// Replays events into a resume decision.
+pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
+    let Some(state) = runlog::replay(events) else {
+        return Replay::Resume(fresh(entry(pipeline), false));
+    };
+    if let RunStatus::Finished(_) = state.status {
+        return Replay::Finished(
+            state
+                .finished
+                .clone()
+                .unwrap_or_else(|| legacy_finished(&state)),
+        );
+    }
+    Replay::Resume(history_from(&state, pipeline))
 }

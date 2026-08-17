@@ -5,6 +5,47 @@ use std::path::Path;
 use super::TerminalRecord;
 use crate::runlog::{self, RunSnapshot, RunState, RunStatus};
 
+fn directories(root: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    Ok(std::fs::read_dir(root)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join(runlog::EVENTS_FILE).is_file())
+        .collect())
+}
+
+fn replay_started(directory: &Path) -> std::io::Result<Option<RunState>> {
+    let events = runlog::read_events(directory)?;
+    if events.is_empty() {
+        return Ok(None);
+    }
+    runlog::replay(events).map(Some).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "non-empty log has no run_started event",
+        )
+    })
+}
+
+fn valid_cost(usage: &crate::adapters::Usage) -> Option<f64> {
+    usage
+        .cost_usd
+        .filter(|cost| cost.is_finite() && *cost >= 0.0)
+}
+
+fn measured_cost(state: &RunState) -> f64 {
+    let steps = state.steps.iter().filter_map(|step| step.usage.as_ref());
+    let partial = state
+        .groups
+        .values()
+        .filter(|group| group.usage.is_none())
+        .flat_map(|group| group.members.values())
+        .filter_map(|member| member.usage.as_ref());
+    steps.chain(partial).filter_map(valid_cost).sum()
+}
+
 pub(super) fn unfinished(runs_dir: &Path) -> std::io::Result<Vec<RunSnapshot>> {
     let mut directories = directories(runs_dir)?;
     directories.sort();
@@ -36,19 +77,6 @@ pub(super) fn finished(runs_dir: &Path) -> std::io::Result<Vec<TerminalRecord>> 
     Ok(records)
 }
 
-fn replay_started(directory: &Path) -> std::io::Result<Option<RunState>> {
-    let events = runlog::read_events(directory)?;
-    if events.is_empty() {
-        return Ok(None);
-    }
-    runlog::replay(events).map(Some).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "non-empty log has no run_started event",
-        )
-    })
-}
-
 pub(super) fn block(runs_dir: &Path, snapshot: &RunSnapshot, message: &str) -> std::io::Result<()> {
     let directory = runlog::run_dir(runs_dir, &snapshot.run_id);
     let state = runlog::replay_state(&directory)?;
@@ -68,32 +96,4 @@ pub(super) fn block(runs_dir: &Path, snapshot: &RunSnapshot, message: &str) -> s
     );
     log.append(runlog::EventKind::RunFinished, finished)?;
     log.close()
-}
-
-fn measured_cost(state: &RunState) -> f64 {
-    let steps = state.steps.iter().filter_map(|step| step.usage.as_ref());
-    let partial = state
-        .groups
-        .values()
-        .filter(|group| group.usage.is_none())
-        .flat_map(|group| group.members.values())
-        .filter_map(|member| member.usage.as_ref());
-    steps.chain(partial).filter_map(valid_cost).sum()
-}
-
-fn valid_cost(usage: &crate::adapters::Usage) -> Option<f64> {
-    usage
-        .cost_usd
-        .filter(|cost| cost.is_finite() && *cost >= 0.0)
-}
-
-fn directories(root: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-    Ok(std::fs::read_dir(root)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join(runlog::EVENTS_FILE).is_file())
-        .collect())
 }

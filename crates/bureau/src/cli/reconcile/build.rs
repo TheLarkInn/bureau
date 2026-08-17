@@ -1,5 +1,6 @@
 //! Credentials and per-assignment forge clients for one config revision.
 
+use crate::cli::out;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -12,6 +13,56 @@ use bureau::git::{Credential, credential_for};
 use bureau::process::{Secret, resolve};
 
 use super::ForgeArg;
+
+fn resolve_reference(
+    settings: Option<&bureau::setup::Settings>,
+    reference: &str,
+) -> anyhow::Result<Secret> {
+    settings.map_or_else(
+        || resolve(reference).map_err(anyhow::Error::from),
+        |settings| bureau::credential::resolve(settings, reference).map_err(anyhow::Error::from),
+    )
+}
+
+fn ado_base_url(repo_url: &str) -> String {
+    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
+    head.rsplit_once('/')
+        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
+}
+
+fn resolve_optional(
+    settings: Option<&bureau::setup::Settings>,
+    reference: &str,
+) -> Option<(String, Secret)> {
+    match resolve_reference(settings, reference) {
+        Ok(secret) => Some((reference.to_owned(), secret)),
+        Err(error) => {
+            out::error(format_args!(
+                "credential `{reference}` is unavailable: {error}"
+            ));
+            None
+        }
+    }
+}
+
+pub(super) fn forge(
+    assignment: &Assignment,
+    repos: &BTreeMap<String, Repo>,
+    credentials: &BTreeMap<String, Secret>,
+) -> anyhow::Result<Arc<dyn Forge>> {
+    let primary = assignment
+        .primary_repo()
+        .and_then(|name| repos.get(name))
+        .context("assignment has no registered primary repo")?;
+    let token = credentials
+        .get(&primary.credential)
+        .cloned()
+        .context("primary repo credential was not resolved")?;
+    Ok(match assignment.work.forge {
+        ForgeKind::Github => Arc::new(GitHubForge::new(token)),
+        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&primary.url), token)),
+    })
+}
 
 pub(super) fn config_credential(
     reference: Option<&str>,
@@ -71,57 +122,11 @@ pub(super) fn forges(
             forge(assignment, &config.repos, credentials)
                 .map(|forge| (name.clone(), forge))
                 .map_err(|error| {
-                    eprintln!("assignment `{name}` forge is unavailable: {error}");
+                    out::error(format_args!(
+                        "assignment `{name}` forge is unavailable: {error}"
+                    ));
                 })
                 .ok()
         })
         .collect()
-}
-
-fn resolve_optional(
-    settings: Option<&bureau::setup::Settings>,
-    reference: &str,
-) -> Option<(String, Secret)> {
-    match resolve_reference(settings, reference) {
-        Ok(secret) => Some((reference.to_owned(), secret)),
-        Err(error) => {
-            eprintln!("credential `{reference}` is unavailable: {error}");
-            None
-        }
-    }
-}
-
-fn resolve_reference(
-    settings: Option<&bureau::setup::Settings>,
-    reference: &str,
-) -> anyhow::Result<Secret> {
-    settings.map_or_else(
-        || resolve(reference).map_err(anyhow::Error::from),
-        |settings| bureau::credential::resolve(settings, reference).map_err(anyhow::Error::from),
-    )
-}
-
-pub(super) fn forge(
-    assignment: &Assignment,
-    repos: &BTreeMap<String, Repo>,
-    credentials: &BTreeMap<String, Secret>,
-) -> anyhow::Result<Arc<dyn Forge>> {
-    let primary = assignment
-        .primary_repo()
-        .and_then(|name| repos.get(name))
-        .context("assignment has no registered primary repo")?;
-    let token = credentials
-        .get(&primary.credential)
-        .cloned()
-        .context("primary repo credential was not resolved")?;
-    Ok(match assignment.work.forge {
-        ForgeKind::Github => Arc::new(GitHubForge::new(token)),
-        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&primary.url), token)),
-    })
-}
-
-fn ado_base_url(repo_url: &str) -> String {
-    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
-    head.rsplit_once('/')
-        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
 }

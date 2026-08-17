@@ -95,25 +95,6 @@ pub struct StepFinishedData {
     pub usage: Option<Usage>,
 }
 
-/// Payload of a `run_finished` event.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RunFinishedData {
-    /// What the run concluded.
-    pub outcome: StepOutcome,
-    /// Human-readable terminal detail.
-    #[serde(default)]
-    pub message: String,
-    /// Adapter-measured total cost.
-    #[serde(default)]
-    pub cost_usd: f64,
-    /// PR created/adopted by this run.
-    #[serde(default)]
-    pub pr: Option<Pr>,
-    /// Dedup disposition projected after the terminal event.
-    #[serde(default)]
-    pub disposition: Option<TerminalDisposition>,
-}
-
 /// State projection implied by a terminal run event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,6 +119,25 @@ impl TerminalDisposition {
             }
         }
     }
+}
+
+/// Payload of a `run_finished` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunFinishedData {
+    /// What the run concluded.
+    pub outcome: StepOutcome,
+    /// Human-readable terminal detail.
+    #[serde(default)]
+    pub message: String,
+    /// Adapter-measured total cost.
+    #[serde(default)]
+    pub cost_usd: f64,
+    /// PR created/adopted by this run.
+    #[serde(default)]
+    pub pr: Option<Pr>,
+    /// Dedup disposition projected after the terminal event.
+    #[serde(default)]
+    pub disposition: Option<TerminalDisposition>,
 }
 
 /// Durable branch checkpoint after one step.
@@ -246,12 +246,6 @@ pub fn step_finished_full(step: &str, execution: &Execution) -> serde_json::Valu
     })
 }
 
-/// Builds the legacy-minimal `data` for a `run_finished` event.
-#[must_use]
-pub fn run_finished(outcome: StepOutcome) -> serde_json::Value {
-    run_finished_full(outcome, "", 0.0, None, None)
-}
-
 /// Builds complete terminal data.
 #[must_use]
 pub fn run_finished_full(
@@ -268,6 +262,12 @@ pub fn run_finished_full(
         pr: pr.cloned(),
         disposition,
     })
+}
+
+/// Builds the legacy-minimal `data` for a `run_finished` event.
+#[must_use]
+pub fn run_finished(outcome: StepOutcome) -> serde_json::Value {
+    run_finished_full(outcome, "", 0.0, None, None)
 }
 
 /// Builds a branch checkpoint payload.

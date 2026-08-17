@@ -12,35 +12,6 @@ pub(super) struct Source {
     _maintenance: bureau::maintenance::Guard,
 }
 
-pub(super) fn source(layout: &bureau::home::Layout, source: &Path) -> anyhow::Result<Source> {
-    let target = safe_directory(layout.root(), true)?;
-    let source = safe_directory(source, false)?;
-    anyhow::ensure!(
-        !source.starts_with(&target) && !target.starts_with(&source),
-        "migration source and target must not overlap"
-    );
-    let maintenance = bureau::maintenance::exclusive(&source)?;
-    reject_pending_migration(&source)?;
-    let target_runs_existed = target_empty(layout)?;
-    let state = optional_file(&source.join("state.db"))?;
-    let runs = optional_directory(&source.join("runs"))?;
-    anyhow::ensure!(
-        state.is_some() || runs.is_some(),
-        "migration source has no durable state"
-    );
-    if let Some(path) = &state {
-        validate_database(path)?;
-    }
-
-    Ok(Source {
-        root: source,
-        state,
-        runs,
-        target_runs_existed,
-        _maintenance: maintenance,
-    })
-}
-
 impl Source {
     pub(super) fn root(&self) -> &Path {
         &self.root
@@ -117,40 +88,15 @@ fn optional_directory(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     }
 }
 
-fn validate_database(path: &Path) -> anyhow::Result<()> {
-    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
-    anyhow::ensure!(
-        integrity == "ok",
-        "migration database integrity check failed"
-    );
-    let tables = table_names(&connection)?;
-    let allowed = BTreeSet::from(["dedup".to_owned(), "leases".to_owned(), "runs".to_owned()]);
-    anyhow::ensure!(
-        tables.is_subset(&allowed),
-        "migration database is from a newer schema"
-    );
-    reject_active_leases(&connection, &tables)?;
-    validate_columns(&connection, "leases", LEASE_COLUMNS)?;
-    validate_columns(&connection, "runs", RUN_COLUMNS)?;
-    validate_columns(&connection, "dedup", DEDUP_COLUMNS)
-}
-
-fn reject_active_leases(connection: &Connection, tables: &BTreeSet<String>) -> anyhow::Result<()> {
-    if !tables.contains("leases") {
-        return Ok(());
-    }
-    let now = std::time::SystemTime::now()
+/// Milliseconds since the Unix epoch as `SQLite` sees them. The process
+/// clock boundary: bound once as a function pointer so this stays the
+/// single read site.
+fn now_millis() -> i64 {
+    let now = std::time::SystemTime::now;
+    let millis = now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis());
-    let now = i64::try_from(now).unwrap_or(i64::MAX);
-    let active: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM leases WHERE expires_at_ms > ?1",
-        [now],
-        |row| row.get(0),
-    )?;
-    anyhow::ensure!(active == 0, "migration source has active leases");
-    Ok(())
+    i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
 const LEASE_COLUMNS: &[&str] = &[
@@ -171,6 +117,21 @@ fn table_names(connection: &Connection) -> anyhow::Result<BTreeSet<String>> {
     names.collect::<Result<_, _>>().map_err(Into::into)
 }
 
+fn required_columns(table: &str, columns: &BTreeSet<String>) -> anyhow::Result<()> {
+    let required: &[&str] = match table {
+        "leases" => &["assignment", "forge", "external_id", "expires_at_ms"],
+        "runs" => &["assignment", "started_at_ms", "cost_usd"],
+        "dedup" => &["content_hash", "disposition", "at_ms"],
+        _ => anyhow::bail!("unknown migration table `{table}`"),
+    };
+    let missing = required.iter().find(|name| !columns.contains(**name));
+    missing.map_or(Ok(()), |name| {
+        Err(anyhow::anyhow!(
+            "migration table `{table}` is missing `{name}`"
+        ))
+    })
+}
+
 fn validate_columns(connection: &Connection, table: &str, allowed: &[&str]) -> anyhow::Result<()> {
     if !table_names(connection)?.contains(table) {
         return Ok(());
@@ -187,17 +148,63 @@ fn validate_columns(connection: &Connection, table: &str, allowed: &[&str]) -> a
     required_columns(table, &columns)
 }
 
-fn required_columns(table: &str, columns: &BTreeSet<String>) -> anyhow::Result<()> {
-    let required: &[&str] = match table {
-        "leases" => &["assignment", "forge", "external_id", "expires_at_ms"],
-        "runs" => &["assignment", "started_at_ms", "cost_usd"],
-        "dedup" => &["content_hash", "disposition", "at_ms"],
-        _ => anyhow::bail!("unknown migration table `{table}`"),
-    };
-    let missing = required.iter().find(|name| !columns.contains(**name));
-    missing.map_or(Ok(()), |name| {
-        Err(anyhow::anyhow!(
-            "migration table `{table}` is missing `{name}`"
-        ))
+fn reject_active_leases(connection: &Connection, tables: &BTreeSet<String>) -> anyhow::Result<()> {
+    if !tables.contains("leases") {
+        return Ok(());
+    }
+    let active: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM leases WHERE expires_at_ms > ?1",
+        [now_millis()],
+        |row| row.get(0),
+    )?;
+    anyhow::ensure!(active == 0, "migration source has active leases");
+    Ok(())
+}
+
+fn validate_database(path: &Path) -> anyhow::Result<()> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    anyhow::ensure!(
+        integrity == "ok",
+        "migration database integrity check failed"
+    );
+    let tables = table_names(&connection)?;
+    let allowed = BTreeSet::from(["dedup".to_owned(), "leases".to_owned(), "runs".to_owned()]);
+    anyhow::ensure!(
+        tables.is_subset(&allowed),
+        "migration database is from a newer schema"
+    );
+    reject_active_leases(&connection, &tables)?;
+    validate_columns(&connection, "leases", LEASE_COLUMNS)?;
+    validate_columns(&connection, "runs", RUN_COLUMNS)?;
+    validate_columns(&connection, "dedup", DEDUP_COLUMNS)
+}
+
+pub(super) fn source(layout: &bureau::home::Layout, source: &Path) -> anyhow::Result<Source> {
+    let target = safe_directory(layout.root(), true)?;
+    let source = safe_directory(source, false)?;
+    anyhow::ensure!(
+        !source.starts_with(&target) && !target.starts_with(&source),
+        "migration source and target must not overlap"
+    );
+    let maintenance = bureau::maintenance::exclusive(&source)?;
+    reject_pending_migration(&source)?;
+    let target_runs_existed = target_empty(layout)?;
+    let state = optional_file(&source.join("state.db"))?;
+    let runs = optional_directory(&source.join("runs"))?;
+    anyhow::ensure!(
+        state.is_some() || runs.is_some(),
+        "migration source has no durable state"
+    );
+    if let Some(path) = &state {
+        validate_database(path)?;
+    }
+
+    Ok(Source {
+        root: source,
+        state,
+        runs,
+        target_runs_existed,
+        _maintenance: maintenance,
     })
 }

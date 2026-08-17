@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use bureau::setup::{
     ConfigDraft, ConfigPullRequest, ConfigSource, FirstPipeline, InitEffects, Merge,
     MigrationEffects, OutcomeSummary, PluginEffects, PluginSettings, ReconcilePass, Settings,
@@ -8,6 +9,28 @@ use super::model::Request;
 use super::proposal::Proposal;
 use super::{author, draft, first_pass, merge, proposal, validate};
 
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(super) struct Error(#[from] anyhow::Error);
+
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<bureau::setup::FileError> for Error {
+    fn from(value: bureau::setup::FileError) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<bureau::maintenance::Error> for Error {
+    fn from(value: bureau::maintenance::Error) -> Self {
+        Self(value.into())
+    }
+}
+
 pub(super) struct LocalEffects {
     layout: bureau::home::Layout,
     request: Request,
@@ -16,25 +39,6 @@ pub(super) struct LocalEffects {
     migration: Option<super::super::migrate::Prepared>,
     proposal: Option<Proposal>,
     outcomes: Option<OutcomeSummary>,
-}
-
-impl LocalEffects {
-    pub(super) const fn new(
-        layout: bureau::home::Layout,
-        request: Request,
-        runtime: tokio::runtime::Handle,
-        maintenance: bureau::maintenance::Guard,
-    ) -> Self {
-        Self {
-            layout,
-            request,
-            runtime,
-            _maintenance: maintenance,
-            migration: None,
-            proposal: None,
-            outcomes: None,
-        }
-    }
 }
 
 impl SettingsEffects for LocalEffects {
@@ -172,26 +176,21 @@ impl InitEffects for LocalEffects {
     }
 }
 
-use anyhow::Context as _;
-
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(super) struct Error(#[from] anyhow::Error);
-
-impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<bureau::setup::FileError> for Error {
-    fn from(value: bureau::setup::FileError) -> Self {
-        Self(value.into())
-    }
-}
-
-impl From<bureau::maintenance::Error> for Error {
-    fn from(value: bureau::maintenance::Error) -> Self {
-        Self(value.into())
+/// Assembles the production init effects; a free constructor so the
+/// effects type carries no builder surface.
+pub(super) const fn local_effects(
+    layout: bureau::home::Layout,
+    request: Request,
+    runtime: tokio::runtime::Handle,
+    maintenance: bureau::maintenance::Guard,
+) -> LocalEffects {
+    LocalEffects {
+        layout,
+        request,
+        runtime,
+        _maintenance: maintenance,
+        migration: None,
+        proposal: None,
+        outcomes: None,
     }
 }

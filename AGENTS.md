@@ -1,13 +1,24 @@
 # Agent Instructions
 
-Before you finish any change, run all four gates and fix every finding:
+Before you finish any change, run all gates and fix every finding:
 
 ```sh
 cargo fmt --all
-bash scripts/check-rust-policy.sh
-cargo clippy --workspace --all-targets --all-features
+bash scripts/lint.sh
 cargo test --offline
 ```
+
+`scripts/lint.sh` is the single lint entry point: repository policy,
+`cargo fmt --check`, clippy, and the dylint custom lints
+(`lints/rust-lints`, configured by `dylint.toml`) — the same command CI
+runs. It needs `cargo-dylint`, `dylint-link`, and the
+`nightly-2026-01-22` toolchain with `rustc-dev` (install lines are in the
+script header).
+
+`dylint.toml` is the workspace module architecture: every top-level module
+must be listed under `[module_dependencies.allow]`, and every cross-module
+dependency must be declared there. Adding a module or a cross-module `use`
+means updating `dylint.toml` in the same change — the lint fails otherwise.
 
 ## The spec
 

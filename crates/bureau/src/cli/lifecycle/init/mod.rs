@@ -9,9 +9,34 @@ mod model;
 mod proposal;
 mod validate;
 
+use crate::cli::out;
 use std::path::Path;
 
 use anyhow::Context as _;
+
+const fn outcome_name(outcome: bureau::setup::Outcome) -> &'static str {
+    match outcome {
+        bureau::setup::Outcome::Success => "success",
+        bureau::setup::Outcome::Failure => "failure",
+        bureau::setup::Outcome::Blocked => "blocked",
+        bureau::setup::Outcome::NoWork => "no-work",
+    }
+}
+
+fn print_outcomes(summary: &bureau::setup::OutcomeSummary) {
+    for run in &summary.runs {
+        out::line(format_args!(
+            "{}: {}",
+            run.run_id,
+            outcome_name(run.outcome)
+        ));
+    }
+}
+
+fn load(path: &Path) -> anyhow::Result<model::Request> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_yaml_ng::from_slice(&bytes).context("parsing init request")
+}
 
 pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
     let request = load(from)?;
@@ -23,7 +48,7 @@ pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
         let maintenance = bureau::maintenance::exclusive(layout.root())?;
         super::migrate::recover_pending(&layout, Some(&mut request.settings))?;
         let flow_request = request.flow_request();
-        let mut effects = effects::LocalEffects::new(layout, request, runtime, maintenance);
+        let mut effects = effects::local_effects(layout, request, runtime, maintenance);
         bureau::setup::InitFlow::new(flow_request)
             .run(&mut effects)
             .map_err(anyhow::Error::new)
@@ -32,24 +57,4 @@ pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
     .context("joining init flow")??;
     print_outcomes(&outcome.outcomes);
     Ok(0)
-}
-
-fn load(path: &Path) -> anyhow::Result<model::Request> {
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    serde_yaml_ng::from_slice(&bytes).context("parsing init request")
-}
-
-fn print_outcomes(summary: &bureau::setup::OutcomeSummary) {
-    for run in &summary.runs {
-        println!("{}: {}", run.run_id, outcome_name(run.outcome));
-    }
-}
-
-const fn outcome_name(outcome: bureau::setup::Outcome) -> &'static str {
-    match outcome {
-        bureau::setup::Outcome::Success => "success",
-        bureau::setup::Outcome::Failure => "failure",
-        bureau::setup::Outcome::Blocked => "blocked",
-        bureau::setup::Outcome::NoWork => "no-work",
-    }
 }

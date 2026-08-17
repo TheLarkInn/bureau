@@ -90,6 +90,12 @@ impl Machine {
     }
 }
 
+fn inspect(effects: &impl Effects, area: Area) -> Observation {
+    effects
+        .inspect(area)
+        .unwrap_or_else(Observation::inspection_failed)
+}
+
 /// Runs all read-only checks against injected effects.
 #[must_use]
 pub fn run(effects: &impl Effects) -> Report {
@@ -99,10 +105,4 @@ pub fn run(effects: &impl Effects) -> Report {
         machine.record_current(area, observation);
     }
     Report::new(machine.diagnostics)
-}
-
-fn inspect(effects: &impl Effects, area: Area) -> Observation {
-    effects
-        .inspect(area)
-        .unwrap_or_else(Observation::inspection_failed)
 }

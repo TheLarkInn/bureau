@@ -56,7 +56,8 @@ fn engine_discovers_and_rehydrates_unfinished_snapshot() {
     .expect("started");
     log.close().expect("close");
     let snapshot = engine.unfinished().expect("unfinished").pop().expect("one");
-    let restored = RunPlan::from_snapshot(snapshot, plan.forge.clone(), plan.credentials.clone());
+    let restored =
+        bureau::engine::rehydrate(snapshot, plan.forge.clone(), plan.credentials.clone());
     assert_eq!(
         (restored.run_id, restored.pipeline.name),
         (plan.run_id, plan.pipeline.name)

@@ -8,6 +8,36 @@ use crate::Error;
 
 pub const DIRECTORY: &str = "activations";
 
+pub fn canonical_directory(path: &Path) -> Result<PathBuf, Error> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| Error::io("inspect", path, error))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(Error::invalid(path, "expected a safe directory"));
+    }
+    fs::canonicalize(path).map_err(|error| Error::io("resolve", path, error))
+}
+
+fn canonical_source(path: &Path) -> Result<PathBuf, Error> {
+    match fs::canonicalize(path) {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_absolute() => {
+            Ok(path.to_path_buf())
+        }
+        Err(error) => Err(Error::io("resolve", path, error)),
+    }
+}
+
+fn validate_relative(path: &Path) -> Result<(), Error> {
+    let valid = path.components().next().is_some()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::invalid(path, "restoration path must be relative"))
+    }
+}
+
 pub fn activation_root(run_dir: &Path) -> Result<PathBuf, Error> {
     let root = run_dir.join(DIRECTORY);
     fs::create_dir_all(&root).map_err(|error| Error::io("create restorations", &root, error))?;
@@ -33,26 +63,8 @@ pub fn contained_worktree(run_dir: &Path, worktree: &Path) -> Result<(PathBuf, P
     }
 }
 
-pub fn canonical_directory(path: &Path) -> Result<PathBuf, Error> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| Error::io("inspect", path, error))?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(Error::invalid(path, "expected a safe directory"));
-    }
-    fs::canonicalize(path).map_err(|error| Error::io("resolve", path, error))
-}
-
 pub fn canonical_optional(path: Option<&Path>) -> Result<Option<PathBuf>, Error> {
     path.map(canonical_source).transpose()
-}
-
-fn canonical_source(path: &Path) -> Result<PathBuf, Error> {
-    match fs::canonicalize(path) {
-        Ok(path) => Ok(path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_absolute() => {
-            Ok(path.to_path_buf())
-        }
-        Err(error) => Err(Error::io("resolve", path, error)),
-    }
 }
 
 pub fn activation_id(relative: &Path) -> String {
@@ -62,10 +74,6 @@ pub fn activation_id(relative: &Path) -> String {
         write!(output, "{byte:02x}").expect("writing to a string cannot fail");
     }
     output
-}
-
-pub fn absolute_paths(worktree: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
-    paths.iter().map(|path| absolute(worktree, path)).collect()
 }
 
 pub fn absolute(base: &Path, relative: &Path) -> Result<PathBuf, Error> {
@@ -81,16 +89,8 @@ pub fn relative(base: &Path, path: &Path) -> Result<PathBuf, Error> {
     Ok(relative.to_path_buf())
 }
 
-fn validate_relative(path: &Path) -> Result<(), Error> {
-    let valid = path.components().next().is_some()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)));
-    if valid {
-        Ok(())
-    } else {
-        Err(Error::invalid(path, "restoration path must be relative"))
-    }
+pub fn absolute_paths(worktree: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
+    paths.iter().map(|path| absolute(worktree, path)).collect()
 }
 
 pub fn reject_existing(path: &Path) -> Result<(), Error> {

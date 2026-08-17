@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use super::machine::{RunCtx, WtCtx};
+use super::context::{RunCtx, WtCtx};
 use super::stream::{self, LogSink};
 use super::{artifact, deadline, plugins};
 use crate::adapters::{self, Execution, Usage};
@@ -14,24 +14,104 @@ use crate::process::{SpawnRequest, SpawnResult, shared_log, spawn};
 /// Default per-step timeout, matching the `fake` adapter.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 
-/// Runs one code step and returns its result.
-pub(super) async fn execute(
+fn synthetic_result(outcome: StepOutcome, message: &str) -> StepResult {
+    StepResult {
+        schema: SCHEMA_VERSION.to_owned(),
+        outcome,
+        outputs: BTreeMap::new(),
+        artifacts: Vec::new(),
+        trust: Trust::Derived,
+        message: message.to_owned(),
+    }
+}
+
+fn failure_result(message: &str) -> StepResult {
+    synthetic_result(StepOutcome::Failure, message)
+}
+
+fn blocked_result(message: &str) -> StepResult {
+    synthetic_result(StepOutcome::Blocked, message)
+}
+
+/// A synthetic failure for a step that cannot run at all.
+fn failed_step(message: &str) -> Execution {
+    Execution::new(failure_result(message), Usage::zero("engine"))
+}
+
+fn blocked_step(message: &str) -> Execution {
+    Execution::new(blocked_result(message), Usage::zero("engine"))
+}
+
+/// Derives the step result: a contract document on stdout wins;
+/// otherwise exit 0 is `Success` with the trimmed stdout as the lone
+/// output. Deterministic steps preserve their input trust either way.
+fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
+    let parsed = StepResult::from_json(&spawned.stdout).is_ok();
+    let mut result = adapters::result_from_spawn(spawned);
+    result.trust = trust;
+    if !parsed && result.outcome == StepOutcome::Success {
+        let stdout = String::from_utf8_lossy(&spawned.stdout).trim().to_owned();
+        result
+            .outputs
+            .insert("stdout".to_owned(), serde_json::Value::String(stdout));
+    }
+    result
+}
+
+fn agent_timeout(ctx: &RunCtx, step: &StepDef) -> Duration {
+    deadline::bounded(step.timeout_secs, ctx.remaining(), ctx.remaining())
+}
+
+fn role_for<'a>(ctx: &'a RunCtx, step: &StepDef) -> Option<&'a crate::config::Role> {
+    step.role
+        .as_deref()
+        .and_then(|name| ctx.plan.roles.get(name))
+}
+
+fn prepare_agent(
     ctx: &RunCtx,
-    wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
-) -> Execution {
-    let timeout = deadline::bounded(
-        step.timeout_secs,
-        Duration::from_secs(DEFAULT_TIMEOUT_SECS),
-        ctx.remaining(),
-    );
-    match step.kind {
-        StepKind::Deterministic => deterministic(ctx, wt, step, request, timeout).await,
-        StepKind::Agent => agent(ctx, step, request, agent_timeout(ctx, step)).await,
-        StepKind::Decision | StepKind::Concurrent => {
-            failed_step("routing and concurrent steps do not run through this path")
-        }
+) -> Result<(crate::config::Role, Option<plugins::ActiveAgent>), String> {
+    let role =
+        role_for(ctx, step).ok_or_else(|| format!("step `{}` names an unknown role", step.name))?;
+    let run_dir = stream::lock(&ctx.log).dir().to_path_buf();
+    let activation = plugins::activate(&ctx.plan, role, &run_dir, &request.worktree)?;
+    let mut runtime_role = role.clone();
+    if let Some(active) = activation.as_ref() {
+        active.agent_name().clone_into(&mut runtime_role.agent);
+    }
+    Ok((runtime_role, activation))
+}
+
+fn enforce_measured_cost(ctx: &RunCtx, execution: &mut Execution) {
+    let capped = ctx.plan.assignment.limits.max_cost_per_day_usd.is_some();
+    if capped && execution.usage.cost_usd.is_none() {
+        execution.result = failure_result(
+            "this assignment has `max_cost_per_day_usd`, but the adapter did not report measurable usage; no further cost-bearing step may run",
+        );
+    }
+}
+
+async fn publish_artifacts(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    execution: &mut Execution,
+) {
+    let destination = stream::lock(&ctx.log)
+        .dir()
+        .join("artifacts")
+        .join(&step.name);
+    if let Err(message) = artifact::materialize(
+        &mut execution.result.artifacts,
+        &request.worktree,
+        &destination,
+        &ctx.secrets(),
+    )
+    .await
+    {
+        execution.result = failure_result(&format!("publishing artifacts failed: {message}"));
     }
 }
 
@@ -76,20 +156,21 @@ async fn deterministic(
     )
 }
 
-/// Derives the step result: a contract document on stdout wins;
-/// otherwise exit 0 is `Success` with the trimmed stdout as the lone
-/// output. Deterministic steps preserve their input trust either way.
-fn derive_result(trust: Trust, spawned: &SpawnResult) -> StepResult {
-    let parsed = StepResult::from_json(&spawned.stdout).is_ok();
-    let mut result = adapters::result_from_spawn(spawned);
-    result.trust = trust;
-    if !parsed && result.outcome == StepOutcome::Success {
-        let stdout = String::from_utf8_lossy(&spawned.stdout).trim().to_owned();
-        result
-            .outputs
-            .insert("stdout".to_owned(), serde_json::Value::String(stdout));
+async fn finish_agent(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    activation: Option<plugins::ActiveAgent>,
+    mut execution: Execution,
+) -> Execution {
+    execution.result.trust = Trust::Derived;
+    if let Err(message) = plugins::restore(activation) {
+        execution.result = blocked_result(&message);
+        return execution.halt();
     }
-    result
+    enforce_measured_cost(ctx, &mut execution);
+    publish_artifacts(ctx, step, request, &mut execution).await;
+    execution
 }
 
 /// Runs the role adapter and grades its output `Derived`.
@@ -118,104 +199,23 @@ async fn agent(
     finish_agent(ctx, step, request, prepared.1, execution).await
 }
 
-fn prepare_agent(
+/// Runs one code step and returns its result.
+pub(super) async fn execute(
     ctx: &RunCtx,
+    wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
-) -> Result<(crate::config::Role, Option<plugins::ActiveAgent>), String> {
-    let role =
-        role_for(ctx, step).ok_or_else(|| format!("step `{}` names an unknown role", step.name))?;
-    let run_dir = stream::lock(&ctx.log).dir().to_path_buf();
-    let activation = plugins::activate(&ctx.plan, role, &run_dir, &request.worktree)?;
-    let mut runtime_role = role.clone();
-    if let Some(active) = activation.as_ref() {
-        active.agent_name().clone_into(&mut runtime_role.agent);
-    }
-    Ok((runtime_role, activation))
-}
-
-async fn finish_agent(
-    ctx: &RunCtx,
-    step: &StepDef,
-    request: &StepRequest,
-    activation: Option<plugins::ActiveAgent>,
-    mut execution: Execution,
 ) -> Execution {
-    execution.result.trust = Trust::Derived;
-    if let Err(message) = plugins::restore(activation) {
-        execution.result = blocked_result(&message);
-        return execution.halt();
-    }
-    enforce_measured_cost(ctx, &mut execution);
-    publish_artifacts(ctx, step, request, &mut execution).await;
-    execution
-}
-
-fn agent_timeout(ctx: &RunCtx, step: &StepDef) -> Duration {
-    deadline::bounded(step.timeout_secs, ctx.remaining(), ctx.remaining())
-}
-
-fn role_for<'a>(ctx: &'a RunCtx, step: &StepDef) -> Option<&'a crate::config::Role> {
-    step.role
-        .as_deref()
-        .and_then(|name| ctx.plan.roles.get(name))
-}
-
-async fn publish_artifacts(
-    ctx: &RunCtx,
-    step: &StepDef,
-    request: &StepRequest,
-    execution: &mut Execution,
-) {
-    let destination = stream::lock(&ctx.log)
-        .dir()
-        .join("artifacts")
-        .join(&step.name);
-    if let Err(message) = artifact::materialize(
-        &mut execution.result.artifacts,
-        &request.worktree,
-        &destination,
-        &ctx.secrets(),
-    )
-    .await
-    {
-        execution.result = failure_result(&format!("publishing artifacts failed: {message}"));
-    }
-}
-
-fn enforce_measured_cost(ctx: &RunCtx, execution: &mut Execution) {
-    let capped = ctx.plan.assignment.limits.max_cost_per_day_usd.is_some();
-    if capped && execution.usage.cost_usd.is_none() {
-        execution.result = failure_result(
-            "this assignment has `max_cost_per_day_usd`, but the adapter did not report measurable usage; no further cost-bearing step may run",
-        );
-    }
-}
-
-/// A synthetic failure for a step that cannot run at all.
-fn failed_step(message: &str) -> Execution {
-    Execution::new(failure_result(message), Usage::zero("engine"))
-}
-
-fn blocked_step(message: &str) -> Execution {
-    Execution::new(blocked_result(message), Usage::zero("engine"))
-}
-
-fn failure_result(message: &str) -> StepResult {
-    synthetic_result(StepOutcome::Failure, message)
-}
-
-fn blocked_result(message: &str) -> StepResult {
-    synthetic_result(StepOutcome::Blocked, message)
-}
-
-fn synthetic_result(outcome: StepOutcome, message: &str) -> StepResult {
-    StepResult {
-        schema: SCHEMA_VERSION.to_owned(),
-        outcome,
-        outputs: BTreeMap::new(),
-        artifacts: Vec::new(),
-        trust: Trust::Derived,
-        message: message.to_owned(),
+    let timeout = deadline::bounded(
+        step.timeout_secs,
+        Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+        ctx.remaining(),
+    );
+    match step.kind {
+        StepKind::Deterministic => deterministic(ctx, wt, step, request, timeout).await,
+        StepKind::Agent => agent(ctx, step, request, agent_timeout(ctx, step)).await,
+        StepKind::Decision | StepKind::Concurrent => {
+            failed_step("routing and concurrent steps do not run through this path")
+        }
     }
 }

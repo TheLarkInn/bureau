@@ -1,7 +1,7 @@
 //! Run cancellation and deadline messages.
 
+use super::context::RunCtx;
 use super::deadline;
-use super::machine::RunCtx;
 
 pub(super) fn cancel_reason(ctx: &RunCtx) -> Option<String> {
     let path = ctx.cancel_path();
@@ -15,17 +15,6 @@ pub(super) fn cancel_reason(ctx: &RunCtx) -> Option<String> {
     } else {
         reason.to_owned()
     })
-}
-
-pub(super) fn ownership_reason(ctx: &RunCtx) -> Option<String> {
-    let owner = ctx.plan.lease.as_ref()?;
-    match owner.owns() {
-        Ok(true) => None,
-        Ok(false) => Some("run lease ownership was lost".to_owned()),
-        Err(error) => Some(format!(
-            "run lease ownership could not be confirmed: {error}"
-        )),
-    }
 }
 
 pub(super) fn deadline_message(ctx: &RunCtx) -> String {

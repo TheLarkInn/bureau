@@ -1,5 +1,6 @@
 //! Two-stage signal handling for one-shot runs.
 
+use crate::cli::out;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -11,36 +12,6 @@ use super::super::reconcile::active::{self, Signals, Until};
 
 type Supervised = (RunOutcome, Result<(), bureau::state::Error>);
 
-pub(super) async fn run(
-    engine: Arc<Engine>,
-    store: Arc<Store>,
-    plan: RunPlan,
-) -> anyhow::Result<RunOutcome> {
-    let owner = plan.lease.clone();
-    let run_id = plan.run_id.clone();
-    let (snapshot, secrets) = durable_inputs(&plan);
-    let runs_dir = engine.runs_dir.clone();
-    prepare_directory(&runs_dir, &run_id)?;
-    let mut signals = Signals::new().context("installing signals")?;
-    let mut supervised = Box::pin(bureau::supervise::run(engine.clone(), store.clone(), plan));
-    let result = await_supervision(supervised.as_mut(), &mut signals).await;
-    let Some((outcome, projection)) = result else {
-        drop(supervised);
-        tokio::task::yield_now().await;
-        cancel_run(
-            &engine,
-            &store,
-            owner.as_ref(),
-            &snapshot,
-            &secrets,
-            &runs_dir,
-        )?;
-        return Ok(cancelled(run_id));
-    };
-    projection.context("projecting terminal run state")?;
-    Ok(outcome)
-}
-
 fn durable_inputs(plan: &RunPlan) -> (bureau::runlog::RunSnapshot, Vec<bureau::process::Secret>) {
     (
         plan.snapshot(),
@@ -51,41 +22,6 @@ fn durable_inputs(plan: &RunPlan) -> (bureau::runlog::RunSnapshot, Vec<bureau::p
 fn prepare_directory(runs_dir: &std::path::Path, run_id: &str) -> anyhow::Result<()> {
     let directory = bureau::runlog::run_dir(runs_dir, run_id);
     std::fs::create_dir_all(directory).context("creating run directory")
-}
-
-fn cancel_run(
-    engine: &Engine,
-    store: &Store,
-    owner: Option<&bureau::state::LeaseOwner>,
-    snapshot: &bureau::runlog::RunSnapshot,
-    secrets: &[bureau::process::Secret],
-    runs_dir: &std::path::Path,
-) -> anyhow::Result<()> {
-    let directory = bureau::runlog::run_dir(runs_dir, &snapshot.run_id);
-    let persisted = persist_cancel(engine, store, snapshot, secrets, runs_dir, &directory);
-    let released = owner.map_or(Ok(()), bureau::state::LeaseOwner::release);
-    persisted?;
-    released?;
-    Ok(())
-}
-
-fn persist_cancel(
-    engine: &Engine,
-    store: &Store,
-    snapshot: &bureau::runlog::RunSnapshot,
-    secrets: &[bureau::process::Secret],
-    runs_dir: &std::path::Path,
-    directory: &std::path::Path,
-) -> anyhow::Result<()> {
-    std::fs::write(
-        directory.join("CANCEL"),
-        "cancelled by second shutdown signal",
-    )
-    .context("writing cancellation marker")?;
-    ensure_started(directory, snapshot, secrets)?;
-    engine.block(snapshot, "cancelled by second shutdown signal")?;
-    bureau::state::project_run(store, runs_dir, &snapshot.run_id)?;
-    Ok(())
 }
 
 fn ensure_started(
@@ -115,6 +51,57 @@ fn ensure_started(
     Ok(())
 }
 
+fn persist_cancel(
+    engine: &Engine,
+    store: &Store,
+    snapshot: &bureau::runlog::RunSnapshot,
+    secrets: &[bureau::process::Secret],
+    runs_dir: &std::path::Path,
+    directory: &std::path::Path,
+) -> anyhow::Result<()> {
+    std::fs::write(
+        directory.join("CANCEL"),
+        "cancelled by second shutdown signal",
+    )
+    .context("writing cancellation marker")?;
+    ensure_started(directory, snapshot, secrets)?;
+    engine.block(snapshot, "cancelled by second shutdown signal")?;
+    bureau::state::project_run(store, runs_dir, &snapshot.run_id)?;
+    Ok(())
+}
+
+fn cancel_run(
+    engine: &Engine,
+    store: &Store,
+    owner: Option<&bureau::state::LeaseOwner>,
+    snapshot: &bureau::runlog::RunSnapshot,
+    secrets: &[bureau::process::Secret],
+    runs_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let directory = bureau::runlog::run_dir(runs_dir, &snapshot.run_id);
+    let persisted = persist_cancel(engine, store, snapshot, secrets, runs_dir, &directory);
+    let released = owner.map_or(Ok(()), bureau::state::LeaseOwner::release);
+    persisted?;
+    released?;
+    Ok(())
+}
+
+async fn drain_supervision<F>(
+    future: std::pin::Pin<&mut F>,
+    signals: &mut Signals,
+) -> Option<Supervised>
+where
+    F: std::future::Future<Output = Supervised> + ?Sized,
+{
+    out::line(format_args!(
+        "run is draining; send a second signal to cancel it"
+    ));
+    match active::until_signal(future, signals).await {
+        Until::Complete(result) => Some(result),
+        Until::Signalled => None,
+    }
+}
+
 async fn await_supervision<F>(
     mut future: std::pin::Pin<&mut F>,
     signals: &mut Signals,
@@ -128,20 +115,6 @@ where
     }
 }
 
-async fn drain_supervision<F>(
-    future: std::pin::Pin<&mut F>,
-    signals: &mut Signals,
-) -> Option<Supervised>
-where
-    F: std::future::Future<Output = Supervised> + ?Sized,
-{
-    println!("run is draining; send a second signal to cancel it");
-    match active::until_signal(future, signals).await {
-        Until::Complete(result) => Some(result),
-        Until::Signalled => None,
-    }
-}
-
 fn cancelled(run_id: String) -> RunOutcome {
     RunOutcome {
         run_id,
@@ -150,4 +123,34 @@ fn cancelled(run_id: String) -> RunOutcome {
         message: "cancelled by second shutdown signal".to_owned(),
         pr: None,
     }
+}
+
+pub(super) async fn run(
+    engine: Arc<Engine>,
+    store: Arc<Store>,
+    plan: RunPlan,
+) -> anyhow::Result<RunOutcome> {
+    let owner = plan.lease.clone();
+    let run_id = plan.run_id.clone();
+    let (snapshot, secrets) = durable_inputs(&plan);
+    let runs_dir = engine.runs_dir.clone();
+    prepare_directory(&runs_dir, &run_id)?;
+    let mut signals = Signals::new().context("installing signals")?;
+    let mut supervised = Box::pin(bureau::supervise::run(engine.clone(), store.clone(), plan));
+    let result = await_supervision(supervised.as_mut(), &mut signals).await;
+    let Some((outcome, projection)) = result else {
+        drop(supervised);
+        tokio::task::yield_now().await;
+        cancel_run(
+            &engine,
+            &store,
+            owner.as_ref(),
+            &snapshot,
+            &secrets,
+            &runs_dir,
+        )?;
+        return Ok(cancelled(run_id));
+    };
+    projection.context("projecting terminal run state")?;
+    Ok(outcome)
 }

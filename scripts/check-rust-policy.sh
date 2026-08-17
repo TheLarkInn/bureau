@@ -16,7 +16,7 @@ while IFS= read -r -d '' source_file; do
         printf '%s contains a forbidden lint-suppression attribute.\n' "$source_file" >&2
         failures=$((failures + 1))
     fi
-done < <(find . -type f -name '*.rs' -not -path './.git/*' -not -path './target/*' -print0)
+done < <(find . -type f -name '*.rs' -not -path './.git/*' -not -path './target/*' -not -path './lints/*' -print0)
 
 if ((failures > 0)); then
     exit 1

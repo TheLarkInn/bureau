@@ -5,52 +5,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::Config;
 use super::files::{Assignment, Role};
 use super::pipeline::{Pipeline, StepDef, StepKind, TERMINALS};
-use super::validate::{path_of, push};
+use super::{AdapterKind, Config, path_of, push, step_err};
 use crate::ConfigError;
-use crate::adapters::AdapterKind;
-
-/// All pipeline rules, plus the assignment-to-pipeline reference.
-#[must_use]
-pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {
-    let mut errors = Vec::new();
-    for (name, pipeline) in &config.pipelines {
-        check_pipeline(&mut errors, config, name, pipeline);
-    }
-    for (name, assignment) in &config.assignments {
-        check_assignment_pipeline(&mut errors, config, name, assignment);
-    }
-    errors
-}
-
-fn check_assignment_pipeline(
-    errors: &mut Vec<ConfigError>,
-    config: &Config,
-    name: &str,
-    a: &Assignment,
-) {
-    let pipeline = a.pipeline.trim();
-    if !pipeline.is_empty() && !config.pipelines.contains_key(pipeline) {
-        push(
-            errors,
-            path_of("assignments", name),
-            format!("assignment `{name}` references unknown pipeline `{pipeline}`"),
-        );
-    }
-}
-
-fn check_pipeline(errors: &mut Vec<ConfigError>, config: &Config, name: &str, pipeline: &Pipeline) {
-    let path = path_of("pipelines", name);
-    check_step_names(errors, name, pipeline, &path);
-    let order = step_order(pipeline);
-    for (index, step) in pipeline.steps.iter().enumerate() {
-        check_step(errors, config, name, index, step, &order, &path);
-    }
-    super::validate_concurrent::check(errors, config, name, pipeline, &path);
-    check_reachable(errors, name, pipeline, &path);
-}
 
 fn step_order(pipeline: &Pipeline) -> BTreeMap<&str, usize> {
     pipeline
@@ -80,37 +38,38 @@ fn check_step_names(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipeli
     }
 }
 
-fn check_step(
+fn check_assignment_pipeline(
     errors: &mut Vec<ConfigError>,
     config: &Config,
     name: &str,
-    index: usize,
-    step: &StepDef,
-    order: &BTreeMap<&str, usize>,
-    path: &Path,
+    a: &Assignment,
 ) {
-    for detail in step.field_errors() {
-        step_err(errors, path, name, &step.name, &detail);
+    let pipeline = a.pipeline.trim();
+    if !pipeline.is_empty() && !config.pipelines.contains_key(pipeline) {
+        push(
+            errors,
+            path_of("assignments", name),
+            format!("assignment `{name}` references unknown pipeline `{pipeline}`"),
+        );
     }
-    check_references(errors, config, name, index, step, order, path);
-    check_named_edges(errors, name, step, order, path);
-    check_decision_edges(errors, name, step, order, path);
-    check_inputs_from(errors, name, index, step, order, path);
 }
 
-fn check_references(
+fn check_fixture(
     errors: &mut Vec<ConfigError>,
-    config: &Config,
     name: &str,
-    index: usize,
     step: &StepDef,
-    order: &BTreeMap<&str, usize>,
+    role: &Role,
     path: &Path,
 ) {
-    match step.kind {
-        StepKind::Agent => check_agent(errors, config, name, step, path),
-        StepKind::Decision => check_over(errors, name, index, step, order, path),
-        StepKind::Deterministic | StepKind::Concurrent => {}
+    let Some(fixture) = step.fixture.as_deref() else {
+        return;
+    };
+    let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
+    if role.adapter != AdapterKind::Fake {
+        err("`fixture` requires a role with the `fake` adapter");
+    }
+    if !Path::new(fixture).is_absolute() {
+        err("`fixture` must be an absolute path");
     }
 }
 
@@ -137,25 +96,6 @@ fn check_agent(
     check_fixture(errors, name, step, role, path);
 }
 
-fn check_fixture(
-    errors: &mut Vec<ConfigError>,
-    name: &str,
-    step: &StepDef,
-    role: &Role,
-    path: &Path,
-) {
-    let Some(fixture) = step.fixture.as_deref() else {
-        return;
-    };
-    let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
-    if role.adapter != AdapterKind::Fake {
-        err("`fixture` requires a role with the `fake` adapter");
-    }
-    if !Path::new(fixture).is_absolute() {
-        err("`fixture` must be an absolute path");
-    }
-}
-
 fn check_over(
     errors: &mut Vec<ConfigError>,
     name: &str,
@@ -172,6 +112,24 @@ fn check_over(
         Some(&i) if i < index => {}
         Some(_) => err(&format!("`over` step `{over}` is not an earlier step")),
         None => err(&format!("`over` names unknown step `{over}`")),
+    }
+}
+
+fn check_edge(
+    errors: &mut Vec<ConfigError>,
+    name: &str,
+    step: &StepDef,
+    field: &str,
+    target: &str,
+    order: &BTreeMap<&str, usize>,
+    path: &Path,
+) {
+    if order.contains_key(target) {
+        return;
+    }
+    let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
+    if !TERMINALS.contains(&target) {
+        err(&format!("edge `{field}` targets unknown step `{target}`"));
     }
 }
 
@@ -210,24 +168,6 @@ fn check_decision_edges(
     }
 }
 
-fn check_edge(
-    errors: &mut Vec<ConfigError>,
-    name: &str,
-    step: &StepDef,
-    field: &str,
-    target: &str,
-    order: &BTreeMap<&str, usize>,
-    path: &Path,
-) {
-    if order.contains_key(target) {
-        return;
-    }
-    let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
-    if !TERMINALS.contains(&target) {
-        err(&format!("edge `{field}` targets unknown step `{target}`"));
-    }
-}
-
 fn check_inputs_from(
     errors: &mut Vec<ConfigError>,
     name: &str,
@@ -248,18 +188,38 @@ fn check_inputs_from(
     }
 }
 
-fn check_reachable(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipeline, path: &Path) {
-    let Some(entry) = pipeline.steps.first() else {
-        return; // an empty pipeline is already reported
-    };
-    let mut seen = BTreeSet::new();
-    visit(&entry.name, pipeline, &mut seen);
-    for step in &pipeline.steps {
-        if !seen.contains(step.name.as_str()) {
-            let detail = format!("unreachable from `{}`", entry.name);
-            step_err(errors, path, name, &step.name, &detail);
-        }
+fn check_references(
+    errors: &mut Vec<ConfigError>,
+    config: &Config,
+    name: &str,
+    index: usize,
+    step: &StepDef,
+    order: &BTreeMap<&str, usize>,
+    path: &Path,
+) {
+    match step.kind {
+        StepKind::Agent => check_agent(errors, config, name, step, path),
+        StepKind::Decision => check_over(errors, name, index, step, order, path),
+        StepKind::Deterministic | StepKind::Concurrent => {}
     }
+}
+
+fn check_step(
+    errors: &mut Vec<ConfigError>,
+    config: &Config,
+    name: &str,
+    index: usize,
+    step: &StepDef,
+    order: &BTreeMap<&str, usize>,
+    path: &Path,
+) {
+    for detail in step.field_errors() {
+        step_err(errors, path, name, &step.name, &detail);
+    }
+    check_references(errors, config, name, index, step, order, path);
+    check_named_edges(errors, name, step, order, path);
+    check_decision_edges(errors, name, step, order, path);
+    check_inputs_from(errors, name, index, step, order, path);
 }
 
 fn visit<'a>(current: &'a str, pipeline: &'a Pipeline, seen: &mut BTreeSet<&'a str>) {
@@ -279,13 +239,40 @@ fn visit<'a>(current: &'a str, pipeline: &'a Pipeline, seen: &mut BTreeSet<&'a s
     }
 }
 
-pub(super) fn step_err(
-    errors: &mut Vec<ConfigError>,
-    path: &Path,
-    name: &str,
-    step: &str,
-    detail: &str,
-) {
-    let message = format!("pipeline `{name}` step `{step}`: {detail}");
-    push(errors, path.to_path_buf(), message);
+fn check_reachable(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipeline, path: &Path) {
+    let Some(entry) = pipeline.steps.first() else {
+        return; // an empty pipeline is already reported
+    };
+    let mut seen = BTreeSet::new();
+    visit(&entry.name, pipeline, &mut seen);
+    for step in &pipeline.steps {
+        if !seen.contains(step.name.as_str()) {
+            let detail = format!("unreachable from `{}`", entry.name);
+            step_err(errors, path, name, &step.name, &detail);
+        }
+    }
+}
+
+fn check_pipeline(errors: &mut Vec<ConfigError>, config: &Config, name: &str, pipeline: &Pipeline) {
+    let path = path_of("pipelines", name);
+    check_step_names(errors, name, pipeline, &path);
+    let order = step_order(pipeline);
+    for (index, step) in pipeline.steps.iter().enumerate() {
+        check_step(errors, config, name, index, step, &order, &path);
+    }
+    super::validate_concurrent::check(errors, config, name, pipeline, &path);
+    check_reachable(errors, name, pipeline, &path);
+}
+
+/// All pipeline rules, plus the assignment-to-pipeline reference.
+#[must_use]
+pub fn validate_pipelines(config: &Config) -> Vec<ConfigError> {
+    let mut errors = Vec::new();
+    for (name, pipeline) in &config.pipelines {
+        check_pipeline(&mut errors, config, name, pipeline);
+    }
+    for (name, assignment) in &config.assignments {
+        check_assignment_pipeline(&mut errors, config, name, assignment);
+    }
+    errors
 }

@@ -3,22 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Non-secret local settings stored under `BUREAU_HOME`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Settings {
-    /// Committed configuration source.
-    pub config: ConfigSource,
-    /// Resolution source for each credential reference.
-    pub credentials: BTreeMap<String, CredentialSource>,
-    /// User-global plugin choice.
-    #[serde(default)]
-    pub plugin: PluginSettings,
-    /// Optional migration source.
-    #[serde(default)]
-    pub migration: MigrationSettings,
-}
-
 /// Location of reviewed configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -104,6 +88,22 @@ pub struct PluginSettings {
 pub struct MigrationSettings {
     /// Existing local-state root to import, when requested.
     pub source: Option<PathBuf>,
+}
+
+/// Non-secret local settings stored under `BUREAU_HOME`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Committed configuration source.
+    pub config: ConfigSource,
+    /// Resolution source for each credential reference.
+    pub credentials: BTreeMap<String, CredentialSource>,
+    /// User-global plugin choice.
+    #[serde(default)]
+    pub plugin: PluginSettings,
+    /// Optional migration source.
+    #[serde(default)]
+    pub migration: MigrationSettings,
 }
 
 /// How the first pipeline is obtained.

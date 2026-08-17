@@ -15,13 +15,16 @@ struct RunCounts {
     orphan_worktrees: usize,
 }
 
-impl LocalEffects {
-    pub(super) fn inspect_recovery(&self) -> Result<Observation, String> {
-        let runs = inspect_runs(self.layout.runs())?;
-        let leases = lease_counts(self.layout.state_db())?;
-        let migration_pending = self.layout.root().join("migration.json").exists();
-        Ok(recovery_observation(&runs, &leases, migration_pending))
+fn parse_events(lines: &[&str], path: &Path) -> Result<Vec<Event>, String> {
+    let mut events = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        match serde_json::from_str(line) {
+            Ok(event) => events.push(event),
+            Err(_) if index + 1 == lines.len() => {}
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        }
     }
+    Ok(events)
 }
 
 pub(super) fn replay_run_read_only(directory: &Path) -> Result<RunState, String> {
@@ -35,31 +38,23 @@ pub(super) fn replay_run_read_only(directory: &Path) -> Result<RunState, String>
     runlog::replay(events).ok_or_else(|| format!("{} has no run_started event", path.display()))
 }
 
-fn parse_events(lines: &[&str], path: &Path) -> Result<Vec<Event>, String> {
-    let mut events = Vec::with_capacity(lines.len());
-    for (index, line) in lines.iter().enumerate() {
-        match serde_json::from_str(line) {
-            Ok(event) => events.push(event),
-            Err(_) if index + 1 == lines.len() => {}
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        }
-    }
-    Ok(events)
+fn derived_matches(directory: &Path, expected: &RunState) -> bool {
+    fs::read(directory.join(runlog::STATE_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<RunState>(&bytes).ok())
+        .is_some_and(|state| state == *expected)
 }
 
-fn inspect_runs(root: &Path) -> Result<RunCounts, String> {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(RunCounts::default());
-        }
-        Err(error) => return Err(format!("{}: {error}", root.display())),
-    };
-    let mut counts = RunCounts::default();
-    for entry in entries {
-        inspect_run_entry(entry, &mut counts)?;
+fn inspect_run(directory: &Path, counts: &mut RunCounts) -> Result<(), String> {
+    if !directory.join(runlog::EVENTS_FILE).is_file() {
+        counts.orphan_worktrees += usize::from(directory.join("wt").exists());
+        return Ok(());
     }
-    Ok(counts)
+    let state = replay_run_read_only(directory)?;
+    counts.runs += 1;
+    counts.running += usize::from(state.status == RunStatus::Running);
+    counts.stale_derived += usize::from(!derived_matches(directory, &state));
+    Ok(())
 }
 
 fn inspect_run_entry(
@@ -79,23 +74,19 @@ fn inspect_run_entry(
     inspect_run(&directory, counts)
 }
 
-fn inspect_run(directory: &Path, counts: &mut RunCounts) -> Result<(), String> {
-    if !directory.join(runlog::EVENTS_FILE).is_file() {
-        counts.orphan_worktrees += usize::from(directory.join("wt").exists());
-        return Ok(());
+fn inspect_runs(root: &Path) -> Result<RunCounts, String> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RunCounts::default());
+        }
+        Err(error) => return Err(format!("{}: {error}", root.display())),
+    };
+    let mut counts = RunCounts::default();
+    for entry in entries {
+        inspect_run_entry(entry, &mut counts)?;
     }
-    let state = replay_run_read_only(directory)?;
-    counts.runs += 1;
-    counts.running += usize::from(state.status == RunStatus::Running);
-    counts.stale_derived += usize::from(!derived_matches(directory, &state));
-    Ok(())
-}
-
-fn derived_matches(directory: &Path, expected: &RunState) -> bool {
-    fs::read(directory.join(runlog::STATE_FILE))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<RunState>(&bytes).ok())
-        .is_some_and(|state| state == *expected)
+    Ok(counts)
 }
 
 fn recovery_observation(
@@ -118,5 +109,14 @@ fn recovery_observation(
         Observation::new(Status::Ok, "recovery_state_ok", message)
     } else {
         Observation::new(Status::Warning, "recovery_repairs_available", message)
+    }
+}
+
+impl LocalEffects {
+    pub(super) fn inspect_recovery(&self) -> Result<Observation, String> {
+        let runs = inspect_runs(self.layout.runs())?;
+        let leases = lease_counts(self.layout.state_db()).map_err(|error| error.to_string())?;
+        let migration_pending = self.layout.root().join("migration.json").exists();
+        Ok(recovery_observation(&runs, &leases, migration_pending))
     }
 }

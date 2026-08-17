@@ -1,6 +1,17 @@
 //! Live approval-label admission at every step boundary.
 
-use super::machine::RunCtx;
+use super::context::RunCtx;
+
+async fn query(ctx: &RunCtx, label: &str) -> Result<Vec<crate::forge::Item>, String> {
+    let work = &ctx.plan.assignment.work;
+    ctx.plan
+        .forge
+        .query(&work.source, &work.filter)
+        .await
+        .map_err(|error| {
+            format!("could not confirm approval label `{label}`; the forge query failed: {error}")
+        })
+}
 
 pub(super) async fn check(ctx: &RunCtx) -> Result<(), String> {
     let Some(label) = ctx.plan.assignment.work.approval_label.as_deref() else {
@@ -21,15 +32,4 @@ pub(super) async fn check(ctx: &RunCtx) -> Result<(), String> {
             ctx.plan.run_id
         ))
     }
-}
-
-async fn query(ctx: &RunCtx, label: &str) -> Result<Vec<crate::forge::Item>, String> {
-    let work = &ctx.plan.assignment.work;
-    ctx.plan
-        .forge
-        .query(&work.source, &work.filter)
-        .await
-        .map_err(|error| {
-            format!("could not confirm approval label `{label}`; the forge query failed: {error}")
-        })
 }

@@ -10,15 +10,18 @@ pub struct Guard {
     _lock: Flock<File>,
 }
 
-/// Acquires a shared worker lock without waiting.
-///
-/// # Errors
-/// Fails when maintenance is active or the lock file cannot be opened.
-pub fn shared(home: &Path) -> Result<Guard, Error> {
-    if migration_pending(home)? {
-        return Err(Error::MigrationPending);
-    }
-    lock(home, FlockArg::LockSharedNonblock)
+/// Maintenance coordination failure.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// Filesystem operation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// Another process holds an incompatible lock.
+    #[error("local maintenance lock is busy: {0}")]
+    Busy(String),
+    /// An interrupted migration must be recovered before work resumes.
+    #[error("local migration is pending; rerun `bureau init` or `bureau setup`")]
+    MigrationPending,
 }
 
 fn migration_pending(home: &Path) -> Result<bool, std::io::Error> {
@@ -27,14 +30,6 @@ fn migration_pending(home: &Path) -> Result<bool, std::io::Error> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
-}
-
-/// Acquires an exclusive maintenance lock without waiting.
-///
-/// # Errors
-/// Fails when any worker is active or the lock file cannot be opened.
-pub fn exclusive(home: &Path) -> Result<Guard, Error> {
-    lock(home, FlockArg::LockExclusiveNonblock)
 }
 
 fn lock(home: &Path, argument: FlockArg) -> Result<Guard, Error> {
@@ -51,16 +46,21 @@ fn lock(home: &Path, argument: FlockArg) -> Result<Guard, Error> {
         .map_err(|(_, error)| Error::Busy(error.to_string()))
 }
 
-/// Maintenance coordination failure.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// Filesystem operation failed.
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    /// Another process holds an incompatible lock.
-    #[error("local maintenance lock is busy: {0}")]
-    Busy(String),
-    /// An interrupted migration must be recovered before work resumes.
-    #[error("local migration is pending; rerun `bureau init` or `bureau setup`")]
-    MigrationPending,
+/// Acquires a shared worker lock without waiting.
+///
+/// # Errors
+/// Fails when maintenance is active or the lock file cannot be opened.
+pub fn shared(home: &Path) -> Result<Guard, Error> {
+    if migration_pending(home)? {
+        return Err(Error::MigrationPending);
+    }
+    lock(home, FlockArg::LockSharedNonblock)
+}
+
+/// Acquires an exclusive maintenance lock without waiting.
+///
+/// # Errors
+/// Fails when any worker is active or the lock file cannot be opened.
+pub fn exclusive(home: &Path) -> Result<Guard, Error> {
+    lock(home, FlockArg::LockExclusiveNonblock)
 }

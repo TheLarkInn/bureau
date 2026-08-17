@@ -6,6 +6,32 @@ use clap::Subcommand;
 
 use super::reconcile;
 
+/// Fake adapter operations.
+#[derive(Debug, Subcommand)]
+pub enum FakeAction {
+    /// Replays a transcript fixture.
+    Replay {
+        /// Fixture path.
+        fixture: PathBuf,
+    },
+    /// Records a command.
+    Record {
+        /// Fixture path to write.
+        fixture: PathBuf,
+        /// The command to run, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
+}
+
+/// MCP protocol operations.
+#[derive(Debug, Subcommand)]
+pub enum McpAction {
+    /// Serves MCP over standard input and output.
+    #[command(hide = true)]
+    Serve,
+}
+
 /// CLI verbs.
 #[derive(Debug, Subcommand)]
 pub enum Verb {
@@ -124,30 +150,4 @@ pub enum Verb {
         #[command(subcommand)]
         action: FakeAction,
     },
-}
-
-/// Fake adapter operations.
-#[derive(Debug, Subcommand)]
-pub enum FakeAction {
-    /// Replays a transcript fixture.
-    Replay {
-        /// Fixture path.
-        fixture: PathBuf,
-    },
-    /// Records a command.
-    Record {
-        /// Fixture path to write.
-        fixture: PathBuf,
-        /// The command to run, after `--`.
-        #[arg(last = true, required = true)]
-        argv: Vec<String>,
-    },
-}
-
-/// MCP protocol operations.
-#[derive(Debug, Subcommand)]
-pub enum McpAction {
-    /// Serves MCP over standard input and output.
-    #[command(hide = true)]
-    Serve,
 }

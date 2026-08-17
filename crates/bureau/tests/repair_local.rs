@@ -129,8 +129,8 @@ fn interrupted_activation_restores_exact_original_state() {
     let run = fixture.run("durable", false, true);
     let worktree = run.join("wt");
     std::fs::create_dir_all(&worktree).expect("worktree");
-    let activation = bureau::plugin::activate_direct("reviewer.md", b"agent", &worktree, &run)
-        .expect("activate");
+    let activation =
+        bureau_plugin::activate_direct("reviewer.md", b"agent", &worktree, &run).expect("activate");
     let activation_id = restoration_id(&run);
     std::mem::forget(activation);
     let result = repair::run(
@@ -150,7 +150,7 @@ fn interrupted_activation_restores_exact_original_state() {
 }
 
 fn restoration_id(run: &std::path::Path) -> String {
-    bureau::plugin::restoration_infos(run)
+    bureau_plugin::restoration_infos(run)
         .expect("restoration")
         .pop()
         .expect("activation")

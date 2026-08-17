@@ -26,15 +26,20 @@ pub use group::{
     GroupStartedData, group_finished, group_member_cancelled, group_member_finished,
     group_member_started, group_started,
 };
-pub use group_state::{GroupMemberRecord, GroupRecord};
 pub use snapshot::{ConfigSource, RunSnapshot};
-pub use state::{RunState, RunStatus, StepRecord, replay};
+pub use state::{RunState, RunStatus, StepRecord};
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
+use crate::adapters::Usage;
+use crate::config::Completion;
+use crate::contract::StepResult;
 use crate::process::{Secret, scrub_json};
 
 /// The append-only event log file name within a run directory.
@@ -43,10 +48,89 @@ pub const EVENTS_FILE: &str = "events.jsonl";
 /// The derived state cache file name within a run directory.
 pub const STATE_FILE: &str = "state.json";
 
+/// Durable state for one concurrent group member.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GroupMemberRecord {
+    /// Number of attempts that began.
+    pub attempts: u32,
+    /// Full result after the member finishes.
+    pub result: Option<StepResult>,
+    /// Adapter-owned usage after the member finishes.
+    pub usage: Option<Usage>,
+    /// Member encountered a non-routable control failure.
+    #[serde(default)]
+    pub halted: bool,
+    /// Why the unfinished member was cancelled.
+    pub cancellation_reason: Option<String>,
+}
+
+/// Durable state for one concurrent group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroupRecord {
+    /// Members keyed deterministically by step name.
+    pub members: BTreeMap<String, GroupMemberRecord>,
+    /// When unfinished members are cancelled.
+    pub completion: Completion,
+    /// Resolved positive member limit.
+    pub max_concurrent: usize,
+    /// Internal Git snapshot shared by every member.
+    pub snapshot: String,
+    /// Aggregate result after the group finishes.
+    pub result: Option<StepResult>,
+    /// Aggregate usage after the group finishes.
+    pub usage: Option<Usage>,
+    /// Aggregate must stop instead of following pipeline edges.
+    #[serde(default)]
+    pub halted: bool,
+}
+
 /// The directory one run writes into.
 #[must_use]
 pub fn run_dir(runs_dir: &Path, run_id: &str) -> PathBuf {
     runs_dir.join(run_id)
+}
+
+/// The process clock boundary: milliseconds since the Unix epoch. The
+/// clock function is bound first so this helper stays the one place
+/// naming the process clock.
+fn now_millis() -> u64 {
+    let now = SystemTime::now;
+    now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Reads every event in a run directory's log, in sequence order.
+///
+/// A daemon kill mid-append leaves the final line torn — the scrubber's
+/// holdback tail is flushed only by [`RunLog::close`] — so for crash
+/// recovery a torn LAST line is dropped, not an error, and is truncated
+/// from the file (WAL-style repair on open; otherwise a resume's next
+/// append would fuse onto the partial bytes and poison the log
+/// mid-file). An unparseable line anywhere earlier remains an error.
+///
+/// # Errors
+/// Propagates filesystem failures and rejects any unparseable line
+/// before the last one.
+pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
+    let path = dir.join(EVENTS_FILE);
+    let text = std::fs::read_to_string(&path)?;
+    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines
+        .last()
+        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
+    {
+        let torn = lines.pop().unwrap_or_default();
+        let keep = torn.as_ptr() as usize - text.as_ptr() as usize;
+        OpenOptions::new()
+            .write(true)
+            .open(&path)?
+            .set_len(u64::try_from(keep).map_err(io::Error::other)?)?;
+    }
+    lines
+        .iter()
+        .map(|line| serde_json::from_str(line).map_err(io::Error::other))
+        .collect()
 }
 
 /// An open run log. Appends are fsync'd and scrubbed on write.
@@ -135,37 +219,17 @@ impl RunLog {
     }
 }
 
-/// Reads every event in a run directory's log, in sequence order.
+/// Rebuilds run state from the event log — the only source of truth.
 ///
-/// A daemon kill mid-append leaves the final line torn — the scrubber's
-/// holdback tail is flushed only by [`RunLog::close`] — so for crash
-/// recovery a torn LAST line is dropped, not an error, and is truncated
-/// from the file (WAL-style repair on open; otherwise a resume's next
-/// append would fuse onto the partial bytes and poison the log
-/// mid-file). An unparseable line anywhere earlier remains an error.
-///
-/// # Errors
-/// Propagates filesystem failures and rejects any unparseable line
-/// before the last one.
-pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
-    let path = dir.join(EVENTS_FILE);
-    let text = std::fs::read_to_string(&path)?;
-    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    if lines
-        .last()
-        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
-    {
-        let torn = lines.pop().unwrap_or_default();
-        let keep = torn.as_ptr() as usize - text.as_ptr() as usize;
-        OpenOptions::new()
-            .write(true)
-            .open(&path)?
-            .set_len(u64::try_from(keep).map_err(io::Error::other)?)?;
+/// Returns `None` when the log has no `run_started` event.
+#[must_use]
+pub fn replay(events: impl IntoIterator<Item = Event>) -> Option<RunState> {
+    let mut iter = events.into_iter();
+    let mut state = iter.by_ref().find_map(|e| RunState::from_event(&e))?;
+    for event in iter {
+        state.apply(&event);
     }
-    lines
-        .iter()
-        .map(|line| serde_json::from_str(line).map_err(io::Error::other))
-        .collect()
+    Some(state)
 }
 
 /// Replays a run directory's log into its state.
@@ -187,10 +251,4 @@ pub fn write_state_cache(dir: &Path, state: &RunState) -> io::Result<()> {
         dir.join(STATE_FILE),
         serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
     )
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

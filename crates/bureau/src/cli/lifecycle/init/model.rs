@@ -7,15 +7,6 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Request {
-    pub(super) settings: Settings,
-    pub(super) repositories: BTreeMap<String, Repo>,
-    pub(super) assignment: FirstAssignment,
-    pub(super) first_pipeline: FirstPipeline,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct FirstAssignment {
     pub(super) name: String,
     pub(super) work: WorkSource,
@@ -27,6 +18,15 @@ pub(super) struct FirstAssignment {
     pub(super) adapter: AdapterKind,
     #[serde(default)]
     pub(super) limits: Limits,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Request {
+    pub(super) settings: Settings,
+    pub(super) repositories: BTreeMap<String, Repo>,
+    pub(super) assignment: FirstAssignment,
+    pub(super) first_pipeline: FirstPipeline,
 }
 
 impl Request {

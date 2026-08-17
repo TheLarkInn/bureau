@@ -17,6 +17,11 @@ const BATCH: usize = 200;
 const MAX_BATCHES: usize = 2;
 const FIELDS: &str = "System.Id,System.Title,System.Description,System.Tags";
 
+#[derive(Deserialize)]
+struct WiqlRef {
+    id: u64,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct WiqlResult {
@@ -24,23 +29,9 @@ struct WiqlResult {
 }
 
 #[derive(Deserialize)]
-struct WiqlRef {
-    id: u64,
-}
-
-#[derive(Deserialize)]
 struct List<T> {
     #[serde(default)]
     value: Vec<T>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct RawWorkItem {
-    id: u64,
-    fields: WorkItemFields,
-    #[serde(rename = "_links")]
-    links: serde_json::Value,
 }
 
 #[derive(Deserialize, Default)]
@@ -52,6 +43,120 @@ struct WorkItemFields {
     description: String,
     #[serde(rename = "System.Tags")]
     tags: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawWorkItem {
+    id: u64,
+    fields: WorkItemFields,
+    #[serde(rename = "_links")]
+    links: serde_json::Value,
+}
+
+/// RFC 4648 base64; a local twin of `git.rs`'s private encoder.
+fn base64(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    data.chunks(3)
+        .flat_map(|chunk| {
+            let bits = chunk
+                .iter()
+                .fold(0usize, |acc, &byte| (acc << 8) | usize::from(byte))
+                << (8 * (3 - chunk.len()));
+            (0..4).map(move |i| {
+                if i <= chunk.len() {
+                    char::from(TABLE[(bits >> (18 - 6 * i)) & 63])
+                } else {
+                    '='
+                }
+            })
+        })
+        .collect()
+}
+
+/// ADO Basic credential: empty user, PAT as password; never logged.
+fn basic_auth(token: &Secret) -> String {
+    format!(
+        "Basic {}",
+        base64(format!(":{}", token.expose()).as_bytes())
+    )
+}
+
+/// Splits a registry URL (`.../{project}/_git/{repo}`) or bare `project/repo`.
+fn repo_parts(input: &str) -> Result<(String, String), Error> {
+    let trimmed = input.trim_matches('/');
+    let parts = trimmed
+        .rsplit_once("/_git/")
+        .map(|(head, repo)| (head.rsplit('/').next().unwrap_or_default(), repo))
+        .or_else(|| trimmed.split_once('/'));
+    match parts {
+        Some((project, repo)) if !project.is_empty() && !repo.is_empty() && !repo.contains('/') => {
+            Ok((project.to_owned(), repo.to_owned()))
+        }
+        _ => Err(Error::Parse(format!("bad repo reference: {input}"))),
+    }
+}
+
+fn item_parts(item_id: &str) -> Result<(String, u64), Error> {
+    let bad = || Error::Parse(format!("bad work item id: {item_id}"));
+    let (project, id) = item_id.split_once('/').ok_or_else(bad)?;
+    let id = id.parse::<u64>().map_err(|_| bad())?;
+    Ok((project.to_owned(), id))
+}
+
+/// Non-2xx becomes [`Error::Api`] (≤300 chars); shape mismatch [`Error::Parse`].
+async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
+    let status = response.status();
+    if status.is_success() {
+        return response
+            .json::<T>()
+            .await
+            .map_err(|error| Error::Parse(error.to_string()));
+    }
+    let text = response.text().await.unwrap_or_default();
+    Err(Error::Api {
+        status: status.as_u16(),
+        message: text.chars().take(300).collect(),
+    })
+}
+
+/// Maps a hydrated work item. Trust fails closed at `Untrusted`: ADO
+/// Stakeholders author items without maintainer authority (§9), so
+/// maintainer gates need a triage step or label convention (future work).
+fn work_item(project: &str, raw: RawWorkItem) -> Item {
+    let url = raw.links["html"]["href"].as_str().unwrap_or_default();
+    Item {
+        external_id: format!("{project}/{}", raw.id),
+        title: raw.fields.title,
+        body: raw.fields.description,
+        url: url.to_owned(),
+        labels: raw
+            .fields
+            .tags
+            .split(';')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        trust: Trust::Untrusted,
+    }
+}
+
+/// Maps a pull request. `item_id` stays `None`: ADO's work-item links
+/// live behind a separate relations API the runner does not call.
+fn pull_request(project: &str, repo: &str, raw: RawPr) -> Pr {
+    let branch = raw
+        .source_ref_name
+        .trim_start_matches("refs/heads/")
+        .to_owned();
+    Pr {
+        number: raw.pull_request_id,
+        repo: format!("{project}/{repo}"),
+        branch,
+        title: raw.title,
+        url: raw.url,
+        item_id: None,
+    }
 }
 
 /// Azure DevOps API client. `source` uses `project/repo` form; `filter`
@@ -189,110 +294,5 @@ impl Forge for AdoForge {
             .body(patch.to_string());
         let _: serde_json::Value = decode(request.send().await?).await?;
         Ok(())
-    }
-}
-
-/// ADO Basic credential: empty user, PAT as password; never logged.
-fn basic_auth(token: &Secret) -> String {
-    format!(
-        "Basic {}",
-        base64(format!(":{}", token.expose()).as_bytes())
-    )
-}
-
-/// RFC 4648 base64; a local twin of `git.rs`'s private encoder.
-fn base64(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    data.chunks(3)
-        .flat_map(|chunk| {
-            let bits = chunk
-                .iter()
-                .fold(0usize, |acc, &byte| (acc << 8) | usize::from(byte))
-                << (8 * (3 - chunk.len()));
-            (0..4).map(move |i| {
-                if i <= chunk.len() {
-                    char::from(TABLE[(bits >> (18 - 6 * i)) & 63])
-                } else {
-                    '='
-                }
-            })
-        })
-        .collect()
-}
-
-/// Splits a registry URL (`.../{project}/_git/{repo}`) or bare `project/repo`.
-fn repo_parts(input: &str) -> Result<(String, String), Error> {
-    let trimmed = input.trim_matches('/');
-    let parts = trimmed
-        .rsplit_once("/_git/")
-        .map(|(head, repo)| (head.rsplit('/').next().unwrap_or_default(), repo))
-        .or_else(|| trimmed.split_once('/'));
-    match parts {
-        Some((project, repo)) if !project.is_empty() && !repo.is_empty() && !repo.contains('/') => {
-            Ok((project.to_owned(), repo.to_owned()))
-        }
-        _ => Err(Error::Parse(format!("bad repo reference: {input}"))),
-    }
-}
-
-fn item_parts(item_id: &str) -> Result<(String, u64), Error> {
-    let bad = || Error::Parse(format!("bad work item id: {item_id}"));
-    let (project, id) = item_id.split_once('/').ok_or_else(bad)?;
-    let id = id.parse::<u64>().map_err(|_| bad())?;
-    Ok((project.to_owned(), id))
-}
-
-/// Non-2xx becomes [`Error::Api`] (≤300 chars); shape mismatch [`Error::Parse`].
-async fn decode<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
-    let status = response.status();
-    if status.is_success() {
-        return response
-            .json::<T>()
-            .await
-            .map_err(|error| Error::Parse(error.to_string()));
-    }
-    let text = response.text().await.unwrap_or_default();
-    Err(Error::Api {
-        status: status.as_u16(),
-        message: text.chars().take(300).collect(),
-    })
-}
-
-/// Maps a hydrated work item. Trust fails closed at `Untrusted`: ADO
-/// Stakeholders author items without maintainer authority (§9), so
-/// maintainer gates need a triage step or label convention (future work).
-fn work_item(project: &str, raw: RawWorkItem) -> Item {
-    let url = raw.links["html"]["href"].as_str().unwrap_or_default();
-    Item {
-        external_id: format!("{project}/{}", raw.id),
-        title: raw.fields.title,
-        body: raw.fields.description,
-        url: url.to_owned(),
-        labels: raw
-            .fields
-            .tags
-            .split(';')
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .map(str::to_owned)
-            .collect(),
-        trust: Trust::Untrusted,
-    }
-}
-
-/// Maps a pull request. `item_id` stays `None`: ADO's work-item links
-/// live behind a separate relations API the runner does not call.
-fn pull_request(project: &str, repo: &str, raw: RawPr) -> Pr {
-    let branch = raw
-        .source_ref_name
-        .trim_start_matches("refs/heads/")
-        .to_owned();
-    Pr {
-        number: raw.pull_request_id,
-        repo: format!("{project}/{repo}"),
-        branch,
-        title: raw.title,
-        url: raw.url,
-        item_id: None,
     }
 }

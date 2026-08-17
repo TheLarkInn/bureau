@@ -27,6 +27,7 @@ mod approval;
 mod artifact;
 mod checkpoint;
 mod concurrent;
+mod context;
 mod control;
 mod deadline;
 mod drive;
@@ -53,14 +54,7 @@ use crate::git::CheckoutCache;
 use crate::process::Secret;
 use crate::runlog::{RunFinishedData, RunSnapshot};
 
-/// One terminal log and the immutable run inputs it projects into state.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TerminalRecord {
-    /// Immutable run inputs.
-    pub snapshot: RunSnapshot,
-    /// Complete terminal event.
-    pub finished: RunFinishedData,
-}
+pub use crate::state::TerminalRecord;
 
 /// Everything one run needs. The item is already leased by the caller;
 /// lease release on completion is also the caller's job (the reconcile
@@ -109,28 +103,28 @@ impl RunPlan {
             direct_agents: self.direct_agents.clone(),
         }
     }
+}
 
-    /// Rehydrates a durable snapshot with current secret values and forge client.
-    #[must_use]
-    pub fn from_snapshot(
-        snapshot: RunSnapshot,
-        forge: Arc<dyn Forge>,
-        credentials: BTreeMap<String, Secret>,
-    ) -> Self {
-        Self {
-            run_id: snapshot.run_id,
-            assignment: snapshot.assignment,
-            pipeline: snapshot.pipeline,
-            roles: snapshot.roles,
-            repos: snapshot.repos,
-            item: snapshot.item,
-            forge,
-            credentials,
-            config_source: snapshot.config_source,
-            plugin_sources: snapshot.plugin_sources,
-            direct_agents: snapshot.direct_agents,
-            lease: None,
-        }
+/// Rehydrates a durable snapshot with current secret values and forge client.
+#[must_use]
+pub fn rehydrate(
+    snapshot: RunSnapshot,
+    forge: Arc<dyn Forge>,
+    credentials: BTreeMap<String, Secret>,
+) -> RunPlan {
+    RunPlan {
+        run_id: snapshot.run_id,
+        assignment: snapshot.assignment,
+        pipeline: snapshot.pipeline,
+        roles: snapshot.roles,
+        repos: snapshot.repos,
+        item: snapshot.item,
+        forge,
+        credentials,
+        config_source: snapshot.config_source,
+        plugin_sources: snapshot.plugin_sources,
+        direct_agents: snapshot.direct_agents,
+        lease: None,
     }
 }
 
@@ -170,6 +164,26 @@ impl RunOutcome {
             message: data.message,
             pr: data.pr,
         }
+    }
+}
+
+/// Awaits the machine's task; a panic inside it is data, not an unwind.
+struct AbortTask(tokio::task::JoinHandle<RunOutcome>);
+
+impl Drop for AbortTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn joined(run_id: String, mut task: AbortTask) -> RunOutcome {
+    match (&mut task.0).await {
+        Ok(outcome) => outcome,
+        Err(error) => RunOutcome::bare(
+            &run_id,
+            StepOutcome::Failure,
+            format!("run task failed: {error}"),
+        ),
     }
 }
 
@@ -239,24 +253,14 @@ impl Engine {
     }
 }
 
-/// Awaits the machine's task; a panic inside it is data, not an unwind.
-struct AbortTask(tokio::task::JoinHandle<RunOutcome>);
-
-impl Drop for AbortTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-async fn joined(run_id: String, mut task: AbortTask) -> RunOutcome {
-    match (&mut task.0).await {
-        Ok(outcome) => outcome,
-        Err(error) => RunOutcome::bare(
-            &run_id,
-            StepOutcome::Failure,
-            format!("run task failed: {error}"),
-        ),
-    }
+/// Wall-clock milliseconds for run-id uniqueness, bound once so this
+/// module stays the single place naming the system clock.
+fn wall_millis() -> u64 {
+    use std::time::UNIX_EPOCH;
+    let now = std::time::SystemTime::now;
+    now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// A filesystem-safe run id with operating-system random entropy.
@@ -264,10 +268,7 @@ async fn joined(run_id: String, mut task: AbortTask) -> RunOutcome {
 /// # Errors
 /// Fails when the operating system random source is unavailable.
 pub fn new_run_id(assignment: &str) -> std::io::Result<String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let millis = wall_millis();
     let safe: String = assignment
         .chars()
         .map(|c| {

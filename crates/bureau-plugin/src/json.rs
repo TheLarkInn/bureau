@@ -7,26 +7,6 @@ use serde_json::Value;
 
 use super::Error;
 
-pub fn read(path: &Path) -> Result<Value, Error> {
-    let bytes = read_bytes(path)?;
-    parse(&bytes, path)
-}
-
-pub fn read_optional(path: &Path) -> Result<Option<Value>, Error> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => read(path).map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Error::io("inspect", path, error)),
-    }
-}
-
-pub fn parse(bytes: &[u8], path: &Path) -> Result<Value, Error> {
-    let stripped = Stripper::new(bytes)
-        .strip()
-        .map_err(|message| Error::invalid(path, message))?;
-    serde_json::from_slice(&stripped).map_err(|error| Error::invalid(path, error))
-}
-
 pub fn format(value: &Value, path: &Path) -> Result<Vec<u8>, Error> {
     let mut bytes =
         serde_json::to_vec_pretty(value).map_err(|error| Error::invalid(path, error))?;
@@ -143,5 +123,25 @@ impl<'a> Stripper<'a> {
             });
             self.index += 1;
         }
+    }
+}
+
+pub fn parse(bytes: &[u8], path: &Path) -> Result<Value, Error> {
+    let stripped = Stripper::new(bytes)
+        .strip()
+        .map_err(|message| Error::invalid(path, message))?;
+    serde_json::from_slice(&stripped).map_err(|error| Error::invalid(path, error))
+}
+
+pub fn read(path: &Path) -> Result<Value, Error> {
+    let bytes = read_bytes(path)?;
+    parse(&bytes, path)
+}
+
+pub fn read_optional(path: &Path) -> Result<Option<Value>, Error> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => read(path).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(Error::io("inspect", path, error)),
     }
 }

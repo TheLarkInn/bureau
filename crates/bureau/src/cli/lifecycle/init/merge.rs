@@ -8,6 +8,19 @@ use super::proposal::{self, Proposal};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
+fn completed(status: PrStatus) -> anyhow::Result<Option<String>> {
+    match status {
+        PrStatus::Open => Ok(None),
+        PrStatus::Closed => anyhow::bail!("config pull request closed without merge"),
+        PrStatus::Merged {
+            commit: Some(commit),
+        } => Ok(Some(commit)),
+        PrStatus::Merged { commit: None } => {
+            anyhow::bail!("forge did not report the exact merged config commit")
+        }
+    }
+}
+
 pub(super) async fn wait(settings: &Settings, proposal: &Proposal) -> anyhow::Result<String> {
     proposal::display(proposal);
     let access = access::resolve(settings)?;
@@ -24,19 +37,6 @@ pub(super) async fn wait(settings: &Settings, proposal: &Proposal) -> anyhow::Re
             return Ok(commit);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
-    }
-}
-
-fn completed(status: PrStatus) -> anyhow::Result<Option<String>> {
-    match status {
-        PrStatus::Open => Ok(None),
-        PrStatus::Closed => anyhow::bail!("config pull request closed without merge"),
-        PrStatus::Merged {
-            commit: Some(commit),
-        } => Ok(Some(commit)),
-        PrStatus::Merged { commit: None } => {
-            anyhow::bail!("forge did not report the exact merged config commit")
-        }
     }
 }
 

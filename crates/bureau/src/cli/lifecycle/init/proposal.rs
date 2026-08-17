@@ -1,3 +1,4 @@
+use crate::cli::out;
 use std::path::PathBuf;
 
 use bureau::forge::PrRequest;
@@ -14,26 +15,31 @@ pub(super) struct Proposal {
     pub(super) commit: String,
 }
 
-pub(super) async fn create(
-    layout: &bureau::home::Layout,
-    settings: &Settings,
-    draft: &ConfigDraft,
-) -> anyhow::Result<Proposal> {
-    let (access, worktree, branch) = checkout(layout, settings).await?;
-    let root = worktree.path().join(settings.config.subdirectory());
-    files::materialize(&root, draft)?;
-    let commit = publish(&worktree, settings, &access).await?;
-    let created = open(settings, &access, branch.clone()).await?;
-    println!("config pull request: {}", created.url);
-    Ok(Proposal {
-        pull_request: ConfigPullRequest {
-            id: created.url.clone(),
-        },
-        repo: created.repo,
-        number: created.number,
+fn branch() -> String {
+    // The process clock boundary: bound once as a function pointer so
+    // this stays the single read site.
+    let now = std::time::SystemTime::now;
+    let nanos = now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    format!("bureau/init-{}-{nanos}", std::process::id())
+}
+
+fn worktree_path(layout: &bureau::home::Layout, branch: &str) -> anyhow::Result<PathBuf> {
+    let root = layout.config_cache().join("init-worktrees");
+    std::fs::create_dir_all(&root)?;
+    Ok(root.join(branch.replace('/', "-")))
+}
+
+fn pull_request(settings: &Settings, repo: String, branch: String) -> PrRequest {
+    PrRequest {
+        repo,
         branch,
-        commit,
-    })
+        base: settings.config.reference().to_owned(),
+        title: "Add bureau configuration".to_owned(),
+        body: "Adds the reviewed configuration for bureau initialization.".to_owned(),
+        item_id: None,
+    }
 }
 
 async fn checkout(
@@ -72,33 +78,31 @@ async fn open(
     Ok(access.forge.create_pr(&request).await?)
 }
 
-fn pull_request(settings: &Settings, repo: String, branch: String) -> PrRequest {
-    PrRequest {
-        repo,
+pub(super) async fn create(
+    layout: &bureau::home::Layout,
+    settings: &Settings,
+    draft: &ConfigDraft,
+) -> anyhow::Result<Proposal> {
+    let (access, worktree, branch) = checkout(layout, settings).await?;
+    let root = worktree.path().join(settings.config.subdirectory());
+    files::materialize(&root, draft)?;
+    let commit = publish(&worktree, settings, &access).await?;
+    let created = open(settings, &access, branch.clone()).await?;
+    out::line(format_args!("config pull request: {}", created.url));
+    Ok(Proposal {
+        pull_request: ConfigPullRequest {
+            id: created.url.clone(),
+        },
+        repo: created.repo,
+        number: created.number,
         branch,
-        base: settings.config.reference().to_owned(),
-        title: "Add bureau configuration".to_owned(),
-        body: "Adds the reviewed configuration for bureau initialization.".to_owned(),
-        item_id: None,
-    }
-}
-
-fn worktree_path(layout: &bureau::home::Layout, branch: &str) -> anyhow::Result<PathBuf> {
-    let root = layout.config_cache().join("init-worktrees");
-    std::fs::create_dir_all(&root)?;
-    Ok(root.join(branch.replace('/', "-")))
-}
-
-fn branch() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
-    format!("bureau/init-{}-{now}", std::process::id())
+        commit,
+    })
 }
 
 pub(super) fn display(proposal: &Proposal) {
-    println!(
+    out::line(format_args!(
         "waiting for {} at {} ({})",
         proposal.pull_request.id, proposal.branch, proposal.commit
-    );
+    ));
 }

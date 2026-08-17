@@ -5,6 +5,23 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Default emergency deadline when an assignment omits one.
 pub(super) const DEFAULT_RUN_HOURS: u64 = 24;
 
+/// The monotonic clock read, bound once so this module stays the
+/// single place naming the process clock.
+fn monotonic_now() -> tokio::time::Instant {
+    let now = tokio::time::Instant::now;
+    now()
+}
+
+/// Wall-clock milliseconds since the Unix epoch, bound once like
+/// [`monotonic_now`].
+fn now_ms() -> u64 {
+    let now = SystemTime::now;
+    let millis = now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    u64::try_from(millis).unwrap_or(u64::MAX)
+}
+
 pub(super) fn at(started_at_ms: u64, configured_hours: Option<u64>) -> tokio::time::Instant {
     let total = Duration::from_secs(
         configured_hours
@@ -16,11 +33,11 @@ pub(super) fn at(started_at_ms: u64, configured_hours: Option<u64>) -> tokio::ti
     } else {
         Duration::from_millis(now_ms().saturating_sub(started_at_ms))
     };
-    tokio::time::Instant::now() + total.saturating_sub(elapsed)
+    monotonic_now() + total.saturating_sub(elapsed)
 }
 
 pub(super) fn remaining(deadline: tokio::time::Instant) -> Duration {
-    deadline.saturating_duration_since(tokio::time::Instant::now())
+    deadline.saturating_duration_since(monotonic_now())
 }
 
 pub(super) fn bounded(
@@ -30,11 +47,4 @@ pub(super) fn bounded(
 ) -> Duration {
     let configured = configured_secs.map_or(fallback, Duration::from_secs);
     configured.min(remaining)
-}
-
-fn now_ms() -> u64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis());
-    u64::try_from(millis).unwrap_or(u64::MAX)
 }

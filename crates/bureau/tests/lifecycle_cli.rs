@@ -124,8 +124,8 @@ fn repair_restores_a_crashed_running_log_without_a_live_lease() {
     let run = crashed_run(&home.0);
     let worktree = run.join("wt");
     std::fs::create_dir_all(&worktree).expect("worktree");
-    let activation = bureau::plugin::activate_direct("reviewer.md", b"agent", &worktree, &run)
-        .expect("activate");
+    let activation =
+        bureau_plugin::activate_direct("reviewer.md", b"agent", &worktree, &run).expect("activate");
     std::mem::forget(activation);
     let output = bureau_input(&home.0, &["repair"], b"yes\n");
     let restored = !worktree.join(".github/agents/reviewer.agent.md").exists()

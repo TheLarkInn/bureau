@@ -3,11 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::Config;
 use super::files::Permission;
 use super::pipeline::{Pipeline, StepDef, StepKind};
-use super::validate::push;
-use super::validate_pipeline::step_err;
+use super::{Config, push, step_err};
 use crate::ConfigError;
 
 const EVIDENCE_PERMISSIONS: [Permission; 5] = [
@@ -17,38 +15,6 @@ const EVIDENCE_PERMISSIONS: [Permission; 5] = [
     Permission::RunsRead,
     Permission::ModelInvoke,
 ];
-
-pub(super) fn check(
-    errors: &mut Vec<ConfigError>,
-    config: &Config,
-    name: &str,
-    pipeline: &Pipeline,
-    path: &Path,
-) {
-    let membership = membership(errors, name, pipeline, path);
-    for (member, group) in &membership {
-        check_member(errors, config, name, pipeline, member, group, path);
-    }
-    check_edge_targets(errors, name, pipeline, &membership, path);
-}
-
-fn membership(
-    errors: &mut Vec<ConfigError>,
-    name: &str,
-    pipeline: &Pipeline,
-    path: &Path,
-) -> BTreeMap<String, String> {
-    let mut membership = BTreeMap::new();
-    for group in pipeline
-        .steps
-        .iter()
-        .filter(|step| step.kind == StepKind::Concurrent)
-    {
-        check_group_limit(errors, name, group, path);
-        add_members(errors, name, pipeline, group, path, &mut membership);
-    }
-    membership
-}
 
 fn check_group_limit(errors: &mut Vec<ConfigError>, name: &str, group: &StepDef, path: &Path) {
     if group
@@ -74,20 +40,19 @@ fn check_group_limit(errors: &mut Vec<ConfigError>, name: &str, group: &StepDef,
     }
 }
 
-fn add_members(
+fn member_error(
     errors: &mut Vec<ConfigError>,
-    name: &str,
-    pipeline: &Pipeline,
-    group: &StepDef,
     path: &Path,
-    membership: &mut BTreeMap<String, String>,
+    name: &str,
+    group: &StepDef,
+    member: &str,
+    detail: &str,
 ) {
-    let mut unique = BTreeSet::new();
-    for member in &group.steps {
-        if let Some(detail) = member_problem(pipeline, group, membership, &mut unique, member) {
-            member_error(errors, path, name, group, member, &detail);
-        }
-    }
+    let message = format!(
+        "pipeline `{name}` concurrent group `{}` member `{member}` {detail}",
+        group.name
+    );
+    push(errors, path.to_path_buf(), message);
 }
 
 fn member_problem(
@@ -108,22 +73,38 @@ fn member_problem(
         .map(|first| format!("already belongs to concurrent group `{first}`"))
 }
 
-fn check_member(
+fn add_members(
     errors: &mut Vec<ConfigError>,
-    config: &Config,
     name: &str,
     pipeline: &Pipeline,
-    member: &str,
-    group: &str,
+    group: &StepDef,
     path: &Path,
+    membership: &mut BTreeMap<String, String>,
 ) {
-    let Some(step) = pipeline.steps.iter().find(|step| step.name == member) else {
-        return;
-    };
-    check_member_kind(errors, name, pipeline, step, group, path);
-    check_member_edges(errors, name, step, path);
-    check_sibling_inputs(errors, name, pipeline, step, group, path);
-    check_permissions(errors, config, name, step, path);
+    let mut unique = BTreeSet::new();
+    for member in &group.steps {
+        if let Some(detail) = member_problem(pipeline, group, membership, &mut unique, member) {
+            member_error(errors, path, name, group, member, &detail);
+        }
+    }
+}
+
+fn membership(
+    errors: &mut Vec<ConfigError>,
+    name: &str,
+    pipeline: &Pipeline,
+    path: &Path,
+) -> BTreeMap<String, String> {
+    let mut membership = BTreeMap::new();
+    for group in pipeline
+        .steps
+        .iter()
+        .filter(|step| step.kind == StepKind::Concurrent)
+    {
+        check_group_limit(errors, name, group, path);
+        add_members(errors, name, pipeline, group, path, &mut membership);
+    }
+    membership
 }
 
 fn check_member_kind(
@@ -216,6 +197,24 @@ fn check_permissions(
     }
 }
 
+fn check_member(
+    errors: &mut Vec<ConfigError>,
+    config: &Config,
+    name: &str,
+    pipeline: &Pipeline,
+    member: &str,
+    group: &str,
+    path: &Path,
+) {
+    let Some(step) = pipeline.steps.iter().find(|step| step.name == member) else {
+        return;
+    };
+    check_member_kind(errors, name, pipeline, step, group, path);
+    check_member_edges(errors, name, step, path);
+    check_sibling_inputs(errors, name, pipeline, step, group, path);
+    check_permissions(errors, config, name, step, path);
+}
+
 fn check_edge_targets(
     errors: &mut Vec<ConfigError>,
     name: &str,
@@ -238,17 +237,16 @@ fn check_edge_targets(
     }
 }
 
-fn member_error(
+pub(super) fn check(
     errors: &mut Vec<ConfigError>,
-    path: &Path,
+    config: &Config,
     name: &str,
-    group: &StepDef,
-    member: &str,
-    detail: &str,
+    pipeline: &Pipeline,
+    path: &Path,
 ) {
-    let message = format!(
-        "pipeline `{name}` concurrent group `{}` member `{member}` {detail}",
-        group.name
-    );
-    push(errors, path.to_path_buf(), message);
+    let membership = membership(errors, name, pipeline, path);
+    for (member, group) in &membership {
+        check_member(errors, config, name, pipeline, member, group, path);
+    }
+    check_edge_targets(errors, name, pipeline, &membership, path);
 }

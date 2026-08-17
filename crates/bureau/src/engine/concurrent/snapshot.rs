@@ -4,18 +4,21 @@ use std::path::{Path, PathBuf};
 
 use crate::engine::gitcmd;
 
-pub(super) async fn create(worktree: &Path, run_dir: &Path, group: &str) -> Result<String, String> {
-    let index = Index::new(run_dir.join(format!(".concurrent-index-{group}")));
-    let index_text = index.path.to_string_lossy().into_owned();
-    let env = [("GIT_INDEX_FILE", index_text.as_str())];
-    let tree = write_tree(worktree, &env).await?;
-    commit(worktree, &tree, &env, group).await
+struct Index {
+    path: PathBuf,
 }
 
-async fn write_tree(worktree: &Path, env: &[(&str, &str)]) -> Result<String, String> {
-    gitcmd::git(&["read-tree", "HEAD"], worktree, env).await?;
-    add(worktree, env).await?;
-    gitcmd::git(&["write-tree"], worktree, env).await
+impl Index {
+    fn new(path: PathBuf) -> Self {
+        let _ = std::fs::remove_file(&path);
+        Self { path }
+    }
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 async fn add(worktree: &Path, env: &[(&str, &str)]) -> Result<(), String> {
@@ -29,6 +32,12 @@ async fn add(worktree: &Path, env: &[(&str, &str)]) -> Result<(), String> {
     ];
     gitcmd::git(&args, worktree, env).await?;
     Ok(())
+}
+
+async fn write_tree(worktree: &Path, env: &[(&str, &str)]) -> Result<String, String> {
+    gitcmd::git(&["read-tree", "HEAD"], worktree, env).await?;
+    add(worktree, env).await?;
+    gitcmd::git(&["write-tree"], worktree, env).await
 }
 
 async fn commit(
@@ -49,19 +58,10 @@ async fn commit(
     .await
 }
 
-struct Index {
-    path: PathBuf,
-}
-
-impl Index {
-    fn new(path: PathBuf) -> Self {
-        let _ = std::fs::remove_file(&path);
-        Self { path }
-    }
-}
-
-impl Drop for Index {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
+pub(super) async fn create(worktree: &Path, run_dir: &Path, group: &str) -> Result<String, String> {
+    let index = Index::new(run_dir.join(format!(".concurrent-index-{group}")));
+    let index_text = index.path.to_string_lossy().into_owned();
+    let env = [("GIT_INDEX_FILE", index_text.as_str())];
+    let tree = write_tree(worktree, &env).await?;
+    commit(worktree, &tree, &env, group).await
 }

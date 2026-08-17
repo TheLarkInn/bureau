@@ -3,25 +3,16 @@ use super::model::{
     PluginActivationState, SkipReason, Skipped, WorktreeState,
 };
 
-/// Builds a canonical plan containing only reversible, currently safe repairs.
-#[must_use]
-pub fn plan(candidates: impl IntoIterator<Item = Candidate>) -> Plan {
-    let mut actions = Vec::new();
-    let mut skipped = Vec::new();
-    for candidate in candidates {
-        assess(candidate, &mut actions, &mut skipped);
-    }
-    Plan::new(actions, skipped)
+fn skip(skipped: &mut Vec<Skipped>, target: String, reason: SkipReason) {
+    skipped.push(Skipped { target, reason });
 }
 
-fn assess(candidate: Candidate, actions: &mut Vec<Action>, skipped: &mut Vec<Skipped>) {
-    match candidate {
-        Candidate::Directory(state) => assess_directory(state, actions),
-        Candidate::Cache(state) => assess_cache(state, actions, skipped),
-        Candidate::PluginActivation(state) => assess_plugin(state, actions, skipped),
-        Candidate::Ownership(state) => assess_ownership(state, actions, skipped),
-        Candidate::Worktree(state) => assess_worktree(state, actions, skipped),
-        Candidate::DerivedState(state) => assess_derived(state, actions, skipped),
+fn plugin_action(state: PluginActivationState) -> Action {
+    Action::RestorePluginActivation {
+        run_id: state.run_id,
+        activation_id: state.activation_id,
+        plugin: state.plugin,
+        version: state.installed_version,
     }
 }
 
@@ -72,15 +63,6 @@ fn assess_plugin(
     actions.push(plugin_action(state));
 }
 
-fn plugin_action(state: PluginActivationState) -> Action {
-    Action::RestorePluginActivation {
-        run_id: state.run_id,
-        activation_id: state.activation_id,
-        plugin: state.plugin,
-        version: state.installed_version,
-    }
-}
-
 fn assess_ownership(state: OwnershipState, actions: &mut Vec<Action>, skipped: &mut Vec<Skipped>) {
     if state.ownership.expires_at_ms <= state.observed_at_ms {
         actions.push(Action::ReapExpiredOwnership {
@@ -123,6 +105,24 @@ fn assess_derived(state: DerivedState, actions: &mut Vec<Action>, skipped: &mut 
     });
 }
 
-fn skip(skipped: &mut Vec<Skipped>, target: String, reason: SkipReason) {
-    skipped.push(Skipped { target, reason });
+fn assess(candidate: Candidate, actions: &mut Vec<Action>, skipped: &mut Vec<Skipped>) {
+    match candidate {
+        Candidate::Directory(state) => assess_directory(state, actions),
+        Candidate::Cache(state) => assess_cache(state, actions, skipped),
+        Candidate::PluginActivation(state) => assess_plugin(state, actions, skipped),
+        Candidate::Ownership(state) => assess_ownership(state, actions, skipped),
+        Candidate::Worktree(state) => assess_worktree(state, actions, skipped),
+        Candidate::DerivedState(state) => assess_derived(state, actions, skipped),
+    }
+}
+
+/// Builds a canonical plan containing only reversible, currently safe repairs.
+#[must_use]
+pub fn plan(candidates: impl IntoIterator<Item = Candidate>) -> Plan {
+    let mut actions = Vec::new();
+    let mut skipped = Vec::new();
+    for candidate in candidates {
+        assess(candidate, &mut actions, &mut skipped);
+    }
+    Plan::new(actions, skipped)
 }

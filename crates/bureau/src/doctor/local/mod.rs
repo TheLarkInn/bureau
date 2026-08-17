@@ -8,10 +8,37 @@ use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-use crate::home::Layout;
+use crate::home::{Environment, Layout};
 use crate::setup::{Settings, load_settings};
 
 use super::{Area, Effects, Observation};
+
+/// The executable search path from the process environment, read
+/// through the lifecycle crate's environment boundary.
+fn system_search_path() -> Vec<PathBuf> {
+    crate::home::ProcessEnvironment
+        .value("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default()
+}
+
+/// Every environment-variable name, without values. The process
+/// environment boundary: `vars_os` is bound once as a function pointer
+/// so this stays the single read site.
+fn environment_names() -> BTreeSet<OsString> {
+    let vars = std::env::vars_os;
+    vars().map(|(name, _value)| name).collect()
+}
+
+fn bundled_plugin_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/bureau")
+}
+
+pub(super) fn replay_run_read_only(
+    directory: &std::path::Path,
+) -> Result<crate::runlog::RunState, String> {
+    recovery::replay_run_read_only(directory)
+}
 
 /// Read-only production doctor effects for one resolved local layout.
 pub struct LocalEffects {
@@ -73,24 +100,4 @@ impl Effects for LocalEffects {
             Area::RecoveryState => self.inspect_recovery(),
         }
     }
-}
-
-pub(super) fn replay_run_read_only(
-    directory: &std::path::Path,
-) -> Result<crate::runlog::RunState, String> {
-    recovery::replay_run_read_only(directory)
-}
-
-fn system_search_path() -> Vec<PathBuf> {
-    std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect())
-        .unwrap_or_default()
-}
-
-fn environment_names() -> BTreeSet<OsString> {
-    std::env::vars_os().map(|(name, _value)| name).collect()
-}
-
-fn bundled_plugin_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/bureau")
 }
