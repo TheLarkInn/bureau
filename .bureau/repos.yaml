@@ -1,0 +1,6 @@
+repos:
+  bureau:
+    url: https://github.com/TheLarkInn/bureau.git
+    forge: github
+    access: push
+    credential: github-main
