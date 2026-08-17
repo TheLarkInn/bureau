@@ -9,6 +9,7 @@ mod prepare;
 mod reconcile;
 mod run;
 mod transcript;
+mod watch;
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -17,7 +18,6 @@ use std::pin::Pin;
 use clap::Parser;
 
 use bureau::config::Config;
-use bureau::contract::StepOutcome;
 
 pub use command::{FakeAction, McpAction, Verb};
 
@@ -35,16 +35,6 @@ struct Paths {
     state: PathBuf,
     /// Checkout cache directory.
     cache: PathBuf,
-}
-
-/// The kebab-case token for an outcome (its serde name).
-const fn outcome_name(outcome: StepOutcome) -> &'static str {
-    match outcome {
-        StepOutcome::Success => "success",
-        StepOutcome::Failure => "failure",
-        StepOutcome::Blocked => "blocked",
-        StepOutcome::NoWork => "no-work",
-    }
 }
 
 /// `bureau` — a local agent work runner.
@@ -197,6 +187,7 @@ async fn run_side(verb: Verb) -> anyhow::Result<i32> {
         Verb::Version
         | Verb::Validate { .. }
         | Verb::Reconcile(_)
+        | Verb::Watch { .. }
         | Verb::Init { .. }
         | Verb::Setup { .. }
         | Verb::Doctor { .. }
@@ -215,6 +206,11 @@ fn dispatch(verb: Verb) -> CliFuture {
         Verb::Version => Box::pin(async { Ok(version()) }),
         Verb::Validate { dir } => Box::pin(async move { Ok(validate(&dir)) }),
         Verb::Reconcile(args) => Box::pin(reconcile::run(args)),
+        Verb::Watch {
+            runs,
+            state,
+            config_cache,
+        } => Box::pin(async move { watch::run(runs, state, config_cache) }),
         Verb::Init { from } => Box::pin(async move { lifecycle::init(&from).await }),
         Verb::Setup { from } => Box::pin(async move { lifecycle::setup(&from).await }),
         Verb::Doctor { json } => Box::pin(async move { lifecycle::doctor(json) }),

@@ -98,9 +98,20 @@ Values are scrubbed from everything written to the run log.
 ```sh
 bureau list                  # every run
 bureau show <run-id>         # replayed state of one run
+bureau watch                 # live terminal dashboard of local state
 bureau cancel <run-id>       # write the run's CANCEL marker
 bureau retry <run-id>        # new run for the item an earlier run targeted
 ```
+
+`watch` is read-only: it never writes state.db or run directories and
+never takes the maintenance lock, so it is safe alongside a live daemon.
+It shows the adopted config commit, live lease and running-run counts,
+one row per run (status, latest step, cost so far, age), per-assignment
+budget counters (today's cost, runs this hour, headroom — the open-PR
+limit is forge state and is excluded), and the selected run's latest
+events. It refreshes once a second; `q`, `Esc`, or `Ctrl-C` quits, and
+`up`/`down` select a run. Piped instead of a terminal, it prints one
+plain-text snapshot and exits.
 
 The fixed home layout contains `settings.yaml`, `credentials/`, `state.db`,
 `runs/`, `checkout-cache/`, and `config-cache/`. Explicit path overrides are

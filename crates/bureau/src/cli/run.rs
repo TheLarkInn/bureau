@@ -184,7 +184,7 @@ fn print_outcome(outcome: &RunOutcome) {
     out::line(format_args!(
         "{} {} cost=${:.2} {}{pr}",
         outcome.run_id,
-        super::outcome_name(outcome.outcome),
+        bureau::runlog::outcome_name(outcome.outcome),
         outcome.cost_usd,
         outcome.message
     ));

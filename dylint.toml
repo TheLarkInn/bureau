@@ -48,6 +48,7 @@ exhaustive = true
 ]
 "bureau:doctor" = ["config", "git", "runlog"]
 "bureau:repair" = ["doctor", "runlog"]
+"bureau:watch" = ["config", "runlog", "state"]
 # bureau (binary target): a single `cli` module over the library.
 "bureau:cli" = []
 

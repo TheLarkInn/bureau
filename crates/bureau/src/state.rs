@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 pub use claim::LeaseOwner;
 pub use disposition::Disposition;
@@ -95,6 +95,20 @@ fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32
     Ok((live, hour, day, spent))
 }
 
+/// One assignment's budget counters at one moment, read only. The same
+/// numbers [`Store::headroom`] computes from, surfaced for display.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Budget {
+    /// Live (unexpired) leases.
+    pub live_leases: u32,
+    /// Runs started in the last hour.
+    pub runs_this_hour: u32,
+    /// Runs started in the last day.
+    pub runs_today: u32,
+    /// Recorded run cost over the last day.
+    pub spent_today_usd: f64,
+}
+
 /// Live leases for an assignment, read through the locked connection.
 fn active_leases(conn: &Connection, assignment: &str) -> Result<Vec<Lease>, Error> {
     let mut stmt = conn.prepare(sql::ACTIVE_LEASES)?;
@@ -126,6 +140,48 @@ impl Store {
     /// Propagates `SQLite` failures.
     pub fn open_in_memory() -> Result<Self, Error> {
         Self::init(Connection::open_in_memory()?)
+    }
+
+    /// Opens an existing database read-only: no creation, no schema, no
+    /// migration — a watcher must never write or block the writer.
+    /// Fails when the file is absent; callers treat that as "no state
+    /// yet".
+    ///
+    /// # Errors
+    /// Propagates filesystem and `SQLite` failures.
+    pub fn open_read_only(path: &Path) -> Result<Self, Error> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    /// One assignment's budget counters right now.
+    ///
+    /// # Errors
+    /// Propagates `SQLite` failures.
+    pub fn budget(&self, assignment: &str) -> Result<Budget, Error> {
+        let now = now_millis();
+        let (live, hour, day, spent) = usage(&self.lock(), assignment, now)?;
+        Ok(Budget {
+            live_leases: live,
+            runs_this_hour: hour,
+            runs_today: day,
+            spent_today_usd: spent,
+        })
+    }
+
+    /// Live leases across every assignment.
+    ///
+    /// # Errors
+    /// Propagates `SQLite` failures.
+    pub fn live_lease_count(&self) -> Result<u32, Error> {
+        let now = now_millis();
+        let count: i64 = self
+            .lock()
+            .query_row(sql::LIVE_LEASES_TOTAL, (now,), |row| row.get(0))?;
+        Ok(u32::try_from(count).unwrap_or(0))
     }
 
     /// How many more runs the assignment may start now: the minimum
