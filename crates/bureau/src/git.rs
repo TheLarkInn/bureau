@@ -17,7 +17,8 @@
 //! push; the container is the sandbox boundary (DESIGN.md section 10).
 
 mod commit;
-mod snapshot;
+/// Committed-snapshot reads: exact-commit worktrees, ref resolution, blobs.
+pub mod snapshot;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -132,7 +132,7 @@ async fn a_run_with_no_changes_is_no_work() {
 async fn check_no_prs(rig: &Rig) {
     let prs = rig
         .forge
-        .open_prs("main", "bureau/")
+        .open_prs(&rig.url, "bureau/")
         .await
         .expect("open_prs");
     assert!(prs.is_empty(), "NoWork opened no PR");

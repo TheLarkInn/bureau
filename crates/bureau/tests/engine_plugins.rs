@@ -71,7 +71,7 @@ async fn agent_step_rejects_a_changed_pinned_plugin() {
     let mut plan = rig.plan(vec![det_step("corrupt", corrupt, Some("agent")), agent]);
     plan.roles.get_mut("worker").expect("worker role").agent = "/bureau:implementer".to_owned();
     let outcome = rig.engine().run(&plan).await;
-    let prs = rig.forge.open_prs("main", "bureau/").await.expect("prs");
+    let prs = rig.forge.open_prs(&rig.url, "bureau/").await.expect("prs");
     assert_eq!(
         (outcome.outcome, prs.len(), rig.forge.comments().len()),
         (StepOutcome::Blocked, 0, 1)
@@ -106,7 +106,7 @@ async fn expired_supervisor_cannot_publish_after_takeover() {
     let run = engine.run(&plan);
     let takeover = take_over(store, plan.run_id.clone());
     let (outcome, second) = tokio::join!(run, takeover);
-    let prs = rig.forge.open_prs("main", "bureau/").await.expect("prs");
+    let prs = rig.forge.open_prs(&rig.url, "bureau/").await.expect("prs");
     assert_eq!(
         (outcome.outcome, second.owns().expect("owns"), prs.len()),
         (StepOutcome::Failure, true, 0)

@@ -66,10 +66,12 @@ async fn two_concurrent_runs_get_distinct_branches() {
     let (implement, review) = fixtures(&rig);
     let steps = support::continuity_steps(&implement, &review);
     let engine = rig.engine();
-    let first = rig.plan(&rig.add_remote("remote-a"), "1", steps.clone());
-    let second = rig.plan(&rig.add_remote("remote-b"), "2", steps);
+    let first_url = rig.add_remote("remote-a");
+    let second_url = rig.add_remote("remote-b");
+    let first = rig.plan(&first_url, "1", steps.clone());
+    let second = rig.plan(&second_url, "2", steps);
     let (one, two) = tokio::join!(engine.run(&first), engine.run(&second));
-    check_distinct(&rig, &one, &two).await;
+    check_distinct(&rig, &one, &two, &first_url, &second_url).await;
 }
 
 /// Both runs completed, their branches differ, and the forge holds both.
@@ -77,19 +79,25 @@ async fn check_distinct(
     rig: &Rig,
     one: &bureau::engine::RunOutcome,
     two: &bureau::engine::RunOutcome,
+    first_url: &str,
+    second_url: &str,
 ) {
-    let branches = (
-        one.pr.as_ref().map(|pr| pr.branch.clone()),
-        two.pr.as_ref().map(|pr| pr.branch.clone()),
-    );
-    let prs = rig
+    let branch =
+        |outcome: &bureau::engine::RunOutcome| outcome.pr.as_ref().map(|pr| pr.branch.clone());
+    let left = rig
         .forge
-        .open_prs("main", "bureau/fix/")
+        .open_prs(first_url, "bureau/fix/")
         .await
-        .expect("open_prs")
-        .len();
+        .expect("prs");
+    let right = rig
+        .forge
+        .open_prs(second_url, "bureau/fix/")
+        .await
+        .expect("prs");
+    let distinct = branch(one) != branch(two);
+    let outcomes = (one.outcome, two.outcome, distinct, left.len() + right.len());
     assert_eq!(
-        (one.outcome, two.outcome, branches.0 != branches.1, prs),
+        outcomes,
         (StepOutcome::Success, StepOutcome::Success, true, 2)
     );
 }

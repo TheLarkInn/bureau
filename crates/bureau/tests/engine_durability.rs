@@ -58,7 +58,7 @@ async fn crash_after_pr_creation_adopts_the_existing_pr() {
     let second = rig.engine().run(&plan).await;
     let prs = rig
         .forge
-        .open_prs("main", "bureau/")
+        .open_prs(&rig.url, "bureau/")
         .await
         .expect("open prs");
     assert_eq!(

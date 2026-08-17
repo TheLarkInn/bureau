@@ -72,7 +72,7 @@ pub fn single_pr(outcome: &RunOutcome) -> Pr {
 pub async fn pr_count(rig: &Rig, expected: usize) {
     let prs = rig
         .forge
-        .open_prs("main", "bureau/fix/")
+        .open_prs(&rig.url, "bureau/fix/")
         .await
         .expect("open_prs");
     assert_eq!(prs.len(), expected, "PRs on the fake forge");

@@ -234,10 +234,21 @@ impl World {
         assert!(won, "pre-claim must win");
     }
 
+    /// The primary repo's registry URL, as the observation resolves it.
+    fn repo_url(&self) -> &str {
+        &self
+            .reconciler
+            .config
+            .repos
+            .get("main")
+            .expect("main repo")
+            .url
+    }
+
     /// An open PR for an item, as a finished run would leave behind.
     pub async fn open_pr(&self, id: &str) {
         let request = PrRequest {
-            repo: "main".to_owned(),
+            repo: self.repo_url().to_owned(),
             branch: format!("bureau/fix-{id}"),
             base: "main".to_owned(),
             title: format!("Fix {id}"),
@@ -270,7 +281,7 @@ impl World {
     /// Open PRs the assignment's observation would see.
     pub async fn observed_prs(&self) -> usize {
         self.forge
-            .open_prs("main", "bureau/")
+            .open_prs(self.repo_url(), "bureau/")
             .await
             .expect("open_prs")
             .len()

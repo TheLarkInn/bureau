@@ -237,6 +237,17 @@ impl World {
         }
         outcomes
     }
+
+    /// The primary repo's registry URL, as the observation resolves it.
+    pub fn primary_url(&self) -> String {
+        self.reconciler
+            .config
+            .repos
+            .get("main")
+            .expect("main repo")
+            .url
+            .clone()
+    }
 }
 
 /// The claimed work item the run operates on.
