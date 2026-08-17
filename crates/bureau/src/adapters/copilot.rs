@@ -14,9 +14,12 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allow-tool=shell(git:*) --deny-tool='shell(git push)'` |
-//! | `repo:push`                   | `--allow-tool=shell(git:*)` |
+//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths --deny-tool='shell(git push)'` |
+//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths` |
 //! | anything else                 | `--deny-tool='shell(*)'` |
+//!
+//! `repo:write` grants editing the run worktree (`write` +
+//! `--allow-all-paths`), not only the git shell — see issue #16.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
@@ -51,12 +54,23 @@ const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default flag instead of silence.
+///
+/// A write grant must allow the agent to *edit* the run worktree, not
+/// only run `git` — `shell(git:*)` alone left every `apply_patch`/edit
+/// denied (issue #16). So `repo:write` adds the file-edit tool plus
+/// `--allow-all-paths` (the worktree sits under `BUREAU_HOME`, outside
+/// any repo root the CLI would otherwise verify paths against). `git
+/// push` stays gated behind `repo:push`.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--deny-tool=shell(*)".to_owned()];
     }
-    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
+    let mut flags = vec![
+        "--allow-tool=write".to_owned(),
+        "--allow-tool=shell(git:*)".to_owned(),
+        "--allow-all-paths".to_owned(),
+    ];
     if !push {
         flags.push("--deny-tool=shell(git push)".to_owned());
     }

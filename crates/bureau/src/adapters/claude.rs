@@ -14,9 +14,12 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allowedTools 'Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
-//! | `repo:push`                   | `--allowedTools 'Bash(git:*)'` |
+//! | `repo:write`, not `repo:push` | `--allowedTools 'Edit,Write,Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
+//! | `repo:push`                   | `--allowedTools 'Edit,Write,Bash(git:*)'` |
 //! | anything else                 | `--disallowedTools 'Bash(*)'` |
+//!
+//! `repo:write` grants editing the run worktree (`Edit`/`Write`), not
+//! only the git shell — see issue #16.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are
@@ -48,12 +51,20 @@ const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKE
 
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default rule instead of silence.
+///
+/// A write grant must allow the agent to *edit* the run worktree, not
+/// only run `git` — `Bash(git:*)` alone left every edit denied (issue
+/// #16). So `repo:write` adds the `Edit` and `Write` tools alongside
+/// the git shell; `git push` stays gated behind `repo:push`.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
     }
-    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
+    let mut flags = vec![
+        "--allowedTools".to_owned(),
+        "Edit,Write,Bash(git:*)".to_owned(),
+    ];
     if !push {
         flags.extend([
             "--disallowedTools".to_owned(),

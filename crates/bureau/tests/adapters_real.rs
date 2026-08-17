@@ -237,14 +237,15 @@ fn claude_carries_the_request_on_stdin_only() {
 
 #[test]
 fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
-    let cases: [(&[Permission], &str); 4] = [
+    let edit = "--allow-tool=write\u{1f}--allow-tool=shell(git:*)\u{1f}--allow-all-paths";
+    let cases: [(&[Permission], String); 4] = [
         (
             &[Permission::RepoWrite],
-            "--allow-tool=shell(git:*)\u{1f}--deny-tool=shell(git push)",
+            format!("{edit}\u{1f}--deny-tool=shell(git push)"),
         ),
-        (&[Permission::RepoPush], "--allow-tool=shell(git:*)"),
-        (&[Permission::RepoRead], "--deny-tool=shell(*)"),
-        (&[], "--deny-tool=shell(*)"),
+        (&[Permission::RepoPush], edit.to_owned()),
+        (&[Permission::RepoRead], "--deny-tool=shell(*)".to_owned()),
+        (&[], "--deny-tool=shell(*)".to_owned()),
     ];
     for (permissions, flags) in cases {
         let dir = TestDir::new("copilot-flags");
@@ -256,14 +257,18 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
 
 #[test]
 fn claude_mirrors_the_push_boundary_and_denies_by_default() {
-    let cases: [(&[Permission], &str); 4] = [
+    let edit = "--allowedTools\u{1f}Edit,Write,Bash(git:*)";
+    let cases: [(&[Permission], String); 4] = [
         (
             &[Permission::RepoWrite],
-            "--allowedTools\u{1f}Bash(git:*)\u{1f}--disallowedTools\u{1f}Bash(git push:*)",
+            format!("{edit}\u{1f}--disallowedTools\u{1f}Bash(git push:*)"),
         ),
-        (&[Permission::RepoPush], "--allowedTools\u{1f}Bash(git:*)"),
-        (&[Permission::RepoRead], "--disallowedTools\u{1f}Bash(*)"),
-        (&[], "--disallowedTools\u{1f}Bash(*)"),
+        (&[Permission::RepoPush], edit.to_owned()),
+        (
+            &[Permission::RepoRead],
+            "--disallowedTools\u{1f}Bash(*)".to_owned(),
+        ),
+        (&[], "--disallowedTools\u{1f}Bash(*)".to_owned()),
     ];
     for (permissions, flags) in cases {
         let dir = TestDir::new("claude-flags");
