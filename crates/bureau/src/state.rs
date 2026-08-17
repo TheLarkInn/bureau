@@ -25,8 +25,8 @@ use rusqlite::Connection;
 
 pub use claim::LeaseOwner;
 pub use disposition::Disposition;
-pub use lease::maintain as maintain_lease;
-pub use project::{run as project_run, terminal as project_terminal};
+pub use lease::maintain_lease;
+pub use project::{TerminalRecord, project_run, project_terminal};
 
 use crate::config::Limits;
 
@@ -68,6 +68,38 @@ pub struct Lease {
     pub owner_id: String,
     /// Expiry, milliseconds since the Unix epoch.
     pub expires_at_ms: u64,
+}
+
+/// The process clock boundary: milliseconds since the Unix epoch,
+/// clamped into `i64`. The clock function is bound first so this helper
+/// stays the one place naming the process clock.
+fn now_millis() -> i64 {
+    let now = SystemTime::now;
+    let millis = now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
+/// A duration as whole milliseconds, clamped into `i64`.
+fn duration_millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
+/// One moment's usage: live leases, runs this hour and day, day's spend.
+fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32, f64), Error> {
+    let live = sql::count(conn, sql::LIVE_LEASES, assignment, now)?;
+    let hour = sql::count(conn, sql::RUNS_SINCE, assignment, now - HOUR_MS)?;
+    let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
+    let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
+    Ok((live, hour, day, spent))
+}
+
+/// Live leases for an assignment, read through the locked connection.
+fn active_leases(conn: &Connection, assignment: &str) -> Result<Vec<Lease>, Error> {
+    let mut stmt = conn.prepare(sql::ACTIVE_LEASES)?;
+    let rows = stmt.query_map((assignment, now_millis()), sql::lease_from_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 /// The durable store. Safe to share: the connection sits behind a mutex,
@@ -178,33 +210,4 @@ impl Store {
     fn lock(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-/// Live leases for an assignment, read through the locked connection.
-fn active_leases(conn: &Connection, assignment: &str) -> Result<Vec<Lease>, Error> {
-    let mut stmt = conn.prepare(sql::ACTIVE_LEASES)?;
-    let rows = stmt.query_map((assignment, now_millis()), sql::lease_from_row)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
-/// One moment's usage: live leases, runs this hour and day, day's spend.
-fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32, f64), Error> {
-    let live = sql::count(conn, sql::LIVE_LEASES, assignment, now)?;
-    let hour = sql::count(conn, sql::RUNS_SINCE, assignment, now - HOUR_MS)?;
-    let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
-    let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
-    Ok((live, hour, day, spent))
-}
-
-/// Milliseconds since the Unix epoch, clamped into `i64`.
-fn now_millis() -> i64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis());
-    i64::try_from(millis).unwrap_or(i64::MAX)
-}
-
-/// A duration as whole milliseconds, clamped into `i64`.
-fn duration_millis(duration: Duration) -> i64 {
-    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }

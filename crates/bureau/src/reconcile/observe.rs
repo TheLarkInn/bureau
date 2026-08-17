@@ -16,16 +16,18 @@ pub(super) struct Observed<'a> {
     pub(super) headroom: usize,
 }
 
+fn bad_assignment(name: &str, reason: &str) -> Error {
+    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
+    Error::Forge(parse)
+}
+
 impl Reconciler {
     pub(super) async fn observe_all(&self) -> (Vec<Observed<'_>>, Vec<Error>) {
         let (mut observed, mut failed) = (Vec::new(), Vec::new());
         for (name, assignment) in &self.config.assignments {
             match self.observe(name, assignment).await {
                 Ok(assignment) => observed.push(assignment),
-                Err(error) => {
-                    eprintln!("assignment `{name}` observation failed: {error}");
-                    failed.push(error);
-                }
+                Err(error) => failed.push(error),
             }
         }
         (observed, failed)
@@ -74,9 +76,4 @@ impl Reconciler {
             .filter_map(|item| super::approved_item(assignment, item))
             .collect())
     }
-}
-
-fn bad_assignment(name: &str, reason: &str) -> Error {
-    let parse = crate::forge::Error::Parse(format!("assignment `{name}`: {reason}"));
-    Error::Forge(parse)
 }

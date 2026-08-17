@@ -5,28 +5,27 @@ use std::path::Path;
 
 use super::validate::Source;
 
-pub(super) fn durable_state(source: &Source, stage: &Path) -> anyhow::Result<()> {
-    if let Some(state) = &source.state {
-        copy_file(state, &stage.join("state.db"))?;
-    }
-    if let Some(runs) = &source.runs {
-        copy_runs(runs, &stage.join("runs"))?;
-    }
+fn create_directory(target: &Path) -> anyhow::Result<()> {
+    fs::create_dir(target)?;
+    fs::set_permissions(target, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 
-fn copy_runs(source: &Path, target: &Path) -> anyhow::Result<()> {
-    create_directory(target)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let metadata = entry.metadata()?;
-        anyhow::ensure!(
-            metadata.is_dir() && !entry.file_type()?.is_symlink(),
-            "migration run entries must be safe directories"
-        );
-        copy_tree(&entry.path(), &target.join(entry.file_name()), true)?;
-    }
-    fs::File::open(target)?.sync_all()?;
+fn copy_file(source: &Path, target: &Path) -> anyhow::Result<()> {
+    let metadata = fs::symlink_metadata(source)?;
+    anyhow::ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.nlink() == 1,
+        "migration source file is unsafe"
+    );
+    let bytes = fs::read(source)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
+    file.write_all(&bytes)?;
+    let mode = 0o600 | (metadata.permissions().mode() & 0o100);
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -72,26 +71,27 @@ fn copy_entry(entry: &fs::DirEntry, target: &Path, run_root: bool) -> anyhow::Re
     }
 }
 
-fn copy_file(source: &Path, target: &Path) -> anyhow::Result<()> {
-    let metadata = fs::symlink_metadata(source)?;
-    anyhow::ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.nlink() == 1,
-        "migration source file is unsafe"
-    );
-    let bytes = fs::read(source)?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(target)?;
-    file.write_all(&bytes)?;
-    let mode = 0o600 | (metadata.permissions().mode() & 0o100);
-    file.set_permissions(fs::Permissions::from_mode(mode))?;
-    file.sync_all()?;
+fn copy_runs(source: &Path, target: &Path) -> anyhow::Result<()> {
+    create_directory(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        anyhow::ensure!(
+            metadata.is_dir() && !entry.file_type()?.is_symlink(),
+            "migration run entries must be safe directories"
+        );
+        copy_tree(&entry.path(), &target.join(entry.file_name()), true)?;
+    }
+    fs::File::open(target)?.sync_all()?;
     Ok(())
 }
 
-fn create_directory(target: &Path) -> anyhow::Result<()> {
-    fs::create_dir(target)?;
-    fs::set_permissions(target, fs::Permissions::from_mode(0o700))?;
+pub(super) fn durable_state(source: &Source, stage: &Path) -> anyhow::Result<()> {
+    if let Some(state) = &source.state {
+        copy_file(state, &stage.join("state.db"))?;
+    }
+    if let Some(runs) = &source.runs {
+        copy_runs(runs, &stage.join("runs"))?;
+    }
     Ok(())
 }

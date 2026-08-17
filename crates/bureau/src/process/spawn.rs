@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, Command};
 
+use super::SpawnOutcome;
 use super::scrub::ScrubWriter;
 use super::secret::Secret;
 
@@ -59,21 +60,6 @@ pub struct SpawnRequest {
     pub cancel: Option<PathBuf>,
 }
 
-/// How a spawned process ended. These four outcomes are genuinely
-/// distinct; a timeout is never collapsed into an exit code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SpawnOutcome {
-    /// Ran to completion; see `exit_code`.
-    Exited,
-    /// Hard-killed (the whole process group) after `timeout`.
-    Timeout,
-    /// Killed externally by a signal.
-    Signaled,
-    /// Never started.
-    SpawnFailed,
-}
-
 /// The captured result of one subprocess. A struct with an enum
 /// discriminant, so it serializes straight into the run log.
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,17 +78,35 @@ pub struct SpawnResult {
     pub error: Option<String>,
 }
 
-impl SpawnResult {
-    fn failed(error: String, started: Instant) -> Self {
-        Self {
-            outcome: SpawnOutcome::SpawnFailed,
-            exit_code: None,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            duration: started.elapsed(),
-            error: Some(error),
-        }
+fn executable(path: PathBuf, program: &str) -> Result<PathBuf, String> {
+    path.is_file()
+        .then_some(path)
+        .ok_or_else(|| format!("program `{program}` was not found"))
+}
+
+fn resolve_program(program: &str, req: &SpawnRequest) -> Result<PathBuf, String> {
+    let path = std::path::Path::new(program);
+    if path.components().count() > 1 {
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            req.dir.join(path)
+        };
+        return executable(path, program);
     }
+    // The process environment boundary: PATH fallback when the request's
+    // complete environment omits it.
+    let env_var_os = std::env::var_os;
+    let search = req
+        .env
+        .get("PATH")
+        .map(std::ffi::OsString::from)
+        .or_else(|| env_var_os("PATH"))
+        .unwrap_or_default();
+    std::env::split_paths(&search)
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| format!("program `{program}` was not found"))
 }
 
 fn build_command(req: &SpawnRequest, token: &str) -> Result<Command, String> {
@@ -131,34 +135,6 @@ fn build_command(req: &SpawnRequest, token: &str) -> Result<Command, String> {
     Ok(Command::from(command))
 }
 
-fn resolve_program(program: &str, req: &SpawnRequest) -> Result<PathBuf, String> {
-    let path = std::path::Path::new(program);
-    if path.components().count() > 1 {
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            req.dir.join(path)
-        };
-        return executable(path, program);
-    }
-    let search = req
-        .env
-        .get("PATH")
-        .map(std::ffi::OsString::from)
-        .or_else(|| std::env::var_os("PATH"))
-        .unwrap_or_default();
-    std::env::split_paths(&search)
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| format!("program `{program}` was not found"))
-}
-
-fn executable(path: PathBuf, program: &str) -> Result<PathBuf, String> {
-    path.is_file()
-        .then_some(path)
-        .ok_or_else(|| format!("program `{program}` was not found"))
-}
-
 fn spawn_child(req: &SpawnRequest) -> Result<(Child, String), String> {
     let token = crate::identity::random_hex().map_err(|error| error.to_string())?;
     let child = build_command(req, &token)
@@ -166,14 +142,87 @@ fn spawn_child(req: &SpawnRequest) -> Result<(Child, String), String> {
     Ok((child, token))
 }
 
-/// Runs a subprocess to completion under the contract.
-#[must_use]
-pub async fn spawn(req: SpawnRequest) -> SpawnResult {
-    let started = Instant::now();
-    match spawn_child(&req) {
-        Ok((child, token)) => run_child(req, child, &token, started).await,
-        Err(error) => SpawnResult::failed(error, started),
+/// Writes `bytes` to the child's stdin in its own task, so a child that
+/// never reads stdin can't block the drains or delay the arming of the
+/// timeout. Dropping the pipe closes the child's stdin.
+fn write_task(pipe: Option<ChildStdin>, bytes: Vec<u8>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let Some(mut pipe) = pipe else {
+            return;
+        };
+        let _ = pipe.write_all(&bytes).await;
+    })
+}
+
+type BoxedStream = Pin<Box<dyn AsyncRead + Send>>;
+
+fn stream<R>(stream: Option<R>) -> BoxedStream
+where
+    R: AsyncRead + Send + Unpin + 'static,
+{
+    stream.map_or_else(
+        || Box::pin(tokio::io::empty()) as BoxedStream,
+        |r| Box::pin(r) as BoxedStream,
+    )
+}
+
+fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
+    if buf.len() <= *forwarded {
+        return;
     }
+    if let Some(sink) = log {
+        if let Ok(mut w) = sink.lock() {
+            let _ = w.write_all(&buf[*forwarded..]);
+        }
+    }
+    *forwarded = buf.len();
+}
+
+/// Reads a stream to EOF, scrubbing each chunk as it arrives and
+/// forwarding the scrubbed bytes to the run-log sink immediately.
+async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>) -> Vec<u8> {
+    let mut reader = reader;
+    let mut scrubber = ScrubWriter::new(Vec::new(), &secrets);
+    let mut forwarded = 0;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match reader.read(&mut chunk).await {
+            Ok(0) | Err(_) => break, // a read error still leaves partial output usable
+            Ok(n) => {
+                let _ = scrubber.write_all(&chunk[..n]);
+                forward(log.as_ref(), scrubber.get_ref(), &mut forwarded);
+            }
+        }
+    }
+    let captured = scrubber.finish().unwrap_or_default();
+    forward(log.as_ref(), &captured, &mut forwarded);
+    captured
+}
+
+fn drain_task(
+    reader: Option<impl AsyncRead + Send + Unpin + 'static>,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> tokio::task::JoinHandle<Vec<u8>> {
+    tokio::spawn(drain(stream(reader), secrets, log))
+}
+
+async fn finish_drains(
+    mut stdin: tokio::task::JoinHandle<()>,
+    mut out: tokio::task::JoinHandle<Vec<u8>>,
+    mut err: tokio::task::JoinHandle<Vec<u8>>,
+) -> (Vec<u8>, Vec<u8>) {
+    let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
+        tokio::join!(&mut stdin, &mut out, &mut err)
+    })
+    .await;
+    if let Ok((_, stdout, stderr)) = drained {
+        return (stdout.unwrap_or_default(), stderr.unwrap_or_default());
+    }
+    stdin.abort();
+    out.abort();
+    err.abort();
+    (Vec::new(), Vec::new())
 }
 
 async fn run_child(
@@ -202,85 +251,25 @@ async fn run_child(
     }
 }
 
-async fn finish_drains(
-    mut stdin: tokio::task::JoinHandle<()>,
-    mut out: tokio::task::JoinHandle<Vec<u8>>,
-    mut err: tokio::task::JoinHandle<Vec<u8>>,
-) -> (Vec<u8>, Vec<u8>) {
-    let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
-        tokio::join!(&mut stdin, &mut out, &mut err)
-    })
-    .await;
-    if let Ok((_, stdout, stderr)) = drained {
-        return (stdout.unwrap_or_default(), stderr.unwrap_or_default());
+/// The process clock boundary: the single place wall time is read.
+fn monotonic_now() -> Instant {
+    let now = std::time::Instant::now;
+    now()
+}
+
+/// Runs a subprocess to completion under the contract.
+#[must_use]
+pub async fn spawn(req: SpawnRequest) -> SpawnResult {
+    let started = monotonic_now();
+    match spawn_child(&req) {
+        Ok((child, token)) => run_child(req, child, &token, started).await,
+        Err(error) => SpawnResult {
+            outcome: SpawnOutcome::SpawnFailed,
+            exit_code: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            duration: started.elapsed(),
+            error: Some(error),
+        },
     }
-    stdin.abort();
-    out.abort();
-    err.abort();
-    (Vec::new(), Vec::new())
-}
-
-/// Writes `bytes` to the child's stdin in its own task, so a child that
-/// never reads stdin can't block the drains or delay the arming of the
-/// timeout. Dropping the pipe closes the child's stdin.
-fn write_task(pipe: Option<ChildStdin>, bytes: Vec<u8>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let Some(mut pipe) = pipe else {
-            return;
-        };
-        let _ = pipe.write_all(&bytes).await;
-    })
-}
-
-type BoxedStream = Pin<Box<dyn AsyncRead + Send>>;
-
-fn stream<R>(stream: Option<R>) -> BoxedStream
-where
-    R: AsyncRead + Send + Unpin + 'static,
-{
-    stream.map_or_else(
-        || Box::pin(tokio::io::empty()) as BoxedStream,
-        |r| Box::pin(r) as BoxedStream,
-    )
-}
-
-fn drain_task(
-    reader: Option<impl AsyncRead + Send + Unpin + 'static>,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> tokio::task::JoinHandle<Vec<u8>> {
-    tokio::spawn(drain(stream(reader), secrets, log))
-}
-
-/// Reads a stream to EOF, scrubbing each chunk as it arrives and
-/// forwarding the scrubbed bytes to the run-log sink immediately.
-async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>) -> Vec<u8> {
-    let mut reader = reader;
-    let mut scrubber = ScrubWriter::new(Vec::new(), &secrets);
-    let mut forwarded = 0;
-    let mut chunk = [0u8; 8192];
-    loop {
-        match reader.read(&mut chunk).await {
-            Ok(0) | Err(_) => break, // a read error still leaves partial output usable
-            Ok(n) => {
-                let _ = scrubber.write_all(&chunk[..n]);
-                forward(log.as_ref(), scrubber.get_ref(), &mut forwarded);
-            }
-        }
-    }
-    let captured = scrubber.finish().unwrap_or_default();
-    forward(log.as_ref(), &captured, &mut forwarded);
-    captured
-}
-
-fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
-    if buf.len() <= *forwarded {
-        return;
-    }
-    if let Some(sink) = log {
-        if let Ok(mut w) = sink.lock() {
-            let _ = w.write_all(&buf[*forwarded..]);
-        }
-    }
-    *forwarded = buf.len();
 }

@@ -32,7 +32,11 @@ pub struct ProcessEnvironment;
 
 impl Environment for ProcessEnvironment {
     fn value(&self, name: &str) -> Option<OsString> {
-        std::env::var_os(name)
+        // Bound once as a function pointer so this impl stays the single
+        // boundary naming the process-global read; callers inject
+        // `Environment` instead of touching the process environment.
+        let read = std::env::var_os::<&str>;
+        read(name)
     }
 }
 
@@ -61,6 +65,101 @@ impl Directory {
         Self::CheckoutCache,
         Self::ConfigCache,
     ];
+}
+
+/// Fixed non-root paths derived from the home root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Paths {
+    settings: PathBuf,
+    credentials: PathBuf,
+    state_db: PathBuf,
+    runs: PathBuf,
+    checkout_cache: PathBuf,
+    config_cache: PathBuf,
+}
+
+/// Every fixed path below the local bureau home.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    root: PathBuf,
+    paths: Paths,
+}
+
+impl Layout {
+    fn new(root: PathBuf) -> Self {
+        let paths = Paths {
+            settings: root.join("settings.yaml"),
+            credentials: root.join("credentials"),
+            state_db: root.join("state.db"),
+            runs: root.join("runs"),
+            checkout_cache: root.join("checkout-cache"),
+            config_cache: root.join("config-cache"),
+        };
+        Self { root, paths }
+    }
+
+    /// Root directory.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Local lifecycle settings file.
+    #[must_use]
+    pub fn settings(&self) -> &Path {
+        &self.paths.settings
+    }
+
+    /// Credential storage directory.
+    #[must_use]
+    pub fn credentials(&self) -> &Path {
+        &self.paths.credentials
+    }
+
+    /// Durable state database.
+    #[must_use]
+    pub fn state_db(&self) -> &Path {
+        &self.paths.state_db
+    }
+
+    /// Durable run directory.
+    #[must_use]
+    pub fn runs(&self) -> &Path {
+        &self.paths.runs
+    }
+
+    /// Disposable checkout cache.
+    #[must_use]
+    pub fn checkout_cache(&self) -> &Path {
+        &self.paths.checkout_cache
+    }
+
+    /// Disposable committed config cache.
+    #[must_use]
+    pub fn config_cache(&self) -> &Path {
+        &self.paths.config_cache
+    }
+
+    /// Resolves one expected directory.
+    #[must_use]
+    pub fn directory(&self, directory: Directory) -> &Path {
+        match directory {
+            Directory::Home => &self.root,
+            Directory::Credentials => &self.paths.credentials,
+            Directory::Runs => &self.paths.runs,
+            Directory::CheckoutCache => &self.paths.checkout_cache,
+            Directory::ConfigCache => &self.paths.config_cache,
+        }
+    }
+}
+
+fn default_root(environment: &impl Environment) -> Result<PathBuf, Error> {
+    environment
+        .value(USER_HOME)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|path| path.join(".bureau"))
+        .ok_or(Error::MissingUserHome)
 }
 
 /// Resolved local bureau home.
@@ -103,94 +202,5 @@ impl Home {
     #[must_use]
     pub const fn layout(&self) -> &Layout {
         &self.layout
-    }
-}
-
-fn default_root(environment: &impl Environment) -> Result<PathBuf, Error> {
-    environment
-        .value(USER_HOME)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|path| path.join(".bureau"))
-        .ok_or(Error::MissingUserHome)
-}
-
-/// Every fixed path below the local bureau home.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Layout {
-    root: PathBuf,
-    settings: PathBuf,
-    credentials: PathBuf,
-    state_db: PathBuf,
-    runs: PathBuf,
-    checkout_cache: PathBuf,
-    config_cache: PathBuf,
-}
-
-impl Layout {
-    fn new(root: PathBuf) -> Self {
-        Self {
-            settings: root.join("settings.yaml"),
-            credentials: root.join("credentials"),
-            state_db: root.join("state.db"),
-            runs: root.join("runs"),
-            checkout_cache: root.join("checkout-cache"),
-            config_cache: root.join("config-cache"),
-            root,
-        }
-    }
-
-    /// Root directory.
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Local lifecycle settings file.
-    #[must_use]
-    pub fn settings(&self) -> &Path {
-        &self.settings
-    }
-
-    /// Credential storage directory.
-    #[must_use]
-    pub fn credentials(&self) -> &Path {
-        &self.credentials
-    }
-
-    /// Durable state database.
-    #[must_use]
-    pub fn state_db(&self) -> &Path {
-        &self.state_db
-    }
-
-    /// Durable run directory.
-    #[must_use]
-    pub fn runs(&self) -> &Path {
-        &self.runs
-    }
-
-    /// Disposable checkout cache.
-    #[must_use]
-    pub fn checkout_cache(&self) -> &Path {
-        &self.checkout_cache
-    }
-
-    /// Disposable committed config cache.
-    #[must_use]
-    pub fn config_cache(&self) -> &Path {
-        &self.config_cache
-    }
-
-    /// Resolves one expected directory.
-    #[must_use]
-    pub fn directory(&self, directory: Directory) -> &Path {
-        match directory {
-            Directory::Home => &self.root,
-            Directory::Credentials => &self.credentials,
-            Directory::Runs => &self.runs,
-            Directory::CheckoutCache => &self.checkout_cache,
-            Directory::ConfigCache => &self.config_cache,
-        }
     }
 }

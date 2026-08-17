@@ -13,17 +13,6 @@ use crate::config::StepDef;
 use crate::contract::{SCHEMA_VERSION, StepRequest, StepResult};
 use crate::process::{Secret, SharedLog, SpawnRequest, SpawnResult, spawn};
 
-/// One output chunk in a recorded transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Chunk {
-    /// Delay before emitting, relative to the previous chunk.
-    pub delay_ms: u64,
-    /// Which stream the bytes go to.
-    pub stream: Stream,
-    /// The bytes (UTF-8).
-    pub data: String,
-}
-
 /// Which stream a chunk belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -34,18 +23,15 @@ pub enum Stream {
     Stderr,
 }
 
-/// A recorded adapter session: the fixture the `fake` adapter replays.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Transcript {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// Output chunks in order.
-    pub chunks: Vec<Chunk>,
-    /// Exit code the replay ends with.
-    pub exit_code: i32,
-    /// Adapter-owned usage replayed with the transcript.
-    #[serde(default)]
-    pub usage: Usage,
+/// One output chunk in a recorded transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Chunk {
+    /// Delay before emitting, relative to the previous chunk.
+    pub delay_ms: u64,
+    /// Which stream the bytes go to.
+    pub stream: Stream,
+    /// The bytes (UTF-8).
+    pub data: String,
 }
 
 /// Why a transcript could not be loaded or saved.
@@ -66,6 +52,28 @@ pub enum FakeError {
     /// Filesystem failure.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+fn schema_of(value: &serde_json::Value) -> String {
+    value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<missing>")
+        .to_owned()
+}
+
+/// A recorded adapter session: the fixture the `fake` adapter replays.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Transcript {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// Output chunks in order.
+    pub chunks: Vec<Chunk>,
+    /// Exit code the replay ends with.
+    pub exit_code: i32,
+    /// Adapter-owned usage replayed with the transcript.
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 impl Transcript {
@@ -119,24 +127,6 @@ impl Transcript {
     }
 }
 
-fn schema_of(value: &serde_json::Value) -> String {
-    value
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("<missing>")
-        .to_owned()
-}
-
-/// Replays a transcript to this process's stdout and stderr, honoring
-/// chunk delays, and returns the recorded exit code.
-pub async fn replay(transcript: &Transcript) -> i32 {
-    for chunk in &transcript.chunks {
-        tokio::time::sleep(Duration::from_millis(chunk.delay_ms)).await;
-        emit(chunk);
-    }
-    transcript.exit_code
-}
-
 fn emit(chunk: &Chunk) {
     let bytes = chunk.data.as_bytes();
     match chunk.stream {
@@ -151,11 +141,40 @@ fn emit(chunk: &Chunk) {
     }
 }
 
-/// Runs `request` under the layer-0 contract and returns the transcript a
-/// `fake` adapter can replay later.
-#[must_use]
-pub async fn record(request: SpawnRequest) -> Transcript {
-    Transcript::from_result(&spawn(request).await)
+/// Replays a transcript to this process's stdout and stderr, honoring
+/// chunk delays, and returns the recorded exit code.
+pub async fn replay(transcript: &Transcript) -> i32 {
+    for chunk in &transcript.chunks {
+        tokio::time::sleep(Duration::from_millis(chunk.delay_ms)).await;
+        emit(chunk);
+    }
+    transcript.exit_code
+}
+
+fn write_chunk_line(
+    script: &mut String,
+    transcript: &Transcript,
+    i: usize,
+    work_dir: &Path,
+) -> std::io::Result<()> {
+    use std::fmt::Write as _;
+    let chunk = &transcript.chunks[i];
+    if chunk.delay_ms > 0 {
+        let _ = writeln!(
+            script,
+            "sleep {}.{:03}",
+            chunk.delay_ms / 1000,
+            chunk.delay_ms % 1000
+        );
+    }
+    let path = work_dir.join(format!("chunk-{i}"));
+    std::fs::write(&path, &chunk.data)?;
+    let fd = match chunk.stream {
+        Stream::Stdout => 1,
+        Stream::Stderr => 2,
+    };
+    let _ = writeln!(script, "cat \"{}\" >&{fd}", path.display());
+    Ok(())
 }
 
 /// Builds the layer-0 request that replays a transcript.
@@ -194,30 +213,41 @@ pub fn replay_request(
     })
 }
 
-fn write_chunk_line(
-    script: &mut String,
-    transcript: &Transcript,
-    i: usize,
-    work_dir: &Path,
-) -> std::io::Result<()> {
-    use std::fmt::Write as _;
-    let chunk = &transcript.chunks[i];
-    if chunk.delay_ms > 0 {
-        let _ = writeln!(
-            script,
-            "sleep {}.{:03}",
-            chunk.delay_ms / 1000,
-            chunk.delay_ms % 1000
-        );
-    }
-    let path = work_dir.join(format!("chunk-{i}"));
-    std::fs::write(&path, &chunk.data)?;
-    let fd = match chunk.stream {
-        Stream::Stdout => 1,
-        Stream::Stderr => 2,
+/// Runs `request` under the layer-0 contract and returns the transcript a
+/// `fake` adapter can replay later.
+#[must_use]
+pub async fn record(request: SpawnRequest) -> Transcript {
+    Transcript::from_result(&spawn(request).await)
+}
+
+fn scratch_dir() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "bureau-fake-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Removes the replay scratch directory off the executor's worker
+/// threads; cleanup is best effort, exactly as the synchronous sweep
+/// was before.
+async fn remove_scratch(dir: std::path::PathBuf) {
+    let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dir)).await;
+}
+
+fn failed(message: &str) -> Execution {
+    let result = StepResult {
+        schema: SCHEMA_VERSION.to_owned(),
+        outcome: crate::contract::StepOutcome::Failure,
+        outputs: std::collections::BTreeMap::new(),
+        artifacts: Vec::new(),
+        trust: crate::contract::Trust::Derived,
+        message: message.to_owned(),
     };
-    let _ = writeln!(script, "cat \"{}\" >&{fd}", path.display());
-    Ok(())
+    Execution::new(result, Usage::zero("fake"))
 }
 
 /// Runs a step through the fake adapter: replay the fixture named by
@@ -251,33 +281,10 @@ pub async fn execute(
         }
         Err(e) => return failed(&format!("preparing replay: {e}")),
     };
-    let _ = std::fs::remove_dir_all(&scratch);
+    remove_scratch(scratch).await;
     if result.outcome == SpawnOutcome::Timeout {
         return failed("fake replay timed out");
     }
     let step_result = super::result_from_agent(&result, None, &result.stdout);
     Execution::new(step_result, transcript.usage)
-}
-
-fn scratch_dir() -> std::path::PathBuf {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "bureau-fake-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let _ = std::fs::create_dir_all(&dir);
-    dir
-}
-
-fn failed(message: &str) -> Execution {
-    let result = StepResult {
-        schema: SCHEMA_VERSION.to_owned(),
-        outcome: crate::contract::StepOutcome::Failure,
-        outputs: std::collections::BTreeMap::new(),
-        artifacts: Vec::new(),
-        trust: crate::contract::Trust::Derived,
-        message: message.to_owned(),
-    };
-    Execution::new(result, Usage::zero("fake"))
 }

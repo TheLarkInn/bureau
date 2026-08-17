@@ -1,17 +1,23 @@
 //! Plugin activation errors.
 
-use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use thiserror::Error;
+
 /// A plugin resolution, snapshot, or temporary activation failure.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
     /// The role agent reference was not a `/plugin:agent` reference.
+    #[error("use a `/plugin:agent` role agent reference; received `{0}`")]
     InvalidReference(String),
     /// No approved source contained the requested plugin.
+    #[error(
+        "run `bureau setup` or install plugin `{0}` with Copilot, then retry; no enabled local, user-global, or development source was found"
+    )]
     MissingPlugin(String),
     /// Plugin or activation data was invalid.
+    #[error("{}: {message}", .path.display())]
     InvalidData {
         /// File or directory associated with the invalid data.
         path: PathBuf,
@@ -19,6 +25,7 @@ pub enum Error {
         message: String,
     },
     /// A filesystem operation failed.
+    #[error("{operation} {}", .path.display())]
     Io {
         /// Operation that failed.
         operation: &'static str,
@@ -28,6 +35,7 @@ pub enum Error {
         source: io::Error,
     },
     /// Activation files changed after they were injected.
+    #[error("{}", conflict_message(.paths, .restore_failures))]
     Conflict {
         /// Paths whose bytes no longer matched the injected bytes.
         paths: Vec<PathBuf>,
@@ -35,13 +43,15 @@ pub enum Error {
         restore_failures: Vec<String>,
     },
     /// Exact restoration failed without an activation conflict.
+    #[error("temporary plugin restoration failed: {}", .0.join("; "))]
     Restore(Vec<String>),
     /// Copilot plugin installation failed.
+    #[error("Copilot plugin installation failed: {0}")]
     Install(String),
 }
 
 impl Error {
-    pub(crate) fn invalid(path: &Path, message: impl fmt::Display) -> Self {
+    pub(crate) fn invalid(path: &Path, message: impl std::fmt::Display) -> Self {
         Self::InvalidData {
             path: path.to_path_buf(),
             message: message.to_string(),
@@ -57,86 +67,23 @@ impl Error {
     }
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidReference(value) => invalid_reference(formatter, value),
-            Self::MissingPlugin(name) => missing_plugin(formatter, name),
-            Self::InvalidData { path, message } => {
-                write!(formatter, "{}: {message}", path.display())
-            }
-            Self::Io {
-                operation,
-                path,
-                source,
-            } => write!(formatter, "{operation} {}: {source}", path.display()),
-            Self::Conflict {
-                paths,
-                restore_failures,
-            } => conflict(formatter, paths, restore_failures),
-            Self::Restore(failures) => restore(formatter, failures),
-            Self::Install(message) => {
-                write!(formatter, "Copilot plugin installation failed: {message}")
-            }
-        }
-    }
-}
-
-fn invalid_reference(formatter: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
-    write!(
-        formatter,
-        "use a `/plugin:agent` role agent reference; received `{value}`"
-    )
-}
-
-fn missing_plugin(formatter: &mut fmt::Formatter<'_>, name: &str) -> fmt::Result {
-    write!(
-        formatter,
-        "run `bureau setup` or install plugin `{name}` with Copilot, then retry; no enabled local, user-global, or development source was found"
-    )
-}
-
-fn conflict(
-    formatter: &mut fmt::Formatter<'_>,
-    paths: &[PathBuf],
-    failures: &[String],
-) -> fmt::Result {
-    if failures.is_empty() {
-        return write!(
-            formatter,
-            "temporary plugin activation changed at {}; originals were restored and the run must escalate",
-            display_paths(paths)
-        );
-    }
-    write!(
-        formatter,
-        "temporary plugin activation changed at {}; restoration was incomplete: {}",
-        display_paths(paths),
-        failures.join("; ")
-    )
-}
-
-fn restore(formatter: &mut fmt::Formatter<'_>, failures: &[String]) -> fmt::Result {
-    write!(
-        formatter,
-        "temporary plugin restoration failed: {}",
-        failures.join("; ")
-    )
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
 fn display_paths(paths: &[PathBuf]) -> String {
     paths
         .iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn conflict_message(paths: &[PathBuf], failures: &[String]) -> String {
+    let changed = display_paths(paths);
+    if failures.is_empty() {
+        return format!(
+            "temporary plugin activation changed at {changed}; originals were restored and the run must escalate"
+        );
+    }
+    format!(
+        "temporary plugin activation changed at {changed}; restoration was incomplete: {}",
+        failures.join("; ")
+    )
 }

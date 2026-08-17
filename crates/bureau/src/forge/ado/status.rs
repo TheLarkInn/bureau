@@ -14,24 +14,15 @@ pub(super) struct RawPr {
 
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
-struct RawStatus {
-    status: String,
-    last_merge_commit: Option<RawCommit>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
 struct RawCommit {
     commit_id: String,
 }
 
-pub(super) async fn get(forge: &AdoForge, repo: &str, number: u64) -> Result<PrStatus, Error> {
-    let (project, repo) = repo_parts(repo)?;
-    let url = forge.url(&format!(
-        "/{project}/_apis/git/repositories/{repo}/pullrequests/{number}?api-version=7.1"
-    ));
-    let raw: RawStatus = decode(forge.get(&url).send().await?).await?;
-    Ok(raw.into_status())
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct RawStatus {
+    status: String,
+    last_merge_commit: Option<RawCommit>,
 }
 
 impl RawStatus {
@@ -44,4 +35,13 @@ impl RawStatus {
             _ => PrStatus::Open,
         }
     }
+}
+
+pub(super) async fn get(forge: &AdoForge, repo: &str, number: u64) -> Result<PrStatus, Error> {
+    let (project, repo) = repo_parts(repo)?;
+    let url = forge.url(&format!(
+        "/{project}/_apis/git/repositories/{repo}/pullrequests/{number}?api-version=7.1"
+    ));
+    let raw: RawStatus = decode(forge.get(&url).send().await?).await?;
+    Ok(raw.into_status())
 }

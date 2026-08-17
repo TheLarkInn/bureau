@@ -4,10 +4,20 @@ pub(super) const INVALID_REQUEST: i64 = -32600;
 pub(super) const METHOD_NOT_FOUND: i64 = -32601;
 pub(super) const INVALID_PARAMS: i64 = -32602;
 
-pub(super) struct Request {
-    pub(super) method: String,
-    pub(super) params: Option<Value>,
-    id: Option<Value>,
+fn error(id: &Value, code: i64, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {"code": code, "message": message}
+    })
+}
+
+fn invalid_request(id: &Value) -> Value {
+    error(id, INVALID_REQUEST, "invalid request")
+}
+
+fn success(id: &Value, result: &Value) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
 pub(super) struct Failure {
@@ -31,6 +41,16 @@ impl Failure {
     }
 }
 
+fn failure(id: &Value, failure: &Failure) -> Value {
+    error(id, failure.code, &failure.message)
+}
+
+pub(super) struct Request {
+    pub(super) method: String,
+    pub(super) params: Option<Value>,
+    id: Option<Value>,
+}
+
 impl Request {
     pub(super) fn complete(&self, result: Result<Value, Failure>) -> Option<Value> {
         let id = self.id.as_ref()?;
@@ -41,25 +61,20 @@ impl Request {
     }
 }
 
-pub(super) fn parse(line: &[u8]) -> Result<Request, Value> {
-    let value: Value =
-        serde_json::from_slice(line).map_err(|_| error(&Value::Null, -32700, "parse error"))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| invalid_request(&Value::Null))?;
-    parse_object(object)
+fn valid_id(value: &Value) -> bool {
+    value.is_null() || value.is_string() || value.is_number()
 }
 
-fn parse_object(object: &Map<String, Value>) -> Result<Request, Value> {
-    validate_version(object)?;
-    validate_id(object)?;
-    validate_params(object)?;
-    let method = method(object)?;
-    Ok(Request {
-        method,
-        params: object.get("params").cloned(),
-        id: object.get("id").cloned(),
-    })
+fn valid_params(value: &Value) -> bool {
+    value.is_object() || value.is_array()
+}
+
+fn id_or_null(object: &Map<String, Value>) -> Value {
+    object
+        .get("id")
+        .filter(|value| valid_id(value))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn validate_version(object: &Map<String, Value>) -> Result<(), Value> {
@@ -91,38 +106,23 @@ fn method(object: &Map<String, Value>) -> Result<String, Value> {
         .ok_or_else(|| invalid_request(&id_or_null(object)))
 }
 
-fn valid_id(value: &Value) -> bool {
-    value.is_null() || value.is_string() || value.is_number()
-}
-
-fn valid_params(value: &Value) -> bool {
-    value.is_object() || value.is_array()
-}
-
-fn id_or_null(object: &Map<String, Value>) -> Value {
-    object
-        .get("id")
-        .filter(|value| valid_id(value))
-        .cloned()
-        .unwrap_or(Value::Null)
-}
-
-fn success(id: &Value, result: &Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
-}
-
-fn failure(id: &Value, failure: &Failure) -> Value {
-    error(id, failure.code, &failure.message)
-}
-
-fn invalid_request(id: &Value) -> Value {
-    error(id, INVALID_REQUEST, "invalid request")
-}
-
-fn error(id: &Value, code: i64, message: &str) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {"code": code, "message": message}
+fn parse_object(object: &Map<String, Value>) -> Result<Request, Value> {
+    validate_version(object)?;
+    validate_id(object)?;
+    validate_params(object)?;
+    let method = method(object)?;
+    Ok(Request {
+        method,
+        params: object.get("params").cloned(),
+        id: object.get("id").cloned(),
     })
+}
+
+pub(super) fn parse(line: &[u8]) -> Result<Request, Value> {
+    let value: Value =
+        serde_json::from_slice(line).map_err(|_| error(&Value::Null, -32700, "parse error"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid_request(&Value::Null))?;
+    parse_object(object)
 }

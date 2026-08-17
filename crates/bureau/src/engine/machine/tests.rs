@@ -1,4 +1,4 @@
-use super::measured_cost;
+use super::super::context::measured_cost;
 use crate::adapters::Usage;
 
 #[test]

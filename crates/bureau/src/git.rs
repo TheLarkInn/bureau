@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::ForgeKind;
+use crate::forge::ForgeKind;
 use crate::process::{Secret, SpawnOutcome, SpawnRequest, SpawnResult, spawn};
 
 /// The per-command timeout for git operations.
@@ -68,30 +68,28 @@ pub const fn credential_for(forge: ForgeKind, secret: Secret) -> Credential {
 /// Base64-encode without a dependency (the approved crate list has none).
 fn base64(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let n = chunk
-            .iter()
-            .fold(0usize, |acc, &b| (acc << 8) | usize::from(b))
-            << (8 * (3 - chunk.len()));
-        for i in 0..4 {
-            let keep = chunk.len() + 1;
-            out.push(if i < keep {
-                char::from(TABLE[(n >> (18 - 6 * i)) & 63])
-            } else {
-                '='
-            });
-        }
-    }
-    out
+    data.chunks(3)
+        .flat_map(|chunk| {
+            let bits = chunk
+                .iter()
+                .fold(0usize, |acc, &byte| (acc << 8) | usize::from(byte))
+                << (8 * (3 - chunk.len()));
+            (0..4).map(move |i| {
+                if i <= chunk.len() {
+                    char::from(TABLE[(bits >> (18 - 6 * i)) & 63])
+                } else {
+                    '='
+                }
+            })
+        })
+        .collect()
 }
 
 /// The `-c http.extraheader=...` argv carrying `credential`.
 ///
-/// Every form the credential takes joins the scrub list: the raw
-/// secret, the base64 `user:secret` pair that sits in argv and on the
-/// wire, and the full `AUTHORIZATION: Basic` value a reflected error
-/// page would echo back.
+/// Every form the credential takes joins the scrub list: the raw secret,
+/// the base64 `user:secret` pair argv carries, and the full
+/// `AUTHORIZATION: Basic` value a reflected error page would echo back.
 #[must_use]
 pub fn auth_args(credential: &Credential, secrets: &mut Vec<Secret>) -> Vec<String> {
     let user = credential.user;
@@ -99,10 +97,20 @@ pub fn auth_args(credential: &Credential, secrets: &mut Vec<Secret>) -> Vec<Stri
     secrets.push(credential.secret.clone());
     secrets.push(Secret::new(pair.as_str()));
     secrets.push(Secret::new(format!("AUTHORIZATION: Basic {pair}")));
-    vec![
-        "-c".to_owned(),
-        format!("http.extraheader=AUTHORIZATION: Basic {pair}"),
-    ]
+    let header = format!("http.extraheader=AUTHORIZATION: Basic {pair}");
+    vec!["-c".to_owned(), header]
+}
+
+fn check(result: SpawnResult, args: &[&str]) -> Result<Vec<u8>, Error> {
+    if result.outcome == SpawnOutcome::Exited && result.exit_code == Some(0) {
+        return Ok(result.stdout);
+    }
+    let detail = String::from_utf8_lossy(&result.stderr);
+    Err(Error::Command {
+        args: args.join(" "),
+        outcome: format!("{:?}", result.outcome),
+        detail: detail.trim().chars().take(500).collect(),
+    })
 }
 
 async fn git(
@@ -131,19 +139,10 @@ async fn git(
     check(result, args)
 }
 
-fn check(result: SpawnResult, args: &[&str]) -> Result<Vec<u8>, Error> {
-    if result.outcome == SpawnOutcome::Exited && result.exit_code == Some(0) {
-        return Ok(result.stdout);
-    }
-    Err(Error::Command {
-        args: args.join(" "),
-        outcome: format!("{:?}", result.outcome),
-        detail: String::from_utf8_lossy(&result.stderr)
-            .trim()
-            .chars()
-            .take(500)
-            .collect(),
-    })
+/// Creates the cache root off the executor's worker threads.
+async fn create_root(root: PathBuf) -> Result<(), Error> {
+    let created = tokio::task::spawn_blocking(move || std::fs::create_dir_all(root)).await;
+    created.map_err(std::io::Error::other)?.map_err(Error::from)
 }
 
 /// Bare-mirror cache, one directory per remote URL.
@@ -170,8 +169,7 @@ impl CheckoutCache {
     }
 
     /// Ensures an up-to-date bare mirror of `url` exists and returns its
-    /// path: `git clone --mirror` on first use, `git fetch --prune`
-    /// after.
+    /// path: `git clone --mirror` on first use, `git fetch --prune` after.
     ///
     /// # Errors
     /// Propagates git and filesystem failures.
@@ -185,21 +183,27 @@ impl CheckoutCache {
         if dir.exists() {
             git(&["fetch", "--prune"], &dir, credential, &mut secrets).await?;
         } else {
-            std::fs::create_dir_all(&self.root)?;
-            let name = dir
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            git(
-                &["clone", "--mirror", url, &name],
-                &self.root,
-                credential,
-                &mut secrets,
-            )
-            .await?;
+            self.clone_mirror(url, &dir, credential).await?;
         }
         Ok(dir)
+    }
+
+    async fn clone_mirror(
+        &self,
+        url: &str,
+        dir: &Path,
+        credential: Option<&Credential>,
+    ) -> Result<(), Error> {
+        create_root(self.root.clone()).await?;
+        let name = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let mut secrets = Vec::new();
+        let args = ["clone", "--mirror", url, &name];
+        git(&args, &self.root, credential, &mut secrets).await?;
+        Ok(())
     }
 }
 
@@ -269,22 +273,16 @@ impl Worktree {
         credential: Option<&Credential>,
     ) -> Result<(), Error> {
         let mut secrets = Vec::new();
-        git(
-            &["push", remote_url, &self.branch],
-            &self.dir,
-            credential,
-            &mut secrets,
-        )
-        .await?;
+        let args = ["push", remote_url, &self.branch];
+        git(&args, &self.dir, credential, &mut secrets).await?;
         Ok(())
     }
 }
 
 impl Drop for Worktree {
     fn drop(&mut self) {
-        // Sync std::process on purpose: Drop cannot be async. Idempotent:
-        // an already-removed worktree or a missing mirror both fall
-        // through to the directory sweep.
+        // Sync std::process on purpose: Drop cannot be async. Idempotent: an
+        // already-removed worktree or missing mirror falls through to the sweep.
         let removed = std::process::Command::new("git")
             .args(["worktree", "remove", "--force"])
             .arg(&self.dir)

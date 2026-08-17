@@ -38,16 +38,21 @@ pub enum InitState {
     Complete,
 }
 
-/// First-time initialization state machine.
-pub struct InitFlow {
-    request: InitRequest,
-    state: InitState,
+/// Intermediate values collected while a first-time flow advances.
+struct Progress {
     draft: Option<ConfigDraft>,
     pull_request: Option<ConfigPullRequest>,
     merged: Option<Merge>,
     validated: Option<ValidatedConfig>,
     pass: Option<ReconcilePass>,
     outcome: Option<InitOutcome>,
+}
+
+/// First-time initialization state machine.
+pub struct InitFlow {
+    request: InitRequest,
+    state: InitState,
+    progress: Progress,
 }
 
 impl InitFlow {
@@ -57,12 +62,14 @@ impl InitFlow {
         Self {
             request,
             state: InitState::CheckingSettings,
-            draft: None,
-            pull_request: None,
-            merged: None,
-            validated: None,
-            pass: None,
-            outcome: None,
+            progress: Progress {
+                draft: None,
+                pull_request: None,
+                merged: None,
+                validated: None,
+                pass: None,
+                outcome: None,
+            },
         }
     }
 
@@ -96,7 +103,8 @@ impl InitFlow {
         while self.state != InitState::Complete {
             self.advance(effects)?;
         }
-        self.outcome
+        self.progress
+            .outcome
             .clone()
             .ok_or(FlowError::MissingStateData("init outcome"))
     }
@@ -136,7 +144,7 @@ impl InitFlow {
         &mut self,
         effects: &mut E,
     ) -> Result<InitState, FlowError<EffectError<E>>> {
-        self.draft = Some(
+        self.progress.draft = Some(
             effects
                 .prepare_config(&self.request.first_pipeline)
                 .map_err(FlowError::Effect)?,
@@ -171,7 +179,7 @@ impl InitFlow {
         let pull_request = effects
             .create_config_pull_request(&self.request.settings.config, self.draft()?)
             .map_err(FlowError::Effect)?;
-        self.pull_request = Some(pull_request);
+        self.progress.pull_request = Some(pull_request);
         Ok(InitState::WaitingForMerge)
     }
 
@@ -182,7 +190,7 @@ impl InitFlow {
         let merged = effects
             .wait_for_merge(self.pull_request()?)
             .map_err(FlowError::Effect)?;
-        self.merged = Some(merged);
+        self.progress.merged = Some(merged);
         Ok(InitState::ValidatingMergedCommit)
     }
 
@@ -196,7 +204,7 @@ impl InitFlow {
             .validate_merged_config(source, &merged)
             .map_err(FlowError::Effect)?;
         self.verify_validated(&merged, &validated)?;
-        self.validated = Some(validated);
+        self.progress.validated = Some(validated);
         Ok(InitState::Reconciling)
     }
 
@@ -241,7 +249,7 @@ impl InitFlow {
         let pass = effects
             .reconcile_once(self.validated()?)
             .map_err(FlowError::Effect)?;
-        self.pass = Some(pass);
+        self.progress.pass = Some(pass);
         Ok(InitState::WaitingForOutcomes)
     }
 

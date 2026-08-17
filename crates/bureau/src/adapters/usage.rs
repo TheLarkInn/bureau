@@ -4,6 +4,51 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::StepResult;
 
+fn json(bytes: &[u8]) -> Option<serde_json::Value> {
+    serde_json::from_slice(bytes).ok()
+}
+
+fn integer(value: Option<&serde_json::Value>, key: &str) -> Option<u64> {
+    value?.get(key)?.as_u64()
+}
+
+fn number(value: Option<&serde_json::Value>, key: &str) -> Option<f64> {
+    value?
+        .get(key)?
+        .as_f64()
+        .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
+fn unsigned(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(number) => number.parse().ok(),
+        serde_json::Value::Object(map) => ["intValue", "doubleValue"]
+            .into_iter()
+            .find_map(|key| map.get(key).and_then(unsigned)),
+        _ => None,
+    }
+}
+
+fn numeric(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(number) => number.parse().ok(),
+        serde_json::Value::Object(map) => ["intValue", "doubleValue"]
+            .into_iter()
+            .find_map(|key| map.get(key).and_then(numeric)),
+        _ => None,
+    }
+    .filter(|number| number.is_finite() && *number >= 0.0)
+}
+
+fn add_count(value: &serde_json::Value, total: &mut u64, seen: &mut bool) {
+    if let Some(value) = unsigned(value) {
+        *total = total.saturating_add(value);
+        *seen = true;
+    }
+}
+
 /// Provider usage measured outside agent-controlled result data.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,30 +120,6 @@ impl Usage {
     }
 }
 
-/// The agent response nested in Claude's structured envelope.
-#[must_use]
-pub fn claude_result(bytes: &[u8]) -> Option<Vec<u8>> {
-    json(bytes)?
-        .get("result")?
-        .as_str()
-        .map(|result| result.as_bytes().to_vec())
-}
-
-fn json(bytes: &[u8]) -> Option<serde_json::Value> {
-    serde_json::from_slice(bytes).ok()
-}
-
-fn integer(value: Option<&serde_json::Value>, key: &str) -> Option<u64> {
-    value?.get(key)?.as_u64()
-}
-
-fn number(value: Option<&serde_json::Value>, key: &str) -> Option<f64> {
-    value?
-        .get(key)?
-        .as_f64()
-        .filter(|number| number.is_finite() && *number >= 0.0)
-}
-
 #[derive(Default)]
 struct Totals {
     input: u64,
@@ -163,13 +184,6 @@ fn add(key: &str, value: &serde_json::Value, totals: &mut Totals) {
     }
 }
 
-fn add_count(value: &serde_json::Value, total: &mut u64, seen: &mut bool) {
-    if let Some(value) = unsigned(value) {
-        *total = total.saturating_add(value);
-        *seen = true;
-    }
-}
-
 fn add_cost(value: &serde_json::Value, totals: &mut Totals) {
     if let Some(value) = numeric(value) {
         totals.nano_aiu += value;
@@ -177,27 +191,13 @@ fn add_cost(value: &serde_json::Value, totals: &mut Totals) {
     }
 }
 
-fn unsigned(value: &serde_json::Value) -> Option<u64> {
-    match value {
-        serde_json::Value::Number(number) => number.as_u64(),
-        serde_json::Value::String(number) => number.parse().ok(),
-        serde_json::Value::Object(map) => ["intValue", "doubleValue"]
-            .into_iter()
-            .find_map(|key| map.get(key).and_then(unsigned)),
-        _ => None,
-    }
-}
-
-fn numeric(value: &serde_json::Value) -> Option<f64> {
-    match value {
-        serde_json::Value::Number(number) => number.as_f64(),
-        serde_json::Value::String(number) => number.parse().ok(),
-        serde_json::Value::Object(map) => ["intValue", "doubleValue"]
-            .into_iter()
-            .find_map(|key| map.get(key).and_then(numeric)),
-        _ => None,
-    }
-    .filter(|number| number.is_finite() && *number >= 0.0)
+/// The agent response nested in Claude's structured envelope.
+#[must_use]
+pub fn claude_result(bytes: &[u8]) -> Option<Vec<u8>> {
+    json(bytes)?
+        .get("result")?
+        .as_str()
+        .map(|result| result.as_bytes().to_vec())
 }
 
 /// A validated step result plus adapter-owned usage.

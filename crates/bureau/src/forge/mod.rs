@@ -14,6 +14,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::Trust;
 
+/// Which forge hosts a repo or work source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ForgeKind {
+    /// Azure DevOps.
+    Ado,
+    /// GitHub.
+    Github,
+}
+
 /// A work item from the work source (bug, issue, task — the forge owns
 /// taxonomy).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

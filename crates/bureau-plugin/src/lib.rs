@@ -28,13 +28,37 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use error::Error;
-
 /// Metadata from a validated plugin package.
 pub use package::{InstallCommand, PackageInfo};
 
 use reference::AgentReference;
 use settings::Settings;
 use snapshot::Snapshot;
+
+/// One resolved plugin source location.
+#[derive(Debug)]
+pub(crate) struct Resolved {
+    /// Plugin package directory.
+    pub path: PathBuf,
+    /// Human-readable source description.
+    pub description: String,
+}
+
+/// Exact identity of one durable plugin snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginSource {
+    /// Plugin name.
+    pub name: String,
+    /// Target-repo, user-global, or development source description.
+    pub source: String,
+    /// Declared semantic version.
+    pub version: String,
+    /// Content digest of the materialized plugin.
+    pub digest: String,
+    /// Original installed or target-repository package path, when available.
+    #[serde(default)]
+    pub origin: Option<PathBuf>,
+}
 
 /// Whether a value has the exact `/plugin:agent` reference shape.
 #[must_use]
@@ -66,44 +90,11 @@ pub fn validate_install_result(success: bool, stderr: &[u8]) -> Result<(), Error
     package::validate_install_result(success, stderr)
 }
 
-/// Exact identity of one durable plugin snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginSource {
-    /// Plugin name.
-    pub name: String,
-    /// Target-repo, user-global, or development source description.
-    pub source: String,
-    /// Declared semantic version.
-    pub version: String,
-    /// Content digest of the materialized plugin.
-    pub digest: String,
-    /// Original installed or target-repository package path, when available.
-    #[serde(default)]
-    pub origin: Option<PathBuf>,
-}
-
 /// One active direct agent file installation.
 #[derive(Debug)]
 pub struct DirectActivation {
     agent_name: String,
     guard: guard::Guard,
-}
-
-/// Temporarily materializes pinned direct-agent bytes for both adapters.
-///
-/// # Errors
-/// Rejects invalid paths and propagates exact-activation failures.
-pub fn activate_direct(
-    agent_path: &str,
-    bytes: &[u8],
-    worktree: &Path,
-    run_dir: &Path,
-) -> Result<DirectActivation, Error> {
-    let agent_name = direct_agent_name(agent_path)?;
-    let worktree =
-        std::fs::canonicalize(worktree).map_err(|error| Error::io("resolve", worktree, error))?;
-    let guard = activation::apply_direct(bytes, &agent_name, &worktree, run_dir)?;
-    Ok(DirectActivation { agent_name, guard })
 }
 
 impl DirectActivation {
@@ -130,6 +121,59 @@ fn direct_agent_name(value: &str) -> Result<String, Error> {
         .ok_or_else(|| Error::InvalidReference(value.to_owned()))?;
     let base = file.strip_suffix(".agent.md").unwrap_or(file);
     Ok(base.strip_suffix(".md").unwrap_or(base).to_owned())
+}
+
+/// Temporarily materializes pinned direct-agent bytes for both adapters.
+///
+/// # Errors
+/// Rejects invalid paths and propagates exact-activation failures.
+pub fn activate_direct(
+    agent_path: &str,
+    bytes: &[u8],
+    worktree: &Path,
+    run_dir: &Path,
+) -> Result<DirectActivation, Error> {
+    let agent_name = direct_agent_name(agent_path)?;
+    let worktree =
+        std::fs::canonicalize(worktree).map_err(|error| Error::io("resolve", worktree, error))?;
+    let guard = activation::apply_direct(bytes, &agent_name, &worktree, run_dir)?;
+    Ok(DirectActivation { agent_name, guard })
+}
+
+/// One active worktree-local plugin installation.
+///
+/// Dropping this value performs best-effort restoration. Prefer [`Self::restore`]
+/// so conflicting edits or restoration failures can be escalated.
+#[derive(Debug)]
+pub struct Activation {
+    source: PluginSource,
+    agent_name: String,
+    guard: guard::Guard,
+}
+
+impl Activation {
+    /// Metadata for the exact durable plugin snapshot.
+    #[must_use]
+    pub const fn metadata(&self) -> &PluginSource {
+        &self.source
+    }
+
+    /// Agent name requested after the plugin prefix.
+    #[must_use]
+    pub fn agent_name(&self) -> &str {
+        &self.agent_name
+    }
+
+    /// Restores all activation files and returns the selected plugin metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict after restoring originals when injected bytes
+    /// changed, or a restoration error when exact cleanup was not possible.
+    pub fn restore(mut self) -> Result<PluginSource, Error> {
+        self.guard.restore()?;
+        Ok(self.source)
+    }
 }
 
 /// Resolves and temporarily activates role plugins for one durable run.
@@ -249,40 +293,4 @@ pub fn restore_stale(
         ));
     }
     guard::Guard::from_loaded(loaded).restore()
-}
-
-/// One active worktree-local plugin installation.
-///
-/// Dropping this value performs best-effort restoration. Prefer [`Self::restore`]
-/// so conflicting edits or restoration failures can be escalated.
-#[derive(Debug)]
-pub struct Activation {
-    source: PluginSource,
-    agent_name: String,
-    guard: guard::Guard,
-}
-
-impl Activation {
-    /// Metadata for the exact durable plugin snapshot.
-    #[must_use]
-    pub const fn metadata(&self) -> &PluginSource {
-        &self.source
-    }
-
-    /// Agent name requested after the plugin prefix.
-    #[must_use]
-    pub fn agent_name(&self) -> &str {
-        &self.agent_name
-    }
-
-    /// Restores all activation files and returns the selected plugin metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns a conflict after restoring originals when injected bytes
-    /// changed, or a restoration error when exact cleanup was not possible.
-    pub fn restore(mut self) -> Result<PluginSource, Error> {
-        self.guard.restore()?;
-        Ok(self.source)
-    }
 }

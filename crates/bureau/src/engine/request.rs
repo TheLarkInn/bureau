@@ -4,20 +4,24 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::RunPlan;
-use super::machine::RunCtx;
+use super::context::RunCtx;
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepRequest, Trust};
 
-pub(super) fn build(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepRequest {
-    StepRequest {
-        schema: SCHEMA_VERSION.to_owned(),
-        run_id: ctx.plan.run_id.clone(),
-        step: step.name.clone(),
-        worktree: worktree.to_path_buf(),
-        trust: request_trust(ctx, step),
-        inputs: collect_outputs(ctx, step),
-        artifacts: collect_artifacts(ctx, step),
+fn input_kind(ctx: &RunCtx, name: &str) -> Option<StepKind> {
+    ctx.plan
+        .pipeline
+        .steps
+        .iter()
+        .find(|step| step.name == name)
+        .map(|step| step.kind)
+}
+
+fn input_trust(ctx: &RunCtx, step: &str) -> Option<Trust> {
+    if let Some(result) = ctx.result_of(step) {
+        return Some(result.trust);
     }
+    ctx.outcome_of(step).map(|_| Trust::Derived)
 }
 
 fn collect_outputs(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, serde_json::Value> {
@@ -53,15 +57,6 @@ fn collect_artifacts(ctx: &RunCtx, step: &StepDef) -> BTreeMap<String, PathBuf> 
     merged
 }
 
-fn input_kind(ctx: &RunCtx, name: &str) -> Option<StepKind> {
-    ctx.plan
-        .pipeline
-        .steps
-        .iter()
-        .find(|step| step.name == name)
-        .map(|step| step.kind)
-}
-
 fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
     step.inputs_from
         .iter()
@@ -69,22 +64,16 @@ fn request_trust(ctx: &RunCtx, step: &StepDef) -> Trust {
         .fold(ctx.plan.item.trust, Ord::min)
 }
 
-fn input_trust(ctx: &RunCtx, step: &str) -> Option<Trust> {
-    if let Some(result) = ctx.result_of(step) {
-        return Some(result.trust);
+pub(super) fn build(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepRequest {
+    StepRequest {
+        schema: SCHEMA_VERSION.to_owned(),
+        run_id: ctx.plan.run_id.clone(),
+        step: step.name.clone(),
+        worktree: worktree.to_path_buf(),
+        trust: request_trust(ctx, step),
+        inputs: collect_outputs(ctx, step),
+        artifacts: collect_artifacts(ctx, step),
     }
-    ctx.outcome_of(step).map(|_| Trust::Derived)
-}
-
-pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
-    let minimum = min_trust(plan, step);
-    if request.trust < minimum {
-        return Some(format!(
-            "step `{}` requires {minimum:?} trust but its inputs are {:?}",
-            step.name, request.trust
-        ));
-    }
-    None
 }
 
 fn min_trust(plan: &RunPlan, step: &StepDef) -> Trust {
@@ -98,4 +87,15 @@ fn min_trust(plan: &RunPlan, step: &StepDef) -> Trust {
             .map_or(Trust::Untrusted, |role| role.min_trust);
     }
     Trust::Untrusted
+}
+
+pub(super) fn trust_check(plan: &RunPlan, step: &StepDef, request: &StepRequest) -> Option<String> {
+    let minimum = min_trust(plan, step);
+    if request.trust < minimum {
+        return Some(format!(
+            "step `{}` requires {minimum:?} trust but its inputs are {:?}",
+            step.name, request.trust
+        ));
+    }
+    None
 }

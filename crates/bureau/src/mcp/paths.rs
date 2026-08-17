@@ -5,6 +5,64 @@ use crate::contract::StepRequest;
 
 use super::{BUREAU_STEP_REQUEST, BUREAU_STEP_RESULT};
 
+fn missing_env(name: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("required environment variable {name} is missing"),
+    )
+}
+
+fn env_path(name: &str) -> io::Result<PathBuf> {
+    // Process-environment boundary: the one place the MCP session path
+    // configuration reads the process environment.
+    use crate::home::{Environment, ProcessEnvironment};
+    let value = ProcessEnvironment
+        .value(name)
+        .ok_or_else(|| missing_env(name))?;
+    if value.is_empty() {
+        return Err(missing_env(name));
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn invalid_data(error: impl std::error::Error + Send + Sync + 'static) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
+fn invalid_path(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message)
+}
+
+fn load_request(path: &Path) -> io::Result<StepRequest> {
+    let bytes = std::fs::read(path)?;
+    StepRequest::from_json(&bytes).map_err(invalid_data)
+}
+
+fn parent(path: &Path) -> io::Result<&Path> {
+    path.parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .ok_or_else(|| invalid_path("MCP path has no parent directory"))
+}
+
+fn require_absent(path: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "MCP result path already exists",
+        )),
+    }
+}
+
+fn validate_outside_worktree(directory: &Path, worktree: &Path) -> io::Result<()> {
+    let worktree = std::fs::canonicalize(worktree)?;
+    if directory.starts_with(worktree) {
+        return Err(invalid_path("MCP session directory is inside the worktree"));
+    }
+    Ok(())
+}
+
 /// Files used by one MCP step session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
@@ -55,21 +113,6 @@ impl Paths {
     }
 }
 
-fn env_path(name: &str) -> io::Result<PathBuf> {
-    let value = std::env::var_os(name).ok_or_else(|| missing_env(name))?;
-    if value.is_empty() {
-        return Err(missing_env(name));
-    }
-    Ok(PathBuf::from(value))
-}
-
-fn missing_env(name: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::NotFound,
-        format!("required environment variable {name} is missing"),
-    )
-}
-
 fn validate_absolute(paths: &Paths) -> io::Result<()> {
     if paths.request.is_absolute() && paths.result.is_absolute() {
         return Ok(());
@@ -77,11 +120,6 @@ fn validate_absolute(paths: &Paths) -> io::Result<()> {
     Err(invalid_path(
         "MCP request and result paths must be absolute",
     ))
-}
-
-fn load_request(path: &Path) -> io::Result<StepRequest> {
-    let bytes = std::fs::read(path)?;
-    StepRequest::from_json(&bytes).map_err(invalid_data)
 }
 
 fn validate_result_path(paths: &Paths) -> io::Result<PathBuf> {
@@ -94,37 +132,4 @@ fn validate_result_path(paths: &Paths) -> io::Result<PathBuf> {
     }
     require_absent(&paths.result)?;
     Ok(request_dir)
-}
-
-fn parent(path: &Path) -> io::Result<&Path> {
-    path.parent()
-        .filter(|value| !value.as_os_str().is_empty())
-        .ok_or_else(|| invalid_path("MCP path has no parent directory"))
-}
-
-fn require_absent(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "MCP result path already exists",
-        )),
-    }
-}
-
-fn validate_outside_worktree(directory: &Path, worktree: &Path) -> io::Result<()> {
-    let worktree = std::fs::canonicalize(worktree)?;
-    if directory.starts_with(worktree) {
-        return Err(invalid_path("MCP session directory is inside the worktree"));
-    }
-    Ok(())
-}
-
-fn invalid_data(error: impl std::error::Error + Send + Sync + 'static) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, error)
-}
-
-fn invalid_path(message: &'static str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, message)
 }

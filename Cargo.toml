@@ -37,9 +37,11 @@ tokio = { version = "1", features = [
 ] }
 
 [workspace.metadata.dylint]
-libraries = [
-    { git = "https://github.com/li-kai/rust-lints", rev = "3e4427e520f87f638e8b4cc1926cc641fe93d6c8" },
-]
+# Vendored copy of https://github.com/li-kai/rust-lints @ 3e4427e with one
+# patch: module_dependencies dead-edge detection only fires when both endpoint
+# modules exist in the crate being linted, so this single workspace-wide
+# dylint.toml can declare every crate's module graph.
+libraries = [{ path = "lints/rust-lints" }]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

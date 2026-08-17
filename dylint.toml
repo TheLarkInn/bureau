@@ -1,2 +1,87 @@
+# Workspace module architecture (lint: module_dependencies).
+#
+# Every top-level module of every crate must be listed (exhaustive mode).
+# Keys are "<crate>:<module>" so each crate's graph is declared separately;
+# values are the modules that module may depend on. Crate-root types act as
+# pseudo-modules (e.g. bureau_plugin's `Resolved`); declare them with an
+# empty allowlist. The vendored lint (lints/rust-lints) flags both undeclared
+# edges and, within a crate, declared edges no longer present in code.
 [module_dependencies]
 exhaustive = true
+
+[module_dependencies.allow]
+# --- bureau (library) ---
+# Crate-root types.
+"bureau:ConfigError" = []
+"bureau:contract" = []
+"bureau:identity" = []
+"bureau:process" = ["identity"]
+"bureau:forge" = ["contract", "process"]
+"bureau:git" = ["forge", "process"]
+"bureau:credential" = ["process"]
+"bureau:mcp" = ["contract"]
+"bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
+"bureau:adapters" = ["config", "contract", "mcp", "process"]
+"bureau:runlog" = ["adapters", "config", "contract", "forge", "process"]
+"bureau:state" = ["config", "forge", "identity", "runlog"]
+"bureau:engine" = [
+    "adapters",
+    "config",
+    "contract",
+    "forge",
+    "git",
+    "identity",
+    "process",
+    "runlog",
+    "state",
+]
+"bureau:supervise" = ["contract", "engine", "runlog", "state"]
+"bureau:reconcile" = [
+    "config",
+    "contract",
+    "engine",
+    "forge",
+    "process",
+    "runlog",
+    "state",
+    "supervise",
+]
+"bureau:doctor" = ["config", "git", "runlog"]
+"bureau:repair" = ["doctor", "runlog"]
+# bureau (binary target): a single `cli` module over the library.
+"bureau:cli" = []
+
+# --- bureau-lifecycle ---
+"bureau_lifecycle:home" = []
+"bureau_lifecycle:maintenance" = []
+"bureau_lifecycle:doctor" = []
+"bureau_lifecycle:repair" = ["home"]
+"bureau_lifecycle:setup" = ["home"]
+
+# --- bureau-plugin ---
+# Crate-root shared types.
+"bureau_plugin:PluginSource" = []
+"bureau_plugin:Resolved" = []
+"bureau_plugin:error" = []
+"bureau_plugin:reference" = ["error"]
+"bureau_plugin:json" = ["error"]
+"bureau_plugin:paths" = ["error"]
+"bureau_plugin:tree" = ["error"]
+"bureau_plugin:package" = ["error"]
+"bureau_plugin:settings" = ["error", "json", "paths"]
+"bureau_plugin:catalog" = ["error", "json", "paths", "settings"]
+"bureau_plugin:global" = ["Resolved", "error", "json", "paths"]
+"bureau_plugin:resolve" = ["Resolved", "catalog", "error", "global", "settings"]
+"bureau_plugin:snapshot" = ["PluginSource", "Resolved", "error", "json", "paths", "tree"]
+"bureau_plugin:restoration" = ["error", "package"]
+"bureau_plugin:guard" = ["error", "restoration"]
+"bureau_plugin:activation" = [
+    "catalog",
+    "error",
+    "guard",
+    "json",
+    "paths",
+    "settings",
+    "snapshot",
+    "tree",
+]

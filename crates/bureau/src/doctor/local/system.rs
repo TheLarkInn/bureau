@@ -7,53 +7,18 @@ use crate::home::Directory;
 use super::LocalEffects;
 use crate::doctor::{Observation, Status};
 
-impl LocalEffects {
-    pub(super) fn inspect_local_state(&self) -> Result<Observation, String> {
-        let mut missing = 0;
-        let mut unsafe_paths = 0;
-        let mut wrong_mode = 0;
-        for directory in Directory::ALL {
-            let path = self.layout.directory(directory);
-            count_path(path, PathKind::Directory, &mut missing, &mut unsafe_paths)?;
-            wrong_mode += usize::from(directory_mode_is_open(path));
-        }
-        count_path(
-            self.layout.settings(),
-            PathKind::File,
-            &mut missing,
-            &mut unsafe_paths,
-        )?;
-        count_optional_file(self.layout.state_db(), &mut missing, &mut unsafe_paths)?;
-        Ok(local_state_observation(missing, unsafe_paths, wrong_mode))
-    }
-
-    pub(super) fn inspect_plugin(&self) -> Observation {
-        match crate::plugin::inspect_package(&self.plugin_root) {
-            Ok(_) => Observation::new(
-                Status::Ok,
-                "plugin_mcp_ok",
-                "bundled plugin and bureau-io MCP definition are available",
-            ),
-            Err(error) => Observation::new(
-                Status::Error,
-                "bundled_plugin_incomplete",
-                format!("bundled plugin or MCP definition is invalid: {error}"),
-            ),
-        }
-    }
-
-    pub(super) fn binary_available(&self, binary: &str) -> bool {
-        self.search_path
-            .iter()
-            .map(|directory| directory.join(binary))
-            .any(|path| executable(&path))
-    }
-}
-
 #[derive(Clone, Copy)]
 enum PathKind {
     Directory,
     File,
+}
+
+fn expected_kind(metadata: &fs::Metadata, kind: PathKind) -> bool {
+    !metadata.file_type().is_symlink()
+        && match kind {
+            PathKind::Directory => metadata.is_dir(),
+            PathKind::File => metadata.is_file(),
+        }
 }
 
 fn count_path(
@@ -77,14 +42,6 @@ fn count_optional_file(
     unsafe_paths: &mut usize,
 ) -> Result<(), String> {
     count_path(path, PathKind::File, missing, unsafe_paths)
-}
-
-fn expected_kind(metadata: &fs::Metadata, kind: PathKind) -> bool {
-    !metadata.file_type().is_symlink()
-        && match kind {
-            PathKind::Directory => metadata.is_dir(),
-            PathKind::File => metadata.is_file(),
-        }
 }
 
 fn local_state_observation(missing: usize, unsafe_paths: usize, wrong_mode: usize) -> Observation {
@@ -123,4 +80,47 @@ fn directory_mode_is_open(path: &Path) -> bool {
 fn executable(path: &Path) -> bool {
     fs::metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+impl LocalEffects {
+    pub(super) fn inspect_local_state(&self) -> Result<Observation, String> {
+        let mut missing = 0;
+        let mut unsafe_paths = 0;
+        let mut wrong_mode = 0;
+        for directory in Directory::ALL {
+            let path = self.layout.directory(directory);
+            count_path(path, PathKind::Directory, &mut missing, &mut unsafe_paths)?;
+            wrong_mode += usize::from(directory_mode_is_open(path));
+        }
+        count_path(
+            self.layout.settings(),
+            PathKind::File,
+            &mut missing,
+            &mut unsafe_paths,
+        )?;
+        count_optional_file(self.layout.state_db(), &mut missing, &mut unsafe_paths)?;
+        Ok(local_state_observation(missing, unsafe_paths, wrong_mode))
+    }
+
+    pub(super) fn inspect_plugin(&self) -> Observation {
+        match bureau_plugin::inspect_package(&self.plugin_root) {
+            Ok(_) => Observation::new(
+                Status::Ok,
+                "plugin_mcp_ok",
+                "bundled plugin and bureau-io MCP definition are available",
+            ),
+            Err(error) => Observation::new(
+                Status::Error,
+                "bundled_plugin_incomplete",
+                format!("bundled plugin or MCP definition is invalid: {error}"),
+            ),
+        }
+    }
+
+    pub(super) fn binary_available(&self, binary: &str) -> bool {
+        self.search_path
+            .iter()
+            .map(|directory| directory.join(binary))
+            .any(|path| executable(&path))
+    }
 }

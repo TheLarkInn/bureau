@@ -9,21 +9,6 @@ use super::super::migrate;
 use super::access;
 use super::files::Temporary;
 
-pub(super) async fn run(
-    layout: &bureau::home::Layout,
-    settings: &Settings,
-    config: &ValidatedConfig,
-    migration: Option<&migrate::Prepared>,
-) -> anyhow::Result<OutcomeSummary> {
-    let durable = durable_paths(layout, migration);
-    let before = run_states(&durable.runs)?;
-    let staging = Temporary::new(layout.config_cache(), "init-reconcile")?;
-    let settings_path = staging.path().join("settings.yaml");
-    bureau::setup::save_settings(&settings_path, settings)?;
-    reconcile::run(arguments(layout, settings, config, settings_path, &durable)).await?;
-    summaries(&durable.runs, &before)
-}
-
 struct DurablePaths {
     runs: std::path::PathBuf,
     state: std::path::PathBuf,
@@ -43,6 +28,13 @@ fn durable_paths(
             state: migration.state_path(),
         },
     )
+}
+
+fn forge_arg(settings: &Settings) -> ForgeArg {
+    match access::forge_kind(settings.config.remote()) {
+        bureau::config::ForgeKind::Github => ForgeArg::Github,
+        bureau::config::ForgeKind::Ado => ForgeArg::Ado,
+    }
 }
 
 fn arguments(
@@ -73,11 +65,38 @@ fn arguments(
     }
 }
 
-fn forge_arg(settings: &Settings) -> ForgeArg {
-    match access::forge_kind(settings.config.remote()) {
-        bureau::config::ForgeKind::Github => ForgeArg::Github,
-        bureau::config::ForgeKind::Ado => ForgeArg::Ado,
-    }
+fn run_ids(runs_root: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(runs_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    Ok(entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect())
+}
+
+fn outcome(status: &RunStatus) -> anyhow::Result<Outcome> {
+    let RunStatus::Finished(outcome) = status else {
+        anyhow::bail!("reconcile returned before a run finished");
+    };
+    Ok(match *outcome {
+        bureau::contract::StepOutcome::Success => Outcome::Success,
+        bureau::contract::StepOutcome::Failure => Outcome::Failure,
+        bureau::contract::StepOutcome::Blocked => Outcome::Blocked,
+        bureau::contract::StepOutcome::NoWork => Outcome::NoWork,
+    })
+}
+
+fn run_states(runs_root: &std::path::Path) -> anyhow::Result<BTreeMap<String, RunStatus>> {
+    run_ids(runs_root)?
+        .into_iter()
+        .map(|id| {
+            let state = bureau::runlog::replay_state(&runs_root.join(&id))?;
+            Ok((id, state.status))
+        })
+        .collect()
 }
 
 fn summaries(
@@ -101,38 +120,19 @@ fn summaries(
     Ok(OutcomeSummary { runs })
 }
 
-fn run_ids(runs_root: &std::path::Path) -> anyhow::Result<Vec<String>> {
-    let entries = match std::fs::read_dir(runs_root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error.into()),
-    };
-    Ok(entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .collect())
-}
-
-fn run_states(runs_root: &std::path::Path) -> anyhow::Result<BTreeMap<String, RunStatus>> {
-    run_ids(runs_root)?
-        .into_iter()
-        .map(|id| {
-            let state = bureau::runlog::replay_state(&runs_root.join(&id))?;
-            Ok((id, state.status))
-        })
-        .collect()
-}
-
-fn outcome(status: &RunStatus) -> anyhow::Result<Outcome> {
-    let RunStatus::Finished(outcome) = status else {
-        anyhow::bail!("reconcile returned before a run finished");
-    };
-    Ok(match *outcome {
-        bureau::contract::StepOutcome::Success => Outcome::Success,
-        bureau::contract::StepOutcome::Failure => Outcome::Failure,
-        bureau::contract::StepOutcome::Blocked => Outcome::Blocked,
-        bureau::contract::StepOutcome::NoWork => Outcome::NoWork,
-    })
+pub(super) async fn run(
+    layout: &bureau::home::Layout,
+    settings: &Settings,
+    config: &ValidatedConfig,
+    migration: Option<&migrate::Prepared>,
+) -> anyhow::Result<OutcomeSummary> {
+    let durable = durable_paths(layout, migration);
+    let before = run_states(&durable.runs)?;
+    let staging = Temporary::new(layout.config_cache(), "init-reconcile")?;
+    let settings_path = staging.path().join("settings.yaml");
+    bureau::setup::save_settings(&settings_path, settings)?;
+    reconcile::run(arguments(layout, settings, config, settings_path, &durable)).await?;
+    summaries(&durable.runs, &before)
 }
 
 #[cfg(test)]

@@ -15,14 +15,47 @@ struct Claim<'a> {
     owner_id: &'a str,
 }
 
-/// One supervisor generation's fenced lease identity.
+fn claim_tx(
+    conn: &mut Connection,
+    claim: &Claim<'_>,
+    now: i64,
+    expires: i64,
+) -> Result<bool, Error> {
+    let tx = conn.transaction()?;
+    let key = (claim.assignment, claim.forge, claim.external_id, now);
+    tx.execute(sql::REAP_EXPIRED, key)?;
+    let params = (
+        claim.assignment,
+        claim.forge,
+        claim.external_id,
+        claim.run_id,
+        claim.owner_id,
+        expires,
+    );
+    match tx.execute(sql::INSERT_LEASE, params) {
+        Ok(_) => {
+            tx.commit()?;
+            Ok(true)
+        }
+        Err(error) if sql::is_unique_violation(&error) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The durable identity of a claim: the work item and the run holding it.
 #[derive(Clone)]
-pub struct LeaseOwner {
-    store: Arc<Store>,
+struct LeaseKey {
     assignment: String,
     forge: String,
     external_id: String,
     run_id: String,
+}
+
+/// One supervisor generation's fenced lease identity.
+#[derive(Clone)]
+pub struct LeaseOwner {
+    store: Arc<Store>,
+    key: LeaseKey,
     owner_id: String,
 }
 
@@ -39,10 +72,12 @@ impl LeaseOwner {
     ) -> Result<Self, Error> {
         Ok(Self {
             store,
-            assignment: assignment.to_owned(),
-            forge: forge.to_owned(),
-            external_id: external_id.to_owned(),
-            run_id: run_id.to_owned(),
+            key: LeaseKey {
+                assignment: assignment.to_owned(),
+                forge: forge.to_owned(),
+                external_id: external_id.to_owned(),
+                run_id: run_id.to_owned(),
+            },
             owner_id: crate::identity::random_hex()?,
         })
     }
@@ -78,13 +113,13 @@ impl LeaseOwner {
     /// Assignment holding this lease.
     #[must_use]
     pub fn assignment(&self) -> &str {
-        &self.assignment
+        &self.key.assignment
     }
 
     /// Work item held by this lease.
     #[must_use]
     pub fn external_id(&self) -> &str {
-        &self.external_id
+        &self.key.external_id
     }
 }
 
@@ -205,10 +240,10 @@ impl Store {
         let now = now_millis();
         let expires = now.saturating_add(duration_millis(ttl));
         let claim = Claim {
-            assignment: &owner.assignment,
-            forge: &owner.forge,
-            external_id: &owner.external_id,
-            run_id: &owner.run_id,
+            assignment: &owner.key.assignment,
+            forge: &owner.key.forge,
+            external_id: &owner.key.external_id,
+            run_id: &owner.key.run_id,
             owner_id: &owner.owner_id,
         };
         claim_tx(&mut self.lock(), &claim, now, expires)
@@ -219,9 +254,9 @@ impl Store {
         let expires = now.saturating_add(duration_millis(ttl));
         let params = (
             expires,
-            &owner.assignment,
-            &owner.external_id,
-            &owner.run_id,
+            &owner.key.assignment,
+            &owner.key.external_id,
+            &owner.key.run_id,
             &owner.owner_id,
             now,
         );
@@ -230,9 +265,9 @@ impl Store {
 
     fn owns(&self, owner: &LeaseOwner) -> Result<bool, Error> {
         let params = (
-            &owner.assignment,
-            &owner.external_id,
-            &owner.run_id,
+            &owner.key.assignment,
+            &owner.key.external_id,
+            &owner.key.run_id,
             &owner.owner_id,
             now_millis(),
         );
@@ -243,9 +278,9 @@ impl Store {
 
     fn release_owner(&self, owner: &LeaseOwner) -> Result<(), Error> {
         let params = (
-            &owner.assignment,
-            &owner.external_id,
-            &owner.run_id,
+            &owner.key.assignment,
+            &owner.key.external_id,
+            &owner.key.run_id,
             &owner.owner_id,
         );
         self.lock().execute(sql::RELEASE, params)?;
@@ -261,32 +296,5 @@ impl Store {
         self.lock()
             .execute(sql::RELEASE_RUN, (assignment, external_id, run_id))?;
         Ok(())
-    }
-}
-
-fn claim_tx(
-    conn: &mut Connection,
-    claim: &Claim<'_>,
-    now: i64,
-    expires: i64,
-) -> Result<bool, Error> {
-    let tx = conn.transaction()?;
-    let key = (claim.assignment, claim.forge, claim.external_id, now);
-    tx.execute(sql::REAP_EXPIRED, key)?;
-    let params = (
-        claim.assignment,
-        claim.forge,
-        claim.external_id,
-        claim.run_id,
-        claim.owner_id,
-        expires,
-    );
-    match tx.execute(sql::INSERT_LEASE, params) {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(true)
-        }
-        Err(error) if sql::is_unique_violation(&error) => Ok(false),
-        Err(error) => Err(error.into()),
     }
 }

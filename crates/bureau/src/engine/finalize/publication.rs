@@ -1,6 +1,6 @@
 //! Typed gates immediately before external publication.
 
-use super::super::machine::RunCtx;
+use super::super::context::{self, RunCtx};
 use super::super::{approval, control, settle};
 use crate::contract::StepOutcome;
 use crate::forge::Pr;
@@ -11,7 +11,7 @@ pub(super) enum Error {
 }
 
 pub(super) async fn check(ctx: &RunCtx) -> Result<(), Error> {
-    if let Some(reason) = control::ownership_reason(ctx) {
+    if let Some(reason) = context::ownership_reason(ctx) {
         return Err(Error::Failure(reason));
     }
     if let Some(reason) = control::cancel_reason(ctx) {

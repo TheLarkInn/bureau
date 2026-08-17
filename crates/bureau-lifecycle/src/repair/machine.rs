@@ -90,6 +90,25 @@ pub enum Error {
     },
 }
 
+fn apply(effects: &mut impl Effects, action: &Action) -> Result<(), String> {
+    match action {
+        Action::CreateDirectory { directory } => effects.create_directory(*directory),
+        Action::FixDirectoryPermissions { directory } => {
+            effects.fix_directory_permissions(*directory)
+        }
+        Action::ClearCache { cache } => effects.clear_cache(*cache),
+        Action::RestorePluginActivation {
+            run_id,
+            activation_id,
+            plugin,
+            version,
+        } => effects.restore_plugin_activation(run_id, activation_id, plugin, version),
+        Action::ReapExpiredOwnership { ownership } => effects.reap_expired_ownership(ownership),
+        Action::PruneOrphanWorktree { run_id } => effects.prune_orphan_worktree(run_id),
+        Action::RebuildDerivedState { run_id } => effects.rebuild_derived_state(run_id),
+    }
+}
+
 /// Final execution summary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Summary {
@@ -217,23 +236,4 @@ pub fn run(
     machine.confirm(confirmation)?;
     while machine.apply_next(effects)? {}
     machine.finish()
-}
-
-fn apply(effects: &mut impl Effects, action: &Action) -> Result<(), String> {
-    match action {
-        Action::CreateDirectory { directory } => effects.create_directory(*directory),
-        Action::FixDirectoryPermissions { directory } => {
-            effects.fix_directory_permissions(*directory)
-        }
-        Action::ClearCache { cache } => effects.clear_cache(*cache),
-        Action::RestorePluginActivation {
-            run_id,
-            activation_id,
-            plugin,
-            version,
-        } => effects.restore_plugin_activation(run_id, activation_id, plugin, version),
-        Action::ReapExpiredOwnership { ownership } => effects.reap_expired_ownership(ownership),
-        Action::PruneOrphanWorktree { run_id } => effects.prune_orphan_worktree(run_id),
-        Action::RebuildDerivedState { run_id } => effects.rebuild_derived_state(run_id),
-    }
 }

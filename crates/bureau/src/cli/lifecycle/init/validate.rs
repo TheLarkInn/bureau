@@ -1,11 +1,15 @@
+use crate::cli::out;
 use bureau::setup::ConfigDraft;
 
 use super::files::{self, Temporary};
 
 pub(super) fn preview(draft: &ConfigDraft) {
     for (path, bytes) in &draft.files {
-        println!("--- {}", path.display());
-        println!("{}", String::from_utf8_lossy(bytes).trim_end());
+        out::line(format_args!("--- {}", path.display()));
+        out::line(format_args!(
+            "{}",
+            String::from_utf8_lossy(bytes).trim_end()
+        ));
     }
 }
 

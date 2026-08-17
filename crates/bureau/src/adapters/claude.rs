@@ -46,6 +46,55 @@ const DISCOVERY: real::Discovery = real::Discovery {
 /// Credential variables forwarded when the role holds `model:invoke`.
 const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
 
+/// The push-boundary mirror; see the module table. Without a write
+/// grant the CLI gets a deny-by-default rule instead of silence.
+fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+    let (write, push) = real::push_boundary(permissions);
+    if !write {
+        return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
+    }
+    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
+    if !push {
+        flags.extend([
+            "--disallowedTools".to_owned(),
+            "Bash(git push:*)".to_owned(),
+        ]);
+    }
+    flags
+}
+
+/// `claude -p --agent <name>` plus the permission mirror.
+fn argv(role: &Role, agent: &str) -> Vec<String> {
+    let mut argv = vec![
+        BINARY.to_owned(),
+        "-p".to_owned(),
+        "--output-format".to_owned(),
+        "json".to_owned(),
+        "--agent".to_owned(),
+        agent.to_owned(),
+        "--allowedTools".to_owned(),
+        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result".to_owned(),
+    ];
+    argv.extend(permission_flags(&role.permissions));
+    argv
+}
+
+fn write_mcp_config(path: &std::path::Path) -> std::io::Result<()> {
+    let config = serde_json::json!({
+        "mcpServers": {
+            "bureau-io": {
+                "type": "stdio",
+                "command": "bureau",
+                "args": ["mcp", "serve"]
+            }
+        }
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&config).map_err(std::io::Error::other)?,
+    )
+}
+
 /// Builds the layer-0 request for a `claude` step: the step contract
 /// JSON on stdin, credentials in env, permissions in argv.
 ///
@@ -75,37 +124,27 @@ pub fn spawn_request(
     }
 }
 
-/// `claude -p --agent <name>` plus the permission mirror.
-fn argv(role: &Role, agent: &str) -> Vec<String> {
-    let mut argv = vec![
-        BINARY.to_owned(),
-        "-p".to_owned(),
-        "--output-format".to_owned(),
-        "json".to_owned(),
-        "--agent".to_owned(),
-        agent.to_owned(),
-        "--allowedTools".to_owned(),
-        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result".to_owned(),
-    ];
-    argv.extend(permission_flags(&role.permissions));
-    argv
-}
-
-/// The push-boundary mirror; see the module table. Without a write
-/// grant the CLI gets a deny-by-default rule instead of silence.
-fn permission_flags(permissions: &[Permission]) -> Vec<String> {
-    let (write, push) = real::push_boundary(permissions);
-    if !write {
-        return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
-    }
-    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
-    if !push {
-        flags.extend([
-            "--disallowedTools".to_owned(),
-            "Bash(git push:*)".to_owned(),
-        ]);
-    }
-    flags
+fn prepare(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> Result<(Session, SpawnRequest), String> {
+    let session = Session::create(request).map_err(|error| error.to_string())?;
+    let config = session.dir().join("mcp.json");
+    write_mcp_config(&config).map_err(|error| error.to_string())?;
+    let mut built = spawn_request(role, step, request, secrets, log);
+    built.timeout = timeout;
+    built.cancel = super::cancel_path(request);
+    built.env.extend(session.env().clone());
+    built.argv.extend([
+        "--mcp-config".to_owned(),
+        config.to_string_lossy().into_owned(),
+        "--strict-mcp-config".to_owned(),
+    ]);
+    Ok((session, built))
 }
 
 /// Runs a `claude` step and derives the step result.
@@ -134,43 +173,4 @@ pub async fn execute(
     let result = super::result_from_agent(&spawned, published, &response);
     let usage = Usage::from_claude_json(&spawned.stdout);
     Execution::new(result, usage)
-}
-
-fn prepare(
-    role: &Role,
-    step: &StepDef,
-    request: &StepRequest,
-    timeout: Duration,
-    secrets: Vec<Secret>,
-    log: Option<SharedLog>,
-) -> Result<(Session, SpawnRequest), String> {
-    let session = Session::create(request).map_err(|error| error.to_string())?;
-    let config = session.dir().join("mcp.json");
-    write_mcp_config(&config).map_err(|error| error.to_string())?;
-    let mut built = spawn_request(role, step, request, secrets, log);
-    built.timeout = timeout;
-    built.cancel = super::cancel_path(request);
-    built.env.extend(session.env().clone());
-    built.argv.extend([
-        "--mcp-config".to_owned(),
-        config.to_string_lossy().into_owned(),
-        "--strict-mcp-config".to_owned(),
-    ]);
-    Ok((session, built))
-}
-
-fn write_mcp_config(path: &std::path::Path) -> std::io::Result<()> {
-    let config = serde_json::json!({
-        "mcpServers": {
-            "bureau-io": {
-                "type": "stdio",
-                "command": "bureau",
-                "args": ["mcp", "serve"]
-            }
-        }
-    });
-    std::fs::write(
-        path,
-        serde_json::to_vec(&config).map_err(std::io::Error::other)?,
-    )
 }

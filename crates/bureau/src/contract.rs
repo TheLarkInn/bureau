@@ -17,10 +17,11 @@ pub const SCHEMA_VERSION: &str = "v2";
 ///
 /// Declaration order defines the ranking, so a step's `min_trust` is a
 /// plain `>=` comparison: `Untrusted < Derived < Maintainer < Trusted`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Trust {
     /// A bot, a build log, or an outside contributor produced it.
+    #[default]
     Untrusted,
     /// An agent produced it in an earlier step.
     Derived,
@@ -31,7 +32,7 @@ pub enum Trust {
 }
 
 /// What a step concluded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum StepOutcome {
     /// The step did what it set out to do.
@@ -41,6 +42,7 @@ pub enum StepOutcome {
     /// The step cannot proceed; a human must intervene.
     Blocked,
     /// There was nothing for the step to do.
+    #[default]
     NoWork,
 }
 
@@ -60,42 +62,6 @@ pub struct Artifact {
     pub name: String,
     /// Path of the artifact file.
     pub path: PathBuf,
-}
-
-/// The input every step receives on stdin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepRequest {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// Owning run.
-    pub run_id: String,
-    /// Step name within the pipeline.
-    pub step: String,
-    /// The run's worktree — the only directory a step may write to.
-    pub worktree: PathBuf,
-    /// Highest provenance grade of any input.
-    pub trust: Trust,
-    /// Named inputs carried from earlier steps.
-    pub inputs: BTreeMap<String, serde_json::Value>,
-    /// Artifacts from earlier steps, by name.
-    pub artifacts: BTreeMap<String, PathBuf>,
-}
-
-/// The answer every step writes to stdout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepResult {
-    /// Must equal [`SCHEMA_VERSION`].
-    pub schema: String,
-    /// What the step concluded.
-    pub outcome: StepOutcome,
-    /// Named outputs for later steps.
-    pub outputs: BTreeMap<String, serde_json::Value>,
-    /// Artifacts produced by this step.
-    pub artifacts: Vec<Artifact>,
-    /// Provenance grade of the outputs (usually [`Trust::Derived`]).
-    pub trust: Trust,
-    /// Human-readable detail for the run log.
-    pub message: String,
 }
 
 /// Why a step payload was rejected.
@@ -132,6 +98,25 @@ fn checked_value(bytes: &[u8]) -> Result<serde_json::Value, DecodeError> {
     }
 }
 
+/// The input every step receives on stdin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StepRequest {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// Owning run.
+    pub run_id: String,
+    /// Step name within the pipeline.
+    pub step: String,
+    /// The run's worktree — the only directory a step may write to.
+    pub worktree: PathBuf,
+    /// Highest provenance grade of any input.
+    pub trust: Trust,
+    /// Named inputs carried from earlier steps.
+    pub inputs: BTreeMap<String, serde_json::Value>,
+    /// Artifacts from earlier steps, by name.
+    pub artifacts: BTreeMap<String, PathBuf>,
+}
+
 impl StepRequest {
     /// Parses a request, rejecting any schema but [`SCHEMA_VERSION`].
     ///
@@ -149,6 +134,23 @@ impl StepRequest {
     pub fn to_json(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
+}
+
+/// The answer every step writes to stdout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StepResult {
+    /// Must equal [`SCHEMA_VERSION`].
+    pub schema: String,
+    /// What the step concluded.
+    pub outcome: StepOutcome,
+    /// Named outputs for later steps.
+    pub outputs: BTreeMap<String, serde_json::Value>,
+    /// Artifacts produced by this step.
+    pub artifacts: Vec<Artifact>,
+    /// Provenance grade of the outputs (usually [`Trust::Derived`]).
+    pub trust: Trust,
+    /// Human-readable detail for the run log.
+    pub message: String,
 }
 
 impl StepResult {

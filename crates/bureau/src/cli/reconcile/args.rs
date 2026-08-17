@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{Args as ClapArgs, ValueEnum};
+use clap::ValueEnum;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ForgeArg {
@@ -20,7 +20,24 @@ impl From<ForgeArg> for bureau::config::ForgeKind {
     }
 }
 
-#[derive(Debug, ClapArgs)]
+pub(super) struct ResolvedArgs {
+    pub(super) maintenance_guarded: bool,
+    pub(super) maintenance_root: PathBuf,
+    pub(super) config_remote: String,
+    pub(super) config_ref: String,
+    pub(super) config_subdir: PathBuf,
+    pub(super) config_credential: Option<String>,
+    pub(super) config_forge: ForgeArg,
+    pub(super) config_cache: PathBuf,
+    pub(super) runs: PathBuf,
+    pub(super) state: PathBuf,
+    pub(super) cache: PathBuf,
+    pub(super) settings: Option<bureau::setup::Settings>,
+    pub(super) interval: String,
+    pub(super) now: bool,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct Args {
     #[arg(skip)]
     pub maintenance_guarded: bool,
@@ -51,23 +68,6 @@ pub struct Args {
     pub interval: String,
     #[arg(long)]
     pub now: bool,
-}
-
-pub(super) struct ResolvedArgs {
-    pub(super) maintenance_guarded: bool,
-    pub(super) maintenance_root: PathBuf,
-    pub(super) config_remote: String,
-    pub(super) config_ref: String,
-    pub(super) config_subdir: PathBuf,
-    pub(super) config_credential: Option<String>,
-    pub(super) config_forge: ForgeArg,
-    pub(super) config_cache: PathBuf,
-    pub(super) runs: PathBuf,
-    pub(super) state: PathBuf,
-    pub(super) cache: PathBuf,
-    pub(super) settings: Option<bureau::setup::Settings>,
-    pub(super) interval: String,
-    pub(super) now: bool,
 }
 
 impl Args {

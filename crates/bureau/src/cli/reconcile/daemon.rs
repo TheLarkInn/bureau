@@ -1,11 +1,12 @@
 //! Config-refresh, recovery, projection, and reconcile orchestration.
 
+use crate::cli::out;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use bureau::config::{ActivatedConfig, Config, ConfigManager, GitSource};
-use bureau::engine::{Engine, RunPlan};
+use bureau::engine::{Engine, rehydrate};
 use bureau::forge::Forge;
 use bureau::process::Secret;
 use bureau::reconcile::Reconciler;
@@ -14,6 +15,30 @@ use bureau::state::{LeaseOwner, Store};
 
 use super::active::Active;
 use super::{ResolvedArgs, build};
+
+struct Revision {
+    config: Config,
+    credentials: BTreeMap<String, Secret>,
+    forges: BTreeMap<String, Arc<dyn Forge>>,
+    source: ConfigSource,
+    direct_agents: BTreeMap<String, Vec<u8>>,
+}
+
+fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>) -> Revision {
+    let credentials = build::credentials(&active.config, settings);
+    let forges = build::forges(&active.config, &credentials);
+    Revision {
+        config: active.config,
+        credentials,
+        forges,
+        source: ConfigSource {
+            remote: active.remote,
+            reference: active.reference,
+            commit: active.commit,
+        },
+        direct_agents: active.direct_agents,
+    }
+}
 
 pub(super) struct Daemon {
     manager: ConfigManager,
@@ -24,49 +49,7 @@ pub(super) struct Daemon {
     settings: Option<bureau::setup::Settings>,
 }
 
-struct Revision {
-    config: Config,
-    credentials: BTreeMap<String, Secret>,
-    forges: BTreeMap<String, Arc<dyn Forge>>,
-    source: ConfigSource,
-    direct_agents: BTreeMap<String, Vec<u8>>,
-}
-
 impl Daemon {
-    pub(super) fn new(args: &ResolvedArgs) -> anyhow::Result<Self> {
-        let credential = build::config_credential(
-            args.config_credential.as_deref(),
-            args.config_forge,
-            args.settings.as_ref(),
-        )?;
-        let maintenance = Self::maintenance(args)?;
-        let source = GitSource::new(
-            args.config_remote.clone(),
-            args.config_ref.clone(),
-            args.config_subdir.clone(),
-            &args.config_cache,
-            credential,
-        );
-        let state = Arc::new(Store::open(&args.state).context("opening state database")?);
-        let engine = Arc::new(Engine::new(args.runs.clone(), args.cache.clone()));
-        Ok(Self {
-            manager: ConfigManager::new(source),
-            state,
-            engine,
-            active: Active::new(args.runs.clone()),
-            _maintenance: maintenance,
-            settings: args.settings.clone(),
-        })
-    }
-
-    fn maintenance(args: &ResolvedArgs) -> anyhow::Result<Option<bureau::maintenance::Guard>> {
-        if args.maintenance_guarded {
-            Ok(None)
-        } else {
-            Ok(Some(bureau::maintenance::shared(&args.maintenance_root)?))
-        }
-    }
-
     pub(super) async fn pass(&mut self) -> anyhow::Result<()> {
         let active = self.refresh().await?;
         self.project_finished()?;
@@ -82,7 +65,9 @@ impl Daemon {
         self.active.reap().await;
         let refresh = self.manager.refresh().await?;
         if let Some(warning) = refresh.warning {
-            eprintln!("config refresh failed; using last-known-good: {warning}");
+            out::error(format_args!(
+                "config refresh failed; using last-known-good: {warning}"
+            ));
         }
         Ok(refresh.active)
     }
@@ -147,7 +132,7 @@ impl Daemon {
             Ok(forge) => forge,
             Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
         };
-        let mut plan = RunPlan::from_snapshot(snapshot, forge, credentials);
+        let mut plan = rehydrate(snapshot, forge, credentials);
         plan.lease = Some(owner);
         Ok(Some(bureau::reconcile::resume(
             self.engine.clone(),
@@ -191,18 +176,38 @@ impl Daemon {
     }
 }
 
-fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>) -> Revision {
-    let credentials = build::credentials(&active.config, settings);
-    let forges = build::forges(&active.config, &credentials);
-    Revision {
-        config: active.config,
-        credentials,
-        forges,
-        source: ConfigSource {
-            remote: active.remote,
-            reference: active.reference,
-            commit: active.commit,
-        },
-        direct_agents: active.direct_agents,
+fn maintenance(args: &ResolvedArgs) -> anyhow::Result<Option<bureau::maintenance::Guard>> {
+    if args.maintenance_guarded {
+        Ok(None)
+    } else {
+        Ok(Some(bureau::maintenance::shared(&args.maintenance_root)?))
     }
+}
+
+/// Assembles the daemon from resolved arguments; a free constructor so
+/// the state machine type carries no builder surface.
+pub(super) fn new(args: &ResolvedArgs) -> anyhow::Result<Daemon> {
+    let credential = build::config_credential(
+        args.config_credential.as_deref(),
+        args.config_forge,
+        args.settings.as_ref(),
+    )?;
+    let maintenance = maintenance(args)?;
+    let source = GitSource::new(
+        args.config_remote.clone(),
+        args.config_ref.clone(),
+        args.config_subdir.clone(),
+        &args.config_cache,
+        credential,
+    );
+    let state = Arc::new(Store::open(&args.state).context("opening state database")?);
+    let engine = Arc::new(Engine::new(args.runs.clone(), args.cache.clone()));
+    Ok(Daemon {
+        manager: ConfigManager::new(source),
+        state,
+        engine,
+        active: Active::new(args.runs.clone()),
+        _maintenance: maintenance,
+        settings: args.settings.clone(),
+    })
 }

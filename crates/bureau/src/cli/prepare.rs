@@ -2,6 +2,7 @@
 //! client, and the item lookup. Everything here happens before anything
 //! spawns (DESIGN.md section 13).
 
+use crate::cli::out;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -12,20 +13,6 @@ use bureau::forge::ado::AdoForge;
 use bureau::forge::github::GitHubForge;
 use bureau::forge::{Forge, Item};
 use bureau::process::Secret;
-
-/// Every credential the assignment's repos need, resolved before any
-/// spawn. A missing reference is named on stderr and fails the verb.
-pub fn resolve_credentials(
-    config: &Config,
-    assignment: &Assignment,
-    settings: &bureau::setup::Settings,
-) -> Option<BTreeMap<String, Secret>> {
-    let mut credentials = BTreeMap::new();
-    for reference in credential_refs(config, assignment) {
-        resolve_one(&mut credentials, settings, &reference)?;
-    }
-    Some(credentials)
-}
 
 /// The distinct credential references across the assignment's repos,
 /// sorted so the first failure reported is deterministic.
@@ -50,10 +37,33 @@ fn resolve_one(
             Some(())
         }
         Err(error) => {
-            eprintln!("{error}");
+            out::error(format_args!("{error}"));
             None
         }
     }
+}
+
+/// Every credential the assignment's repos need, resolved before any
+/// spawn. A missing reference is named on stderr and fails the verb.
+pub fn resolve_credentials(
+    config: &Config,
+    assignment: &Assignment,
+    settings: &bureau::setup::Settings,
+) -> Option<BTreeMap<String, Secret>> {
+    let mut credentials = BTreeMap::new();
+    for reference in credential_refs(config, assignment) {
+        resolve_one(&mut credentials, settings, &reference)?;
+    }
+    Some(credentials)
+}
+
+/// The ADO organization root from the primary repo URL:
+/// `https://dev.azure.com/org/project/_git/repo` becomes
+/// `https://dev.azure.com/org`.
+fn ado_base_url(repo_url: &str) -> String {
+    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
+    head.rsplit_once('/')
+        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
 }
 
 /// The client for the forge the work items live on. v0: its token is the
@@ -80,13 +90,13 @@ pub fn work_forge(
     })
 }
 
-/// The ADO organization root from the primary repo URL:
-/// `https://dev.azure.com/org/project/_git/repo` becomes
-/// `https://dev.azure.com/org`.
-fn ado_base_url(repo_url: &str) -> String {
-    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
-    head.rsplit_once('/')
-        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
+/// Whether an external id names `query`: exactly (a `retry` reuses the
+/// recorded id), or by `#<id>` / `/<id>` suffix — the id's repo context
+/// is embedded (`owner/repo#42`, `project/42`).
+fn matches_item(item: &Item, query: &str) -> bool {
+    item.external_id == query
+        || item.external_id.ends_with(&format!("#{query}"))
+        || item.external_id.ends_with(&format!("/{query}"))
 }
 
 /// Queries the work forge and picks the item `query` names.
@@ -103,15 +113,6 @@ pub async fn find_item(
         .await
         .context("querying the work forge")?;
     Ok(items.into_iter().find(|item| matches_item(item, query)))
-}
-
-/// Whether an external id names `query`: exactly (a `retry` reuses the
-/// recorded id), or by `#<id>` / `/<id>` suffix — the id's repo context
-/// is embedded (`owner/repo#42`, `project/42`).
-fn matches_item(item: &Item, query: &str) -> bool {
-    item.external_id == query
-        || item.external_id.ends_with(&format!("#{query}"))
-        || item.external_id.ends_with(&format!("/{query}"))
 }
 
 /// The registry entries for exactly the assignment's repos.

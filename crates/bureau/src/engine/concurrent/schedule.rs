@@ -9,7 +9,7 @@ use crate::adapters::Execution;
 use crate::config::{Completion, StepDef};
 use crate::contract::StepOutcome;
 
-use super::super::machine::RunCtx;
+use super::super::context::RunCtx;
 use super::member;
 
 pub(super) struct Schedule {
@@ -22,17 +22,6 @@ pub(super) struct Schedule {
 }
 
 impl Schedule {
-    pub(super) fn new(members: Vec<StepDef>, limit: usize, completion: Completion) -> Self {
-        Self {
-            pending: members.into(),
-            active: BTreeMap::new(),
-            cancelled: BTreeSet::new(),
-            tasks: JoinSet::new(),
-            limit,
-            completion,
-        }
-    }
-
     pub(super) fn fill(
         &mut self,
         ctx: &RunCtx,
@@ -113,5 +102,18 @@ impl Schedule {
 
     pub(super) fn is_finished(&self) -> bool {
         self.pending.is_empty() && self.tasks.is_empty()
+    }
+}
+
+/// A fresh schedule over `members` with `limit` parallel slots and the
+/// group's completion rule.
+pub(super) fn new(members: Vec<StepDef>, limit: usize, completion: Completion) -> Schedule {
+    Schedule {
+        pending: members.into(),
+        active: BTreeMap::new(),
+        cancelled: BTreeSet::new(),
+        tasks: JoinSet::new(),
+        limit,
+        completion,
     }
 }

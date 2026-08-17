@@ -1,0 +1,475 @@
+Building workspace metadata entry `rust-lints`
+    Finished `release` profile [optimized] target(s) in 0.31s
+Checking with toolchain `nightly-2026-01-22-x86_64-unknown-linux-gnu`
+    Checking bureau-plugin v0.1.0 (/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-super-funicular/crates/bureau-plugin)
+    Checking bureau-lifecycle v0.1.0 (/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-super-funicular/crates/bureau-lifecycle)
+    Checking bureau v0.1.0 (/home/selarkin/src/copilot-worktrees/bureau/thelarkinn-super-funicular/crates/bureau)
+warning: renamed imports (`use foo::Bar as Baz`) are banned — use the original name
+  --> crates/bureau/src/lib.rs:21:1
+   |
+21 | pub use bureau_plugin as plugin;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: import the item under its original name, or create a type alias if a new name is truly needed
+   = note: `#[warn(unclear_exports)]` on by default
+
+warning: `state` depends on `forge`, which is not in its allowlist
+  --> crates/bureau/src/state/project.rs:38:26
+   |
+38 |         store.mark_seen(&snapshot.item.content_hash(), disposition)?;
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: if this dependency is architecturally correct, add "forge" to the `state` allowlist in dylint.toml under [module_dependencies.allow]
+           if not, move the item to a module that `state` is allowed to depend on (currently: config, identity, runlog)
+   = note: `#[warn(module_dependencies)]` on by default
+
+warning: allowlist declares `doctor` → `adapters`, but no such dependency exists in code
+  |
+  = help: remove "adapters" from the `doctor` allowlist in dylint.toml, or this edge is stale
+  = note: `-D module-dependencies-dead-edge` implied by `-D warnings`
+  = help: to override `-D warnings` add `#[allow(module_dependencies_dead_edge)]`
+
+warning: `bureau` (lib) generated 3 warnings
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:177:9
+    |
+177 |         println!("{line}");
+    |         ^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+    = note: `-D debug-remnants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(debug_remnants)]`
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:185:5
+    |
+185 |     println!("run: {}", state.run_id);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:186:5
+    |
+186 |     println!("assignment: {}", state.assignment);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:187:5
+    |
+187 |     println!("status: {}", status_text(&state.status));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:188:5
+    |
+188 |     println!("steps:");
+    |     ^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:191:9
+    |
+191 |         println!("  {}: {outcome}", step.step);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:197:5
+    |
+197 |     println!("events (last 5):");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:199:9
+    |
+199 |         println!("  #{} {} {}", event.seq, kind_name(event.kind), gist(event));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:210:9
+    |
+210 |         eprintln!("no such run: `{run_id}`");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:235:9
+    |
+235 |         eprintln!("no such run: `{run_id}`");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:239:9
+    |
+239 |         println!("run `{run_id}` is already finished");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/inspect.rs:243:5
+    |
+243 |     println!("run `{run_id}` marked for cancellation");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/doctor.rs:15:9
+   |
+15 |         println!("{}", report.json()?);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/doctor.rs:17:9
+   |
+17 |         println!("{}", report.human());
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: struct `LocalEffects` has 7 fields; consider exposing a `#[builder]` constructor
+  --> crates/bureau/src/cli/lifecycle/init/effects.rs:34:1
+   |
+34 | / pub(super) struct LocalEffects {
+35 | |     layout: bureau::home::Layout,
+36 | |     request: Request,
+37 | |     runtime: tokio::runtime::Handle,
+...  |
+41 | |     outcomes: Option<OutcomeSummary>,
+42 | | }
+   | |_^
+   |
+   = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+   = note: `-D suggest-builder` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(suggest_builder)]`
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/init/proposal.rs:90:5
+   |
+90 |     println!("config pull request: {}", created.url);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/lifecycle/init/proposal.rs:103:5
+    |
+103 | /     println!(
+104 | |         "waiting for {} at {} ({})",
+105 | |         proposal.pull_request.id, proposal.branch, proposal.commit
+106 | |     );
+    | |_____^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+ --> crates/bureau/src/cli/lifecycle/init/validate.rs:7:9
+  |
+7 |         println!("--- {}", path.display());
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+ --> crates/bureau/src/cli/lifecycle/init/validate.rs:8:9
+  |
+8 |         println!("{}", String::from_utf8_lossy(bytes).trim_end());
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/init/mod.rs:27:9
+   |
+27 |         println!("{}: {}", run.run_id, outcome_name(run.outcome));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/repair.rs:21:5
+   |
+21 |     println!("{}", serde_json::to_string_pretty(&plan)?);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/lifecycle/repair.rs:23:9
+   |
+23 |         eprintln!("repair declined; no changes applied");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/lifecycle/repair.rs:28:5
+   |
+28 |     println!("repair complete: {} action(s)", summary.applied);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/lifecycle/setup.rs:144:5
+    |
+144 |     println!("setup complete: {}", settings_path.display());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/prepare.rs:39:13
+   |
+39 |             eprintln!("{error}");
+   |             ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/reconcile/active.rs:28:13
+   |
+28 | /             println!(
+29 | |                 "{} {} {}",
+30 | |                 outcome.run_id,
+31 | |                 super::super::outcome_name(outcome.outcome),
+32 | |                 outcome.message
+33 | |             );
+   | |_____________^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/reconcile/active.rs:37:13
+   |
+37 |             eprintln!("active run task failed: {error}");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/reconcile/active.rs:47:13
+   |
+47 |             eprintln!("failed to cancel run {run_id}: {error}");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/reconcile/active.rs:55:13
+   |
+55 |             eprintln!("forced shutdown lease release failed: {error}");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/reconcile/build.rs:39:13
+   |
+39 |             eprintln!("credential `{reference}` is unavailable: {error}");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/reconcile/build.rs:122:21
+    |
+122 |                     eprintln!("assignment `{name}` forge is unavailable: {error}");
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: struct `Daemon` has 6 fields; consider exposing a `#[builder]` constructor
+  --> crates/bureau/src/cli/reconcile/daemon.rs:42:1
+   |
+42 | / pub(super) struct Daemon {
+43 | |     manager: ConfigManager,
+44 | |     state: Arc<Store>,
+45 | |     engine: Arc<Engine>,
+...  |
+48 | |     settings: Option<bureau::setup::Settings>,
+49 | | }
+   | |_^
+   |
+   = help: use the function builder style: `#[bon] impl` plus `#[builder] fn new(...) -> Self`
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/reconcile/daemon.rs:101:13
+    |
+101 |             eprintln!("config refresh failed; using last-known-good: {warning}");
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/reconcile/mod.rs:57:5
+   |
+57 | /     println!(
+58 | |         "reconcile is draining active runs [{}]; send a second signal to cancel them",
+59 | |         daemon.active_ids().join(", ")
+60 | |     );
+   | |_____^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/reconcile/mod.rs:132:37
+    |
+132 |             Cycle::Failed(error) => eprintln!("reconcile pass failed; retrying: {error}"),
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli/run/signal.rs:95:5
+   |
+95 |     println!("run is draining; send a second signal to cancel it");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:38:13
+   |
+38 |             eprintln!("no assignment uses pipeline `{pipeline}`");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:48:13
+   |
+48 | /             eprintln!(
+49 | |                 "pipeline `{pipeline}` is used by {} assignments: {names}",
+50 | |                 many.len()
+51 | |             );
+   | |_____________^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:62:9
+   |
+62 |         eprintln!("no such run: `{run_id}`");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:74:5
+   |
+74 |     eprintln!("run `{run_id}` recorded no work item; nothing to retry");
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:84:9
+   |
+84 |         eprintln!("no item `{item_query}` in `{}`", assignment.work.source);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli/run.rs:88:9
+   |
+88 |         eprintln!("item `{item_query}` is missing the required approval label");
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/run.rs:133:9
+    |
+133 |         println!("item `{}` is already claimed", item.external_id);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+   --> crates/bureau/src/cli/run.rs:173:5
+    |
+173 | /     println!(
+174 | |         "{} {} cost=${:.2} {}{pr}",
+175 | |         outcome.run_id,
+176 | |         super::outcome_name(outcome.outcome),
+177 | |         outcome.cost_usd,
+178 | |         outcome.message
+179 | |     );
+    | |_____^
+    |
+    = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+   --> crates/bureau/src/cli/run.rs:259:9
+    |
+259 |         eprintln!("assignment `{name}` from run `{run_id}` is no longer in the config");
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli.rs:60:5
+   |
+60 |     println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `println!` in committed code
+  --> crates/bureau/src/cli.rs:67:13
+   |
+67 | /             println!(
+68 | |                 "config ok: {} repos, {} roles, {} assignments",
+69 | |                 config.repos.len(),
+70 | |                 config.roles.len(),
+71 | |                 config.assignments.len()
+72 | |             );
+   | |_____________^
+   |
+   = help: replace with `tracing::info!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli.rs:77:17
+   |
+77 |                 eprintln!("{error}");
+   |                 ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/cli.rs:79:13
+   |
+79 |             eprintln!("{} config error(s)", errors.len());
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: debug remnant: `eprintln!` in committed code
+  --> crates/bureau/src/main.rs:15:13
+   |
+15 |             eprintln!("{error:#}");
+   |             ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: replace with `tracing::warn!(...)` for structured logging
+
+warning: `bureau` (bin "bureau") generated 50 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.02s
