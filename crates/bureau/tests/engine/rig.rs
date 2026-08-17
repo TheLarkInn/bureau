@@ -224,7 +224,8 @@ fn item() -> Item {
 pub struct Rig {
     pub dir: TestDir,
     pub forge: Arc<FakeForge>,
-    url: String,
+    /// The primary repo's registry URL: the local remote's path.
+    pub url: String,
 }
 
 impl Rig {

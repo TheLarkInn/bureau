@@ -115,11 +115,11 @@ async fn push_branch(
 async fn finish_push(
     ctx: &RunCtx,
     wt: &WtCtx,
-    name: &str,
+    url: &str,
     pushed: Result<String, PublicationError>,
 ) -> (StepOutcome, String, Option<Pr>) {
     match pushed {
-        Ok(commit) => pull_request::open(ctx, wt, name, &commit).await,
+        Ok(commit) => pull_request::open(ctx, wt, url, &commit).await,
         Err(error) => publication::stop(ctx, error).await,
     }
 }
@@ -129,9 +129,9 @@ async fn push_target(
     wt: &WtCtx,
     target: (&str, &Repo, Credential),
 ) -> (StepOutcome, String, Option<Pr>) {
-    let (name, repo, credential) = target;
+    let (_, repo, credential) = target;
     let pushed = push_branch(ctx, wt, repo, &credential).await;
-    finish_push(ctx, wt, name, pushed).await
+    finish_push(ctx, wt, &repo.url, pushed).await
 }
 
 async fn push_pr(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {

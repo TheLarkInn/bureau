@@ -62,6 +62,7 @@ fn writable_path(root: &Path, relative: &Path) -> anyhow::Result<PathBuf> {
 }
 
 pub(super) fn materialize(root: &Path, draft: &ConfigDraft) -> anyhow::Result<()> {
+    std::fs::create_dir_all(root)?;
     for (relative, bytes) in &draft.files {
         let path = writable_path(root, relative)?;
         std::fs::write(path, bytes)?;
@@ -90,5 +91,34 @@ impl Temporary {
 impl Drop for Temporary {
     fn drop(&mut self) {
         let _removed = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use bureau::setup::ConfigDraft;
+
+    use super::materialize;
+
+    #[test]
+    fn materialize_creates_a_missing_config_subdirectory() {
+        let outer = std::env::temp_dir().join(format!("bureau-materialize-{}", std::process::id()));
+        let _removed = std::fs::remove_dir_all(&outer);
+        let root = outer.join(".bureau");
+        let draft = ConfigDraft {
+            files: BTreeMap::from([
+                (PathBuf::from("repos.yaml"), b"repos: {}".to_vec()),
+                (PathBuf::from("roles/implementer.yaml"), b"name: i".to_vec()),
+            ]),
+        };
+        let written = materialize(&root, &draft);
+        let both = written.is_ok()
+            && root.join("repos.yaml").is_file()
+            && root.join("roles/implementer.yaml").is_file();
+        std::fs::remove_dir_all(&outer).expect("cleanup");
+        assert!(both);
     }
 }

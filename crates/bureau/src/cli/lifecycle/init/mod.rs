@@ -51,7 +51,10 @@ pub(super) async fn run(from: &Path) -> anyhow::Result<i32> {
         let mut effects = effects::local_effects(layout, request, runtime, maintenance);
         bureau::setup::InitFlow::new(flow_request)
             .run(&mut effects)
-            .map_err(anyhow::Error::new)
+            .map_err(|error| match error {
+                bureau::setup::FlowError::Effect(effect) => anyhow::Error::new(effect),
+                other => anyhow::Error::new(other),
+            })
     })
     .await
     .context("joining init flow")??;

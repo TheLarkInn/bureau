@@ -33,17 +33,28 @@ impl Reconciler {
         (observed, failed)
     }
 
+    /// The primary repo's registry URL: forge calls take a URL, not the
+    /// registry name (DESIGN.md section 8's pseudocode elides the lookup).
+    fn primary_url(&self, name: &str, assignment: &Assignment) -> Result<&str, Error> {
+        let repo = assignment
+            .primary_repo()
+            .ok_or_else(|| bad_assignment(name, "lists no repos"))?;
+        self.config
+            .repos
+            .get(repo)
+            .map(|repo| repo.url.as_str())
+            .ok_or_else(|| bad_assignment(name, "primary repo is not in the registry"))
+    }
+
     async fn observe<'a>(
         &'a self,
         name: &str,
         assignment: &'a Assignment,
     ) -> Result<Observed<'a>, Error> {
         let forge = self.work_forge(name, assignment)?;
-        let repo = assignment
-            .primary_repo()
-            .ok_or_else(|| bad_assignment(name, "lists no repos"))?;
+        let url = self.primary_url(name, assignment)?;
         let desired = Self::desired(forge, assignment).await?;
-        let open_prs = forge.open_prs(repo, &assignment.branch_prefix).await?;
+        let open_prs = forge.open_prs(url, &assignment.branch_prefix).await?;
         let inflight = self.state.active(name)?;
         let headroom = self
             .state

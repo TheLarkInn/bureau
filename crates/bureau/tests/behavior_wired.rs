@@ -22,7 +22,7 @@ async fn committed_config_drives_a_reconcile_pass_to_a_pr() {
     let outcomes = world.pass_and_join().await;
     let prs = world
         .forge
-        .open_prs("main", "bureau/fix/")
+        .open_prs(&world.primary_url(), "bureau/fix/")
         .await
         .expect("open_prs");
     let state = (

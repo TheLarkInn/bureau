@@ -83,8 +83,15 @@ impl World {
 
     /// Open PRs the assignment's observation would see.
     pub async fn observed_prs(&self) -> usize {
+        let url = &self
+            .reconciler
+            .config
+            .repos
+            .get("main")
+            .expect("main repo")
+            .url;
         self.forge
-            .open_prs("main", "bureau/")
+            .open_prs(url, "bureau/")
             .await
             .expect("open_prs")
             .len()

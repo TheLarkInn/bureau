@@ -120,6 +120,10 @@ generates, opens a config PR, waits for you to merge it, validates the exact
 merged commit, runs one foreground reconcile pass, and only then marks the
 install initialized. It never runs unmerged config.
 
+Re-running `init` after an interruption is safe: when the committed config
+at the tracked ref already matches the generated draft byte for byte, no new
+config PR is opened — the flow resumes by validating that exact commit.
+
 ### init.yaml — every field
 
 ```yaml
