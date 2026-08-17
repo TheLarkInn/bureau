@@ -25,7 +25,7 @@ fn report(joined: Result<RunOutcome, tokio::task::JoinError>) -> Option<RunOutco
             out::line(format_args!(
                 "{} {} {}",
                 outcome.run_id,
-                super::super::outcome_name(outcome.outcome),
+                bureau::runlog::outcome_name(outcome.outcome),
                 outcome.message
             ));
             Some(outcome)

@@ -19,6 +19,9 @@ anyhow = "1"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
 nix = { version = "0.31", default-features = false }
+# `bureau watch`: the ecosystem-standard TUI stack; crossterm comes
+# through ratatui's re-export so exactly one version is linked.
+ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ring = "0.17"
 rusqlite = { version = "0.37", features = ["bundled"] }

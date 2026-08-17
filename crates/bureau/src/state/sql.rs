@@ -70,6 +70,10 @@ pub(super) const LIVE_LEASES: &str = "
 SELECT COUNT(*) FROM leases
 WHERE assignment = ?1 AND expires_at_ms > ?2";
 
+pub(super) const LIVE_LEASES_TOTAL: &str = "
+SELECT COUNT(*) FROM leases
+WHERE expires_at_ms > ?1";
+
 pub(super) const RUNS_SINCE: &str = "
 SELECT COUNT(*) FROM runs
 WHERE assignment = ?1 AND started_at_ms > ?2";

@@ -282,6 +282,7 @@ bureau validate runner-config     # check a config checkout; every error in one 
 bureau run fix-failing-test --item acme/web#42   # one item, once, foreground
 bureau reconcile                  # the continuous loop (default 5m interval)
 bureau reconcile --now            # one pass; start eligible work and wait
+bureau watch                      # live dashboard: runs, budget, latest events
 bureau list                       # every run
 bureau show <run-id>              # replayed state of one run
 bureau cancel <run-id>            # cooperative stop between steps
@@ -289,6 +290,12 @@ bureau retry <run-id>             # new run for the item an earlier run targeted
 bureau doctor --json              # read-only diagnostics (offline)
 bureau repair                     # preview, then confirm, reversible repairs
 ```
+
+While the daemon runs, `bureau watch` is the standing answer to "what is
+it doing right now": a self-refreshing terminal view of the adopted
+config commit, active leases, every run's current step and cost, and the
+per-assignment budget headroom. It reads `~/.bureau` without ever
+writing or locking it.
 
 `bureau run` exit codes: `0` success or no-work, `1` failure/blocked/
 claim-lost, `2` setup errors (e.g. a missing credential, named in the

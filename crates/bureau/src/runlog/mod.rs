@@ -9,6 +9,7 @@
 //! ```
 
 mod event;
+mod gist;
 mod group;
 mod group_state;
 mod snapshot;
@@ -21,6 +22,7 @@ pub use event::{
     checkpoint, output, pr_created, run_finished, run_finished_full, run_started,
     run_started_for_item, run_started_snapshot, step_finished, step_finished_full, step_started,
 };
+pub use gist::{gist, kind_name, outcome_name, status_text};
 pub use group::{
     GroupFinishedData, GroupMemberCancelledData, GroupMemberFinishedData, GroupMemberStartedData,
     GroupStartedData, group_finished, group_member_cancelled, group_member_finished,
@@ -100,6 +102,24 @@ fn now_millis() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+/// Splits log text into non-empty lines, identifying a torn final line
+/// (a daemon kill mid-append leaves one) without treating it as corrupt.
+fn log_lines(text: &str) -> (Vec<&str>, Option<&str>) {
+    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let torn = lines
+        .last()
+        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
+        .then(|| lines.pop().unwrap_or_default());
+    (lines, torn)
+}
+
+fn parse_events(lines: &[&str]) -> io::Result<Vec<Event>> {
+    lines
+        .iter()
+        .map(|line| serde_json::from_str(line).map_err(io::Error::other))
+        .collect()
+}
+
 /// Reads every event in a run directory's log, in sequence order.
 ///
 /// A daemon kill mid-append leaves the final line torn — the scrubber's
@@ -115,22 +135,27 @@ fn now_millis() -> u64 {
 pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
     let path = dir.join(EVENTS_FILE);
     let text = std::fs::read_to_string(&path)?;
-    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    if lines
-        .last()
-        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
-    {
-        let torn = lines.pop().unwrap_or_default();
+    let (lines, torn) = log_lines(&text);
+    if let Some(torn) = torn {
         let keep = torn.as_ptr() as usize - text.as_ptr() as usize;
         OpenOptions::new()
             .write(true)
             .open(&path)?
             .set_len(u64::try_from(keep).map_err(io::Error::other)?)?;
     }
-    lines
-        .iter()
-        .map(|line| serde_json::from_str(line).map_err(io::Error::other))
-        .collect()
+    parse_events(&lines)
+}
+
+/// Read-only [`read_events`] for tools that must never mutate a run
+/// directory: a torn final line is dropped from the result but the file
+/// is left exactly as found.
+///
+/// # Errors
+/// Propagates filesystem failures and rejects any unparseable line
+/// before the last one.
+pub fn read_events_tolerant(dir: &Path) -> io::Result<Vec<Event>> {
+    let text = std::fs::read_to_string(dir.join(EVENTS_FILE))?;
+    parse_events(&log_lines(&text).0)
 }
 
 /// An open run log. Appends are fsync'd and scrubbed on write.
@@ -251,4 +276,14 @@ pub fn write_state_cache(dir: &Path, state: &RunState) -> io::Result<()> {
         dir.join(STATE_FILE),
         serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
     )
+}
+
+/// Reads the derived state cache, when it exists and parses.
+///
+/// The engine writes the cache only when a run settles, so a running
+/// run has none (or a torn one); callers then fall back to
+/// [`read_events_tolerant`] + [`replay`].
+#[must_use]
+pub fn read_state_cache(dir: &Path) -> Option<RunState> {
+    serde_json::from_slice(&std::fs::read(dir.join(STATE_FILE)).ok()?).ok()
 }

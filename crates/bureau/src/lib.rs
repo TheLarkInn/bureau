@@ -24,6 +24,7 @@ pub mod repair;
 pub mod runlog;
 pub mod state;
 pub mod supervise;
+pub mod watch;
 pub use bureau_lifecycle::{home, maintenance, setup};
 
 use std::path::{Path, PathBuf};

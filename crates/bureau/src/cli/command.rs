@@ -110,6 +110,19 @@ pub enum Verb {
     },
     /// Continuously reconciles committed config with forge state.
     Reconcile(reconcile::Args),
+    /// Watches local state in a live terminal dashboard; piped, prints
+    /// one snapshot.
+    Watch {
+        /// Directory holding run directories.
+        #[arg(long)]
+        runs: Option<PathBuf>,
+        /// Durable state database path.
+        #[arg(long)]
+        state: Option<PathBuf>,
+        /// Committed config cache directory.
+        #[arg(long)]
+        config_cache: Option<PathBuf>,
+    },
     /// Performs first-time local initialization.
     Init {
         /// YAML initialization request.
