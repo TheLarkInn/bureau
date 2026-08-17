@@ -90,22 +90,6 @@ fn argv(role: &Role, agent: &str) -> Vec<String> {
     argv
 }
 
-fn write_mcp_config(path: &std::path::Path) -> std::io::Result<()> {
-    let config = serde_json::json!({
-        "mcpServers": {
-            "bureau-io": {
-                "type": "stdio",
-                "command": "bureau",
-                "args": ["mcp", "serve"]
-            }
-        }
-    });
-    std::fs::write(
-        path,
-        serde_json::to_vec(&config).map_err(std::io::Error::other)?,
-    )
-}
-
 /// Builds the layer-0 request for a `claude` step: the step contract
 /// JSON on stdin, credentials in env, permissions in argv.
 ///
@@ -145,7 +129,7 @@ fn prepare(
 ) -> Result<(Session, SpawnRequest), String> {
     let session = Session::create(request).map_err(|error| error.to_string())?;
     let config = session.dir().join("mcp.json");
-    write_mcp_config(&config).map_err(|error| error.to_string())?;
+    real::write_mcp_config(&config).map_err(|error| error.to_string())?;
     let mut built = spawn_request(role, step, request, secrets, log);
     built.timeout = timeout;
     built.cancel = super::cancel_path(request);

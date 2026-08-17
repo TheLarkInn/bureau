@@ -28,6 +28,7 @@
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use super::real;
@@ -141,6 +142,36 @@ async fn read_usage(path: std::path::PathBuf) -> Usage {
     }
 }
 
+/// Assembles the session, the `bureau-io` MCP config, and the spawn
+/// request. The CLI needs the server *definition* to launch it — the
+/// `--allow-tool=bureau-io` flag alone references a server it cannot
+/// find (issue #17) — so we write the config and point
+/// `--additional-mcp-config` at it.
+fn prepare(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> Result<(Session, PathBuf, SpawnRequest), String> {
+    let session = Session::create(request).map_err(|_| "creating bureau-io session failed")?;
+    let telemetry = session.dir().join("copilot-otel.jsonl");
+    let config = session.dir().join("mcp.json");
+    real::write_mcp_config(&config)
+        .map_err(|e| format!("writing bureau-io MCP config failed: {e}"))?;
+    let mut built = spawn_request(role, step, request, secrets, log);
+    built.timeout = timeout;
+    built.cancel = super::cancel_path(request);
+    built.env.extend(session.env().clone());
+    built.argv.push(format!(
+        "--additional-mcp-config=@{}",
+        config.to_string_lossy()
+    ));
+    enable_telemetry(&mut built.env, &telemetry);
+    Ok((session, telemetry, built))
+}
+
 /// Runs a `copilot` step and derives the step result.
 ///
 /// A spawn failure is data: it becomes `StepOutcome::Failure` through
@@ -154,15 +185,10 @@ pub async fn execute(
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
-    let Ok(session) = Session::create(request) else {
-        return super::failed("creating bureau-io session failed");
+    let (session, telemetry, built) = match prepare(role, step, request, timeout, secrets, log) {
+        Ok(prepared) => prepared,
+        Err(message) => return super::failed(&message),
     };
-    let telemetry = session.dir().join("copilot-otel.jsonl");
-    let mut built = spawn_request(role, step, request, secrets, log);
-    built.timeout = timeout;
-    built.cancel = super::cancel_path(request);
-    built.env.extend(session.env().clone());
-    enable_telemetry(&mut built.env, &telemetry);
     let spawned = crate::process::spawn(built).await;
     let published = match session.published() {
         Ok(result) => result,
