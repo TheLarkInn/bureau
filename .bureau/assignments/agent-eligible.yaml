@@ -1,0 +1,19 @@
+name: agent-eligible
+work:
+  forge: github
+  source: TheLarkInn/bureau
+  filter: is:open label:agent-eligible
+  approval_label: null
+repos:
+- bureau
+pipeline: agent-eligible-pipeline
+role: implementer
+verify: cargo test --offline
+branch_prefix: bureau/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 4
+  max_runs_per_day: null
+  max_open_prs: null
+  max_cost_per_day_usd: 25.0
+  max_run_hours: null
