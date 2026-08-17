@@ -153,5 +153,6 @@ Behavioral departures from the spec as written, each with its reason:
 - Duplicate YAML mapping keys are last-write-wins (`serde_yaml_ng` has
   no rejection) — review config diffs carefully.
 
-Run-log `output` events carry `stream: "combined"` because layer 0
-multiplexes stdout and stderr into one scrubbed sink.
+Run-log step `output` events carry `stream: "combined"` because layer 0
+multiplexes a step's stdout and stderr into one scrubbed sink; run-level
+messages use `stream: "run"`.
