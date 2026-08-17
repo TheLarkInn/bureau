@@ -14,9 +14,12 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allowedTools 'Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
-//! | `repo:push`                   | `--allowedTools 'Bash(git:*)'` |
+//! | `repo:write`, not `repo:push` | `--allowedTools 'Edit,Write,Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
+//! | `repo:push`                   | `--allowedTools 'Edit,Write,Bash(git:*)'` |
 //! | anything else                 | `--disallowedTools 'Bash(*)'` |
+//!
+//! `repo:write` grants editing the run worktree (`Edit`/`Write`), not
+//! only the git shell — see issue #16.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are
@@ -48,12 +51,20 @@ const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKE
 
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default rule instead of silence.
+///
+/// A write grant must allow the agent to *edit* the run worktree, not
+/// only run `git` — `Bash(git:*)` alone left every edit denied (issue
+/// #16). So `repo:write` adds the `Edit` and `Write` tools alongside
+/// the git shell; `git push` stays gated behind `repo:push`.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
     }
-    let mut flags = vec!["--allowedTools".to_owned(), "Bash(git:*)".to_owned()];
+    let mut flags = vec![
+        "--allowedTools".to_owned(),
+        "Edit,Write,Bash(git:*)".to_owned(),
+    ];
     if !push {
         flags.extend([
             "--disallowedTools".to_owned(),
@@ -77,22 +88,6 @@ fn argv(role: &Role, agent: &str) -> Vec<String> {
     ];
     argv.extend(permission_flags(&role.permissions));
     argv
-}
-
-fn write_mcp_config(path: &std::path::Path) -> std::io::Result<()> {
-    let config = serde_json::json!({
-        "mcpServers": {
-            "bureau-io": {
-                "type": "stdio",
-                "command": "bureau",
-                "args": ["mcp", "serve"]
-            }
-        }
-    });
-    std::fs::write(
-        path,
-        serde_json::to_vec(&config).map_err(std::io::Error::other)?,
-    )
 }
 
 /// Builds the layer-0 request for a `claude` step: the step contract
@@ -134,7 +129,7 @@ fn prepare(
 ) -> Result<(Session, SpawnRequest), String> {
     let session = Session::create(request).map_err(|error| error.to_string())?;
     let config = session.dir().join("mcp.json");
-    write_mcp_config(&config).map_err(|error| error.to_string())?;
+    real::write_mcp_config(&config).map_err(|error| error.to_string())?;
     let mut built = spawn_request(role, step, request, secrets, log);
     built.timeout = timeout;
     built.cancel = super::cancel_path(request);

@@ -14,9 +14,12 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allow-tool=shell(git:*) --deny-tool='shell(git push)'` |
-//! | `repo:push`                   | `--allow-tool=shell(git:*)` |
+//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths --deny-tool='shell(git push)'` |
+//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths` |
 //! | anything else                 | `--deny-tool='shell(*)'` |
+//!
+//! `repo:write` grants editing the run worktree (`write` +
+//! `--allow-all-paths`), not only the git shell — see issue #16.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
@@ -25,6 +28,7 @@
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use super::real;
@@ -51,12 +55,23 @@ const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default flag instead of silence.
+///
+/// A write grant must allow the agent to *edit* the run worktree, not
+/// only run `git` — `shell(git:*)` alone left every `apply_patch`/edit
+/// denied (issue #16). So `repo:write` adds the file-edit tool plus
+/// `--allow-all-paths` (the worktree sits under `BUREAU_HOME`, outside
+/// any repo root the CLI would otherwise verify paths against). `git
+/// push` stays gated behind `repo:push`.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--deny-tool=shell(*)".to_owned()];
     }
-    let mut flags = vec!["--allow-tool=shell(git:*)".to_owned()];
+    let mut flags = vec![
+        "--allow-tool=write".to_owned(),
+        "--allow-tool=shell(git:*)".to_owned(),
+        "--allow-all-paths".to_owned(),
+    ];
     if !push {
         flags.push("--deny-tool=shell(git push)".to_owned());
     }
@@ -127,6 +142,36 @@ async fn read_usage(path: std::path::PathBuf) -> Usage {
     }
 }
 
+/// Assembles the session, the `bureau-io` MCP config, and the spawn
+/// request. The CLI needs the server *definition* to launch it — the
+/// `--allow-tool=bureau-io` flag alone references a server it cannot
+/// find (issue #17) — so we write the config and point
+/// `--additional-mcp-config` at it.
+fn prepare(
+    role: &Role,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+    secrets: Vec<Secret>,
+    log: Option<SharedLog>,
+) -> Result<(Session, PathBuf, SpawnRequest), String> {
+    let session = Session::create(request).map_err(|_| "creating bureau-io session failed")?;
+    let telemetry = session.dir().join("copilot-otel.jsonl");
+    let config = session.dir().join("mcp.json");
+    real::write_mcp_config(&config)
+        .map_err(|e| format!("writing bureau-io MCP config failed: {e}"))?;
+    let mut built = spawn_request(role, step, request, secrets, log);
+    built.timeout = timeout;
+    built.cancel = super::cancel_path(request);
+    built.env.extend(session.env().clone());
+    built.argv.push(format!(
+        "--additional-mcp-config=@{}",
+        config.to_string_lossy()
+    ));
+    enable_telemetry(&mut built.env, &telemetry);
+    Ok((session, telemetry, built))
+}
+
 /// Runs a `copilot` step and derives the step result.
 ///
 /// A spawn failure is data: it becomes `StepOutcome::Failure` through
@@ -140,15 +185,10 @@ pub async fn execute(
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
-    let Ok(session) = Session::create(request) else {
-        return super::failed("creating bureau-io session failed");
+    let (session, telemetry, built) = match prepare(role, step, request, timeout, secrets, log) {
+        Ok(prepared) => prepared,
+        Err(message) => return super::failed(&message),
     };
-    let telemetry = session.dir().join("copilot-otel.jsonl");
-    let mut built = spawn_request(role, step, request, secrets, log);
-    built.timeout = timeout;
-    built.cancel = super::cancel_path(request);
-    built.env.extend(session.env().clone());
-    enable_telemetry(&mut built.env, &telemetry);
     let spawned = crate::process::spawn(built).await;
     let published = match session.published() {
         Ok(result) => result,
