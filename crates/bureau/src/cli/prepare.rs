@@ -132,3 +132,97 @@ pub const fn forge_name(kind: ForgeKind) -> &'static str {
         ForgeKind::Github => "github",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bureau::config::{Access, Limits, WorkSource};
+
+    fn repo(credential: &str) -> Repo {
+        Repo {
+            url: "https://github.com/acme/web".to_owned(),
+            forge: ForgeKind::Github,
+            access: Access::Push,
+            credential: credential.to_owned(),
+        }
+    }
+
+    fn config() -> Config {
+        Config {
+            repos: BTreeMap::from([
+                ("primary".to_owned(), repo("primary-ref")),
+                ("context".to_owned(), repo("context-ref")),
+            ]),
+            roles: BTreeMap::new(),
+            assignments: BTreeMap::new(),
+            pipelines: BTreeMap::new(),
+        }
+    }
+
+    fn assignment(repos: &[&str]) -> Assignment {
+        Assignment {
+            name: "fix".to_owned(),
+            work: WorkSource {
+                forge: ForgeKind::Github,
+                source: "acme/web".to_owned(),
+                filter: "*".to_owned(),
+                approval_label: None,
+            },
+            repos: repos.iter().map(|name| (*name).to_owned()).collect(),
+            pipeline: "fix".to_owned(),
+            role: "worker".to_owned(),
+            verify: "true".to_owned(),
+            branch_prefix: "bureau/".to_owned(),
+            limits: Limits::default(),
+        }
+    }
+
+    fn credentials(names: &[&str]) -> BTreeMap<String, Secret> {
+        names
+            .iter()
+            .map(|name| ((*name).to_owned(), Secret::new("token")))
+            .collect()
+    }
+
+    /// README's known delta, pinned: the work forge's token is the
+    /// PRIMARY repo's credential — a resolved primary credential alone
+    /// suffices, even with a context repo's reference unresolved.
+    #[test]
+    fn the_work_forge_token_is_the_primary_repos_credential() {
+        let built = work_forge(
+            &config(),
+            &assignment(&["primary", "context"]),
+            &credentials(&["primary-ref"]),
+        );
+        assert!(built.is_ok(), "primary credential alone builds the forge");
+    }
+
+    /// The flip side: a context repo's credential never substitutes for
+    /// the primary's, and the error says so.
+    #[test]
+    fn a_context_credential_cannot_substitute_for_the_primary() {
+        let error = work_forge(
+            &config(),
+            &assignment(&["primary", "context"]),
+            &credentials(&["context-ref"]),
+        )
+        .err()
+        .expect("context credential must not build the work forge");
+        assert!(
+            error.to_string().contains("primary repo credential"),
+            "error names the rule: {error}"
+        );
+    }
+
+    /// No primary repo (an empty `repos` list) fails closed as well.
+    #[test]
+    fn an_assignment_without_a_primary_repo_is_rejected() {
+        let error = work_forge(&config(), &assignment(&[]), &credentials(&[]))
+            .err()
+            .expect("no primary repo must fail");
+        assert!(
+            error.to_string().contains("no primary repo"),
+            "error names the rule: {error}"
+        );
+    }
+}

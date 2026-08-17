@@ -232,6 +232,44 @@ async fn check_resume(rig: &Rig, plan: &RunPlan) {
     );
 }
 
+/// The payload field of an event as a string, when present.
+fn field_of<'a>(e: &'a Event, key: &str) -> Option<&'a str> {
+    e.data.get(key).and_then(serde_json::Value::as_str)
+}
+
+/// A run's step-output events (run-level messages have a null step).
+fn step_outputs(events: &[Event]) -> Vec<&Event> {
+    events
+        .iter()
+        .filter(|e| {
+            e.kind == EventKind::Output
+                && e.data.get("step").is_some_and(serde_json::Value::is_string)
+        })
+        .collect()
+}
+
+/// README's known delta, pinned: every step `output` event's stream
+/// label is `combined` (layer 0 multiplexes a step's stdout and stderr
+/// into one scrubbed sink), and the payloads carry the step's bytes.
+#[tokio::test]
+async fn output_events_are_labeled_with_the_combined_stream() {
+    let rig = Rig::new();
+    let steps = vec![det_step("echo", "echo hello-from-the-step", Some("done"))];
+    let outcome = rig.engine().run(&rig.plan(steps)).await;
+    let events = events(&rig, &outcome.run_id);
+    let outputs = step_outputs(&events);
+    let labeled = !outputs.is_empty()
+        && outputs
+            .iter()
+            .all(|e| field_of(e, "stream") == Some("combined"));
+    let text: String = outputs.iter().filter_map(|e| field_of(e, "data")).collect();
+    assert_eq!(
+        (labeled, text.contains("hello-from-the-step")),
+        (true, true),
+        "events: {outputs:?}"
+    );
+}
+
 #[tokio::test]
 async fn credentials_never_reach_the_event_log() {
     let rig = Rig::new();
