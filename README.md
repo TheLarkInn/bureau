@@ -11,7 +11,9 @@ shell script. It is level-triggered: each pass compares desired state
 (every matching work item should have an open PR) with observed state
 (what the forge shows) and closes the gap by running agent pipelines in
 git worktrees. Work is claimed off a backlog by lease, never pushed.
-`DESIGN.md` is the authoritative spec.
+`DESIGN.md` is the authoritative spec. New here?
+[docs/getting-started.md](docs/getting-started.md) walks through setup for
+single- and multi-repository layouts on both GitHub and Azure DevOps.
 
 ## Plugins and agent resources
 
