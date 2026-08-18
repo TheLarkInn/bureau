@@ -15,6 +15,33 @@ function runFixture(name, options = {}) {
   return findings(fixtureDir(name), { binary: stub, ...options });
 }
 
+test("a bureau without --json is reported as skew, not as a crash", async () => {
+  const old = fileURLToPath(new URL("./findings-old-bureau.mjs", fixturesUrl));
+
+  const result = await findings(fixtureDir("findings-valid"), { binary: old });
+
+  assert.deepEqual(
+    {
+      state: result.state,
+      ok: result.ok,
+      // The message has to say what to do; "did not return JSON" does not.
+      actionable: result.message.includes("does not support") && result.message.includes("BUREAU_CANVAS_BUREAU"),
+    },
+    { state: "unsupported-binary", ok: false, actionable: true },
+  );
+});
+
+test("a current binary is used even when an older one is found first", async () => {
+  const old = fileURLToPath(new URL("./findings-old-bureau.mjs", fixturesUrl));
+  const dir = fixtureDir("findings-valid");
+
+  // `locateCandidates` prefers PATH, so simulate PATH holding the stale one
+  // and the workspace holding a current build.
+  const result = await findings(dir, { candidates: [old, stub] });
+
+  assert.deepEqual({ state: result.state, ok: result.ok }, { state: "validated", ok: true });
+});
+
 test("valid config returns no findings", async () => {
   const result = await runFixture("findings-valid");
 
