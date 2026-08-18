@@ -178,36 +178,31 @@ async fn timeout_hard_kills() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
-fn pid_is_dead(pid: i32) -> bool {
-    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err()
-}
-
-fn wait_for_death(pid: i32) -> bool {
-    for _ in 0..100 {
-        if pid_is_dead(pid) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    false
-}
-
+/// A backgrounded grandchild must not outlive the timeout kill.
+///
+/// Observed through the shared filesystem rather than a pid. The child
+/// runs in its own PID namespace (`unshare --pid`), so the `$!` it
+/// reports names a process *in that namespace*; checking that number
+/// from this one with `kill(pid, 0)` compares across namespaces. That
+/// check passed only by accident — signalling an unrelated pid returns
+/// `EPERM`, and an error read as "dead" — and inverted when the suite
+/// ran nested inside another bureau spawn, where `--map-root-user` made
+/// the same number a live, signalable process.
+///
+/// A marker rewritten in a loop is namespace-independent: remove it
+/// after the kill and only a surviving grandchild puts it back.
 #[tokio::test]
 async fn timeout_kills_the_whole_process_group() {
     let dir = TestDir::new("pgroup");
-    let script = "sleep 30 & echo $! > grandchild.pid; wait";
-    let result = spawn(request(dir.path(), script, Duration::from_millis(800))).await;
-    let pid: i32 = std::fs::read_to_string(dir.path().join("grandchild.pid"))
-        .expect("grandchild pidfile")
-        .trim()
-        .parse()
-        .expect("pid is a number");
-    let dead = wait_for_death(pid);
-    if !dead {
-        let pid = nix::unistd::Pid::from_raw(pid);
-        let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGKILL);
-    }
-    assert_eq!((result.outcome, dead), (SpawnOutcome::Timeout, true));
+    let marker = dir.path().join("escaped.marker");
+    let script = "(while true; do touch escaped.marker; sleep 0.1; done) & wait";
+    let result = spawn(request(dir.path(), script, Duration::from_millis(500))).await;
+    std::fs::remove_file(&marker).ok();
+    std::thread::sleep(Duration::from_secs(1));
+    assert_eq!(
+        (result.outcome, marker.exists()),
+        (SpawnOutcome::Timeout, false)
+    );
 }
 
 #[tokio::test]
