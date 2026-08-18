@@ -53,6 +53,18 @@ const DISCOVERY: real::Discovery = real::Discovery {
 /// Credential variable forwarded when the role holds a forge grant.
 const CREDENTIAL_VARS: [&str; 1] = ["GH_TOKEN"];
 
+/// The `bureau-io` server definition, in the shape this CLI's MCP
+/// config actually requires.
+///
+/// Deliberately not [`real::write_mcp_config`]'s shared shape, which
+/// serves `claude`: this CLI spells the transport `local`, not `stdio`,
+/// and exposes no tools at all unless the definition carries an explicit
+/// filter. A definition missing either is still listed by
+/// `copilot mcp list` and still reports `Status: Enabled`, but its tools
+/// never reach the model — which is why `--additional-mcp-config` looked
+/// like a no-op and a workspace `.mcp.json` looked like the fix.
+const MCP_CONFIG: &str = r#"{"mcpServers":{"bureau-io":{"type":"local","command":"bureau","args":["mcp","serve"],"tools":["*"]}}}"#;
+
 /// The push-boundary mirror; see the module table. Without a write
 /// grant the CLI gets a deny-by-default flag instead of silence.
 ///
@@ -79,6 +91,10 @@ fn permission_flags(permissions: &[Permission]) -> Vec<String> {
 }
 
 /// `copilot -p <json> --agent <name>` plus the permission mirror.
+///
+/// The `bureau-io` definition rides on argv so the server the agent is
+/// granted is the server that actually launches, and so a recorded
+/// fixture reproduces the real invocation.
 fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
     let mut argv = vec![
         BINARY.to_owned(),
@@ -87,6 +103,8 @@ fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
         "--agent".to_owned(),
         agent.to_owned(),
         "--allow-tool=bureau-io".to_owned(),
+        "--additional-mcp-config".to_owned(),
+        MCP_CONFIG.to_owned(),
     ];
     argv.extend(permission_flags(&role.permissions));
     argv
@@ -142,12 +160,13 @@ async fn read_usage(path: std::path::PathBuf) -> Usage {
     }
 }
 
-/// Assembles the session, the `bureau-io` MCP config, and the spawn
-/// request. The CLI needs the server *definition* to launch it — the
+/// Assembles the session and the spawn request.
+///
+/// The CLI needs the server *definition* to launch it — the
 /// `--allow-tool=bureau-io` flag alone references a server it cannot
-/// find. `--additional-mcp-config` is a no-op in the shipped CLI, so we
-/// write the workspace config the CLI *does* read: `.mcp.json` in the
-/// run worktree (the spawn's working directory).
+/// find. [`argv`] carries that definition inline rather than writing it
+/// into the run worktree, which would leave an untracked `.mcp.json`
+/// for the agent to commit into its own pull request.
 fn prepare(
     role: &Role,
     step: &StepDef,
@@ -158,8 +177,6 @@ fn prepare(
 ) -> Result<(Session, PathBuf, SpawnRequest), String> {
     let session = Session::create(request).map_err(|_| "creating bureau-io session failed")?;
     let telemetry = session.dir().join("copilot-otel.jsonl");
-    real::write_mcp_config(&request.worktree.join(".mcp.json"))
-        .map_err(|e| format!("writing bureau-io MCP config failed: {e}"))?;
     let mut built = spawn_request(role, step, request, secrets, log);
     built.timeout = timeout;
     built.cancel = super::cancel_path(request);

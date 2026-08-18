@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements one reviewed work item in a bureau-managed worktree and publishes a structured result.
-tools: ["view", "grep", "glob", "edit", "bash", "powershell"]
+tools: ["view", "grep", "glob", "edit", "bash", "powershell", "bureau-io"]
 model: opus
 ---
 

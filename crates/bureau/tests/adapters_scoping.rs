@@ -97,6 +97,43 @@ fn copilot_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
     copilot::spawn_request(&role, &step(), &request(dir), Vec::new(), None)
 }
 
+/// The `bureau-io` definition must use this CLI's spelling: transport
+/// `local`, plus an explicit tool filter. With `stdio`, or without the
+/// filter, the server is still listed by `copilot mcp list` and still
+/// reports `Status: Enabled`, but its tools never reach the model — so
+/// every step fails as though the agent never published a result.
+#[test]
+fn copilot_mcp_definition_uses_the_shape_the_cli_requires() {
+    let dir = TestDir::new("mcp-shape");
+    let req = copilot_request(&[], dir.path());
+    let at = req
+        .argv
+        .iter()
+        .position(|a| a == "--additional-mcp-config")
+        .expect("server definition present");
+    let config: serde_json::Value =
+        serde_json::from_str(&req.argv[at + 1]).expect("definition is JSON");
+    let server = &config["mcpServers"]["bureau-io"];
+    assert_eq!(
+        (
+            server["type"].as_str(),
+            server["command"].as_str(),
+            server["tools"][0].as_str(),
+            req.argv.iter().any(|a| a == "--allow-tool=bureau-io"),
+        ),
+        (Some("local"), Some("bureau"), Some("*"), true)
+    );
+}
+
+/// The definition rides on argv, so nothing is left in the worktree for
+/// the agent to commit into its own pull request.
+#[test]
+fn copilot_leaves_no_mcp_config_in_the_worktree() {
+    let dir = TestDir::new("mcp-clean");
+    let _ = copilot_request(&[], dir.path());
+    assert!(!dir.path().join(".mcp.json").exists());
+}
+
 /// Whether the daemon environment holds any of `names`, non-empty.
 fn daemon_has(names: &[&str]) -> bool {
     names

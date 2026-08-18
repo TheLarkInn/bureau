@@ -109,8 +109,8 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
 }
 
 /// Asserts copilot's argv carries the JSON prompt and selected agent.
-/// This grant-less role also gets the deny-by-default flag, so argv
-/// has 7 elements including the bureau-io grant.
+/// This grant-less role also gets the deny-by-default flag, so argv has
+/// 9 elements including the bureau-io grant and its server definition.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
@@ -118,7 +118,7 @@ fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
         value_after(&req.argv, "--agent"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", 7);
+    let expected = (Some(copilot::BINARY), json, "analyzer", 9);
     assert_eq!(parts, expected);
 }
 
@@ -252,7 +252,12 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
         let dir = TestDir::new("copilot-flags");
         let role = role("/p:a", AdapterKind::Copilot, permissions);
         let req = copilot_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[6..].join(SEP), flags);
+        let at = req
+            .argv
+            .iter()
+            .position(|a| a == "--additional-mcp-config")
+            .expect("mcp config present");
+        assert_eq!(req.argv[at + 2..].join(SEP), flags);
     }
 }
 
