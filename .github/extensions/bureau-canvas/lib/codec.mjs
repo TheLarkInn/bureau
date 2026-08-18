@@ -21,6 +21,7 @@ export function parse(text, options = {}) {
 export function render(view, doc, style) {
   const yamlDoc = YAML.parseDocument(doc.normalized, { keepSourceTokens: true });
   applyPipelineChanges(yamlDoc, doc.view, view);
+  applyDocumentChanges(yamlDoc, doc.view, view);
   return restoreLineEndings(stringify(yamlDoc, style), style);
 }
 
@@ -204,6 +205,21 @@ function applyPipelineChanges(yamlDoc, original, next) {
   applyStepFieldChanges(yamlDoc, stepIndex, original.steps, next.steps);
   removeDeletedEdges(yamlDoc, stepIndex, originalEdges, nextEdges, original.steps);
   upsertChangedEdges(yamlDoc, stepIndex, originalEdges, nextEdges, original.steps);
+}
+
+function applyDocumentChanges(yamlDoc, original, next) {
+  if (original.kind !== "document" || next.kind !== "document") {
+    return;
+  }
+  for (const [key, value] of Object.entries(next.value ?? {})) {
+    if (changedValue(value, original.value?.[key])) {
+      yamlDoc.set(key, value);
+    }
+  }
+}
+
+function changedValue(left, right) {
+  return JSON.stringify(left) !== JSON.stringify(right);
 }
 
 function applyStepFieldChanges(yamlDoc, stepIndex, originalSteps, nextSteps) {
