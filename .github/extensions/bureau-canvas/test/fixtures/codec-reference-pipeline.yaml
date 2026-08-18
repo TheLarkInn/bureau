@@ -1,0 +1,16 @@
+# Hand-authored sparse pipeline fixture.
+name: codec-reference-pipeline
+steps:
+- name: reproduce
+  type: deterministic
+  run: cargo test --offline
+  next: propose
+- name: propose
+  type: agent
+  role: implementer
+  inputs_from: [reproduce]
+  next: review
+- name: review
+  type: decision
+  over: propose
+  on: {success: done, failure: propose, blocked: escalate, no-work: done}

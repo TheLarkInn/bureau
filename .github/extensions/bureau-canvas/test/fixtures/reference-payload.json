@@ -1,0 +1,253 @@
+{
+  "_comment": "This fixture is a faithful variant of DESIGN.md section 11: it intentionally adds the run-checks concurrent group so layout and view tests cover concurrent members.",
+  "ok": true,
+  "errors": [],
+  "dir": ".bureau",
+  "config": {
+    "repos": {
+      "bureau": {
+        "url": "https://github.com/TheLarkInn/bureau.git",
+        "forge": "github",
+        "access": "push",
+        "credential": "github-main"
+      }
+    },
+    "roles": {
+      "implementer": {
+        "name": "implementer",
+        "agent": "/bureau:implementer",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "repo:write", "model:invoke"],
+        "min_trust": "maintainer"
+      },
+      "reviewer": {
+        "name": "reviewer",
+        "agent": "/bureau:reviewer",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "pr:read", "model:invoke"],
+        "min_trust": "derived"
+      }
+    },
+    "assignments": {
+      "fix-failing-test": {
+        "name": "fix-failing-test",
+        "work": {
+          "forge": "github",
+          "source": "TheLarkInn/bureau",
+          "filter": "is:open label:failing-test",
+          "approval_label": "agent-eligible"
+        },
+        "repos": ["bureau"],
+        "pipeline": "fix-failing-test",
+        "role": "implementer",
+        "verify": "cargo test --offline",
+        "branch_prefix": "bureau/",
+        "limits": {
+          "max_concurrent": 1,
+          "max_runs_per_hour": 4,
+          "max_runs_per_day": null,
+          "max_open_prs": null,
+          "max_cost_per_day_usd": null,
+          "max_run_hours": null
+        }
+      }
+    },
+    "pipelines": {
+      "fix-failing-test": {
+        "name": "fix-failing-test",
+        "steps": [
+          {
+            "name": "claim",
+            "type": "deterministic",
+            "run": "claim next item",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "reproduce",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": "done",
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "reproduce",
+            "type": "deterministic",
+            "run": "create worktree and run failing test",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "propose",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "propose",
+            "type": "agent",
+            "run": null,
+            "role": "implementer",
+            "fixture": null,
+            "trust": "maintainer",
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "run-checks",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": null,
+            "inputs_from": ["reproduce"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "run-checks",
+            "type": "concurrent",
+            "run": null,
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": ["apply", "review"],
+            "completion": "all",
+            "max_concurrent": 2,
+            "next": "passed",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "apply",
+            "type": "deterministic",
+            "run": "apply patch and re-run the failing test",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": ["propose"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "review",
+            "type": "agent",
+            "run": null,
+            "role": "reviewer",
+            "fixture": null,
+            "trust": "derived",
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": ["propose"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "passed",
+            "type": "decision",
+            "run": null,
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": "apply",
+            "on": {
+              "blocked": "escalate",
+              "failure": "propose",
+              "no-work": "done",
+              "success": "verdict"
+            },
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": ["apply"],
+            "max_attempts": 3,
+            "timeout_secs": null
+          },
+          {
+            "name": "verdict",
+            "type": "decision",
+            "run": null,
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": "review",
+            "on": {
+              "blocked": "escalate",
+              "failure": "propose",
+              "no-work": "done",
+              "success": "verify"
+            },
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": ["review"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "verify",
+            "type": "deterministic",
+            "run": "run the assignment verify command",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "done",
+            "on_failure": "propose",
+            "on_blocked": "escalate",
+            "on_no_work": "done",
+            "inputs_from": ["apply", "review"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          }
+        ]
+      }
+    }
+  }
+}

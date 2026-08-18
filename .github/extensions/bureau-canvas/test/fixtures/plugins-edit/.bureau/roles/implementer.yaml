@@ -1,0 +1,4 @@
+name: implementer
+agent: /bureau:implementer
+adapter: copilot
+permissions: [repo:read]

@@ -1,0 +1,6 @@
+name: bad-edge
+steps:
+  - name: verify
+    type: deterministic
+    run: cargo test --offline
+    next: missing

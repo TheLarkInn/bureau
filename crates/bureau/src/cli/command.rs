@@ -40,6 +40,9 @@ pub enum Verb {
         /// Path to the config repository checkout.
         #[arg(default_value = "runner-config")]
         dir: PathBuf,
+        /// Emits structured JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Prints the version.
     Version,
