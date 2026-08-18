@@ -693,6 +693,57 @@ adapter can enforce it, mirror it in argv:
 Toolchain needs (`node@20`, `os=linux`) belong to the container image, not to this
 list. Do not build host-capability matching (§3).
 
+### Shell breadth — deliberately loose, for now
+
+A role holding a write grant gets the **whole shell**, not a per-command allowlist.
+`git push` remains denied without `repo:push`; denial beats any allow in both
+adapters, so the push boundary survives the wider grant. A role without a write
+grant is still denied shell outright — the tool grammar matches commands, not
+effects, so a read-only shell is not expressible.
+
+This is a deliberate, temporary stance, and the reasoning matters more than the
+setting:
+
+- An agent step is instructed to validate its own edit before publishing, and the
+  deterministic step remains the authority. An agent that cannot run the repo's
+  build or test command cannot follow that instruction: it publishes code it has
+  never compiled, and `verify` then fails on errors the agent would have caught
+  itself. That was observed, not predicted.
+- The grantable unit is the command stem (`shell(cargo:*)` matches every `cargo`
+  subcommand), so a "narrow" allowlist would still hand over a tool that runs
+  arbitrary code through build scripts, while requiring every repository to
+  enumerate its toolchain here — which is host-capability matching (§3) wearing a
+  different hat.
+- The blast radius is already implied. A write grant plus `--allow-all-paths` lets
+  the step edit the worktree, and a later deterministic step executes what it
+  wrote. Withholding the shell from the agent does not withhold execution from the
+  run.
+
+**The container is doing the work here.** This stance is defensible because of the
+boundary stated at the top of this section, and it is exactly as strong as that
+boundary is. Running a write-granted role outside a container gives the agent an
+unrestricted shell as the invoking user — the same posture this document criticises
+the reference implementation for defaulting to. Do not read this section as
+endorsing that; read it as the container's rent.
+
+Tighten this once there is evidence: after enough repositories have run, the set of
+commands agent steps actually need will be visible in the run logs, and a narrower
+default can be derived from that set rather than guessed at now.
+
+**The successor is repo-declared, not bureau-declared.** A repository knows its own
+toolchain; bureau does not, and teaching bureau to infer it is host-capability
+matching (§3). So when an adapter's CLI can read tool permissions from a file in the
+repository, bureau should defer to that file when it exists and fall back to the
+loose grant when it does not. That keeps the declaration next to the code it
+describes and under that repo's own review, and it costs bureau no new vocabulary.
+
+Note as of this writing the mechanism only half exists. The `copilot` CLI's settings
+carry `allowedUrls`, `deniedUrls`, and `trustedFolders` but **no** tool-permission
+keys — tool approval is command-line only, so the adapter must pass it and there is
+nothing to inherit. Adapter CLIs that do support a repository permissions file
+should honour it before this section's default applies. Re-check this when adapter
+CLIs change; it is the reason the loose grant is a stance and not a design.
+
 ---
 
 ## 11. Reference pipeline — build exactly this one

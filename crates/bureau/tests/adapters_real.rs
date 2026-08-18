@@ -238,7 +238,7 @@ fn claude_carries_the_request_on_stdin_only() {
 
 #[test]
 fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
-    let edit = "--allow-tool=write\u{1f}--allow-tool=shell(git:*)\u{1f}--allow-all-paths";
+    let edit = "--allow-tool=write\u{1f}--allow-tool=shell\u{1f}--allow-all-paths";
     let cases: [(&[Permission], String); 4] = [
         (
             &[Permission::RepoWrite],
@@ -263,7 +263,7 @@ fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
 
 #[test]
 fn claude_mirrors_the_push_boundary_and_denies_by_default() {
-    let edit = "--allowedTools\u{1f}Edit,Write,Bash(git:*)";
+    let edit = "--allowedTools\u{1f}Edit,Write,Bash";
     let cases: [(&[Permission], String); 4] = [
         (
             &[Permission::RepoWrite],

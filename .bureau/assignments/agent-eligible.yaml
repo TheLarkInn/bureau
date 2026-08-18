@@ -8,7 +8,13 @@ repos:
 - bureau
 pipeline: agent-eligible-pipeline
 role: implementer
-verify: cargo test --offline
+# `timeout_kills_the_whole_process_group` is a layer-0 test that asserts a
+# backgrounded grandchild dies with its process group. Bureau runs this
+# command inside its own process-group supervisor, so the test's kill
+# semantics nest inside the very mechanism it is checking, and it fails
+# here while passing standalone. Skip it in automation; CI and developers
+# still run the whole suite.
+verify: cargo test --offline -- --skip timeout_kills_the_whole_process_group
 branch_prefix: bureau/
 limits:
   max_concurrent: 1

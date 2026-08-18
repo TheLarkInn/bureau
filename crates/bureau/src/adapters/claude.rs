@@ -14,12 +14,14 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allowedTools 'Edit,Write,Bash(git:*)' --disallowedTools 'Bash(git push:*)'` |
-//! | `repo:push`                   | `--allowedTools 'Edit,Write,Bash(git:*)'` |
+//! | `repo:write`, not `repo:push` | `--allowedTools 'Edit,Write,Bash' --disallowedTools 'Bash(git push:*)'` |
+//! | `repo:push`                   | `--allowedTools 'Edit,Write,Bash'` |
 //! | anything else                 | `--disallowedTools 'Bash(*)'` |
 //!
 //! `repo:write` grants editing the run worktree (`Edit`/`Write`), not
-//! only the git shell — see issue #16.
+//! only the git shell — see issue #16 — and the whole shell, not only
+//! `git`, so the agent can run the build and test commands its own
+//! instructions tell it to run (DESIGN.md section 10, "shell breadth").
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` are
@@ -55,16 +57,16 @@ const CREDENTIAL_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKE
 /// A write grant must allow the agent to *edit* the run worktree, not
 /// only run `git` — `Bash(git:*)` alone left every edit denied (issue
 /// #16). So `repo:write` adds the `Edit` and `Write` tools alongside
-/// the git shell; `git push` stays gated behind `repo:push`.
+/// the shell, granted whole rather than just `git`: a step told to
+/// validate its own edit needs the repo's build and test commands
+/// (DESIGN.md section 10, "shell breadth"). `git push` stays gated
+/// behind `repo:push`, and denial beats any allow.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--disallowedTools".to_owned(), "Bash(*)".to_owned()];
     }
-    let mut flags = vec![
-        "--allowedTools".to_owned(),
-        "Edit,Write,Bash(git:*)".to_owned(),
-    ];
+    let mut flags = vec!["--allowedTools".to_owned(), "Edit,Write,Bash".to_owned()];
     if !push {
         flags.extend([
             "--disallowedTools".to_owned(),
