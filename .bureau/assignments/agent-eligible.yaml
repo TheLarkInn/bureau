@@ -15,5 +15,7 @@ limits:
   max_runs_per_hour: 4
   max_runs_per_day: null
   max_open_prs: null
-  max_cost_per_day_usd: 25.0
+  # Cost accounting is not measured by the copilot adapter yet (issue
+  # 18); a daily cost limit would block every run on unmeasurable usage.
+  max_cost_per_day_usd: null
   max_run_hours: null
