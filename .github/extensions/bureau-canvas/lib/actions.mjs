@@ -2,6 +2,7 @@ import { findings as loadFindings } from "./findings.mjs";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { advisories as loadAdvisories } from "./advisories.mjs";
 import { parse, render } from "./codec.mjs";
 import { configView, pipelineView } from "./view.mjs";
 
@@ -11,6 +12,7 @@ const SUBJECT_SCHEMA = {
   properties: {
     dir: { type: "string", description: "Config directory to read." },
     pipeline: { type: "string", description: "Pipeline to describe or select." },
+    role: { type: "string", description: "Role to edit." },
   },
 };
 
@@ -36,11 +38,12 @@ const SET_FIELD_SCHEMA = {
   properties: {
     dir: { type: "string" },
     pipeline: { type: "string" },
+    role: { type: "string" },
     step: { type: "string" },
-    field: { type: "string", enum: ["run", "role", "trust", "over", "max_attempts", "timeout_secs"] },
+    field: { type: "string", enum: ["run", "role", "trust", "over", "max_attempts", "timeout_secs", "agent"] },
     value: { type: ["string", "number", "null"] },
   },
-  required: ["step", "field", "value"],
+  required: ["field", "value"],
 };
 
 const REWIRE_SCHEMA = {
@@ -62,6 +65,7 @@ const SAVE_SCHEMA = {
   properties: {
     dir: { type: "string" },
     pipeline: { type: "string" },
+    role: { type: "string" },
     force: { type: "boolean" },
   },
 };
@@ -73,6 +77,7 @@ const FIELD_NAMES = new Map([
   ["over", "over"],
   ["max_attempts", "maxAttempts"],
   ["timeout_secs", "timeoutSecs"],
+  ["agent", "agent"],
 ]);
 
 const TERMINALS = new Set(["done", "abort", "escalate"]);
@@ -100,7 +105,7 @@ export const actions = [
   },
   {
     name: "set_field",
-    description: "Set an editable field on a pipeline step and validate the draft.",
+    description: "Set an editable field on a pipeline step or role and validate the draft.",
     inputSchema: SET_FIELD_SCHEMA,
     handler: setField,
   },
@@ -112,7 +117,7 @@ export const actions = [
   },
   {
     name: "save",
-    description: "Write the validated draft pipeline YAML back to the working tree.",
+    description: "Write validated draft Bureau YAML back to the working tree.",
     inputSchema: SAVE_SCHEMA,
     handler: save,
   },
@@ -125,7 +130,7 @@ export async function describe(ctx, deps = {}) {
     return draftPayload(draft, subject);
   }
   const result = await loader(deps)(subject.dir);
-  return described(result, subject);
+  return describeResult(result, subject, deps);
 }
 
 export async function focus(ctx, deps = {}) {
@@ -141,7 +146,7 @@ export async function reload(ctx, deps = {}) {
   const subject = subjectFor(ctx, deps);
   clearDraft(ctx, deps);
   const result = await loader(deps)(subject.dir);
-  const payload = described(result, subject);
+  const payload = await describeResult(result, subject, deps);
   rememberSubject(ctx, deps, subject);
   await publisher(deps)(ctx.instanceId, "state", payload);
   return payload;
@@ -149,6 +154,10 @@ export async function reload(ctx, deps = {}) {
 
 export async function setField(ctx, deps = {}) {
   return mutate(ctx, deps, (draft, input) => {
+    if (draft.view.kind === "document" && input.field === "agent") {
+      draft.view.value.agent = input.value;
+      return;
+    }
     const step = stepFor(draft.view, input.step);
     step.fields[FIELD_NAMES.get(input.field)] = input.value;
   });
@@ -174,7 +183,7 @@ export async function save(ctx, deps = {}) {
   await writer(deps)(draft.path, render(draft.view, draft.doc, draft.style));
   clearDraft(ctx, deps);
   const result = await loader(deps)(subject.dir);
-  const payload = { ...described(result, subject), saved: true, path: draft.path, forced: Boolean(ctx.input?.force) };
+  const payload = { ...(await describeResult(result, subject, deps)), saved: true, path: draft.path, forced: Boolean(ctx.input?.force) };
   await publisher(deps)(ctx.instanceId, "state", payload);
   return payload;
 }
@@ -191,6 +200,14 @@ function described(result, subject) {
     findings: result.findings ?? [],
     view: scope === "pipeline" ? pipelineView(result, subject.pipeline) : configView(result),
   };
+}
+
+async function describeResult(result, subject, deps) {
+  return mergeAdvisories(described(result, subject), await advisor(deps)(result, advisoryOptions(deps)));
+}
+
+function mergeAdvisories(payload, items) {
+  return { ...payload, findings: [...payload.findings, ...items] };
 }
 
 async function mutate(ctx, deps, change) {
@@ -215,7 +232,7 @@ async function editableDraft(ctx, deps, subject) {
 }
 
 async function loadDraft(subject, deps) {
-  const path = await pipelinePath(subject, deps);
+  const path = await documentPath(subject, deps);
   const text = await reader(deps)(path, "utf8");
   const parsed = parse(text, { path: relative(resolve(subject.dir), path).replaceAll("\\", "/") });
   return { subject, path, ...parsed, validation: null };
@@ -223,8 +240,9 @@ async function loadDraft(subject, deps) {
 
 function draftPayload(draft, subject) {
   const validation = draft.validation ?? { ok: true, state: "draft", dir: subject.dir, errors: [], findings: [] };
+  const scope = draft.view.kind === "pipeline" ? "pipeline" : "role";
   return {
-    scope: "pipeline",
+    scope,
     subject,
     ok: validation.ok,
     state: validation.state,
@@ -241,7 +259,7 @@ function draftFor(ctx, deps, subject) {
 }
 
 function sameSubject(left, right) {
-  return resolve(left.dir) === resolve(right.dir) && left.pipeline === right.pipeline;
+  return resolve(left.dir) === resolve(right.dir) && left.pipeline === right.pipeline && left.role === right.role;
 }
 
 function getDraft(ctx, deps) {
@@ -322,6 +340,25 @@ async function scratchCopy(dir) {
   return { root, config };
 }
 
+async function documentPath(subject, deps) {
+  if (subject.role) {
+    return rolePath(subject, deps);
+  }
+  return pipelinePath(subject, deps);
+}
+
+async function rolePath(subject, deps) {
+  const base = resolve(subject.dir);
+  const role = subject.role;
+  const candidates = [join(base, "roles", `${role}.yaml`), join(base, "roles", `${role}.yml`)];
+  for (const candidate of candidates) {
+    if (await exists(deps, candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
 async function pipelinePath(subject, deps) {
   const base = resolve(subject.dir);
   const pipeline = subject.pipeline;
@@ -350,10 +387,12 @@ function firstMessage(result) {
 function subjectFor(ctx, deps) {
   const saved = deps.getSubject?.(ctx.instanceId) ?? {};
   const input = ctx.input ?? {};
-  const pipeline = input.pipeline ?? pipelineName(input) ?? saved.pipeline ?? null;
+  const role = input.role ?? saved.role ?? null;
+  const pipeline = role ? null : (input.pipeline ?? pipelineName(input) ?? saved.pipeline ?? null);
   return {
     dir: input.dir ?? saved.dir ?? ".bureau",
     ...(pipeline ? { pipeline } : {}),
+    ...(role ? { role } : {}),
   };
 }
 
@@ -385,6 +424,14 @@ function rememberSubject(ctx, deps, subject) {
 
 function loader(deps) {
   return deps.loadFindings ?? loadFindings;
+}
+
+function advisor(deps) {
+  return deps.loadAdvisories ?? loadAdvisories;
+}
+
+function advisoryOptions(deps) {
+  return { repoRoot: deps.repoRoot, resolveAgent: deps.resolveAgent };
 }
 
 function publisher(deps) {

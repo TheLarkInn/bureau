@@ -268,6 +268,34 @@ test("scratch validation runs outside the config tree and is removed", async () 
   });
 });
 
+test("set_field edits a role agent through the draft save path", async () => {
+  await withRoleFile("plugins-edit", async (original) => {
+    const deps = depsFor("plugins-edit");
+    await action("set_field").handler({ instanceId: "plugins-role", input: { role: "implementer", field: "agent", value: "/bureau:reviewer" } }, deps);
+    await action("save").handler({ instanceId: "plugins-role", input: { role: "implementer" } }, deps);
+
+    assert.deepEqual(
+      { changed: changedLines(original, await roleText("plugins-edit", "implementer")) },
+      { changed: [[2, "agent: /bureau:implementer", "agent: /bureau:reviewer"]] },
+    );
+  });
+});
+
+test("advisories do not block save", async () => {
+  await withPipelineFile(async () => {
+    const deps = depsFor("actions-edit", {
+      loadAdvisories: async () => [{ source: "advisory", marker: "script-advisory", message: "missing", path: "pipelines/agent-eligible-pipeline.yaml" }],
+    });
+    await action("set_field").handler(
+      { instanceId: "actions-advisory-save", input: { pipeline: "agent-eligible-pipeline", step: "verify", field: "run", value: "./missing.sh" } },
+      deps,
+    );
+    const result = await action("save").handler({ instanceId: "actions-advisory-save", input: { pipeline: "agent-eligible-pipeline" } }, deps);
+
+    assert.deepEqual({ saved: result.saved, markers: result.findings.map((item) => item.marker) }, { saved: true, markers: ["script-advisory"] });
+  });
+});
+
 async function withChangingState(name, state, run) {
   const url = stateUrl(name);
   const original = await readFile(url, "utf8");
@@ -293,6 +321,15 @@ async function withPipelineFile(run) {
     await run(original);
   } finally {
     await writePipelineText(original);
+  }
+}
+
+async function withRoleFile(name, run) {
+  const original = await roleText(name, "implementer");
+  try {
+    await run(original);
+  } finally {
+    await writeRoleText(name, "implementer", original);
   }
 }
 
@@ -323,6 +360,14 @@ function edge(result, source, outcome) {
 
 async function pipelineText() {
   return readFile(new URL("./fixtures/actions-edit/.bureau/pipelines/agent-eligible-pipeline.yaml", import.meta.url), "utf8");
+}
+
+async function roleText(name, role) {
+  return readFile(new URL(`./fixtures/${name}/.bureau/roles/${role}.yaml`, import.meta.url), "utf8");
+}
+
+async function writeRoleText(name, role, text) {
+  await writeFile(new URL(`./fixtures/${name}/.bureau/roles/${role}.yaml`, import.meta.url), text);
 }
 
 async function writePipelineText(text) {
