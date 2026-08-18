@@ -1,0 +1,59 @@
+{
+  "ok": true,
+  "errors": [],
+  "dir": ".bureau",
+  "config": {
+    "roles": {
+      "triager": {
+        "name": "triager",
+        "agent": "/bureau:triager",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "model:invoke"],
+        "min_trust": "untrusted"
+      },
+      "planner": {
+        "name": "planner",
+        "agent": "/bureau:planner",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "model:invoke"],
+        "min_trust": "maintainer"
+      },
+      "implementer": {
+        "name": "implementer",
+        "agent": "/bureau:implementer",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "repo:push", "model:invoke"],
+        "min_trust": "derived"
+      }
+    },
+    "assignments": {},
+    "pipelines": {
+      "trust-severed-midway": {
+        "name": "trust-severed-midway",
+        "steps": [
+          {
+            "name": "triage",
+            "type": "agent",
+            "role": "triager",
+            "trust": "untrusted",
+            "next": "plan"
+          },
+          {
+            "name": "plan",
+            "type": "agent",
+            "role": "planner",
+            "inputs_from": ["triage"],
+            "next": "propose"
+          },
+          {
+            "name": "propose",
+            "type": "agent",
+            "role": "implementer",
+            "inputs_from": ["plan"],
+            "next": "done"
+          }
+        ]
+      }
+    }
+  }
+}
