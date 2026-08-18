@@ -124,8 +124,38 @@ test("config layout uses fixed columns and detached orphans", async () => {
   );
 });
 
-test("config layout gives every shared-column item a distinct cell", async () => {
-  const layout = configLayout(configView(await fixture(committedUrl)));
+test("config cards reserve room for their own content", async () => {
+  const payload = await fixture(committedUrl);
+  // A role holding every permission is far taller than one holding two; a fixed
+  // row gap is what made this overlap.
+  payload.config.roles.everything = {
+    name: "everything",
+    agent: "/x:y",
+    adapter: "copilot",
+    min_trust: "maintainer",
+    permissions: ["repo:read", "repo:write", "repo:push", "issues:read", "issues:write", "pr:read", "pr:write", "pr:review", "pr:merge", "runs:read", "model:invoke"],
+  };
+  const layout = configLayout(configView(payload));
+  const overlaps = [];
+  for (const left of layout.items) {
+    for (const right of layout.items) {
+      const collides = left.id < right.id
+        && left.column === right.column
+        && left.y < right.y + right.height
+        && right.y < left.y + left.height;
+      if (collides) {
+        overlaps.push(`${left.id} / ${right.id}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    { overlaps, tallerThanSmall: layout.items.find((item) => item.id === "role:everything").height > layout.items.find((item) => item.id === "role:reviewer").height },
+    { overlaps: [], tallerThanSmall: true },
+  );
+});
+
+test("config layout gives every shared-column item a distinct cell", async () => {  const layout = configLayout(configView(await fixture(committedUrl)));
   const cells = layout.items.map((item) => `${item.column}:${item.row}`);
   const intersections = [];
   for (const [index, item] of layout.items.entries()) {

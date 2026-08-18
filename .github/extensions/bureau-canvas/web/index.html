@@ -87,8 +87,11 @@
       }
 
       .app-shell {
-        display: grid;
-        grid-template-rows: auto 1fr;
+        /* Flex rather than fixed grid rows: the draft bar appears and
+           disappears, and a fixed `1fr` row stretched whichever child landed
+           in it. */
+        display: flex;
+        flex-direction: column;
         min-height: 100vh;
         background: var(--background-color-default, #ffffff);
       }
@@ -118,6 +121,18 @@
         flex-wrap: wrap;
         gap: var(--space-2);
       }
+      /* Chips carry names that can be long; clip with an ellipsis rather than
+         letting them run past the card the layout reserved room for. */
+      .chips > *, .step-list > * {
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .create-bar, .draft-bar {
+        margin-left: var(--space-5);
+        margin-right: var(--space-5);
+      }
 
       .general-findings {
         padding: var(--space-3) var(--space-5) 0;
@@ -139,6 +154,8 @@
         display: grid;
         gap: var(--space-4);
         padding: var(--space-5);
+        flex: 1 1 auto;
+        min-height: 0;
       }
 
       .view-shell--pipeline {
@@ -187,7 +204,25 @@
       }
 
       .card {
-        position: absolute;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        width: 240px;
+        overflow: hidden;
+      }
+      .card > div,
+      .card > .card-button {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+      /* Same surface as the pipeline view: pan, zoom, fit, minimap. */
+      .config-flow {
+        min-height: 44rem;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        overflow: hidden;
       }
       /* A pending change must not look like saved state. */
       .draft-bar {
@@ -212,14 +247,31 @@
       .create-bar button,
       .card-action,
       .preflight button {
-        margin-right: 6px;
-        padding: 4px 10px;
+        padding: 5px 12px;
         border: 1px solid var(--border-color-default, #d0d7de);
         border-radius: 6px;
         background: var(--background-color-default, #fff);
         color: var(--text-color-default, #1f2328);
         font: inherit;
+        font-size: var(--text-code-inline, 12px);
+        line-height: 1.4;
         cursor: pointer;
+      }
+      .draft-actions button:hover,
+      .create-bar button:hover,
+      .card-action:hover,
+      .preflight button:hover {
+        border-color: var(--text-color-muted, #656d76);
+      }
+      .draft-actions button + button,
+      .preflight button + button {
+        margin-left: 6px;
+      }
+      .card-action {
+        align-self: flex-end;
+        flex: 0 0 auto;
+        margin: 6px 0 0;
+        color: var(--text-color-muted, #656d76);
       }
       .create-bar {
         display: flex;
@@ -238,16 +290,12 @@
         font: inherit;
       }
       .card-action {
-        position: absolute;
-        right: 8px;
-        bottom: 8px;
+        display: block;
+        margin: 8px 0 0 auto;
         font-size: var(--text-code-inline, 12px);
       }
       .preflight {
-        position: absolute;
-        left: 8px;
-        right: 8px;
-        bottom: 8px;
+        margin-top: 8px;
         padding: 8px;
         border: 1px solid var(--border-color-default, #d0d7de);
         border-radius: 6px;

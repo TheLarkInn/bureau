@@ -403,9 +403,28 @@ async function checkConfigView(page, url) {
     });
   });
   await record("config cards do not overlap", async () => assertNoOverlap(await boxes(page, ".card")));
-  await record("config elements do not overflow the viewport horizontally", async () => {
-    assert.deepEqual(await evaluate(page, overflowExpression()), []);
+  await record("config fits every card inside the surface", async () => {
+    // The old assertion checked page overflow, which only made sense for a
+    // static surface. Now that this pans and zooms like the pipeline view, the
+    // property worth protecting is that `fitView` leaves nothing clipped.
+    assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
+}
+
+function clippedCardsExpression() {
+  return `(() => {
+    const surface = document.querySelector(".config-flow");
+    if (!surface) { return ["missing .config-flow"]; }
+    const frame = surface.getBoundingClientRect();
+    const slack = 1;
+    return [...document.querySelectorAll(".card")]
+      .filter((card) => {
+        const box = card.getBoundingClientRect();
+        return box.left < frame.left - slack || box.right > frame.right + slack
+          || box.top < frame.top - slack || box.bottom > frame.bottom + slack;
+      })
+      .map((card) => card.getAttribute("data-ref"));
+  })()`;
 }
 
 async function checkPipelineView(page, url, name, label) {

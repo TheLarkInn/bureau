@@ -23,6 +23,7 @@ const flowItemTypes = {
   terminalPill: TerminalPill,
   concurrentFrame: ConcurrentFrame,
 };
+const configItemTypes = { configCard: ConfigCardNode };
 const flowEdgeTypes = { routed: RoutedEdge };
 const edgeColors = {
   success: "var(--outcome-success)",
@@ -193,51 +194,64 @@ function summaryText(view) {
 }
 
 function ConfigView({ state }) {
-  const layout = state.config?.layout ?? { items: [], edges: [] };
-  const byId = new Map(layout.items.map((item) => [item.id, item]));
-  const size = configSize(layout.items);
+  const flow = useMemo(() => toConfigFlow(state), [state]);
   return h(
     "section",
     { className: "view-shell" },
     h(
-      "section",
-      { className: "surface config-surface", style: { width: size.width, height: size.height }, "aria-label": "Bureau config view" },
-      h("svg", { className: "edge-layer", viewBox: `0 0 ${size.width} ${size.height}`, width: size.width, height: size.height, "aria-hidden": true }, layout.edges.map((edge) => configEdge(edge, byId))),
-      h("div", { className: "card-layer" }, layout.items.map((item) => h(ConfigCard, { key: item.id, state, item }))),
+      "div",
+      { className: "config-flow", "aria-label": "Bureau config view" },
+      h(ReactFlow, {
+        nodes: flow.nodes,
+        edges: flow.edges,
+        nodeTypes: configItemTypes,
+        fitView: true,
+        fitViewOptions: { padding: 0.18 },
+        minZoom: 0.2,
+        maxZoom: 1.5,
+        nodesDraggable: false,
+        nodesConnectable: false,
+        elementsSelectable: true,
+        proOptions: { hideAttribution: true },
+      }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
     ),
   );
 }
 
-function configSize(items) {
+/** Same surface as the pipeline view: pan, zoom, fit, minimap. */
+function toConfigFlow(state) {
+  const layout = state.config?.layout ?? { items: [], edges: [] };
   return {
-    width: Math.max(0, ...items.map((item) => item.x)) + CARD_WIDTH + CONFIG_PAD,
-    height: Math.max(0, ...items.map((item) => item.y)) + CARD_HEIGHT + CONFIG_PAD,
+    nodes: layout.items.map((item) => ({
+      id: item.id,
+      type: "configCard",
+      position: { x: item.x, y: item.y },
+      data: { state, item },
+      draggable: false,
+      connectable: false,
+    })),
+    edges: layout.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: "smoothstep",
+      style: { stroke: "var(--border-color-default, #d0d7de)", strokeWidth: 1.4 },
+    })),
   };
 }
 
-function configEdge(edge, byId) {
-  const source = byId.get(edge.source);
-  const target = byId.get(edge.target);
-  if (!source || !target) {
-    return null;
-  }
-  return h("line", {
-    key: edge.id,
-    className: "edge-path",
-    x1: source.x + CARD_WIDTH,
-    y1: source.y + CARD_HEIGHT / 2,
-    x2: target.x,
-    y2: target.y + CARD_HEIGHT / 2,
-  });
+function ConfigCardNode({ data }) {
+  return h(ConfigCard, { state: data.state, item: data.item });
 }
-
 function ConfigCard({ state, item }) {
   const data = configData(state, item);
   const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
   const deletable = ["repo", "role", "assignment", "pipeline"].includes(item.kind);
   return h(
     "article",
-    { className, style: { transform: `translate(${item.x}px, ${item.y}px)` }, "data-ref": item.id },
+    // React Flow positions the node wrapper; the height comes from layout so
+    // the rendered card can never exceed the box reserved for it.
+    { className, "data-ref": item.id, style: { height: item.height } },
     item.kind === "pipeline"
       ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data))
       : h("div", {}, configCardContent(state, item, data)),
