@@ -2,7 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   MiniMap,
@@ -20,6 +23,7 @@ const flowItemTypes = {
   terminalPill: TerminalPill,
   concurrentFrame: ConcurrentFrame,
 };
+const flowEdgeTypes = { routed: RoutedEdge };
 const edgeColors = {
   success: "var(--outcome-success)",
   failure: "var(--outcome-failure)",
@@ -256,6 +260,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           nodes: flow.nodes,
           edges: flow.edges,
           nodeTypes: flowItemTypes,
+          edgeTypes: flowEdgeTypes,
           fitView: true,
           fitViewOptions: { padding: 0.22 },
           minZoom: 0.2,
@@ -329,11 +334,30 @@ function flowEdge(edge, endpoints, backIndex) {
     target: edge.target,
     sourceHandle: endpoints?.source,
     targetHandle: endpoints?.target,
-    type: "smoothstep",
+    type: "routed",
     className: `flow-edge--${key}`,
-    pathOptions: { offset: edge.route === "back" ? 26 + backIndex * 12 : 12 },
     markerEnd: { type: MarkerType.ArrowClosed, color: edgeColors[key] ?? edgeColors.success },
+    data: {
+      label: edgeLabelText(edge),
+      offset: edge.route === "back" ? 26 + backIndex * 12 : 12,
+      captionShiftY: edgeCaptionShiftY(edge),
+      route: edge.route,
+    },
   };
+}
+
+function edgeLabelText(edge) {
+  if (edge.relation === "control") {
+    return edge.outcome;
+  }
+  return edge.relation === "observes" ? "over" : undefined;
+}
+
+function edgeCaptionShiftY(edge) {
+  if (edge.relation !== "control") {
+    return 0;
+  }
+  return { success: -18, failure: 0, blocked: 18, "no-work": 36 }[edge.outcome] ?? 0;
 }
 
 function routeIndexes(edges, route) {
@@ -346,6 +370,35 @@ function routeIndexes(edges, route) {
     indexes.set(edge.id, index);
   }
   return indexes;
+}
+
+function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data = {} }) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    offset: data.offset ?? 12,
+  });
+  const [captionX, captionY] = edgeCaptionPosition({ data, labelX, labelY, sourceX, sourceY, targetX });
+  return h(React.Fragment, null,
+    h(BaseEdge, { id, path, markerEnd }),
+    data.label ? h(EdgeLabelRenderer, null, h("div", {
+      className: "react-flow__edge-label edge-caption",
+      style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
+    }, data.label)) : null,
+  );
+}
+
+function edgeCaptionPosition({ data, labelX, labelY, sourceX, sourceY, targetX }) {
+  if (data.route === "exit") {
+    const direction = Math.sign(targetX - sourceX) || 1;
+    const distance = Math.min(180, Math.max(96, Math.abs(targetX - sourceX) * 0.4));
+    return [sourceX + direction * distance, sourceY - 10];
+  }
+  return [labelX, labelY + (data.captionShiftY ?? 0)];
 }
 
 function StepCard({ data }) {

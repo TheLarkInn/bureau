@@ -1,6 +1,6 @@
 const X_GAP = 320;
 const Y_GAP = 190;
-const TERMINAL_GAP = 260;
+const TERMINAL_GAP = 120;
 const CONFIG_COLUMNS = {
   "work-source": 0,
   assignment: 1,
@@ -215,7 +215,8 @@ function placeTerminals(view, steps) {
 }
 
 function terminalX(steps) {
-  const maxColumn = Math.max(0, ...steps.map((step) => step.column));
+  const railSteps = steps.filter((step) => step.parentId == null);
+  const maxColumn = Math.max(0, ...railSteps.map((step) => step.column));
   return (maxColumn + 1) * X_GAP + TERMINAL_GAP;
 }
 
@@ -264,13 +265,23 @@ function routeOf(edge, positions) {
 
 function configMainItems(view) {
   const orphans = orphanSet(view);
-  return [
+  return assignColumnRows([
     ...workSourceItems(view.assignments ?? []),
     ...kindItems("assignment", view.assignments ?? [], orphans),
     ...kindItems("role", view.roles ?? [], orphans),
     ...kindItems("repo", view.repos ?? [], orphans),
     ...kindItems("pipeline", view.pipelines ?? [], orphans),
-  ];
+  ]);
+}
+
+function assignColumnRows(items) {
+  const rows = new Map();
+  return items.map((item) => {
+    const column = CONFIG_COLUMNS[item.kind] ?? 0;
+    const row = rows.get(column) ?? 0;
+    rows.set(column, row + 1);
+    return { ...item, row };
+  });
 }
 
 function orphanSet(view) {
@@ -278,18 +289,17 @@ function orphanSet(view) {
 }
 
 function workSourceItems(assignments) {
-  return assignments.map((assignment, row) => ({
+  return assignments.map((assignment) => ({
     id: `work-source:${assignment.name}`,
     kind: "work-source",
     name: assignment.work.source,
-    row,
   }));
 }
 
 function kindItems(kind, values, orphans = new Set()) {
   return values
     .filter((value) => !orphans.has(`${kind}:${value.name}`))
-    .map((value, row) => ({ id: `${kind}:${value.name}`, kind, name: value.name, row }));
+    .map((value) => ({ id: `${kind}:${value.name}`, kind, name: value.name }));
 }
 
 function configOrphanItems(view, mainCount) {

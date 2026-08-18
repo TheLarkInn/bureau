@@ -308,6 +308,20 @@
       .flow-edge--data .react-flow__edge-path { stroke: var(--relation-data); stroke-dasharray: 7 5; }
       .flow-edge--observes .react-flow__edge-path { stroke: var(--relation-observes); stroke-dasharray: 2 5; }
 
+      .edge-caption {
+        position: absolute;
+        padding: 0;
+        color: var(--text-color-muted, #656d76);
+        font: 700 0.72rem/1 var(--font-mono, SFMono-Regular, Consolas, monospace);
+        letter-spacing: 0.01em;
+        text-shadow:
+          0 1px 0 var(--background-color-default, #ffffff),
+          1px 0 0 var(--background-color-default, #ffffff),
+          0 -1px 0 var(--background-color-default, #ffffff),
+          -1px 0 0 var(--background-color-default, #ffffff);
+        pointer-events: none;
+      }
+
       .react-flow__minimap { background: var(--background-color-default, #ffffff); border: 1px solid var(--border-color-default, #d0d7de); }
       .react-flow__controls { box-shadow: none; border: 1px solid var(--border-color-default, #d0d7de); }
       .react-flow__controls-button { background: var(--background-color-default, #ffffff); border-bottom-color: var(--border-color-default, #d0d7de); color: var(--text-color-default, #1f2328); }

@@ -30,6 +30,14 @@ function edgeBy(layout, source, outcome, target) {
   return layout.edges.find((edge) => edge.source === source && edge.outcome === outcome && edge.target === target);
 }
 
+function itemBox(item) {
+  return { left: item.x, top: item.y, right: item.x + 240, bottom: item.y + 112 };
+}
+
+function intersects(left, right) {
+  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+}
+
 test("pipeline layout is deterministic byte for byte", async () => {
   const view = await referencePipeline();
 
@@ -81,12 +89,13 @@ test("shuffled step input keeps the same placement", async () => {
   assert.deepEqual(pipelineLayout(shuffled), pipelineLayout(view));
 });
 
-
 test("arranged positions update geometric edge routes", async () => {
   const layout = pipelineLayout(await referencePipeline(), { positions: { propose: { x: 0, y: 999 } } });
 
   assert.equal(edgeBy(layout, "passed", "failure", "propose").route, "exit");
-});test("data and observes routes follow their relation", async () => {
+});
+
+test("data and observes routes follow their relation", async () => {
   const layout = pipelineLayout(await referencePipeline());
   const routes = [
     layout.edges.find((edge) => edge.relation === "data").route,
@@ -113,6 +122,21 @@ test("config layout uses fixed columns and detached orphans", async () => {
     },
     { work: 0, assignment: 1, repo: 2, pipeline: 3, orphanDetached: true },
   );
+});
+
+test("config layout gives every shared-column item a distinct cell", async () => {
+  const layout = configLayout(configView(await fixture(committedUrl)));
+  const cells = layout.items.map((item) => `${item.column}:${item.row}`);
+  const intersections = [];
+  for (const [index, item] of layout.items.entries()) {
+    for (const other of layout.items.slice(index + 1)) {
+      if (intersects(itemBox(item), itemBox(other))) {
+        intersections.push(`${item.id}/${other.id}`);
+      }
+    }
+  }
+
+  assert.deepEqual({ duplicateCells: cells.length - new Set(cells).size, intersections }, { duplicateCells: 0, intersections: [] });
 });
 
 test("arrangement helpers are deterministic and ignore stale entries", async () => {
