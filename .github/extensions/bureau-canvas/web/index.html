@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Bureau</title>
     <!-- Module URLs are pinned here; keep the stylesheet version below in lockstep because CSS links cannot use import-map aliases. -->
-    <link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.3.5/dist/style.css" />
+    <link rel="stylesheet" href="./vendor/xyflow-react.css" />
     <script type="importmap">
       {
         "imports": {
-          "react": "https://esm.sh/react@18.3.1",
-          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-          "react-dom": "https://esm.sh/react-dom@18.3.1?external=react",
-          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
-          "@xyflow/react": "https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom"
+          "react": "./vendor/react.mjs",
+          "react/jsx-runtime": "./vendor/react-jsx-runtime.mjs",
+          "react-dom": "./vendor/react-dom.mjs",
+          "react-dom/client": "./vendor/react-dom-client.mjs",
+          "@xyflow/react": "./vendor/xyflow-react.mjs"
         }
       }
     </script>

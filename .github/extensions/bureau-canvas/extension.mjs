@@ -511,6 +511,9 @@ async function register() {
     workspacePath = session.workspacePath ?? workspacePath;
 }
 
-if (process.env.BUREAU_CANVAS_TEST !== "1") {
+// `BUREAU_CANVAS_TEST` makes the run hermetic (no real `bureau` binary), which
+// tests want but a standalone server does not. `BUREAU_CANVAS_NO_SDK` only
+// skips registration, so `serve.mjs` reads real config.
+if (process.env.BUREAU_CANVAS_TEST !== "1" && process.env.BUREAU_CANVAS_NO_SDK !== "1") {
     await register();
 }

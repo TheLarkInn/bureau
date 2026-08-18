@@ -12,6 +12,7 @@ through the Chrome DevTools Protocol with Node's built-in `WebSocket` and
 `fetch`. It captures config and pipeline screenshots under
 `e2e/screenshots/`.
 
-This is intentionally not part of `scripts/lint.sh`: it needs Microsoft Edge
-and network access to `esm.sh` for the renderer import map. If Edge is missing
-or the network preflight fails, the command exits 0 and prints `skipped`.
+This is intentionally not part of `scripts/lint.sh`: it needs Microsoft Edge,
+which not every machine or CI image has. The renderer modules are vendored
+under `web/vendor/`, so the suite itself needs no network. If Edge is missing,
+the command exits 0 and prints `skipped`.

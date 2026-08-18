@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -46,20 +46,24 @@ test("absolute config dir is honored", () => {
 });
 
 
-test("pins CDN modules and serves a renderer fallback", async () => {
+test("vendors renderer modules locally and serves a fallback", async () => {
   const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+  const vendorDir = new URL("../web/vendor/", import.meta.url);
+  const vendored = ["react.mjs", "react-jsx-runtime.mjs", "react-dom.mjs", "react-dom-client.mjs", "xyflow-react.mjs", "xyflow-react.css"];
+  const present = await Promise.all(vendored.map((name) => stat(new URL(name, vendorDir)).then((info) => info.size > 0, () => false)));
 
   assert.deepEqual(
     {
-      xyflowModule: html.includes("https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom"),
-      xyflowStyle: html.includes("https://esm.sh/@xyflow/react@12.3.5/dist/style.css"),
-      floatingMajor: html.includes("@xyflow/react@12?"),
+      mapped: vendored.map((name) => html.includes(`./vendor/${name}`)),
+      present,
+      // A CDN reference means the panel would need network to draw.
+      remote: html.includes("esm.sh") || html.includes("https://"),
       fallback: ["Bureau renderer could not start", "window.addEventListener(\"error\"", "unhandledrejection", "await import(\"./app.mjs\")", "Config dir"].map((text) => html.includes(text)),
     },
     {
-      xyflowModule: true,
-      xyflowStyle: true,
-      floatingMajor: false,
+      mapped: vendored.map(() => true),
+      present: vendored.map(() => true),
+      remote: false,
       fallback: [true, true, true, true, true],
     },
   );
