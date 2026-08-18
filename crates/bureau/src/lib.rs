@@ -54,6 +54,9 @@ impl ConfigError {
     }
 }
 
+/// Serializes the path the way `Display` renders it: serde's stock `PathBuf`
+/// impl fails on non-UTF-8 paths, and a JSON error must carry the same text
+/// the human-readable form prints.
 fn display_path<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

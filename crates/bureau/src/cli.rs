@@ -9,6 +9,7 @@ mod prepare;
 mod reconcile;
 mod run;
 mod transcript;
+mod validate;
 mod watch;
 
 use std::future::Future;
@@ -16,9 +17,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 use clap::Parser;
-
-use bureau::ConfigError;
-use bureau::config::Config;
 
 pub use command::{FakeAction, McpAction, Verb};
 
@@ -55,66 +53,6 @@ fn version() -> i32 {
         env!("CARGO_PKG_VERSION")
     ));
     0
-}
-
-#[derive(serde::Serialize)]
-struct ValidateJson<'a> {
-    ok: bool,
-    dir: String,
-    errors: &'a [ConfigError],
-    config: Option<&'a Config>,
-}
-
-fn write_validate_json(
-    dir: &std::path::Path,
-    errors: &[ConfigError],
-    config: Option<&Config>,
-    code: i32,
-) -> i32 {
-    let document = ValidateJson {
-        ok: errors.is_empty(),
-        dir: dir.display().to_string(),
-        errors,
-        config,
-    };
-    let text = serde_json::to_string(&document).expect("serialize validate json");
-    out::line(format_args!("{text}"));
-    code
-}
-
-fn validate_json(dir: &std::path::Path) -> i32 {
-    match Config::load(dir) {
-        Ok(config) => write_validate_json(dir, &[], Some(&config), 0),
-        Err(errors) => write_validate_json(dir, &errors, None, 1),
-    }
-}
-
-fn validate_human(dir: &std::path::Path) -> i32 {
-    match Config::load(dir) {
-        Ok(config) => {
-            out::line(format_args!(
-                "config ok: {} repos, {} roles, {} assignments",
-                config.repos.len(),
-                config.roles.len(),
-                config.assignments.len()
-            ));
-            0
-        }
-        Err(errors) => {
-            for error in &errors {
-                out::error(format_args!("{error}"));
-            }
-            out::error(format_args!("{} config error(s)", errors.len()));
-            1
-        }
-    }
-}
-
-fn validate(dir: &std::path::Path, json: bool) -> i32 {
-    if json {
-        return validate_json(dir);
-    }
-    validate_human(dir)
 }
 
 fn parent(path: &std::path::Path) -> PathBuf {
@@ -244,7 +182,7 @@ type CliFuture = Pin<Box<dyn Future<Output = anyhow::Result<i32>> + Send>>;
 fn dispatch(verb: Verb) -> CliFuture {
     match verb {
         Verb::Version => Box::pin(async { Ok(version()) }),
-        Verb::Validate { dir, json } => Box::pin(async move { Ok(validate(&dir, json)) }),
+        Verb::Validate { dir, json } => Box::pin(async move { validate::run(&dir, json) }),
         Verb::Reconcile(args) => Box::pin(reconcile::run(args)),
         Verb::Watch {
             runs,
