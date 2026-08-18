@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actions } from "./lib/actions.mjs";
+import { crudActions } from "./lib/crud.mjs";
 import { findings } from "./lib/findings.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
 import { configView, pipelineView } from "./lib/view.mjs";
@@ -42,6 +43,7 @@ export const canvasDeclaration = {
 
 export const servers = new Map();
 const subjects = new Map();
+const plans = new Map();
 
 /**
  * Actions receive a relative `dir` default, so resolve it the same way
@@ -51,9 +53,16 @@ function actionDependencies() {
     return {
         getSubject: (instanceId) => subjects.get(instanceId),
         setSubject: (instanceId, subject) => subjects.set(instanceId, subject),
-        loadFindings: (dir) => loadConfigPayload(isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir), {}),
+        getPlan: (instanceId) => plans.get(instanceId),
+        setPlan: (instanceId, plan) => plans.set(instanceId, plan),
+        clearPlan: (instanceId) => plans.delete(instanceId),
+        loadFindings: (dir) => loadConfigPayload(configDir(dir), {}),
         publish: (instanceId, event, payload) => publishEvent(instanceId, event, payload),
     };
+}
+
+function configDir(dir) {
+    return isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir);
 }
 
 async function publishEvent(instanceId, event, payload) {
@@ -80,7 +89,7 @@ function resolvedSubject(subject) {
 }
 
 export function canvasActions(deps = actionDependencies()) {
-    return actions.map((action) => ({
+    return [...actions, ...crudActions].map((action) => ({
         name: action.name,
         description: action.description,
         inputSchema: action.inputSchema,
