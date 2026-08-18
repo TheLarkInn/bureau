@@ -13,6 +13,9 @@ import { createText, repoNames, withRepo, withoutRepo, renameReference, withDecl
 import { insertStep, orphanedBy, removeStep, scaffoldStep, scaffoldStepEdges, stepConsequences } from "../lib/steps.mjs";
 import { parse, render } from "../lib/codec.mjs";
 import { findings } from "../lib/findings.mjs";
+import { skipWithoutBureau } from "./support/bureau-binary.mjs";
+
+const needsBureau = await skipWithoutBureau();
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 // The `bureau` binary runs inside WSL, so a scratch config has to live where
@@ -49,7 +52,7 @@ async function buildConfig(dir) {
   }));
 }
 
-test("a config scaffolded from empty is accepted by bureau validate", async () => {
+test("a config scaffolded from empty is accepted by bureau validate", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     await buildConfig(dir);
 
@@ -96,7 +99,7 @@ test("renaming a role rewrites the declaring file and every referrer", async () 
   );
 });
 
-test("a scaffolded step of every kind is accepted by bureau validate", async () => {
+test("a scaffolded step of every kind is accepted by bureau validate", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     await buildConfig(dir);
     const path = join(dir, "pipelines", "build.yaml");
@@ -121,7 +124,7 @@ test("a scaffolded step of every kind is accepted by bureau validate", async () 
   });
 });
 
-test("an unwired inserted step is reported by the CLI, not silently accepted", async () => {
+test("an unwired inserted step is reported by the CLI, not silently accepted", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     await buildConfig(dir);
     const path = join(dir, "pipelines", "build.yaml");

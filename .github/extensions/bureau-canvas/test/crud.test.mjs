@@ -10,6 +10,9 @@ import { test } from "node:test";
 
 import { applyPlan, create, crudActions, emptyPlan, remove, rename } from "../lib/crud.mjs";
 import { findings } from "../lib/findings.mjs";
+import { skipWithoutBureau } from "./support/bureau-binary.mjs";
+
+const needsBureau = await skipWithoutBureau();
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 // The `bureau` binary runs inside WSL, so scratch config must live where it can
@@ -59,7 +62,7 @@ async function buildAll(app) {
   });
 }
 
-test("builds a whole config from empty and bureau validate accepts it", async () => {
+test("builds a whole config from empty and bureau validate accepts it", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     const app = session(dir);
     await buildAll(app);
@@ -84,7 +87,7 @@ test("nothing reaches disk until a save", async () => {
   });
 });
 
-test("deleting requires confirmation and returns the preflight first", async () => {
+test("deleting requires confirmation and returns the preflight first", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     const app = session(dir);
     await buildAll(app);
@@ -119,7 +122,7 @@ test("tears the whole config back down again", async () => {
   });
 });
 
-test("renaming a role cascades to every referrer and still validates", async () => {
+test("renaming a role cascades to every referrer and still validates", { skip: needsBureau }, async () => {
   await withDir(async (dir) => {
     const app = session(dir);
     await buildAll(app);

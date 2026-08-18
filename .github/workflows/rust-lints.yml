@@ -20,5 +20,10 @@ jobs:
           cargo install cargo-dylint --version 5.0.0 --locked
           cargo install dylint-link --version 5.0.0 --locked
           rustup toolchain install nightly-2026-01-22 --component rustc-dev
+      # The canvas suite validates its scaffolds by running the real
+      # `bureau validate --json`. Without a binary those tests skip, so build
+      # one here rather than lose the coverage.
+      - name: Build bureau for the canvas tests
+        run: cargo build --bin bureau
       - name: Run all lint gates
         run: ./scripts/lint.sh
