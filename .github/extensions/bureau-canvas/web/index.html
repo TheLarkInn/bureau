@@ -363,6 +363,42 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      /* The detail is a button so a long value is readable, not just hinted at
+         by a native tooltip nobody waits for. */
+      .detail-toggle {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .detail-toggle:hover,
+      .detail-toggle:focus-visible {
+        color: var(--text-color-default, #1f2328);
+        text-decoration: underline dotted;
+      }
+      .detail-toggle--open {
+        overflow: visible;
+        white-space: normal;
+        word-break: break-word;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      /* An expanded card grows past its reserved box and floats above the rest
+         rather than shoving its neighbours around. */
+      .card--expanded {
+        height: auto;
+        overflow: visible;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+      }
+      .card--expanded > div,
+      .card--expanded > .card-button {
+        overflow: visible;
+      }
 
       .pipeline-main {
         display: grid;

@@ -13,6 +13,7 @@ const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
 const SCREENSHOT_DIR = join(E2E_DIR, "screenshots");
 const PROFILE_DIR = join(E2E_DIR, ".edge-profiles");
 const REFERENCE_FIXTURE = new URL("../test/fixtures/reference-payload.json", import.meta.url);
+const COMMITTED_FIXTURE = new URL("../test/fixtures/committed-payload.json", import.meta.url);
 // Scratch config for the CRUD flow. `target/` is gitignored and is not a
 // scanned config directory, and the binary runs inside WSL where a Windows
 // temp directory is invisible.
@@ -259,6 +260,8 @@ async function runSuite(page) {
     await checkReferenceState(instance.opened.url);
     await checkPipelineView(page, instance.opened.url, "fix-failing-test", "reference fixture");
   });
+  console.log("bureau-canvas e2e: detail expansion");
+  await checkDetailExpansion(page);
   console.log("bureau-canvas e2e: CRUD from empty");
   await runCrudSuite(page);
 }
@@ -409,6 +412,42 @@ async function checkConfigView(page, url) {
     // property worth protecting is that `fitView` leaves nothing clipped.
     assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
+}
+
+/** A long `verify` is the real case: it must be readable, not just ellipsised. */
+async function checkDetailExpansion(page) {
+  const payload = JSON.parse(await readFile(COMMITTED_FIXTURE, "utf8"));
+  payload.config.assignments["agent-eligible"].verify =
+    "cargo test --offline -- --skip timeout_kills_the_whole_process_group --nocapture";
+  await withInstance("detail", {}, { payload }, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await waitForRender(page, ".card", "config cards");
+    const before = await evaluate(page, truncatedDetailExpression());
+    await record("config truncates a long detail before it is opened", () => {
+      assert.deepEqual({ truncated: before.truncated, expanded: before.expanded }, { truncated: true, expanded: false });
+    });
+    await evaluate(page, `document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle").click()`);
+    const after = await evaluate(page, truncatedDetailExpression());
+    await record("config reveals the full detail on click", () => {
+      assert.deepEqual(
+        { truncated: after.truncated, expanded: after.expanded, sameText: after.text === before.text },
+        { truncated: false, expanded: true, sameText: true },
+      );
+    });
+  });
+}
+
+/** Whether the assignment's `verify` line is clipped, and its full text. */
+function truncatedDetailExpression() {
+  return `(() => {
+    const detail = document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle");
+    if (!detail) { return { truncated: null }; }
+    return {
+      truncated: detail.scrollWidth > detail.clientWidth + 1,
+      expanded: detail.getAttribute("aria-expanded") === "true",
+      text: detail.textContent,
+    };
+  })()`;
 }
 
 function clippedCardsExpression() {

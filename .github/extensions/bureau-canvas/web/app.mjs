@@ -194,7 +194,9 @@ function summaryText(view) {
 }
 
 function ConfigView({ state }) {
-  const flow = useMemo(() => toConfigFlow(state), [state]);
+  const [expanded, setExpanded] = useState(null);
+  const toggle = (id) => setExpanded((current) => (current === id ? null : id));
+  const flow = useMemo(() => toConfigFlow(state, expanded, toggle), [state, expanded]);
   return h(
     "section",
     { className: "view-shell" },
@@ -219,16 +221,19 @@ function ConfigView({ state }) {
 }
 
 /** Same surface as the pipeline view: pan, zoom, fit, minimap. */
-function toConfigFlow(state) {
+function toConfigFlow(state, expanded, onToggle) {
   const layout = state.config?.layout ?? { items: [], edges: [] };
   return {
     nodes: layout.items.map((item) => ({
       id: item.id,
       type: "configCard",
       position: { x: item.x, y: item.y },
-      data: { state, item },
+      data: { state, item, expanded: expanded === item.id, onToggle },
       draggable: false,
       connectable: false,
+      // An expanded card grows past its reserved box, so it must sit above its
+      // neighbours rather than push them around.
+      zIndex: expanded === item.id ? 10 : 0,
     })),
     edges: layout.edges.map((edge) => ({
       id: edge.id,
@@ -241,29 +246,47 @@ function toConfigFlow(state) {
 }
 
 function ConfigCardNode({ data }) {
-  return h(ConfigCard, { state: data.state, item: data.item });
+  return h(ConfigCard, { state: data.state, item: data.item, expanded: data.expanded, onToggle: data.onToggle });
 }
-function ConfigCard({ state, item }) {
+function ConfigCard({ state, item, expanded, onToggle }) {
   const data = configData(state, item);
-  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
+  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}${expanded ? " card--expanded" : ""}`;
   const deletable = ["repo", "role", "assignment", "pipeline"].includes(item.kind);
   return h(
     "article",
     // React Flow positions the node wrapper; the height comes from layout so
-    // the rendered card can never exceed the box reserved for it.
-    { className, "data-ref": item.id, style: { height: item.height } },
+    // the rendered card can never exceed the box reserved for it. An expanded
+    // card is the deliberate exception and overlays instead.
+    { className, "data-ref": item.id, style: expanded ? {} : { height: item.height } },
     item.kind === "pipeline"
-      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data))
-      : h("div", {}, configCardContent(state, item, data)),
+      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data, expanded, onToggle))
+      : h("div", {}, configCardContent(state, item, data, expanded, onToggle)),
     deletable ? h(DeleteControl, { dir: state.dir, kind: item.kind, name: item.name }) : null,
   );
 }
 
-function configCardContent(state, item, data) {
+function configCardContent(state, item, data, expanded, onToggle) {
+  const detail = detailText(item, data);
   return [
     h("p", { className: "kind-label", key: "kind" }, item.kind.replace("-", " ")),
     h("h2", { key: "title" }, item.name),
-    h("p", { className: "detail", key: "detail", title: detailText(item, data) }, detailText(item, data)),
+    // The detail carries a whole shell command for an assignment, so it is the
+    // affordance rather than a hidden tooltip: click to read it in full.
+    h(
+      "button",
+      {
+        className: `detail detail-toggle${expanded ? " detail-toggle--open" : ""}`,
+        key: "detail",
+        type: "button",
+        title: detail,
+        "aria-expanded": Boolean(expanded),
+        onClick: (event) => {
+          event.stopPropagation();
+          onToggle?.(item.id);
+        },
+      },
+      detail,
+    ),
     h(Chips, { key: "chips", chips: chipsFor(state, item, data) }),
     item.kind === "pipeline" ? h(StepBadges, { key: "steps", state, name: item.name }) : null,
     h(Findings, { key: "findings", findings: state.findingsByItem?.[item.id] ?? [] }),
