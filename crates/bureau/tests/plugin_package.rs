@@ -94,3 +94,24 @@ fn bureau_resources_are_present_with_owned_models() {
     );
     assert_eq!(seen, (true, true, true));
 }
+
+/// Every bureau agent must list `bureau-io` among its tools.
+///
+/// A `tools:` list is an allowlist: an agent that omits the server
+/// cannot see `get_step_context` or `publish_result` at all, however the
+/// adapter grants or configures them. The step then always ends
+/// "agent did not publish a result", and the agent's own transcript
+/// shows it trying to run `bureau-io publish_result` as a shell command.
+#[test]
+fn bureau_agents_are_granted_the_step_io_server() {
+    let agents = ["implementer", "reviewer"];
+    for name in agents {
+        let path = root().join(format!("plugins/bureau/agents/{name}.agent.md"));
+        let text = std::fs::read_to_string(&path).expect("agent file");
+        let tools = text
+            .lines()
+            .find(|line| line.starts_with("tools:"))
+            .unwrap_or_default();
+        assert!(tools.contains("bureau-io"), "{name} tools: {tools}");
+    }
+}

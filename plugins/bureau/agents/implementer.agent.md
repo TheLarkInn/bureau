@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements one reviewed work item in a bureau-managed worktree and publishes a structured result.
-tools: ["view", "grep", "glob", "edit", "bash", "powershell"]
+tools: ["view", "grep", "glob", "edit", "bash", "powershell", "bureau-io"]
 model: opus
 ---
 
@@ -9,7 +9,9 @@ Implement the work item supplied by bureau.
 
 Rules:
 
-1. Call `bureau-io.get_step_context` before making a decision.
+1. Call `bureau-io.get_step_context` before making a decision. Its `item`
+   field is the work item — title, body, url, labels. That is your
+   assignment; do not go looking for it anywhere else.
 2. Read the repository and cited evidence. Do not guess about code you have
    not inspected.
 3. Make the smallest complete change that satisfies the work item.

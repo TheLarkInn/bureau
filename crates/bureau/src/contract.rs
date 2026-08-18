@@ -78,9 +78,8 @@ pub enum DecodeError {
     Json(#[from] serde_json::Error),
 }
 
-/// Parses `bytes` as JSON and rejects any schema but [`SCHEMA_VERSION`].
-fn checked_value(bytes: &[u8]) -> Result<serde_json::Value, DecodeError> {
-    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+/// Rejects any schema but [`SCHEMA_VERSION`] on an already-parsed value.
+fn checked(value: serde_json::Value) -> Result<serde_json::Value, DecodeError> {
     // `<missing>` is only for an absent field; a present but non-string
     // `schema` renders as its JSON form so the error names what arrived.
     let received = value.get("schema").map_or_else(
@@ -98,6 +97,26 @@ fn checked_value(bytes: &[u8]) -> Result<serde_json::Value, DecodeError> {
     }
 }
 
+/// The work item a run acts on, as a step sees it (DESIGN.md section 7).
+///
+/// This is the wire projection of a `forge::Item`, not a second data
+/// model: the forge stays the database (section 3). It deliberately
+/// omits the item's own trust grade, because [`StepRequest::trust`]
+/// already carries the provenance floor for everything in the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WorkItem {
+    /// The forge's id for the item (issue number, work item id).
+    pub external_id: String,
+    /// One-line summary.
+    pub title: String,
+    /// Full description.
+    pub body: String,
+    /// Human-facing URL.
+    pub url: String,
+    /// Current labels / tags.
+    pub labels: Vec<String>,
+}
+
 /// The input every step receives on stdin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StepRequest {
@@ -109,6 +128,12 @@ pub struct StepRequest {
     pub step: String,
     /// The run's worktree — the only directory a step may write to.
     pub worktree: PathBuf,
+    /// The work item the run acts on.
+    ///
+    /// `#[serde(default)]` so a hand-written request may omit it; the
+    /// engine always fills it in.
+    #[serde(default)]
+    pub item: WorkItem,
     /// Highest provenance grade of any input.
     pub trust: Trust,
     /// Named inputs carried from earlier steps.
@@ -118,13 +143,23 @@ pub struct StepRequest {
 }
 
 impl StepRequest {
+    /// Parses a request from an already-decoded value, rejecting any
+    /// schema but [`SCHEMA_VERSION`].
+    ///
+    /// # Errors
+    /// Returns [`DecodeError::Schema`] on a version mismatch and
+    /// [`DecodeError::Json`] when the value does not fit the schema.
+    pub fn from_value(value: serde_json::Value) -> Result<Self, DecodeError> {
+        Ok(serde_json::from_value(checked(value)?)?)
+    }
+
     /// Parses a request, rejecting any schema but [`SCHEMA_VERSION`].
     ///
     /// # Errors
     /// Returns [`DecodeError::Schema`] on a version mismatch and
     /// [`DecodeError::Json`] on malformed JSON.
     pub fn from_json(bytes: &[u8]) -> Result<Self, DecodeError> {
-        Ok(serde_json::from_value(checked_value(bytes)?)?)
+        Self::from_value(serde_json::from_slice(bytes)?)
     }
 
     /// Serializes to the wire form.
@@ -154,13 +189,27 @@ pub struct StepResult {
 }
 
 impl StepResult {
+    /// Parses a result from an already-decoded value, rejecting any
+    /// schema but [`SCHEMA_VERSION`].
+    ///
+    /// # Errors
+    /// Returns [`DecodeError::Schema`] on a version mismatch and
+    /// [`DecodeError::Json`] when the value does not fit the schema.
+    pub fn from_value(value: serde_json::Value) -> Result<Self, DecodeError> {
+        Ok(serde_json::from_value(checked(value)?)?)
+    }
+
     /// Parses a result, rejecting any schema but [`SCHEMA_VERSION`].
+    ///
+    /// Strict: the whole buffer must be exactly one document. A caller
+    /// whose input may surround the document with other text owns that
+    /// leniency itself; the schema does not define it.
     ///
     /// # Errors
     /// Returns [`DecodeError::Schema`] on a version mismatch and
     /// [`DecodeError::Json`] on malformed JSON.
     pub fn from_json(bytes: &[u8]) -> Result<Self, DecodeError> {
-        Ok(serde_json::from_value(checked_value(bytes)?)?)
+        Self::from_value(serde_json::from_slice(bytes)?)
     }
 
     /// Serializes to the wire form.

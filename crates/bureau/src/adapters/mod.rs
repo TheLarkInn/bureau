@@ -10,6 +10,7 @@ pub mod claude;
 pub mod copilot;
 pub mod fake;
 pub(crate) mod real;
+mod transcript;
 mod usage;
 
 use std::future::Future;
@@ -65,6 +66,11 @@ fn tail(result: &SpawnResult) -> String {
 /// document wins. Otherwise the outcome is derived from how the process
 /// ended: exit 0 is `Success`, anything else is `Failure`, with the tail
 /// of the captured (already scrubbed) output as the message.
+///
+/// Deliberately strict, unlike [`result_from_agent`]: this path also
+/// serves deterministic steps, whose command output is arbitrary, and a
+/// build or test run that happens to print a v2-shaped object must not
+/// take over the step's outcome.
 #[must_use]
 pub fn result_from_spawn(result: &SpawnResult) -> StepResult {
     if let Ok(parsed) = StepResult::from_json(&result.stdout) {
@@ -81,6 +87,10 @@ pub fn result_from_spawn(result: &SpawnResult) -> StepResult {
 }
 
 /// A real/fake agent must return a valid contract result after exit zero.
+///
+/// `response` is captured process output, which for a real CLI carries a
+/// rendered tool transcript around the document, so it is parsed with
+/// the tolerant [`transcript::result_from_output`].
 #[must_use]
 pub fn result_from_agent(
     spawned: &SpawnResult,
@@ -93,7 +103,7 @@ pub fn result_from_agent(
     if let Some(result) = published {
         return result;
     }
-    StepResult::from_json(response).unwrap_or_else(|_| missing_result())
+    transcript::result_from_output(response).unwrap_or_else(|_| missing_result())
 }
 
 pub(crate) fn failed(message: &str) -> Execution {

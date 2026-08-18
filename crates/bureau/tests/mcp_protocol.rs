@@ -5,7 +5,9 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bureau::contract::{Artifact, SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
+use bureau::contract::{
+    Artifact, SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust, WorkItem,
+};
 use bureau::mcp::{Session, serve};
 use serde_json::{Value, json};
 
@@ -35,12 +37,23 @@ impl Drop for TestDir {
     }
 }
 
+fn work_item() -> WorkItem {
+    WorkItem {
+        external_id: "acme/web#42".to_owned(),
+        title: "Fix the flaky login test".to_owned(),
+        body: "The login test fails intermittently on CI.".to_owned(),
+        url: "https://example.invalid/acme/web/issues/42".to_owned(),
+        labels: vec!["bug".to_owned(), "agent-eligible".to_owned()],
+    }
+}
+
 fn request(worktree: &Path) -> StepRequest {
     StepRequest {
         schema: SCHEMA_VERSION.to_owned(),
         run_id: "run-42".to_owned(),
         step: "implement".to_owned(),
         worktree: worktree.to_path_buf(),
+        item: work_item(),
         trust: Trust::Maintainer,
         inputs: BTreeMap::from([("issue".to_owned(), json!(42))]),
         artifacts: BTreeMap::from([("log".to_owned(), PathBuf::from("test.log"))]),
@@ -135,6 +148,18 @@ fn context_returns_the_exact_validated_request() {
         .expect("context text");
     let actual: StepRequest = serde_json::from_str(text).expect("context request");
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn context_hands_the_agent_its_work_item() {
+    let dir = TestDir::new("context-item");
+    let session = Session::create(&request(dir.path())).expect("create session");
+    let replies = exchange(&session, &[tool_call(1, "get_step_context", &json!({}))]);
+    let text = replies[0]["result"]["content"][0]["text"]
+        .as_str()
+        .expect("context text");
+    let actual: StepRequest = serde_json::from_str(text).expect("context request");
+    assert_eq!(actual.item, work_item());
 }
 
 #[test]

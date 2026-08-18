@@ -413,11 +413,21 @@ scratch directories.
 pub const SCHEMA_VERSION: &str = "v2";
 
 #[derive(Serialize, Deserialize)]
+pub struct WorkItem {
+    pub external_id: String,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct StepRequest {
     pub schema: String,
     pub run_id: String,
     pub step: String,
     pub worktree: PathBuf,
+    pub item: WorkItem,
     pub trust: Trust,
     pub inputs: BTreeMap<String, serde_json::Value>,
     pub artifacts: BTreeMap<String, PathBuf>,
@@ -452,6 +462,19 @@ it should have been versioned immediately.
 
 `Blocked` and `NoWork` are **not failures** and must not consume retry budget. This
 distinction is why the outcome set has four members instead of two.
+
+`item` is the work item the run acts on, carried on every step's request so a step
+never has to go looking for its assignment. It is the wire projection of a
+`forge::Item`, not a second data model (section 3): the forge remains the database,
+and the item's own trust grade is not repeated because `trust` above already holds
+the request's provenance floor.
+
+A step answers on stdout. A real agent CLI renders its tool transcript to that same
+stream ahead of the final message, so **parse the result as a document embedded in
+the output, not as the whole buffer**, searching from the end. Requiring the whole
+buffer to be one document silently discards results that were published correctly.
+Deterministic steps keep the strict whole-buffer parse: their command output is
+arbitrary, and a build that prints a `v2`-shaped object must not seize the outcome.
 
 ### Layer 3 — the run log
 

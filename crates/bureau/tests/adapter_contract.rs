@@ -68,6 +68,86 @@ fn process_failure_wins_over_a_published_success() {
     );
 }
 
+/// One contract document, as an agent CLI emits it.
+fn document(message: &str) -> String {
+    serde_json::to_string(&result(StepOutcome::Success, message)).expect("serialize document")
+}
+
+#[test]
+fn a_transcript_wrapped_result_is_recovered_not_reported_missing() {
+    // What the copilot CLI actually writes: tool transcript on stdout,
+    // then the contract document (issue #23). The agent published a
+    // valid result; reporting it as missing discards finished work.
+    let stdout = format!(
+        "● Read label.rs\n  └ 61 lines read\n\n{}\n",
+        document("implemented")
+    )
+    .into_bytes();
+    let spawned = spawn(0, stdout);
+    let result = result_from_agent(&spawned, None, &spawned.stdout);
+    assert_eq!(
+        (result.outcome, result.message.as_str()),
+        (StepOutcome::Success, "implemented")
+    );
+}
+
+#[test]
+fn the_last_document_wins_when_output_holds_several() {
+    // An agent may quote an example before answering; the answer is last.
+    let stdout = format!(
+        "example: {}\nfinal: {}\n",
+        document("example"),
+        document("final")
+    )
+    .into_bytes();
+    let spawned = spawn(0, stdout);
+    assert_eq!(
+        result_from_agent(&spawned, None, &spawned.stdout).message,
+        "final"
+    );
+}
+
+#[test]
+fn output_without_a_document_still_fails_closed() {
+    let cases: [&[u8]; 3] = [b"ordinary prose", b"", br#"{"schema":"v7"}"#];
+    for bytes in cases {
+        let spawned = spawn(0, bytes.to_vec());
+        let result = result_from_agent(&spawned, None, &spawned.stdout);
+        assert_eq!(
+            result.outcome,
+            StepOutcome::Failure,
+            "{:?}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}
+
+#[test]
+fn a_large_document_inside_the_searched_tail_is_still_recovered() {
+    // Pins the positive side of the bound: a real answer ends the
+    // buffer, so a big one must still be found. Without this, shrinking
+    // the window would break no test.
+    let big = "x".repeat(200_000);
+    let stdout = format!("● Read big.rs\n\n{}\n", document(&big)).into_bytes();
+    let spawned = spawn(0, stdout);
+    let result = result_from_agent(&spawned, None, &spawned.stdout);
+    assert_eq!(
+        (result.outcome, result.message.len()),
+        (StepOutcome::Success, big.len())
+    );
+}
+
+#[test]
+fn a_document_far_past_the_searched_tail_is_not_recovered() {
+    // The scan is bounded so output holding no document cannot cost a
+    // parse attempt at every brace of a multi-megabyte transcript. A
+    // real answer is the CLI's last output, so it is inside the window.
+    let stdout = format!("{}{}", document("buried"), "{ noise\n".repeat(80_000)).into_bytes();
+    let spawned = spawn(0, stdout);
+    let result = result_from_agent(&spawned, None, &spawned.stdout);
+    assert_eq!(result.outcome, StepOutcome::Failure);
+}
+
 #[test]
 fn claude_usage_is_measured_from_the_outer_envelope() {
     let bytes =
