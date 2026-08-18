@@ -5,7 +5,7 @@ import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actions } from "./lib/actions.mjs";
 import { findings } from "./lib/findings.mjs";
-import { configLayout, pipelineLayout } from "./lib/layout.mjs";
+import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
 import { configView, pipelineView } from "./lib/view.mjs";
 
 const CANVAS_ID = "bureau";
@@ -56,14 +56,27 @@ function actionDependencies() {
     };
 }
 
-function publishEvent(instanceId, event, payload) {
+async function publishEvent(instanceId, event, payload) {
     const entry = servers.get(instanceId);
     if (!entry) {
+        return;
+    }
+    if (event === "state" && payload?.subject) {
+        entry.state = await buildState({ ...entry.state, ...resolvedSubject(payload.subject), instanceId }, {});
+        publishState(entry);
         return;
     }
     for (const client of entry.clients) {
         client.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     }
+}
+
+function resolvedSubject(subject) {
+    const dir = subject.dir ?? ".bureau";
+    return {
+        dir: isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir),
+        pipeline: subject.pipeline ?? null,
+    };
 }
 
 export function canvasActions(deps = actionDependencies()) {
@@ -210,7 +223,8 @@ function pipelineStates(payload, config) {
 
 function pipelineState(payload, config, name) {
     const view = pipelineView(payload, name);
-    return { view, layout: pipelineLayout(view), summary: pipelineSummary(view, config) };
+    const layout = pipelineLayout(view);
+    return { view, layout, handles: pipelineHandles(layout), containers: pipelineContainers(layout), summary: pipelineSummary(view, config) };
 }
 
 function pipelineSummary(view, config) {

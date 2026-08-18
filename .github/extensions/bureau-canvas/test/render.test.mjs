@@ -45,6 +45,25 @@ test("absolute config dir is honored", () => {
   assert.equal(canvas.resolveInput({ dir: validDir }).dir, validDir);
 });
 
+
+test("pins CDN modules and serves a renderer fallback", async () => {
+  const html = await readFile(new URL("../web/index.html", import.meta.url), "utf8");
+
+  assert.deepEqual(
+    {
+      xyflowModule: html.includes("https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom"),
+      xyflowStyle: html.includes("https://esm.sh/@xyflow/react@12.3.5/dist/style.css"),
+      floatingMajor: html.includes("@xyflow/react@12?"),
+      fallback: ["Bureau renderer could not start", "window.addEventListener(\"error\"", "unhandledrejection", "await import(\"./app.mjs\")", "Config dir"].map((text) => html.includes(text)),
+    },
+    {
+      xyflowModule: true,
+      xyflowStyle: true,
+      floatingMajor: false,
+      fallback: [true, true, true, true, true],
+    },
+  );
+});
 test("serves the config renderer markup and fallback state", async () => {
   const instance = await openInstance("bureau-render-state-test");
 
@@ -56,7 +75,7 @@ test("serves the config renderer markup and fallback state", async () => {
 
     assert.deepEqual(
       {
-        markup: ["config-view", "drill-down", "--true-color-blue", "app.mjs"].map((text) => page.includes(text)),
+        markup: ["@xyflow/react", "react-dom/client", "--true-color-blue", "app.mjs"].map((text) => page.includes(text)),
         status: state.status,
         reason: state.validation.message,
         roles: pipeline.agentSteps.map((step) => step.role).sort(),
@@ -169,7 +188,7 @@ test("committed pipeline view keeps absent branches absent", async () => {
         steps: pipeline.layout.steps.length,
         reachedTerminals: pipeline.view.terminals.filter((terminal) => pipeline.layout.edges.some((edge) => edge.target === terminal.id)).length,
         verifyOutcomes: verifyEdges.map((edge) => edge.outcome).sort(),
-        markup: ["edge--data", "edge--observes", "back-button", "card--terminal"].map((text) => page.includes(text)),
+        markup: ["flow-edge--data", "flow-edge--observes", "back-button", "terminal-pill"].map((text) => page.includes(text)),
       },
       {
         selected: "agent-eligible-pipeline",
@@ -252,10 +271,11 @@ test("focus and reload keep the selected pipeline subject", async () => {
   try {
     const focus = await actions.find((action) => action.name === "focus").handler({ instanceId, input: { kind: "step", name: "verify" } });
     const reload = await actions.find((action) => action.name === "reload").handler({ instanceId, input: {} });
+    const state = await fetch(new URL("/state", instance.opened.url)).then((response) => response.json());
 
     assert.deepEqual(
-      { focusSubject: focus.subject.pipeline, reloadScope: reload.scope, reloadPipeline: reload.subject.pipeline },
-      { focusSubject: "agent-eligible-pipeline", reloadScope: "pipeline", reloadPipeline: "agent-eligible-pipeline" },
+      { focusSubject: focus.subject.pipeline, reloadScope: reload.scope, reloadPipeline: reload.subject.pipeline, selected: state.selectedPipeline.name },
+      { focusSubject: "agent-eligible-pipeline", reloadScope: "pipeline", reloadPipeline: "agent-eligible-pipeline", selected: "agent-eligible-pipeline" },
     );
   } finally {
     await instance.close();

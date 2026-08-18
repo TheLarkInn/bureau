@@ -1,6 +1,6 @@
-const X_GAP = 240;
-const Y_GAP = 120;
-const TERMINAL_GAP = 180;
+const X_GAP = 320;
+const Y_GAP = 190;
+const TERMINAL_GAP = 260;
 const CONFIG_COLUMNS = {
   "work-source": 0,
   assignment: 1,
@@ -30,6 +30,28 @@ export function configLayout(view, arrangement = {}) {
   return mergeArrangement({ dir: view.dir, items, edges }, arrangement);
 }
 
+export function pipelineHandles(layout) {
+  const items = [...(layout.steps ?? []), ...(layout.terminals ?? [])];
+  const handles = {
+    items: Object.fromEntries(items.map((item) => [item.id, { source: [], target: [] }])),
+    edges: {},
+  };
+  for (const edge of layout.edges ?? []) {
+    const pair = handlePair(edge);
+    addHandle(handles.items, edge.source, "source", pair.source);
+    addHandle(handles.items, edge.target, "target", pair.target);
+    handles.edges[edge.id] = { source: pair.source.id, target: pair.target.id };
+  }
+  return sortHandles(handles);
+}
+
+export function pipelineContainers(layout) {
+  const steps = positionMap(layout.steps ?? []);
+  return (layout.steps ?? [])
+    .filter((step) => step.kind === "concurrent")
+    .map((step) => containerFor(step, steps));
+}
+
 export function arrangementItemKey(configPath, itemName) {
   return `${configPath}\u001f${itemName}`;
 }
@@ -41,6 +63,69 @@ export function arrangementBucket(configPath) {
 export function mergeArrangement(layout, arrangement = {}) {
   const positions = arrangement.positions ?? {};
   return mapPlacedItems(layout, (item) => moveItem(item, positions[item.arrangementKey ?? item.id]));
+}
+
+function handlePair(edge) {
+  if (edge.route === "spine") {
+    return { source: handle("bottom", edge.outcome), target: handle("top", "in") };
+  }
+  if (edge.route === "back") {
+    return { source: handle("left", "loop"), target: handle("left", "in-left") };
+  }
+  if (edge.route === "data" || edge.route === "observes") {
+    return { source: handle("right", edge.route), target: handle("left", "in-left") };
+  }
+  return { source: handle("right", edge.outcome), target: handle("top", "in") };
+}
+
+function handle(side, name) {
+  return { id: `${side}:${name}`, side, name };
+}
+
+function addHandle(items, id, direction, handle) {
+  const item = items[id];
+  if (!item) {
+    return;
+  }
+  if (!item[direction].some((existing) => existing.id === handle.id)) {
+    item[direction].push(handle);
+  }
+}
+
+function sortHandles(handles) {
+  return {
+    items: Object.fromEntries(Object.entries(handles.items).map(([id, item]) => [id, {
+      source: item.source.sort(handleSort),
+      target: item.target.sort(handleSort),
+    }])),
+    edges: handles.edges,
+  };
+}
+
+function handleSort(left, right) {
+  return sideRank(left.side) - sideRank(right.side) || left.name.localeCompare(right.name);
+}
+
+function sideRank(side) {
+  return ["top", "right", "bottom", "left"].indexOf(side);
+}
+
+function containerFor(step, steps) {
+  const members = (step.fields.members ?? []).map((member) => steps.get(member)).filter(Boolean);
+  const boxed = [step, ...members];
+  const left = Math.min(...boxed.map((item) => item.x));
+  const top = Math.min(...boxed.map((item) => item.y));
+  const right = Math.max(...boxed.map((item) => item.x));
+  const bottom = Math.max(...boxed.map((item) => item.y));
+  return {
+    id: `concurrent:${step.id}`,
+    parent: step.id,
+    members: members.map((member) => member.id),
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
 }
 
 function stepsByOrder(steps) {

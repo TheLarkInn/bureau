@@ -1,102 +1,133 @@
-const CARD_WIDTH = 216;
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+} from "@xyflow/react";
+
+const h = React.createElement;
+const CARD_WIDTH = 240;
 const CARD_HEIGHT = 112;
-const CARD_PAD = 64;
-const MEMBER_PAD = 24;
+const CONFIG_PAD = 72;
+const FRAME_PAD = 34;
+const flowItemTypes = {
+  stepCard: StepCard,
+  terminalPill: TerminalPill,
+  concurrentFrame: ConcurrentFrame,
+};
+const edgeColors = {
+  success: "var(--outcome-success)",
+  failure: "var(--outcome-failure)",
+  blocked: "var(--outcome-blocked)",
+  "no-work": "var(--outcome-no-work)",
+  data: "var(--relation-data)",
+  observes: "var(--relation-observes)",
+};
 
-const summary = document.querySelector("#summary");
-const status = document.querySelector("#status");
-const surface = document.querySelector("#config-view");
-const edgeLayer = document.querySelector("#edges");
-const cardLayer = document.querySelector("#cards");
-const drillDown = document.querySelector("#drill-down");
-const generalFindings = document.querySelector("#general-findings");
+createRoot(document.querySelector("#root")).render(h(App));
+window.__bureauCanvasMounted = true;
+window.dispatchEvent(new Event("bureau-mounted"));
 
-let currentState = null;
-let selectedStep = null;
+function App() {
+  const [state, setState] = useState(null);
+  const [selectedStep, setSelectedStep] = useState(null);
 
-await loadState();
+  useEffect(() => {
+    let alive = true;
+    fetch("./state", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((next) => alive && setState(next));
+    const events = new EventSource("./events");
+    const localState = (event) => setState(event.detail);
+    events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
+    events.addEventListener("focus", (event) => applyFocus(JSON.parse(event.data), setSelectedStep, setState));
+    window.addEventListener("bureau-state", localState);
+    return () => {
+      alive = false;
+      events.close();
+      window.removeEventListener("bureau-state", localState);
+    };
+  }, []);
 
-const events = new EventSource("./events");
-events.addEventListener("state", (event) => receiveState(JSON.parse(event.data)));
-events.addEventListener("focus", (event) => receiveFocus(JSON.parse(event.data)));
-
-async function loadState() {
-  const response = await fetch("./state", { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`state request failed: ${response.status}`);
+  if (!state) {
+    return h("main", { className: "app-shell" }, h("p", { className: "status" }, "Loading…"));
   }
-  render(await response.json());
-}
 
-function receiveState(payload) {
-  if (payload?.config) {
-    render(payload);
-  }
-}
-
-function receiveFocus(payload) {
-  if (payload?.focus?.kind === "step") {
-    selectedStep = payload.focus.step ?? payload.focus.name;
-    render(currentState);
-  }
-  if (payload?.focus?.kind === "pipeline") {
-    requestPipeline(payload.focus.name ?? payload.focus.pipeline);
-  }
-}
-
-function render(state) {
-  currentState = state;
-  renderHeader(state);
-  renderFindings(generalFindings, state.generalFindings ?? []);
-  if (state.selectedPipeline) {
-    renderPipeline(state, state.selectedPipeline.name);
-  } else {
-    renderConfig(state);
-  }
-  renderDrillDown(state.selectedPipeline);
-}
-
-function renderHeader(state) {
-  const counts = state.config?.view ?? { assignments: [], roles: [], repos: [], pipelines: [], orphans: [] };
-  summary.textContent = `${counts.assignments.length} assignment · ${counts.roles.length} roles · ${counts.repos.length} repos · ${counts.pipelines.length} pipelines`;
-  status.replaceChildren(
-    textLine(state.status),
-    textLine(state.validation?.dir ?? state.dir),
-    textLine(`${counts.orphans.length} orphan${counts.orphans.length === 1 ? "" : "s"}`),
+  return h(
+    "main",
+    { className: "app-shell" },
+    h(Header, { state }),
+    h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
+    state.selectedPipeline
+      ? h(PipelineView, { state, selectedStep, setSelectedStep })
+      : h(ConfigView, { state }),
   );
 }
 
-function renderConfig(state) {
+function applyFocus(payload, setSelectedStep, setState) {
+  const focus = payload?.focus;
+  if (focus?.kind === "step") {
+    setSelectedStep(focus.step ?? focus.name ?? null);
+  }
+  if (focus?.kind === "pipeline") {
+    postIntent({ kind: "open-pipeline", pipeline: focus.name ?? focus.pipeline }).then((result) => {
+      if (result?.ok) {
+        setState(result.state);
+      }
+    });
+  }
+}
+
+function Header({ state }) {
+  const view = state.config?.view ?? emptyConfigView();
+  return h(
+    "header",
+    { className: "app-header" },
+    h("div", {}, h("h1", {}, "Bureau config"), h("p", { className: "summary" }, summaryText(view))),
+    h(
+      "div",
+      { className: "status", "aria-live": "polite" },
+      h("p", {}, state.status),
+      h("p", {}, state.validation?.dir ?? state.dir),
+      h("p", {}, `${view.orphans.length} orphan${view.orphans.length === 1 ? "" : "s"}`),
+    ),
+  );
+}
+
+function emptyConfigView() {
+  return { assignments: [], roles: [], repos: [], pipelines: [], orphans: [] };
+}
+
+function summaryText(view) {
+  return `${view.assignments.length} assignment · ${view.roles.length} roles · ${view.repos.length} repos · ${view.pipelines.length} pipelines`;
+}
+
+function ConfigView({ state }) {
   const layout = state.config?.layout ?? { items: [], edges: [] };
   const byId = new Map(layout.items.map((item) => [item.id, item]));
-  setSurfaceSize(layout.items);
-  edgeLayer.replaceChildren(...layout.edges.map((edge) => configEdge(edge, byId)).filter(Boolean));
-  cardLayer.replaceChildren(...layout.items.map((item) => configCard(state, item)));
-}
-
-function renderPipeline(state, name) {
-  const pipeline = state.pipelines?.[name];
-  const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
-  const items = [...layout.steps, ...layout.terminals];
-  const byId = new Map(items.map((item) => [item.id, item]));
-  setSurfaceSize(items);
-  edgeLayer.replaceChildren(...pipelineEdges(layout.edges, byId));
-  cardLayer.replaceChildren(
-    pipelineToolbar(name),
-    ...concurrentBoxes(layout.steps),
-    ...layout.steps.map((step) => stepCard(state, name, step)),
-    ...layout.terminals.map(terminalCard),
+  const size = configSize(layout.items);
+  return h(
+    "section",
+    { className: "view-shell" },
+    h(
+      "section",
+      { className: "surface config-surface", style: { width: size.width, height: size.height }, "aria-label": "Bureau config view" },
+      h("svg", { className: "edge-layer", viewBox: `0 0 ${size.width} ${size.height}`, width: size.width, height: size.height, "aria-hidden": true }, layout.edges.map((edge) => configEdge(edge, byId))),
+      h("div", { className: "card-layer" }, layout.items.map((item) => h(ConfigCard, { key: item.id, state, item }))),
+    ),
   );
 }
 
-function setSurfaceSize(items) {
-  const width = Math.max(0, ...items.map((item) => item.x)) + CARD_WIDTH + CARD_PAD;
-  const height = Math.max(0, ...items.map((item) => item.y)) + CARD_HEIGHT + CARD_PAD;
-  surface.style.width = `${width}px`;
-  surface.style.height = `${height}px`;
-  edgeLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  edgeLayer.setAttribute("width", width);
-  edgeLayer.setAttribute("height", height);
+function configSize(items) {
+  return {
+    width: Math.max(0, ...items.map((item) => item.x)) + CARD_WIDTH + CONFIG_PAD,
+    height: Math.max(0, ...items.map((item) => item.y)) + CARD_HEIGHT + CONFIG_PAD,
+  };
 }
 
 function configEdge(edge, byId) {
@@ -105,156 +136,46 @@ function configEdge(edge, byId) {
   if (!source || !target) {
     return null;
   }
-  return svgLine(source.x + CARD_WIDTH, source.y + CARD_HEIGHT / 2, target.x, target.y + CARD_HEIGHT / 2, "edge-path");
-}
-
-function pipelineEdges(edges, byId) {
-  return edges.flatMap((edge) => {
-    const source = byId.get(edge.source);
-    const target = byId.get(edge.target);
-    if (!source || !target) {
-      return [];
-    }
-    const path = routePath(edge.route, source, target);
-    const line = svgPath(path, `edge-path ${edgeClass(edge)}`);
-    const label = edgeLabel(edge, path.midX, path.midY);
-    return label ? [line, label] : [line];
+  return h("line", {
+    key: edge.id,
+    className: "edge-path",
+    x1: source.x + CARD_WIDTH,
+    y1: source.y + CARD_HEIGHT / 2,
+    x2: target.x,
+    y2: target.y + CARD_HEIGHT / 2,
   });
 }
 
-function routePath(route, source, target) {
-  const start = startPoint(route, source);
-  const end = endPoint(route, target);
-  const midX = route === "back" ? Math.min(start.x, end.x) - CARD_PAD : (start.x + end.x) / 2;
-  const midY = (start.y + end.y) / 2;
-  if (route === "spine") {
-    return { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, midX, midY };
-  }
-  if (route === "back") {
-    return { d: `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`, midX, midY };
-  }
-  return { d: `M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`, midX, midY };
+function ConfigCard({ state, item }) {
+  const data = configData(state, item);
+  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
+  return h(
+    "article",
+    { className, style: { transform: `translate(${item.x}px, ${item.y}px)` }, "data-ref": item.id },
+    item.kind === "pipeline"
+      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data))
+      : h("div", {}, configCardContent(state, item, data)),
+  );
 }
 
-function startPoint(route, item) {
-  if (route === "spine") {
-    return { x: item.x + CARD_WIDTH / 2, y: item.y + CARD_HEIGHT };
-  }
-  if (route === "back") {
-    return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
-  }
-  return { x: item.x + CARD_WIDTH, y: item.y + CARD_HEIGHT / 2 };
-}
-
-function endPoint(route, item) {
-  if (route === "spine") {
-    return { x: item.x + CARD_WIDTH / 2, y: item.y };
-  }
-  if (route === "back") {
-    return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
-  }
-  return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
-}
-
-function edgeClass(edge) {
-  if (edge.relation === "data") {
-    return "edge--data";
-  }
-  if (edge.relation === "observes") {
-    return "edge--observes";
-  }
-  return `edge--${edge.outcome}`;
-}
-
-function edgeLabel(edge, x, y) {
-  const text = edge.relation === "control" ? edge.outcome : edge.relation;
-  if (!text) {
-    return null;
-  }
-  const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  label.setAttribute("class", "edge-label");
-  label.setAttribute("x", x + 4);
-  label.setAttribute("y", y - 4);
-  label.textContent = text;
-  return label;
-}
-
-function svgLine(x1, y1, x2, y2, className) {
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("class", className);
-  line.setAttribute("x1", x1);
-  line.setAttribute("y1", y1);
-  line.setAttribute("x2", x2);
-  line.setAttribute("y2", y2);
-  line.setAttribute("stroke", "currentColor");
-  return line;
-}
-
-function svgPath(path, className) {
-  const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  element.setAttribute("class", className);
-  element.setAttribute("d", path.d);
-  return element;
-}
-
-function configCard(state, item) {
-  const data = dataFor(state, item);
-  const card = baseCard(`card card--${item.kind}${item.orphan ? " card--orphan" : ""}`, item);
-  card.dataset.ref = item.id;
-  card.append(configCardBody(state, item, data));
-  return card;
-}
-
-function baseCard(className, item) {
-  const card = document.createElement("article");
-  card.className = className;
-  card.style.transform = `translate(${item.x}px, ${item.y}px)`;
-  return card;
-}
-
-function configCardBody(state, item, data) {
-  if (item.kind === "pipeline") {
-    const button = document.createElement("button");
-    button.className = "card-button";
-    button.type = "button";
-    button.append(...configCardContents(state, item, data));
-    button.addEventListener("click", () => requestPipeline(item.name));
-    return button;
-  }
-  const body = document.createElement("div");
-  body.append(...configCardContents(state, item, data));
-  return body;
-}
-
-function configCardContents(state, item, data) {
+function configCardContent(state, item, data) {
   return [
-    title(item.name),
-    detailFor(item, data),
-    chipRow(chipsFor(state, item, data)),
-    stepList(state, item),
-    findingList([...(state.findingsByItem?.[item.id] ?? [])]),
-  ].filter(Boolean);
+    h("p", { className: "kind-label", key: "kind" }, item.kind.replace("-", " ")),
+    h("h2", { key: "title" }, item.name),
+    h("p", { className: "detail", key: "detail", title: detailText(item, data) }, detailText(item, data)),
+    h(Chips, { key: "chips", chips: chipsFor(state, item, data) }),
+    item.kind === "pipeline" ? h(StepBadges, { key: "steps", state, name: item.name }) : null,
+    h(Findings, { key: "findings", findings: state.findingsByItem?.[item.id] ?? [] }),
+  ];
 }
 
-function dataFor(state, item) {
-  const view = state.config?.view ?? {};
-  const sources = {
-    assignment: view.assignments ?? [],
-    role: view.roles ?? [],
-    repo: view.repos ?? [],
-    pipeline: view.pipelines ?? [],
-  };
+function configData(state, item) {
+  const view = state.config?.view ?? emptyConfigView();
+  const sources = { assignment: view.assignments, role: view.roles, repo: view.repos, pipeline: view.pipelines };
   if (item.kind === "work-source") {
-    return (view.assignments ?? []).find((assignment) => `work-source:${assignment.name}` === item.id);
+    return view.assignments.find((assignment) => `work-source:${assignment.name}` === item.id) ?? {};
   }
   return (sources[item.kind] ?? []).find((value) => value.name === item.name) ?? {};
-}
-
-function detailFor(item, data) {
-  const detail = document.createElement("p");
-  detail.className = "detail";
-  detail.textContent = detailText(item, data);
-  return detail;
 }
 
 function detailText(item, data) {
@@ -275,187 +196,219 @@ function detailText(item, data) {
 
 function chipsFor(state, item, data) {
   if (item.kind === "work-source") {
-    return [data.work?.filter, approvalChip(data.work?.approvalLabel)].filter(Boolean).map(labelChip);
+    return [data.work?.filter, data.work?.approvalLabel ? `approval: ${data.work.approvalLabel}` : null].filter(Boolean).map((text) => ({ text }));
   }
   if (item.kind === "assignment") {
-    return limitChips(data.limits ?? {});
+    return Object.entries(data.limits ?? {}).filter(([, value]) => value != null).map(([name, value]) => ({ text: `${name}: ${value}` }));
   }
   if (item.kind === "role") {
-    return (data.permissions ?? []).map((permission) => permissionChip(permission, data.usedBy ?? []));
+    return (data.permissions ?? []).map((permission) => ({ text: permission, refs: data.usedBy ?? [], className: "permission-chip" }));
   }
   if (item.kind === "repo") {
-    return repoChips(state, data);
+    const primaries = (state.config?.view?.assignments ?? []).filter((assignment) => assignment.primaryRepo === data.name);
+    return [{ text: data.access }, ...primaries.map((assignment) => ({ text: `primary: ${assignment.name}` }))];
   }
-  return pipelineChips(state, data);
+  const counts = state.pipelines?.[data.name]?.summary?.kindCounts ?? {};
+  return Object.entries(counts).map(([kind, count]) => ({ text: `${kind}×${count}` }));
 }
 
-function labelChip(text) {
-  return { text };
-}
-
-function approvalChip(label) {
-  return label ? `approval: ${label}` : null;
-}
-
-function limitChips(limits) {
-  return Object.entries(limits)
-    .filter(([, value]) => value != null)
-    .map(([name, value]) => ({ text: `${name}: ${value}` }));
-}
-
-function permissionChip(permission, refs) {
-  return { text: permission, className: "permission-chip", refs };
-}
-
-function repoChips(state, repo) {
-  const primaries = (state.config?.view?.assignments ?? []).filter((assignment) => assignment.primaryRepo === repo.name);
-  return [labelChip(repo.access), ...primaries.map((assignment) => labelChip(`primary: ${assignment.name}`))];
-}
-
-function pipelineChips(state, pipeline) {
-  const pipelineSummary = state.pipelines?.[pipeline.name]?.summary ?? { kindCounts: {} };
-  return Object.entries(pipelineSummary.kindCounts).map(([kind, count]) => labelChip(`${kind}×${count}`));
-}
-
-function chipRow(chips) {
-  if (chips.length === 0) {
+function Chips({ chips }) {
+  if (!chips?.length) {
     return null;
   }
-  const row = document.createElement("div");
-  row.className = "chips";
-  row.append(...chips.map(chipElement));
-  return row;
+  return h("div", { className: "chips" }, chips.map((chip) => h(Chip, { key: `${chip.text}:${chip.refs?.join("|") ?? ""}`, chip })));
 }
 
-function chipElement(chip) {
-  const element = document.createElement("span");
-  element.className = `chip ${chip.className ?? ""}`.trim();
-  element.textContent = chip.text;
-  if (chip.refs) {
-    element.tabIndex = 0;
-    element.addEventListener("pointerenter", () => setHighlights(chip.refs));
-    element.addEventListener("pointerleave", clearHighlights);
-    element.addEventListener("focus", () => setHighlights(chip.refs));
-    element.addEventListener("blur", clearHighlights);
-  }
-  return element;
+function Chip({ chip }) {
+  return h("span", {
+    className: `chip ${chip.className ?? ""}`.trim(),
+    tabIndex: chip.refs ? 0 : undefined,
+    onPointerEnter: chip.refs ? () => setHighlights(chip.refs) : undefined,
+    onPointerLeave: chip.refs ? clearHighlights : undefined,
+    onFocus: chip.refs ? () => setHighlights(chip.refs) : undefined,
+    onBlur: chip.refs ? clearHighlights : undefined,
+  }, chip.text);
 }
 
-function stepList(state, item) {
-  if (item.kind !== "pipeline") {
+function StepBadges({ state, name }) {
+  const steps = state.pipelines?.[name]?.summary?.agentSteps ?? [];
+  if (steps.length === 0) {
     return null;
   }
-  const steps = state.pipelines?.[item.name]?.summary?.agentSteps ?? [];
-  const list = document.createElement("div");
-  list.className = "step-list";
-  list.append(...steps.map((step) => stepBadge(state, step)));
-  return list;
+  return h("div", { className: "step-list" }, steps.map((step) => h("span", { key: step.ref, className: "step-badge", "data-ref": step.ref }, `${step.name} · ${step.role} · trust: ${step.trust ?? "role"}`)));
 }
 
-function stepBadge(state, step) {
-  const badge = document.createElement("span");
-  const findings = findingList(state.findingsByStep?.[step.ref] ?? []);
-  badge.className = "step-badge";
-  badge.dataset.ref = step.ref;
-  badge.textContent = `${step.name} · ${step.role} · trust: ${step.trust ?? "role"}`;
-  if (findings) {
-    badge.append(findings);
-  }
-  return badge;
-}
-
-function pipelineToolbar(name) {
-  const toolbar = document.createElement("div");
-  toolbar.className = "pipeline-toolbar";
-  toolbar.append(backButton(), title(name), legend());
-  return toolbar;
-}
-
-function backButton() {
-  const button = document.createElement("button");
-  button.className = "back-button";
-  button.type = "button";
-  button.textContent = "Back to config";
-  button.addEventListener("click", backToConfig);
-  return button;
-}
-
-function legend() {
-  const row = document.createElement("div");
-  row.className = "legend";
-  row.setAttribute("aria-label", "Edge legend");
-  row.append(
-    legendItem("success", "var(--bureau-teal)"),
-    legendItem("failure", "var(--bureau-red)"),
-    legendItem("blocked", "var(--bureau-amber)"),
-    legendItem("no-work", "var(--bureau-grey)"),
-    legendItem("data dashed", "var(--bureau-blue)"),
-    legendItem("observes dotted", "var(--bureau-yellow)"),
+function PipelineView({ state, selectedStep, setSelectedStep }) {
+  const name = state.selectedPipeline.name;
+  const pipeline = state.pipelines?.[name];
+  const flow = useMemo(() => toFlow(pipeline, state, selectedStep), [pipeline, state, selectedStep]);
+  return h(
+    "section",
+    { className: "view-shell view-shell--pipeline" },
+    h(
+      "section",
+      { className: "pipeline-main" },
+      h("div", { className: "pipeline-toolbar" }, h("button", { className: "back-button", type: "button", onClick: backToConfig }, "Back to config"), h("h2", {}, name)),
+      h(
+        "div",
+        { className: "pipeline-flow" },
+        h(ReactFlow, {
+          nodes: flow.nodes,
+          edges: flow.edges,
+          nodeTypes: flowItemTypes,
+          fitView: true,
+          fitViewOptions: { padding: 0.22 },
+          minZoom: 0.2,
+          maxZoom: 1.5,
+          nodesDraggable: false,
+          nodesConnectable: false,
+          elementsSelectable: true,
+          proOptions: { hideAttribution: true },
+          onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
+        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
+      ),
+    ),
+    h(SidePanel, { state, pipeline, name }),
   );
-  return row;
 }
 
-function legendItem(text, color) {
-  const item = document.createElement("span");
-  const swatch = document.createElement("span");
-  swatch.className = "legend-swatch";
-  swatch.style.setProperty("--swatch", color);
-  item.append(swatch, ` ${text}`);
-  return item;
+function toFlow(pipeline, state, selectedStep) {
+  const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
+  const handles = pipeline?.handles ?? { items: {}, edges: {} };
+  const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame));
+  const steps = layout.steps.map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep));
+  const terminals = layout.terminals.map((terminal) => flowTerminal(terminal, handles.items[terminal.id]));
+  const backIndexes = routeIndexes(layout.edges, "back");
+  return {
+    nodes: [...frames, ...steps, ...terminals],
+    edges: layout.edges.map((edge) => flowEdge(edge, handles.edges[edge.id], backIndexes.get(edge.id) ?? 0)),
+  };
 }
 
-function concurrentBoxes(steps) {
-  const byId = new Map(steps.map((step) => [step.id, step]));
-  return steps.filter((step) => step.kind === "concurrent").map((step) => concurrentBox(step, byId));
+function flowFrame(frame) {
+  return {
+    id: frame.id,
+    type: "concurrentFrame",
+    position: { x: frame.x - FRAME_PAD, y: frame.y - FRAME_PAD },
+    data: { frame },
+    style: { width: frame.width + CARD_WIDTH + FRAME_PAD * 2, height: frame.height + CARD_HEIGHT + FRAME_PAD * 2 },
+    selectable: false,
+    draggable: false,
+    zIndex: -1,
+  };
 }
 
-function concurrentBox(step, byId) {
-  const members = (step.fields.members ?? []).map((member) => byId.get(member)).filter(Boolean);
-  const left = Math.min(step.x, ...members.map((member) => member.x)) - MEMBER_PAD;
-  const top = Math.min(step.y, ...members.map((member) => member.y)) - MEMBER_PAD;
-  const right = Math.max(step.x + CARD_WIDTH, ...members.map((member) => member.x + CARD_WIDTH)) + MEMBER_PAD;
-  const bottom = Math.max(step.y + CARD_HEIGHT, ...members.map((member) => member.y + CARD_HEIGHT)) + MEMBER_PAD;
-  const box = document.createElement("div");
-  box.className = "concurrent-box";
-  box.style.transform = `translate(${left}px, ${top}px)`;
-  box.style.width = `${right - left}px`;
-  box.style.height = `${bottom - top}px`;
-  return box;
+function flowStep(step, state, pipelineName, handles, selectedStep) {
+  const ref = `pipeline:${pipelineName}/${step.name}`;
+  return {
+    id: step.id,
+    type: "stepCard",
+    position: { x: step.x, y: step.y },
+    data: { step, handles: handles ?? emptyHandles(), findings: state.findingsByStep?.[ref] ?? [], selected: selectedStep === step.name },
+    style: { width: CARD_WIDTH },
+    draggable: false,
+  };
 }
 
-function stepCard(state, pipelineName, step) {
-  const className = [
-    "card",
-    "step-card",
-    `card--${step.kind}`,
-    step.parentId ? "card--member" : "",
-    selectedStep === step.name ? "is-highlighted" : "",
-    unreachableClass(state, pipelineName, step),
-  ].filter(Boolean).join(" ");
-  const card = baseCard(className, step);
-  const button = document.createElement("button");
-  button.className = "step-button";
-  button.type = "button";
-  button.append(...[title(step.name), stepDetail(step), stepChips(step), findingList(state.findingsByStep?.[`pipeline:${pipelineName}/${step.name}`] ?? [])].filter(Boolean));
-  button.addEventListener("click", () => selectStep(step.name));
-  card.dataset.ref = `pipeline:${pipelineName}/${step.name}`;
-  card.append(button);
-  return card;
+function flowTerminal(terminal, handles) {
+  return {
+    id: terminal.id,
+    type: "terminalPill",
+    position: { x: terminal.x, y: terminal.y + 26 },
+    data: { terminal, handles: handles ?? emptyHandles() },
+    style: { width: 136 },
+    draggable: false,
+  };
 }
 
-function unreachableClass(state, pipelineName, step) {
-  const findings = state.findingsByStep?.[`pipeline:${pipelineName}/${step.name}`] ?? [];
-  return findings.some((finding) => /unreachable/i.test(finding.message ?? "")) ? "card--unreachable" : "";
+function flowEdge(edge, endpoints, backIndex) {
+  const key = edge.relation === "control" ? edge.outcome : edge.relation;
+  return {
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: endpoints?.source,
+    targetHandle: endpoints?.target,
+    type: "smoothstep",
+    className: `flow-edge--${key}`,
+    pathOptions: { offset: edge.route === "back" ? 26 + backIndex * 12 : 12 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: edgeColors[key] ?? edgeColors.success },
+  };
+}
+
+function routeIndexes(edges, route) {
+  const counts = new Map();
+  const indexes = new Map();
+  for (const edge of edges.filter((edge) => edge.route === route)) {
+    const key = edge.target;
+    const index = counts.get(key) ?? 0;
+    counts.set(key, index + 1);
+    indexes.set(edge.id, index);
+  }
+  return indexes;
+}
+
+function StepCard({ data }) {
+  const step = data.step;
+  const className = ["flow-card", `flow-card--${step.kind}`, step.parentId ? "flow-card--member" : "", data.selected ? "is-highlighted" : "", unreachableClass(data.findings)].filter(Boolean).join(" ");
+  return h(
+    "article",
+    { className },
+    h(Handles, { handles: data.handles }),
+    h("button", { className: "step-button", type: "button" },
+      h("p", { className: "kind-label" }, step.kind),
+      h("h2", {}, step.name),
+      h("p", { className: "detail", title: stepDetail(step) }, stepDetail(step)),
+      h(Chips, { chips: stepChips(step) }),
+      h(Findings, { findings: data.findings }),
+    ),
+  );
+}
+
+function TerminalPill({ data }) {
+  return h("article", { className: "flow-card terminal-pill" }, h(Handles, { handles: data.handles }), h("h2", {}, data.terminal.name));
+}
+
+function ConcurrentFrame() {
+  return h("div", { className: "concurrent-frame" });
+}
+
+function Handles({ handles }) {
+  return [
+    ...(handles.target ?? []).map((handle, index, list) => handleElement(handle, "target", index, list)),
+    ...(handles.source ?? []).map((handle, index, list) => handleElement(handle, "source", index, list)),
+  ];
+}
+
+function handleElement(handle, type, index, list) {
+  return h(Handle, {
+    key: `${type}:${handle.id}`,
+    id: handle.id,
+    type,
+    position: handlePosition(handle.side),
+    isConnectable: false,
+    className: `flow-handle flow-handle--${handle.name}`,
+    style: handleStyle(handle.side, index, list),
+  });
+}
+
+function handlePosition(side) {
+  return { top: Position.Top, right: Position.Right, bottom: Position.Bottom, left: Position.Left }[side];
+}
+
+function handleStyle(side, index, list) {
+  const percent = list.length <= 1 ? 50 : 22 + (index * 56) / (list.length - 1);
+  if (side === "left" || side === "right") {
+    return { top: `${percent}%` };
+  }
+  return { left: `${percent}%` };
+}
+
+function emptyHandles() {
+  return { source: [], target: [] };
 }
 
 function stepDetail(step) {
-  const line = document.createElement("p");
-  line.className = "detail";
-  line.textContent = stepDetailText(step);
-  return line;
-}
-
-function stepDetailText(step) {
   if (step.kind === "deterministic") {
     return step.fields.run ?? "run command not set";
   }
@@ -469,40 +422,68 @@ function stepDetailText(step) {
 }
 
 function stepChips(step) {
-  const chips = [
+  return [
     step.parentId ? { text: `member of ${step.parentId}` } : null,
     step.fields.trust ? { text: `trust: ${step.fields.trust}` } : null,
     step.fields.maxAttempts > 1 ? { text: `attempts: ${step.fields.maxAttempts}` } : null,
   ].filter(Boolean);
-  return chipRow(chips) ?? document.createElement("span");
 }
 
-function terminalCard(terminal) {
-  const card = baseCard("card step-card card--terminal", terminal);
-  card.append(title(terminal.name));
-  return card;
+function unreachableClass(findings) {
+  return findings.some((finding) => /unreachable/i.test(finding.message ?? "")) ? "flow-card--unreachable" : "";
 }
 
-function findingList(findings) {
-  if (!findings || findings.length === 0) {
+function SidePanel({ state, pipeline, name }) {
+  const findings = pipelineFindings(state, name);
+  return h(
+    "aside",
+    { className: "side-panel" },
+    h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
+    h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
+    h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
+    h("section", { className: "panel-section" }, h("h3", {}, "Trust flow"), h("p", { className: "muted" }, "Reserved for trust analysis.")),
+  );
+}
+
+function pipelineCounts(pipeline) {
+  const steps = pipeline?.layout?.steps?.length ?? 0;
+  const terminals = pipeline?.layout?.terminals?.length ?? 0;
+  const edges = pipeline?.layout?.edges?.length ?? 0;
+  return `${steps} steps · ${terminals} terminals · ${edges} edges`;
+}
+
+function pipelineFindings(state, name) {
+  return (state.findings ?? []).filter((finding) => {
+    const target = finding.target ?? {};
+    return target.pipeline === name || target.kind === "pipeline" && target.pipeline === name;
+  });
+}
+
+function Legend() {
+  return h("div", { className: "legend" }, [
+    legendItem("success", "var(--outcome-success)"),
+    legendItem("failure", "var(--outcome-failure)"),
+    legendItem("blocked", "var(--outcome-blocked)"),
+    legendItem("no-work", "var(--outcome-no-work)"),
+    legendItem("inputs_from", "var(--relation-data)", "legend-swatch--data"),
+    legendItem("over", "var(--relation-observes)", "legend-swatch--observes"),
+  ]);
+}
+
+function legendItem(text, color, className = "") {
+  return h("span", { className: "legend-item", key: text }, h("span", { className: `legend-swatch ${className}`.trim(), style: { "--swatch": color } }), ` ${text}`);
+}
+
+function Findings({ findings, className = "findings" }) {
+  if (!findings?.length) {
     return null;
   }
-  const list = document.createElement("div");
-  list.className = "findings";
-  renderFindings(list, findings);
-  return list;
+  return h("div", { className }, findings.map((finding, index) => h("span", { className: findingClass(finding), key: `${finding.message}:${index}` }, finding.message)));
 }
 
-function renderFindings(container, findings) {
-  container.replaceChildren(...findings.map(findingElement));
-}
-
-function findingElement(finding) {
-  const element = document.createElement("span");
+function findingClass(finding) {
   const advisory = finding.marker === "advisory" || finding.source === "advisory";
-  element.className = `finding ${advisory ? "finding--advisory" : "finding--validation"}`;
-  element.textContent = finding.message;
-  return element;
+  return `finding ${advisory ? "finding--advisory" : "finding--validation"}`;
 }
 
 function setHighlights(refs) {
@@ -519,53 +500,24 @@ function clearHighlights() {
   }
 }
 
-function selectStep(name) {
-  selectedStep = name;
-  for (const element of document.querySelectorAll(".step-card")) {
-    element.classList.toggle("is-highlighted", element.textContent.includes(name));
-  }
+function selectPipeline(name) {
+  postIntent({ kind: "open-pipeline", pipeline: name }).then(publishLocalState);
 }
 
-async function requestPipeline(name) {
-  const result = await postIntent({ kind: "open-pipeline", pipeline: name });
+function backToConfig() {
+  postIntent({ kind: "back-to-config" }).then(publishLocalState);
+}
+
+function publishLocalState(result) {
   if (result?.ok) {
-    render(result.state);
+    window.dispatchEvent(new CustomEvent("bureau-state", { detail: result.state }));
   }
 }
 
-async function backToConfig() {
-  const result = await postIntent({ kind: "back-to-config" });
-  if (result?.ok) {
-    selectedStep = null;
-    render(result.state);
-  }
-}
-
-async function postIntent(body) {
-  const response = await fetch("./intent", {
+function postIntent(body) {
+  return fetch("./intent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  return response.ok ? response.json() : null;
-}
-
-function renderDrillDown(selected) {
-  drillDown.hidden = !selected;
-  drillDown.replaceChildren();
-  if (selected) {
-    drillDown.append(textLine(selected.missing ? `${selected.name} is not present.` : "Select a step to inspect it. No edits are available in this view."));
-  }
-}
-
-function title(text) {
-  const heading = document.createElement("h2");
-  heading.textContent = text;
-  return heading;
-}
-
-function textLine(text) {
-  const line = document.createElement("p");
-  line.textContent = text ?? "";
-  return line;
+  }).then((response) => response.ok ? response.json() : null);
 }

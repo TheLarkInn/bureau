@@ -1,0 +1,14 @@
+name: agent-eligible-pipeline
+steps:
+- name: start
+  type: deterministic
+  run: cargo test --offline
+  next: verify
+  on_failure: escalate
+- name: verify
+  type: deterministic
+  run: cargo test --offline
+  role: null
+  next: done
+  on_failure: escalate
+  inputs_from: [start]

@@ -4,25 +4,47 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Bureau</title>
+    <!-- Module URLs are pinned here; keep the stylesheet version below in lockstep because CSS links cannot use import-map aliases. -->
+    <link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.3.5/dist/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+          "react-dom": "https://esm.sh/react-dom@18.3.1?external=react",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
+          "@xyflow/react": "https://esm.sh/@xyflow/react@12.3.5?external=react,react-dom"
+        }
+      }
+    </script>
     <style>
       :root {
         color-scheme: light dark;
-        --bureau-space-1: 0.25rem;
-        --bureau-space-2: 0.5rem;
-        --bureau-space-3: 0.75rem;
-        --bureau-space-4: 1rem;
-        --bureau-card-width: 13.5rem;
-        --bureau-card-min-height: 7rem;
-        --bureau-radius: 0.5rem;
-        --bureau-grey: var(--text-color-muted, #656d76);
-        --bureau-blue: var(--true-color-blue, #0969da);
-        --bureau-magenta: var(--true-color-pink, #bf3989);
-        --bureau-teal: var(--true-color-green, #1a7f37);
-        --bureau-yellow: var(--true-color-yellow, #9a6700);
-        --bureau-red: var(--true-color-red, #cf222e);
-        --bureau-amber: var(--true-color-yellow, #9a6700);
-        --bureau-red-muted: var(--true-color-red-muted, #ffebe9);
-        --bureau-yellow-muted: var(--true-color-yellow-muted, #fff8c5);
+        --space-1: 0.25rem;
+        --space-2: 0.5rem;
+        --space-3: 0.75rem;
+        --space-4: 1rem;
+        --space-5: 1.5rem;
+        --radius: 0.625rem;
+        --card-width: 15rem;
+        --kind-work-source: var(--text-color-muted, #656d76);
+        --kind-assignment: var(--true-color-blue, #0969da);
+        --kind-role: var(--true-color-purple, #8250df);
+        --kind-repo: var(--true-color-green, #1a7f37);
+        --kind-pipeline: var(--true-color-yellow, #9a6700);
+        --kind-deterministic: var(--true-color-blue, #0969da);
+        --kind-agent: var(--true-color-purple, #8250df);
+        --kind-decision: var(--true-color-yellow, #9a6700);
+        --kind-concurrent: var(--true-color-green, #1a7f37);
+        --kind-terminal: var(--text-color-muted, #656d76);
+        --outcome-success: var(--true-color-green, #1a7f37);
+        --outcome-failure: var(--true-color-red, #cf222e);
+        --outcome-blocked: var(--true-color-yellow, #9a6700);
+        --outcome-no-work: var(--text-color-muted, #656d76);
+        --relation-data: var(--true-color-blue, #0969da);
+        --relation-observes: var(--true-color-purple, #8250df);
+        --finding-validation: var(--true-color-red-muted, #ffebe9);
+        --finding-advisory: var(--true-color-yellow-muted, #fff8c5);
       }
 
       body {
@@ -34,281 +56,418 @@
         line-height: var(--leading-body-medium, 20px);
       }
 
-      main {
-        display: grid;
-        gap: var(--bureau-space-4);
-        min-width: max-content;
-        padding: var(--bureau-space-4);
-      }
+      button { font: inherit; }
 
-      header {
-        display: flex;
-        align-items: start;
-        justify-content: space-between;
-        gap: var(--bureau-space-4);
-      }
-
-      h1,
-      h2,
-      p {
-        margin: 0;
-      }
+      h1, h2, h3, p { margin: 0; }
 
       h1 {
-        font-family: var(--font-sans-display, var(--font-sans, sans-serif));
-        font-size: var(--text-title-large, 26px);
-        font-weight: var(--font-weight-semibold, 600);
-        line-height: var(--leading-title-large, 32px);
+        font-size: 1.25rem;
+        line-height: 1.5rem;
+        font-weight: 700;
       }
 
       h2 {
-        font-size: var(--text-body-medium, 14px);
-        font-weight: var(--font-weight-semibold, 600);
+        font-size: 1rem;
+        line-height: 1.25rem;
+        font-weight: 700;
       }
 
-      code {
+      h3 {
+        font-size: 0.78rem;
+        line-height: 1rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-color-muted, #656d76);
+        font-weight: 700;
+      }
+
+      code, .mono {
         font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
         font-size: var(--text-code-inline, 12px);
       }
 
-      .muted,
-      .detail {
+      .app-shell {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 100vh;
+        background: var(--background-color-default, #ffffff);
+      }
+
+      .app-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--space-5);
+        padding: var(--space-4) var(--space-5);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+      }
+
+      .summary, .muted, .detail {
         color: var(--text-color-muted, #656d76);
       }
 
-      .toolbar,
-      .chips,
-      .step-list,
-      .findings {
+      .status {
+        display: grid;
+        gap: var(--space-1);
+        max-width: 40rem;
+        text-align: right;
+        color: var(--text-color-muted, #656d76);
+      }
+
+      .findings, .chips, .step-list, .legend {
         display: flex;
         flex-wrap: wrap;
-        gap: var(--bureau-space-2);
+        gap: var(--space-2);
       }
 
-      .chip,
-      .finding,
-      .step-badge {
+      .general-findings {
+        padding: var(--space-3) var(--space-5) 0;
+      }
+
+      .chip, .finding, .step-badge, .legend-item {
         border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: var(--bureau-radius);
-        padding: var(--bureau-space-1) var(--bureau-space-2);
+        border-radius: 999px;
+        padding: 0.125rem 0.5rem;
         background: var(--background-color-default, #ffffff);
         color: var(--text-color-default, #1f2328);
-        font: inherit;
+        white-space: nowrap;
       }
 
-      .permission-chip {
-        cursor: help;
+      .finding--validation { background: var(--finding-validation); }
+      .finding--advisory { background: var(--finding-advisory); }
+
+      .view-shell {
+        display: grid;
+        gap: var(--space-4);
+        padding: var(--space-5);
       }
 
-      .status,
-      .placeholder {
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: var(--bureau-radius);
-        padding: var(--bureau-space-3);
+      .view-shell--pipeline {
+        grid-template-columns: minmax(50rem, 1fr) 19rem;
+        min-height: 0;
       }
 
       .surface {
         position: relative;
-        overflow: auto;
+        min-height: 42rem;
         border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: var(--bureau-radius);
-        min-height: calc(var(--bureau-card-min-height) * 4);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        overflow: auto;
       }
 
-      .edge-layer,
-      .card-layer {
+      .config-surface {
+        min-width: max-content;
+      }
+
+      .edge-layer, .card-layer {
         position: absolute;
         inset: 0;
       }
 
-      .edge-layer {
-        color: var(--border-color-default, #d0d7de);
-        pointer-events: none;
+      .edge-layer { pointer-events: none; }
+
+      .edge-path {
+        fill: none;
+        stroke: var(--border-color-default, #d0d7de);
+        stroke-width: 2;
+      }
+
+      .card, .flow-card {
+        box-sizing: border-box;
+        display: grid;
+        gap: var(--space-2);
+        width: var(--card-width);
+        min-height: 7rem;
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-top: 4px solid var(--accent, var(--kind-terminal));
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        box-shadow: 0 10px 24px rgba(31, 35, 40, 0.08);
       }
 
       .card {
         position: absolute;
-        box-sizing: border-box;
-        display: grid;
-        gap: var(--bureau-space-2);
-        width: var(--bureau-card-width);
-        min-height: var(--bureau-card-min-height);
-        padding: var(--bureau-space-3);
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-top: var(--bureau-space-1) solid var(--accent, var(--bureau-grey));
-        border-radius: var(--bureau-radius);
-        background: var(--background-color-default, #ffffff);
-        box-shadow: none;
       }
 
-      .card--work-source { --accent: var(--bureau-grey); }
-      .card--assignment { --accent: var(--bureau-blue); }
-      .card--role { --accent: var(--bureau-magenta); }
-      .card--repo { --accent: var(--bureau-teal); }
-      .card--pipeline { --accent: var(--bureau-yellow); }
-
-      .card--orphan {
-        outline: 1px dashed var(--border-color-default, #d0d7de);
-        outline-offset: var(--bureau-space-1);
-      }
-
-      .card-button {
-        display: grid;
-        gap: var(--bureau-space-2);
-        padding: 0;
+      .card-button, .step-button, .back-button {
         border: 0;
         background: transparent;
         color: inherit;
-        font: inherit;
-        text-align: start;
+        text-align: left;
         cursor: pointer;
-      }
-
-      .card-button:focus-visible,
-      .permission-chip:focus-visible {
-        outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: var(--bureau-space-1);
-      }
-
-      .finding--validation {
-        background: var(--bureau-red-muted);
-      }
-
-      .finding--advisory {
-        background: var(--bureau-yellow-muted);
-      }
-
-      .has-highlight .card,
-      .has-highlight .step-badge {
-        opacity: var(--bureau-dim-opacity, 0.35);
-      }
-
-      .has-highlight .is-highlighted,
-      .step-card.is-highlighted {
-        opacity: 1;
-        outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: var(--bureau-space-1);
-      }
-      .pipeline-toolbar,
-      .legend {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: var(--bureau-space-2);
       }
 
       .back-button {
         border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: var(--bureau-radius);
-        padding: var(--bureau-space-1) var(--bureau-space-2);
+        border-radius: 999px;
+        padding: var(--space-1) var(--space-3);
         background: var(--background-color-default, #ffffff);
-        color: var(--text-color-default, #1f2328);
-        font: inherit;
-        cursor: pointer;
       }
 
-      .back-button:focus-visible,
-      .step-button:focus-visible {
+      .card-button, .step-button {
+        display: grid;
+        gap: var(--space-2);
+        width: 100%;
+        padding: 0;
+      }
+
+      .card-button:focus-visible, .step-button:focus-visible, .back-button:focus-visible, .permission-chip:focus-visible {
         outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: var(--bureau-space-1);
+        outline-offset: 2px;
+      }
+
+      .card--work-source { --accent: var(--kind-work-source); }
+      .card--assignment { --accent: var(--kind-assignment); }
+      .card--role { --accent: var(--kind-role); }
+      .card--repo { --accent: var(--kind-repo); }
+      .card--pipeline { --accent: var(--kind-pipeline); }
+      .card--orphan { outline: 1px dashed var(--border-color-default, #d0d7de); outline-offset: 4px; }
+
+      .kind-label {
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-color-muted, #656d76);
+      }
+
+      .detail {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .pipeline-main {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: var(--space-3);
+        min-width: 0;
+      }
+
+      .pipeline-toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+
+      .pipeline-flow {
+        min-height: 44rem;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        overflow: hidden;
+      }
+
+      .flow-card {
+        width: 15rem;
+      }
+
+      .flow-card--deterministic { --accent: var(--kind-deterministic); }
+      .flow-card--agent { --accent: var(--kind-agent); }
+      .flow-card--decision { --accent: var(--kind-decision); }
+      .flow-card--concurrent { --accent: var(--kind-concurrent); }
+      .flow-card--member { background: var(--background-color-default, #ffffff); }
+      .flow-card--unreachable { outline: 2px dashed var(--outcome-failure); outline-offset: 4px; }
+
+      .terminal-pill {
+        width: 8.5rem;
+        min-height: auto;
+        justify-items: center;
+        border-radius: 999px;
+        --accent: var(--kind-terminal);
+      }
+
+      .concurrent-frame {
+        border: 1px dashed var(--kind-concurrent);
+        border-radius: calc(var(--radius) + 0.25rem);
+        background: transparent;
+      }
+
+      .flow-handle {
+        width: 0.65rem;
+        height: 0.65rem;
+        border: 2px solid var(--background-color-default, #ffffff);
+        background: var(--handle-color, var(--border-color-default, #d0d7de));
+      }
+
+      .flow-handle--success { --handle-color: var(--outcome-success); }
+      .flow-handle--failure { --handle-color: var(--outcome-failure); }
+      .flow-handle--blocked { --handle-color: var(--outcome-blocked); }
+      .flow-handle--no-work { --handle-color: var(--outcome-no-work); }
+      .flow-handle--data { --handle-color: var(--relation-data); }
+      .flow-handle--observes { --handle-color: var(--relation-observes); }
+      .flow-handle--loop { --handle-color: var(--outcome-failure); }
+
+      .react-flow__edge-path { stroke-width: 2.4; }
+      .flow-edge--success .react-flow__edge-path { stroke: var(--outcome-success); }
+      .flow-edge--failure .react-flow__edge-path { stroke: var(--outcome-failure); }
+      .flow-edge--blocked .react-flow__edge-path { stroke: var(--outcome-blocked); }
+      .flow-edge--no-work .react-flow__edge-path { stroke: var(--outcome-no-work); }
+      .flow-edge--data .react-flow__edge-path { stroke: var(--relation-data); stroke-dasharray: 7 5; }
+      .flow-edge--observes .react-flow__edge-path { stroke: var(--relation-observes); stroke-dasharray: 2 5; }
+
+      .react-flow__minimap { background: var(--background-color-default, #ffffff); border: 1px solid var(--border-color-default, #d0d7de); }
+      .react-flow__controls { box-shadow: none; border: 1px solid var(--border-color-default, #d0d7de); }
+      .react-flow__controls-button { background: var(--background-color-default, #ffffff); border-bottom-color: var(--border-color-default, #d0d7de); color: var(--text-color-default, #1f2328); }
+      .react-flow__background { color: var(--border-color-default, #d0d7de); }
+
+      .side-panel {
+        display: grid;
+        align-content: start;
+        gap: var(--space-4);
+        padding: var(--space-4);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+
+      .panel-section {
+        display: grid;
+        gap: var(--space-2);
       }
 
       .legend-swatch {
         display: inline-block;
-        width: var(--bureau-space-4);
-        height: var(--bureau-space-1);
-        border-radius: var(--bureau-radius);
-        background: var(--swatch, var(--bureau-grey));
+        width: 1.25rem;
+        height: 0.25rem;
+        border-radius: 999px;
+        background: var(--swatch, var(--border-color-default, #d0d7de));
         vertical-align: middle;
       }
 
-      .step-card {
-        width: var(--bureau-card-width);
-        min-height: var(--bureau-card-min-height);
-      }
+      .legend-swatch--data { border-top: 2px dashed var(--relation-data); background: transparent; }
+      .legend-swatch--observes { border-top: 2px dotted var(--relation-observes); background: transparent; }
 
-      .step-button {
+      .has-highlight .card, .has-highlight .step-badge { opacity: 0.35; }
+      .has-highlight .is-highlighted, .flow-card.is-highlighted { opacity: 1; outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
+
+      .fallback-shell {
         display: grid;
-        gap: var(--bureau-space-2);
-        width: 100%;
-        padding: 0;
-        border: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        text-align: start;
-        cursor: pointer;
-      }
-
-      .card--deterministic { --accent: var(--bureau-blue); }
-      .card--agent { --accent: var(--bureau-magenta); }
-      .card--decision { --accent: var(--bureau-yellow); }
-      .card--concurrent { --accent: var(--bureau-teal); }
-      .card--terminal {
-        --accent: var(--bureau-grey);
-        min-height: auto;
-        border-radius: 999px;
-      }
-
-      .card--member {
+        gap: var(--space-4);
+        max-width: 52rem;
+        margin: var(--space-5);
+        padding: var(--space-5);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
         background: var(--background-color-default, #ffffff);
       }
 
-      .card--unreachable {
-        outline: 2px dashed var(--bureau-red);
-        outline-offset: var(--bureau-space-1);
+      .fallback-error {
+        white-space: pre-wrap;
+        color: var(--outcome-failure);
       }
 
-      .concurrent-box {
-        position: absolute;
-        box-sizing: border-box;
-        border: 1px dashed var(--bureau-teal);
-        border-radius: var(--bureau-radius);
-        background: transparent;
-        pointer-events: none;
+      .fallback-state {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--space-2) var(--space-3);
       }
 
-      .edge-path {
-        fill: none;
-        stroke-width: 2;
+      .fallback-state dt {
+        color: var(--text-color-muted, #656d76);
       }
 
-      .edge--success { stroke: var(--bureau-teal); }
-      .edge--failure { stroke: var(--bureau-red); }
-      .edge--blocked { stroke: var(--bureau-amber); }
-      .edge--no-work { stroke: var(--bureau-grey); }
-      .edge--data {
-        stroke: var(--bureau-blue);
-        stroke-dasharray: 7 5;
-      }
-      .edge--observes {
-        stroke: var(--bureau-yellow);
-        stroke-dasharray: 2 5;
+      .fallback-state dd {
+        margin: 0;
       }
 
-      .edge-label {
-        fill: var(--text-color-muted, #656d76);
-        font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
-        font-size: var(--text-code-inline, 12px);
-      }
     </style>
   </head>
   <body>
-    <main>
-      <header>
-        <div>
-          <h1>Bureau config</h1>
-          <p id="summary" class="muted">Loading…</p>
-        </div>
-        <div id="status" class="status" aria-live="polite">Waiting for state…</div>
-      </header>
-      <section id="general-findings" class="findings" aria-label="General findings"></section>
-      <section id="config-view" class="surface" aria-label="Bureau config view">
-        <svg id="edges" class="edge-layer" aria-hidden="true"></svg>
-        <div id="cards" class="card-layer"></div>
-      </section>
-      <aside id="drill-down" class="placeholder" hidden></aside>
-    </main>
-    <script type="module" src="./app.mjs"></script>
+    <div id="root"></div>
+    <script type="module">
+      const root = document.querySelector("#root");
+      let renderedFallback = false;
+      let lastError = null;
+
+      window.addEventListener("error", (event) => {
+        lastError = event.error ?? event.message;
+        void showFallback(lastError);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        lastError = event.reason;
+        void showFallback(lastError);
+      });
+      window.addEventListener("bureau-mounted", () => {
+        window.__bureauCanvasMounted = true;
+      });
+
+      setTimeout(() => {
+        if (!window.__bureauCanvasMounted) {
+          void showFallback(lastError ?? new Error("Renderer did not mount before timeout."));
+        }
+      }, 2500);
+
+      try {
+        await import("./app.mjs");
+      } catch (error) {
+        lastError = error;
+        await showFallback(error);
+      }
+
+      async function showFallback(error) {
+        if (window.__bureauCanvasMounted || renderedFallback) {
+          return;
+        }
+        renderedFallback = true;
+        const state = await loadState();
+        root.replaceChildren(fallbackView(error, state));
+      }
+
+      async function loadState() {
+        try {
+          const response = await fetch("./state", { cache: "no-store" });
+          return response.ok ? response.json() : { status: `State request failed: ${response.status}` };
+        } catch (error) {
+          return { status: "State unavailable", validation: { message: String(error) } };
+        }
+      }
+
+      function fallbackView(error, state) {
+        const shell = document.createElement("main");
+        shell.className = "fallback-shell";
+        shell.append(heading(), errorText(error), stateList(state));
+        return shell;
+      }
+
+      function heading() {
+        const block = document.createElement("div");
+        const title = document.createElement("h1");
+        const copy = document.createElement("p");
+        title.textContent = "Bureau renderer could not start";
+        copy.className = "muted";
+        copy.textContent = "The config data is still available below. Check whether the CDN, proxy, or import map blocked the renderer modules.";
+        block.append(title, copy);
+        return block;
+      }
+
+      function errorText(error) {
+        const message = document.createElement("p");
+        message.className = "fallback-error";
+        message.textContent = error?.stack || error?.message || String(error);
+        return message;
+      }
+
+      function stateList(state) {
+        const list = document.createElement("dl");
+        list.className = "fallback-state";
+        addPair(list, "Status", state.status ?? state.validation?.state ?? "unknown");
+        addPair(list, "Config dir", state.validation?.dir ?? state.dir ?? "unknown");
+        addPair(list, "Validation", state.validation?.message ?? `${state.validation?.errors?.length ?? state.validation?.errors ?? 0} errors`);
+        addPair(list, "Assignments", String(state.config?.view?.assignments?.length ?? 0));
+        addPair(list, "Pipelines", String(state.config?.view?.pipelines?.length ?? 0));
+        return list;
+      }
+
+      function addPair(list, label, value) {
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        list.append(term, detail);
+      }
+    </script>
   </body>
 </html>

@@ -1,0 +1,6 @@
+name: codec-absent-outcome
+steps:
+- name: start
+  type: deterministic
+  run: cargo test --offline
+  next: done
