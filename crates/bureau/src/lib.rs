@@ -33,10 +33,11 @@ use std::path::{Path, PathBuf};
 ///
 /// Loading and validation accumulate these into a `Vec` so
 /// `bureau validate` reports every error in one pass.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, serde::Serialize, thiserror::Error)]
 #[error("{}: {message}", .path.display())]
 pub struct ConfigError {
     /// The file (or synthetic `dir/name` path) the error belongs to.
+    #[serde(serialize_with = "display_path")]
     pub path: PathBuf,
     /// What is wrong.
     pub message: String,
@@ -51,4 +52,11 @@ impl ConfigError {
             message: message.to_string(),
         }
     }
+}
+
+fn display_path<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.collect_str(&path.display())
 }
