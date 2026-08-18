@@ -21,8 +21,20 @@ async function readState(dir) {
 }
 
 async function readPipeline(dir) {
-  const text = await readFile(join(dir, "pipelines", "agent-eligible-pipeline.yaml"), "utf8").catch(() => null);
-  return text ? YAML.parse(text) : null;
+  const path = join(dir, "pipelines", "agent-eligible-pipeline.yaml");
+  const text = await retryRead(path);
+  return text ? { text, value: YAML.parse(text) } : null;
+}
+
+async function retryRead(path) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const text = await readFile(path, "utf8").catch(() => null);
+    if (text) {
+      return text;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return null;
 }
 
 function statePayload(dir, state) {
@@ -31,7 +43,7 @@ function statePayload(dir, state) {
 
 function payloadFromPipeline(dir, pipeline) {
   const errors = pipelineErrors(pipeline);
-  return errors.length === 0 ? validPayload(dir, "/bureau:implementer", pipeline) : { ok: false, dir, errors, config: null };
+  return errors.length === 0 ? validPayload(dir, "/bureau:implementer", pipeline.value) : { ok: false, dir, errors, config: null };
 }
 
 function pipelineErrors(pipeline) {
@@ -42,22 +54,26 @@ function pipelineErrors(pipeline) {
 }
 
 function fieldErrors(pipeline) {
-  return (pipeline.steps ?? []).flatMap((item) =>
-    item.name === "verify" && item.type === "deterministic" && item.role
-      ? [{ path: "pipelines/agent-eligible-pipeline.yaml", message: "pipeline `agent-eligible-pipeline` step `verify`: `role` does not apply to deterministic steps" }]
-      : [],
-  );
+  return verifyBlock(pipeline.text).includes("role: implementer")
+    ? [{ path: "pipelines/agent-eligible-pipeline.yaml", message: "pipeline `agent-eligible-pipeline` step `verify`: `role` does not apply to deterministic steps" }]
+    : [];
 }
 
 function targetErrors(pipeline) {
-  const names = new Set([...(pipeline.steps ?? []).map((item) => item.name), "done", "abort", "escalate"]);
-  return (pipeline.steps ?? []).flatMap((item) =>
+  const names = new Set([...(pipeline.value.steps ?? []).map((item) => item.name), "done", "abort", "escalate"]);
+  return (pipeline.value.steps ?? []).flatMap((item) =>
     ["next", "on_failure", "on_blocked", "on_no_work"].flatMap((field) =>
       item[field] && !names.has(item[field])
         ? [{ path: "pipelines/agent-eligible-pipeline.yaml", message: `pipeline \`agent-eligible-pipeline\` step \`${item.name}\`: unknown ${field} target \`${item[field]}\`` }]
         : [],
     ),
   );
+}
+
+function verifyBlock(text) {
+  const start = text.indexOf("- name: verify");
+  const end = text.indexOf("\n- ", start + 1);
+  return text.slice(start, end === -1 ? undefined : end);
 }
 
 function validPayload(dir, agent, pipeline = defaultPipeline()) {

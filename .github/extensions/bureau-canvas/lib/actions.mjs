@@ -1,4 +1,8 @@
 import { findings as loadFindings } from "./findings.mjs";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
+import { parse, render } from "./codec.mjs";
 import { configView, pipelineView } from "./view.mjs";
 
 const SUBJECT_SCHEMA = {
@@ -26,6 +30,55 @@ const FOCUS_SCHEMA = {
   required: ["kind"],
 };
 
+const SET_FIELD_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    pipeline: { type: "string" },
+    step: { type: "string" },
+    field: { type: "string", enum: ["run", "role", "trust", "over", "max_attempts", "timeout_secs"] },
+    value: { type: ["string", "number", "null"] },
+  },
+  required: ["step", "field", "value"],
+};
+
+const REWIRE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    pipeline: { type: "string" },
+    step: { type: "string" },
+    outcome: { type: "string", enum: ["success", "failure", "blocked", "no-work"] },
+    target: { type: ["string", "null"] },
+  },
+  required: ["step", "outcome", "target"],
+};
+
+const SAVE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    pipeline: { type: "string" },
+    force: { type: "boolean" },
+  },
+};
+
+const FIELD_NAMES = new Map([
+  ["run", "run"],
+  ["role", "role"],
+  ["trust", "trust"],
+  ["over", "over"],
+  ["max_attempts", "maxAttempts"],
+  ["timeout_secs", "timeoutSecs"],
+]);
+
+const TERMINALS = new Set(["done", "abort", "escalate"]);
+
+const drafts = new Map();
+
 export const actions = [
   {
     name: "describe",
@@ -45,10 +98,32 @@ export const actions = [
     inputSchema: SUBJECT_SCHEMA,
     handler: reload,
   },
+  {
+    name: "set_field",
+    description: "Set an editable field on a pipeline step and validate the draft.",
+    inputSchema: SET_FIELD_SCHEMA,
+    handler: setField,
+  },
+  {
+    name: "rewire",
+    description: "Point a step outcome at another step or terminal and validate the draft.",
+    inputSchema: REWIRE_SCHEMA,
+    handler: rewire,
+  },
+  {
+    name: "save",
+    description: "Write the validated draft pipeline YAML back to the working tree.",
+    inputSchema: SAVE_SCHEMA,
+    handler: save,
+  },
 ];
 
 export async function describe(ctx, deps = {}) {
   const subject = subjectFor(ctx, deps);
+  const draft = draftFor(ctx, deps, subject);
+  if (draft) {
+    return draftPayload(draft, subject);
+  }
   const result = await loader(deps)(subject.dir);
   return described(result, subject);
 }
@@ -64,9 +139,42 @@ export async function focus(ctx, deps = {}) {
 
 export async function reload(ctx, deps = {}) {
   const subject = subjectFor(ctx, deps);
+  clearDraft(ctx, deps);
   const result = await loader(deps)(subject.dir);
   const payload = described(result, subject);
   rememberSubject(ctx, deps, subject);
+  await publisher(deps)(ctx.instanceId, "state", payload);
+  return payload;
+}
+
+export async function setField(ctx, deps = {}) {
+  return mutate(ctx, deps, (draft, input) => {
+    const step = stepFor(draft.view, input.step);
+    step.fields[FIELD_NAMES.get(input.field)] = input.value;
+  });
+}
+
+export async function rewire(ctx, deps = {}) {
+  return mutate(ctx, deps, (draft, input) => {
+    const key = (edge) => edge.source === input.step && edge.outcome === input.outcome && edge.relation === "control";
+    draft.view.edges = input.target == null ? draft.view.edges.filter((edge) => !key(edge)) : upsertEdge(draft.view.edges, input, key);
+  });
+}
+
+export async function save(ctx, deps = {}) {
+  const subject = subjectFor(ctx, deps);
+  const draft = draftFor(ctx, deps, subject);
+  if (!draft) {
+    return reload(ctx, deps);
+  }
+  const validation = await validateDraft(draft, deps);
+  if (!validation.ok && !ctx.input?.force) {
+    throw new Error(firstMessage(validation));
+  }
+  await writer(deps)(draft.path, render(draft.view, draft.doc, draft.style));
+  clearDraft(ctx, deps);
+  const result = await loader(deps)(subject.dir);
+  const payload = { ...described(result, subject), saved: true, path: draft.path, forced: Boolean(ctx.input?.force) };
   await publisher(deps)(ctx.instanceId, "state", payload);
   return payload;
 }
@@ -83,6 +191,160 @@ function described(result, subject) {
     findings: result.findings ?? [],
     view: scope === "pipeline" ? pipelineView(result, subject.pipeline) : configView(result),
   };
+}
+
+async function mutate(ctx, deps, change) {
+  const subject = subjectFor(ctx, deps);
+  const original = await editableDraft(ctx, deps, subject);
+  const draft = cloneDraft(original);
+  change(draft, ctx.input ?? {});
+  draft.validation = await validateDraft(draft, deps);
+  if (!draft.validation.ok) {
+    throw new Error(firstMessage(draft.validation));
+  }
+  storeDraft(ctx, deps, draft);
+  rememberSubject(ctx, deps, subject);
+  const payload = { ...draftPayload(draft, subject), dirty: true };
+  await publisher(deps)(ctx.instanceId, "state", payload);
+  return payload;
+}
+
+async function editableDraft(ctx, deps, subject) {
+  const draft = draftFor(ctx, deps, subject);
+  return draft ?? loadDraft(subject, deps);
+}
+
+async function loadDraft(subject, deps) {
+  const path = await pipelinePath(subject, deps);
+  const text = await reader(deps)(path, "utf8");
+  const parsed = parse(text, { path: relative(resolve(subject.dir), path).replaceAll("\\", "/") });
+  return { subject, path, ...parsed, validation: null };
+}
+
+function draftPayload(draft, subject) {
+  const validation = draft.validation ?? { ok: true, state: "draft", dir: subject.dir, errors: [], findings: [] };
+  return {
+    scope: "pipeline",
+    subject,
+    ok: validation.ok,
+    state: validation.state,
+    dir: validation.dir ?? subject.dir,
+    errors: validation.errors ?? [],
+    findings: validation.findings ?? [],
+    view: draft.view,
+  };
+}
+
+function draftFor(ctx, deps, subject) {
+  const draft = getDraft(ctx, deps);
+  return draft && sameSubject(draft.subject, subject) ? draft : null;
+}
+
+function sameSubject(left, right) {
+  return resolve(left.dir) === resolve(right.dir) && left.pipeline === right.pipeline;
+}
+
+function getDraft(ctx, deps) {
+  return deps.getDraft?.(ctx.instanceId) ?? drafts.get(ctx.instanceId);
+}
+
+function storeDraft(ctx, deps, draft) {
+  if (deps.setDraft) {
+    deps.setDraft(ctx.instanceId, draft);
+  } else {
+    drafts.set(ctx.instanceId, draft);
+  }
+}
+
+function clearDraft(ctx, deps) {
+  if (deps.clearDraft) {
+    deps.clearDraft(ctx.instanceId);
+  } else {
+    drafts.delete(ctx.instanceId);
+  }
+}
+
+function cloneDraft(draft) {
+  return { ...draft, view: structuredClone(draft.view) };
+}
+
+function stepFor(view, name) {
+  return view.steps.find((step) => step.name === name);
+}
+
+function upsertEdge(edges, input, key) {
+  const target = targetName(input.target);
+  const next = edges.filter((edge) => !key(edge));
+  next.push({
+    id: `control:${input.step}:${input.outcome}->${target}`,
+    source: input.step,
+    target,
+    relation: "control",
+    outcome: input.outcome,
+  });
+  return next;
+}
+
+function targetName(target) {
+  return TERMINALS.has(target) ? `terminal:${target}` : target;
+}
+
+async function validateDraft(draft, deps) {
+  if (deps.validateDraft) {
+    return deps.validateDraft(draft);
+  }
+  const { root, config } = await scratchCopy(draft.subject.dir);
+  try {
+    const destination = join(config, relative(resolve(draft.subject.dir), draft.path));
+    await writer(deps)(destination, render(draft.view, draft.doc, draft.style));
+    return loadValidation(config, deps);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function loadValidation(dir, deps) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = await loader(deps)(dir);
+    if (result.state !== "dir-missing") {
+      return result;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  }
+  return loader(deps)(dir);
+}
+
+async function scratchCopy(dir) {
+  const source = resolve(dir);
+  const root = await mkdtemp(join(tmpdir(), "bureau-canvas-validate-"));
+  const config = join(root, "config");
+  await cp(source, config, { recursive: true });
+  return { root, config };
+}
+
+async function pipelinePath(subject, deps) {
+  const base = resolve(subject.dir);
+  const pipeline = subject.pipeline;
+  const candidates = [join(base, "pipelines", `${pipeline}.yaml`), join(base, "pipelines", `${pipeline}.yml`)];
+  for (const candidate of candidates) {
+    if (await exists(deps, candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
+async function exists(deps, path) {
+  try {
+    await reader(deps)(path, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function firstMessage(result) {
+  return result.errors?.[0]?.message ?? result.message;
 }
 
 function subjectFor(ctx, deps) {
@@ -127,4 +389,12 @@ function loader(deps) {
 
 function publisher(deps) {
   return deps.publish ?? (() => undefined);
+}
+
+function reader(deps) {
+  return deps.readText ?? readFile;
+}
+
+function writer(deps) {
+  return deps.writeText ?? writeFile;
 }
