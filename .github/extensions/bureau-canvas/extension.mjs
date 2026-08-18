@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actions } from "./lib/actions.mjs";
+import { applyPlan, create, crudActions, emptyPlan, remove as removeEntity, rename } from "./lib/crud.mjs";
 import { findings } from "./lib/findings.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
 import { configView, pipelineView } from "./lib/view.mjs";
@@ -42,6 +43,7 @@ export const canvasDeclaration = {
 
 export const servers = new Map();
 const subjects = new Map();
+const plans = new Map();
 
 /**
  * Actions receive a relative `dir` default, so resolve it the same way
@@ -51,9 +53,16 @@ function actionDependencies() {
     return {
         getSubject: (instanceId) => subjects.get(instanceId),
         setSubject: (instanceId, subject) => subjects.set(instanceId, subject),
-        loadFindings: (dir) => loadConfigPayload(isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir), {}),
+        getPlan: (instanceId) => plans.get(instanceId),
+        setPlan: (instanceId, plan) => plans.set(instanceId, plan),
+        clearPlan: (instanceId) => plans.delete(instanceId),
+        loadFindings: (dir) => loadConfigPayload(configDir(dir), {}),
         publish: (instanceId, event, payload) => publishEvent(instanceId, event, payload),
     };
+}
+
+function configDir(dir) {
+    return isAbsolute(dir) ? dir : resolve(REPO_ROOT, dir);
 }
 
 async function publishEvent(instanceId, event, payload) {
@@ -80,7 +89,7 @@ function resolvedSubject(subject) {
 }
 
 export function canvasActions(deps = actionDependencies()) {
-    return actions.map((action) => ({
+    return [...actions, ...crudActions].map((action) => ({
         name: action.name,
         description: action.description,
         inputSchema: action.inputSchema,
@@ -114,6 +123,8 @@ export async function openBureauCanvas(ctx, options = {}) {
         entry.state = state;
         publishState(entry);
     }
+    // Kept so a later refresh rebuilds state the same way this open did.
+    entry.options = options;
 
     return { title: DISPLAY_NAME, status: state.status, url: entry.url };
 }
@@ -153,6 +164,7 @@ export async function buildState(input, options = {}) {
         generalFindings: generalFindings(result.findings ?? []),
         config: { view, layout: configLayout(view) },
         pipelines,
+        plan: planSummary(input.instanceId),
     };
     return { ...state, selectedPipeline: selectedPipeline(state, input.pipeline) };
 }
@@ -381,8 +393,18 @@ async function handleRequest(entry, request, response) {
     }
 }
 
+const CRUD_INTENTS = { create, delete: removeEntity, rename };
+
 async function handleIntent(entry, request, response) {
     const intent = await readIntent(request);
+    if (CRUD_INTENTS[intent?.kind]) {
+        await runCrudIntent(entry, intent, response);
+        return;
+    }
+    if (intent?.kind === "save-plan" || intent?.kind === "discard-plan") {
+        await runPlanIntent(entry, intent, response);
+        return;
+    }
     if (intent?.kind === "back-to-config") {
         entry.state = { ...entry.state, pipeline: null, selectedPipeline: null };
         subjects.set(entry.state.instanceId, subjectFromState(entry.state));
@@ -422,6 +444,52 @@ function parseJson(text) {
 
 function requestPath(request) {
     return new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+}
+
+/** Runs one CRUD verb and republishes state so a pending plan is visible. */
+async function runCrudIntent(entry, intent, response) {
+    const deps = actionDependencies();
+    const ctx = { instanceId: entry.state.instanceId, input: { dir: entry.state.dir, ...intent.input } };
+    try {
+        const result = await CRUD_INTENTS[intent.kind](ctx, deps);
+        await refreshState(entry);
+        sendJson(response, { ok: true, result, state: entry.state }, false);
+    } catch (error) {
+        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
+    }
+}
+
+async function runPlanIntent(entry, intent, response) {
+    const instance = entry.state.instanceId;
+    try {
+        if (intent.kind === "save-plan") {
+            const plan = plans.get(instance) ?? emptyPlan();
+            await applyPlan(configDir(entry.state.dir), plan, {});
+        }
+        plans.delete(instance);
+        await refreshState(entry);
+        sendJson(response, { ok: true, state: entry.state }, false);
+    } catch (error) {
+        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
+    }
+}
+
+async function refreshState(entry) {
+    const input = { dir: entry.state.dir, pipeline: entry.state.pipeline ?? undefined };
+    entry.state = await buildState({ ...input, instanceId: entry.state.instanceId }, entry.options ?? {});
+    publishState(entry);
+}
+
+/** Pending, unsaved work, so the panel can show a draft rather than look saved. */
+function planSummary(instanceId) {
+    const plan = plans.get(instanceId);
+    if (!plan || (plan.writes.length === 0 && plan.removals.length === 0)) {
+        return null;
+    }
+    return {
+        writes: plan.writes.map((write) => write.path),
+        removals: plan.removals.map((entry) => entry.path),
+    };
 }
 
 function sendJson(response, value, headOnly) {

@@ -13,7 +13,25 @@
 #   rustup toolchain install nightly-2026-01-22 --component rustc-dev
 set -euo pipefail
 
-node --test .github/extensions/bureau-canvas/test/*.test.mjs
+# `node --test` exits 0 even when tests fail on the Node in use here, so the
+# result is read from TAP rather than from the exit code — otherwise this gate
+# passes silently while tests are red. Also fails when nothing ran, which is
+# what a mistyped glob looks like.
+canvas_tests() {
+    local output
+    output="$(node --test --test-reporter=tap .github/extensions/bureau-canvas/test/*.test.mjs)" || true
+    printf '%s\n' "$output"
+    if grep -qE '^not ok ' <<<"$output"; then
+        echo "canvas tests failed" >&2
+        return 1
+    fi
+    if ! grep -qE '^ok 1 ' <<<"$output"; then
+        echo "canvas tests did not run" >&2
+        return 1
+    fi
+}
+
+canvas_tests
 ./scripts/check-rust-policy.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings

@@ -23,6 +23,7 @@ const flowItemTypes = {
   terminalPill: TerminalPill,
   concurrentFrame: ConcurrentFrame,
 };
+const configItemTypes = { configCard: ConfigCardNode };
 const flowEdgeTypes = { routed: RoutedEdge };
 const edgeColors = {
   success: "var(--outcome-success)",
@@ -66,6 +67,8 @@ function App() {
     "main",
     { className: "app-shell" },
     h(Header, { state }),
+    h(DraftBar, { plan: state.plan }),
+    state.selectedPipeline ? null : h(CreateBar, { dir: state.dir }),
     h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
     state.selectedPipeline
       ? h(PipelineView, { state, selectedStep, setSelectedStep })
@@ -103,6 +106,85 @@ function Header({ state }) {
   );
 }
 
+/**
+ * Unsaved work has to look unsaved. Every card looked saved until now because
+ * everything always was; a pending create, rename or delete must read
+ * differently and be discardable.
+ */
+function DraftBar({ plan }) {
+  if (!plan) {
+    return null;
+  }
+  const pending = plan.writes.length + plan.removals.length;
+  return h(
+    "section",
+    { className: "draft-bar", "data-testid": "draft-bar" },
+    h("p", {}, `${pending} unsaved change${pending === 1 ? "" : "s"}`),
+    h("ul", { className: "draft-list" }, [
+      ...plan.writes.map((path) => h("li", { key: `w:${path}` }, `write ${shortPath(path)}`)),
+      ...plan.removals.map((path) => h("li", { key: `r:${path}` }, `delete ${shortPath(path)}`)),
+    ]),
+    h(
+      "div",
+      { className: "draft-actions" },
+      h("button", { type: "button", onClick: () => postIntent({ kind: "save-plan" }).then(publishLocalState) }, "Save"),
+      h("button", { type: "button", onClick: () => postIntent({ kind: "discard-plan" }).then(publishLocalState) }, "Discard"),
+    ),
+  );
+}
+
+function shortPath(path) {
+  return String(path).replaceAll("\\", "/").split("/").slice(-2).join("/");
+}
+
+/** Create controls, one per kind, scaffolded so a new entity is valid at once. */
+function CreateBar({ dir }) {
+  const [kind, setKind] = useState("role");
+  const [name, setName] = useState("");
+  const submit = (event) => {
+    event.preventDefault();
+    if (!name.trim()) {
+      return;
+    }
+    postIntent({ kind: "create", input: { dir, kind, name: name.trim(), fields: {} } }).then((result) => {
+      setName("");
+      publishLocalState(result);
+    });
+  };
+  return h(
+    "form",
+    { className: "create-bar", onSubmit: submit, "data-testid": "create-bar" },
+    h(
+      "select",
+      { value: kind, onChange: (event) => setKind(event.target.value), "aria-label": "New entity kind" },
+      ["repo", "role", "assignment", "pipeline"].map((option) => h("option", { key: option, value: option }, option)),
+    ),
+    h("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "name", "aria-label": "New entity name" }),
+    h("button", { type: "submit" }, "Create"),
+  );
+}
+
+/** Delete asks first and shows what breaks; the entry-step case reads louder. */
+function DeleteControl({ dir, kind, name }) {
+  const [preflight, setPreflight] = useState(null);
+  const ask = () => postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => setPreflight(response?.result ?? null));
+  const confirm = () => postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
+    setPreflight(null);
+    publishLocalState(result);
+  });
+  if (!preflight) {
+    return h("button", { type: "button", className: "card-action", onClick: ask }, "Delete");
+  }
+  return h(
+    "div",
+    { className: `preflight${preflight.referrers?.length ? " preflight--blocking" : ""}`, "data-testid": "preflight" },
+    h("p", {}, preflight.referrers?.length ? `${preflight.referrers.length} reference${preflight.referrers.length === 1 ? "" : "s"}` : "Nothing references this"),
+    h("ul", {}, (preflight.referrers ?? []).map((item) => h("li", { key: item.name, className: `severity-${item.severity}` }, item.message))),
+    h("button", { type: "button", onClick: confirm }, "Confirm delete"),
+    h("button", { type: "button", onClick: () => setPreflight(null) }, "Cancel"),
+  );
+}
+
 function emptyConfigView() {
   return { assignments: [], roles: [], repos: [], pipelines: [], orphans: [] };
 }
@@ -112,61 +194,99 @@ function summaryText(view) {
 }
 
 function ConfigView({ state }) {
-  const layout = state.config?.layout ?? { items: [], edges: [] };
-  const byId = new Map(layout.items.map((item) => [item.id, item]));
-  const size = configSize(layout.items);
+  const [expanded, setExpanded] = useState(null);
+  const toggle = (id) => setExpanded((current) => (current === id ? null : id));
+  const flow = useMemo(() => toConfigFlow(state, expanded, toggle), [state, expanded]);
   return h(
     "section",
     { className: "view-shell" },
     h(
-      "section",
-      { className: "surface config-surface", style: { width: size.width, height: size.height }, "aria-label": "Bureau config view" },
-      h("svg", { className: "edge-layer", viewBox: `0 0 ${size.width} ${size.height}`, width: size.width, height: size.height, "aria-hidden": true }, layout.edges.map((edge) => configEdge(edge, byId))),
-      h("div", { className: "card-layer" }, layout.items.map((item) => h(ConfigCard, { key: item.id, state, item }))),
+      "div",
+      { className: "config-flow", "aria-label": "Bureau config view" },
+      h(ReactFlow, {
+        nodes: flow.nodes,
+        edges: flow.edges,
+        nodeTypes: configItemTypes,
+        fitView: true,
+        fitViewOptions: { padding: 0.18 },
+        minZoom: 0.2,
+        maxZoom: 1.5,
+        nodesDraggable: false,
+        nodesConnectable: false,
+        elementsSelectable: true,
+        proOptions: { hideAttribution: true },
+      }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
     ),
   );
 }
 
-function configSize(items) {
+/** Same surface as the pipeline view: pan, zoom, fit, minimap. */
+function toConfigFlow(state, expanded, onToggle) {
+  const layout = state.config?.layout ?? { items: [], edges: [] };
   return {
-    width: Math.max(0, ...items.map((item) => item.x)) + CARD_WIDTH + CONFIG_PAD,
-    height: Math.max(0, ...items.map((item) => item.y)) + CARD_HEIGHT + CONFIG_PAD,
+    nodes: layout.items.map((item) => ({
+      id: item.id,
+      type: "configCard",
+      position: { x: item.x, y: item.y },
+      data: { state, item, expanded: expanded === item.id, onToggle },
+      draggable: false,
+      connectable: false,
+      // An expanded card grows past its reserved box, so it must sit above its
+      // neighbours rather than push them around.
+      zIndex: expanded === item.id ? 10 : 0,
+    })),
+    edges: layout.edges.map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: "smoothstep",
+      style: { stroke: "var(--border-color-default, #d0d7de)", strokeWidth: 1.4 },
+    })),
   };
 }
 
-function configEdge(edge, byId) {
-  const source = byId.get(edge.source);
-  const target = byId.get(edge.target);
-  if (!source || !target) {
-    return null;
-  }
-  return h("line", {
-    key: edge.id,
-    className: "edge-path",
-    x1: source.x + CARD_WIDTH,
-    y1: source.y + CARD_HEIGHT / 2,
-    x2: target.x,
-    y2: target.y + CARD_HEIGHT / 2,
-  });
+function ConfigCardNode({ data }) {
+  return h(ConfigCard, { state: data.state, item: data.item, expanded: data.expanded, onToggle: data.onToggle });
 }
-
-function ConfigCard({ state, item }) {
+function ConfigCard({ state, item, expanded, onToggle }) {
   const data = configData(state, item);
-  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
+  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}${expanded ? " card--expanded" : ""}`;
+  const deletable = ["repo", "role", "assignment", "pipeline"].includes(item.kind);
   return h(
     "article",
-    { className, style: { transform: `translate(${item.x}px, ${item.y}px)` }, "data-ref": item.id },
+    // React Flow positions the node wrapper; the height comes from layout so
+    // the rendered card can never exceed the box reserved for it. An expanded
+    // card is the deliberate exception and overlays instead.
+    { className, "data-ref": item.id, style: expanded ? {} : { height: item.height } },
     item.kind === "pipeline"
-      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data))
-      : h("div", {}, configCardContent(state, item, data)),
+      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data, expanded, onToggle))
+      : h("div", {}, configCardContent(state, item, data, expanded, onToggle)),
+    deletable ? h(DeleteControl, { dir: state.dir, kind: item.kind, name: item.name }) : null,
   );
 }
 
-function configCardContent(state, item, data) {
+function configCardContent(state, item, data, expanded, onToggle) {
+  const detail = detailText(item, data);
   return [
     h("p", { className: "kind-label", key: "kind" }, item.kind.replace("-", " ")),
     h("h2", { key: "title" }, item.name),
-    h("p", { className: "detail", key: "detail", title: detailText(item, data) }, detailText(item, data)),
+    // The detail carries a whole shell command for an assignment, so it is the
+    // affordance rather than a hidden tooltip: click to read it in full.
+    h(
+      "button",
+      {
+        className: `detail detail-toggle${expanded ? " detail-toggle--open" : ""}`,
+        key: "detail",
+        type: "button",
+        title: detail,
+        "aria-expanded": Boolean(expanded),
+        onClick: (event) => {
+          event.stopPropagation();
+          onToggle?.(item.id);
+        },
+      },
+      detail,
+    ),
     h(Chips, { key: "chips", chips: chipsFor(state, item, data) }),
     item.kind === "pipeline" ? h(StepBadges, { key: "steps", state, name: item.name }) : null,
     h(Findings, { key: "findings", findings: state.findingsByItem?.[item.id] ?? [] }),

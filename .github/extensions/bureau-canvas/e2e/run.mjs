@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,11 @@ const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
 const SCREENSHOT_DIR = join(E2E_DIR, "screenshots");
 const PROFILE_DIR = join(E2E_DIR, ".edge-profiles");
 const REFERENCE_FIXTURE = new URL("../test/fixtures/reference-payload.json", import.meta.url);
+const COMMITTED_FIXTURE = new URL("../test/fixtures/committed-payload.json", import.meta.url);
+// Scratch config for the CRUD flow. `target/` is gitignored and is not a
+// scanned config directory, and the binary runs inside WSL where a Windows
+// temp directory is invisible.
+const CRUD_ROOT = fileURLToPath(new URL("../../../../target/canvas-crud-tests/", import.meta.url));
 const VIEWPORT = { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false };
 const screenshots = [];
 const results = [];
@@ -255,6 +260,98 @@ async function runSuite(page) {
     await checkReferenceState(instance.opened.url);
     await checkPipelineView(page, instance.opened.url, "fix-failing-test", "reference fixture");
   });
+  console.log("bureau-canvas e2e: detail expansion");
+  await checkDetailExpansion(page);
+  console.log("bureau-canvas e2e: CRUD from empty");
+  await runCrudSuite(page);
+}
+
+/**
+ * The epic's acceptance criterion (#43), through the real UI: build a whole
+ * config from an empty directory, then take it away again.
+ */
+async function runCrudSuite(page) {
+  const dir = await mkdtemp(join(CRUD_ROOT, "e2e-"));
+  await Promise.all(["roles", "assignments", "pipelines"].map((sub) => mkdir(join(dir, sub), { recursive: true })));
+  try {
+    // This flow needs the real CLI: the point is that what the UI builds is
+    // accepted by `bureau validate`. The rest of the suite stays hermetic.
+    await withInstance("crud", { dir }, { findingsOptions: {} }, async (instance) => {
+      await navigate(page, instance.opened.url);
+      await record("crud create controls are present", async () => {
+        await waitForRender(page, "[data-testid='create-bar']", "create bar");
+      });
+      await buildThroughUi(instance.opened.url);
+      await navigate(page, instance.opened.url);
+      await record("crud a pending plan is visible as a draft", async () => {
+        const state = await fetchJson(new URL("/state", instance.opened.url));
+        // Wait for the mount rather than sampling the DOM immediately, or this
+        // measures render timing instead of the feature.
+        await waitForRender(page, "[data-testid='draft-bar']", "draft bar");
+        const draft = await evaluate(page, "document.querySelectorAll(\"[data-testid='draft-bar']\").length");
+        assert(draft === 1, `expected a draft bar, saw ${draft}; plan=${JSON.stringify(state.plan)}`);
+      });
+      await postJson(instance.opened.url, { kind: "save-plan" });
+      await record("crud the built config validates", async () => {
+        const state = await fetchJson(new URL("/state", instance.opened.url));
+        assert(state.validation.state === "validated", `expected validated, saw ${state.validation.state}`);
+        assert(state.validation.errors.length === 0, `expected no errors, saw ${state.validation.errors.length}`);
+      });
+      await navigate(page, instance.opened.url);
+      await renderAndScreenshot(page, ".card", "built config", "crud-built.png");
+      await record("crud delete asks before acting and names referrers", async () => {
+        const asked = await postJson(instance.opened.url, { kind: "delete", input: { dir, kind: "role", name: "implementer" } });
+        assert(asked.result.confirmed === false, "delete acted without confirmation");
+        assert(asked.result.referrers.length > 0, "delete reported no referrers for a referenced role");
+      });
+      await tearDownThroughUi(instance.opened.url, dir);
+      await record("crud teardown leaves the directory empty", async () => {
+        const left = await Promise.all(["roles", "assignments", "pipelines"].map((sub) => readdir(join(dir, sub))));
+        assert(left.every((entries) => entries.length === 0), `expected empty config, saw ${JSON.stringify(left)}`);
+      });
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function buildThroughUi(url) {
+  const steps = [
+    { kind: "repo", name: "bureau", fields: { url: "https://x/y.git", forge: "github", access: "push", credential: "github-main" } },
+    { kind: "role", name: "implementer", fields: { permissions: ["repo:read", "repo:write", "model:invoke"] } },
+    { kind: "pipeline", name: "build", fields: {} },
+    {
+      kind: "assignment",
+      name: "work",
+      fields: { work: { forge: "github", source: "a/b", filter: "is:open" }, repos: ["bureau"], pipeline: "build", role: "implementer", verify: "cargo test --offline" },
+    },
+  ];
+  for (const input of steps) {
+    const response = await postJson(url, { kind: "create", input });
+    assert(response.ok, `create ${input.kind} failed: ${response.error ?? "unknown"}`);
+  }
+}
+
+async function tearDownThroughUi(url, dir) {
+  for (const [kind, name] of [["assignment", "work"], ["pipeline", "build"], ["role", "implementer"], ["repo", "bureau"]]) {
+    const response = await postJson(url, { kind: "delete", input: { dir, kind, name, confirm: true } });
+    assert(response.ok, `delete ${kind} failed: ${response.error ?? "unknown"}`);
+  }
+  await postJson(url, { kind: "save-plan" });
+}
+
+async function postJson(url, body) {
+  const response = await fetch(new URL("/intent", url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return response.json();
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url);
+  return response.json();
 }
 
 async function withInstance(name, input, options, fn) {
@@ -309,9 +406,64 @@ async function checkConfigView(page, url) {
     });
   });
   await record("config cards do not overlap", async () => assertNoOverlap(await boxes(page, ".card")));
-  await record("config elements do not overflow the viewport horizontally", async () => {
-    assert.deepEqual(await evaluate(page, overflowExpression()), []);
+  await record("config fits every card inside the surface", async () => {
+    // The old assertion checked page overflow, which only made sense for a
+    // static surface. Now that this pans and zooms like the pipeline view, the
+    // property worth protecting is that `fitView` leaves nothing clipped.
+    assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
+}
+
+/** A long `verify` is the real case: it must be readable, not just ellipsised. */
+async function checkDetailExpansion(page) {
+  const payload = JSON.parse(await readFile(COMMITTED_FIXTURE, "utf8"));
+  payload.config.assignments["agent-eligible"].verify =
+    "cargo test --offline -- --skip timeout_kills_the_whole_process_group --nocapture";
+  await withInstance("detail", {}, { payload }, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await waitForRender(page, ".card", "config cards");
+    const before = await evaluate(page, truncatedDetailExpression());
+    await record("config truncates a long detail before it is opened", () => {
+      assert.deepEqual({ truncated: before.truncated, expanded: before.expanded }, { truncated: true, expanded: false });
+    });
+    await evaluate(page, `document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle").click()`);
+    const after = await evaluate(page, truncatedDetailExpression());
+    await record("config reveals the full detail on click", () => {
+      assert.deepEqual(
+        { truncated: after.truncated, expanded: after.expanded, sameText: after.text === before.text },
+        { truncated: false, expanded: true, sameText: true },
+      );
+    });
+  });
+}
+
+/** Whether the assignment's `verify` line is clipped, and its full text. */
+function truncatedDetailExpression() {
+  return `(() => {
+    const detail = document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle");
+    if (!detail) { return { truncated: null }; }
+    return {
+      truncated: detail.scrollWidth > detail.clientWidth + 1,
+      expanded: detail.getAttribute("aria-expanded") === "true",
+      text: detail.textContent,
+    };
+  })()`;
+}
+
+function clippedCardsExpression() {
+  return `(() => {
+    const surface = document.querySelector(".config-flow");
+    if (!surface) { return ["missing .config-flow"]; }
+    const frame = surface.getBoundingClientRect();
+    const slack = 1;
+    return [...document.querySelectorAll(".card")]
+      .filter((card) => {
+        const box = card.getBoundingClientRect();
+        return box.left < frame.left - slack || box.right > frame.right + slack
+          || box.top < frame.top - slack || box.bottom > frame.bottom + slack;
+      })
+      .map((card) => card.getAttribute("data-ref"));
+  })()`;
 }
 
 async function checkPipelineView(page, url, name, label) {

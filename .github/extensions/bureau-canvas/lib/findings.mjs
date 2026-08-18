@@ -16,28 +16,65 @@ export async function findings(dir, options = {}) {
     return distinctState("dir-missing", dir, `Config directory does not exist: ${resolvedDir}`);
   }
 
-  const bureau = await locateBureau(resolvedDir, { cwd, env, binary: options.binary });
-  if (!bureau) {
+  const candidates = await locateCandidates(resolvedDir, { cwd, env, binary: options.binary, candidates: options.candidates });
+  if (candidates.length === 0) {
     return distinctState("binary-missing", dir, "Could not find bureau on PATH or at target/debug/bureau.");
   }
 
-  const run = await runValidate(bureau, resolvedDir, { cwd, env });
-  const parsed = parsePayload(run.stdout);
-  if (!parsed.ok) {
-    return crashState(dir, run, parsed.error);
-  }
-
-  return validatedState(parsed.value, dir, run.code);
+  return firstUsable(candidates, resolvedDir, dir, { cwd, env });
 }
 
-async function locateBureau(dir, options) {
+/**
+ * Tries each candidate until one returns JSON.
+ *
+ * A `bureau` installed on PATH can predate `validate --json` while a current
+ * build sits in the workspace. Preferring PATH unconditionally then reports a
+ * crash on a machine that has everything it needs, so version skew is detected
+ * and skipped rather than surfaced as a failure.
+ */
+async function firstUsable(candidates, resolvedDir, dir, options) {
+  let unsupported = null;
+  for (const candidate of candidates) {
+    const run = await runValidate(candidate, resolvedDir, options);
+    const parsed = parsePayload(run.stdout);
+    if (parsed.ok) {
+      return validatedState(parsed.value, dir, run.code);
+    }
+    if (lacksJsonFlag(run)) {
+      unsupported = unsupported ?? { candidate, run };
+      continue;
+    }
+    return crashState(dir, run, parsed.error);
+  }
+  return unsupportedState(dir, unsupported);
+}
+
+function lacksJsonFlag(run) {
+  return /unexpected argument\s+'?--json'?/u.test(`${run.stderr ?? ""}${run.stdout ?? ""}`);
+}
+
+function unsupportedState(dir, unsupported) {
+  const where = unsupported?.candidate?.args?.at(-1) ?? unsupported?.candidate?.command ?? "bureau";
+  return distinctState(
+    "unsupported-binary",
+    dir,
+    `\`${where}\` does not support \`validate --json\`; rebuild it or set BUREAU_CANVAS_BUREAU to one that does.`,
+  );
+}
+
+async function locateCandidates(dir, options) {
+  if (options.candidates) {
+    const resolved = await Promise.all(options.candidates.map((candidate) => commandFor(candidate)));
+    return resolved.filter(Boolean);
+  }
   const explicit = options.binary ?? options.env.BUREAU_CANVAS_BUREAU;
   if (explicit) {
-    return (await commandFor(explicit)) ?? null;
+    const command = await commandFor(explicit);
+    return command ? [command] : [];
   }
 
-  const found = (await findOnPath("bureau", options.env)) ?? (await findInWorkspace(dir, options.cwd));
-  return found ? wslBridged(found) : null;
+  const found = [await findOnPath("bureau", options.env), await findInWorkspace(dir, options.cwd)];
+  return found.filter(Boolean).map((command) => wslBridged(command));
 }
 
 /**

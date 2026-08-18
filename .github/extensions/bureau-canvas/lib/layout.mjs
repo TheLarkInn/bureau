@@ -1,5 +1,13 @@
 const X_GAP = 320;
 const Y_GAP = 190;
+// Config card geometry, mirrored by the CSS so a reserved box always holds its
+// content. Heights are derived per card rather than fixed (see stackConfigColumns).
+const CARD_BASE = 92;
+const CHIP_ROW = 32;
+const ACTION_ROW = 36;
+const CONFIG_GAP = 28;
+const CHIPS_PER_ROW = 2;
+const DELETABLE = ["repo", "role", "assignment", "pipeline"];
 const TERMINAL_GAP = 120;
 const CONFIG_COLUMNS = {
   "work-source": 0,
@@ -23,11 +31,64 @@ export function pipelineLayout(view, arrangement = {}) {
 }
 
 export function configLayout(view, arrangement = {}) {
-  const main = configMainItems(view);
-  const orphans = configOrphanItems(view, main.length);
-  const items = [...main, ...orphans].map(placeConfigItem);
+  const main = stackConfigColumns(configMainItems(view), view, new Map());
+  // Orphans sit below every column, not merely below their own, so "detached"
+  // reads as detached however tall the other columns happen to be.
+  const baseline = main.reduce((lowest, item) => Math.max(lowest, item.y + item.height), 0) + CONFIG_GAP * 2;
+  const orphans = stackConfigColumns(configOrphanItems(view, main.length), view, startingAt(baseline));
+  const items = [...main, ...orphans];
   const edges = configEdges(view, new Set(items.map((item) => item.id)));
   return mergeArrangement({ dir: view.dir, items, edges }, arrangement);
+}
+
+function startingAt(baseline) {
+  return new Map(Object.values(CONFIG_COLUMNS).map((column) => [column, baseline]));
+}
+
+/**
+ * Places config cards by stacking each column with running offsets, using a
+ * height derived from the card's own content.
+ *
+ * A fixed row gap cannot work here: a role with eleven permissions is far
+ * taller than one with two, and a pipeline lists a line per agent step. Tuning
+ * one global constant just moves which config overlaps.
+ */
+function stackConfigColumns(items, view, offsets) {
+  return items.map((item) => {
+    const column = CONFIG_COLUMNS[item.kind] ?? 0;
+    const height = configCardHeight(item, view);
+    const y = offsets.get(column) ?? 0;
+    offsets.set(column, y + height + CONFIG_GAP);
+    return { ...item, column, height, x: column * X_GAP, y };
+  });
+}
+
+/** Mirrors what the card renders, so the DOM cannot exceed the reserved box. */
+function configCardHeight(item, view) {
+  return CARD_BASE + chipRowsFor(item, view) * CHIP_ROW + (DELETABLE.includes(item.kind) ? ACTION_ROW : 0);
+}
+
+function chipRowsFor(item, view) {
+  const record = configRecord(item, view);
+  if (item.kind === "role") {
+    return Math.ceil((record?.permissions?.length ?? 0) / CHIPS_PER_ROW);
+  }
+  if (item.kind === "pipeline") {
+    return 1 + (record?.stepCount ?? 0);
+  }
+  if (item.kind === "assignment") {
+    return Math.ceil(countLimits(record) / CHIPS_PER_ROW);
+  }
+  return 1;
+}
+
+function countLimits(record) {
+  return Object.values(record?.limits ?? {}).filter((value) => value != null).length;
+}
+
+function configRecord(item, view) {
+  const collection = { role: "roles", repo: "repos", assignment: "assignments", pipeline: "pipelines" }[item.kind];
+  return collection ? (view[collection] ?? []).find((value) => value.name === item.name) : null;
 }
 
 export function pipelineHandles(layout) {
@@ -311,11 +372,6 @@ function configOrphanItems(view, mainCount) {
     row: row + index,
     orphan: true,
   }));
-}
-
-function placeConfigItem(item) {
-  const column = CONFIG_COLUMNS[item.kind] ?? 0;
-  return { ...item, column, x: column * X_GAP, y: item.row * Y_GAP };
 }
 
 function configEdges(view, ids) {
