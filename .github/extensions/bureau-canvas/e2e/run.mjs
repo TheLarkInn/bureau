@@ -1,0 +1,557 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+process.env.BUREAU_CANVAS_TEST = "1";
+
+const canvas = await import("../extension.mjs");
+const EDGE_EXE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
+const SCREENSHOT_DIR = join(E2E_DIR, "screenshots");
+const PROFILE_DIR = join(E2E_DIR, ".edge-profiles");
+const REFERENCE_FIXTURE = new URL("../test/fixtures/reference-payload.json", import.meta.url);
+const VIEWPORT = { width: 1920, height: 1200, deviceScaleFactor: 1, mobile: false };
+const screenshots = [];
+const results = [];
+
+class CdpSession {
+  constructor(wsUrl) {
+    this.ws = new WebSocket(wsUrl);
+    this.nextId = 1;
+    this.pending = new Map();
+    this.listeners = new Map();
+    this.diagnostics = [];
+    this.ws.addEventListener("message", (event) => this.receive(event.data));
+  }
+
+  async open(timeout = 10_000) {
+    if (this.ws.readyState === WebSocket.OPEN) {
+      return;
+    }
+    await withTimeout(new Promise((resolve, reject) => {
+      this.ws.addEventListener("open", resolve, { once: true });
+      this.ws.addEventListener("error", reject, { once: true });
+    }), timeout, "Timed out connecting to DevTools WebSocket");
+  }
+
+  call(method, params = {}, timeout = 8_000) {
+    const id = this.nextId;
+    this.nextId += 1;
+    const message = JSON.stringify({ id, method, params });
+    const done = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Timed out waiting for CDP ${method}`));
+      }, timeout);
+      this.pending.set(id, { method, resolve, reject, timer });
+    });
+    this.ws.send(message);
+    return done;
+  }
+
+  waitForEvent(method, timeout = 15_000) {
+    return withTimeout(new Promise((resolve) => {
+      const list = this.listeners.get(method) ?? [];
+      list.push(resolve);
+      this.listeners.set(method, list);
+    }), timeout, `Timed out waiting for CDP event ${method}`);
+  }
+
+  resetDiagnostics() {
+    this.diagnostics = [];
+  }
+
+  async receive(data) {
+    const message = JSON.parse(await messageText(data));
+    if (message.id) {
+      this.complete(message);
+      return;
+    }
+    this.captureDiagnostic(message);
+    for (const listener of this.listeners.get(message.method) ?? []) {
+      listener(message.params);
+    }
+    this.listeners.delete(message.method);
+  }
+
+  complete(message) {
+    const entry = this.pending.get(message.id);
+    if (!entry) {
+      return;
+    }
+    clearTimeout(entry.timer);
+    this.pending.delete(message.id);
+    if (message.error) {
+      entry.reject(new Error(`${entry.method} failed: ${message.error.message}`));
+    } else {
+      entry.resolve(message.result ?? {});
+    }
+  }
+
+  captureDiagnostic(message) {
+    if (message.method === "Runtime.exceptionThrown") {
+      this.diagnostics.push({ kind: "exception", text: exceptionText(message.params) });
+    }
+    if (message.method === "Runtime.consoleAPICalled" && message.params?.type === "error") {
+      this.diagnostics.push({ kind: "console.error", text: consoleText(message.params.args) });
+    }
+    if (message.method === "Log.entryAdded" && message.params?.entry?.level === "error") {
+      this.diagnostics.push({ kind: "log.error", text: message.params.entry.text });
+    }
+  }
+
+  close() {
+    this.ws.close();
+  }
+}
+
+async function main() {
+  const skip = await skipReason();
+  if (skip) {
+    console.log(`bureau-canvas e2e skipped: ${skip}`);
+    return;
+  }
+  await mkdir(SCREENSHOT_DIR, { recursive: true });
+  console.log("bureau-canvas e2e: launching Microsoft Edge over CDP");
+  const browser = await launchEdge();
+  let fatal = null;
+  try {
+    console.log("bureau-canvas e2e: running browser assertions");
+    await runSuite(browser.page);
+  } catch (error) {
+    fatal = error;
+    results.push({ name: "browser harness completed all required renders", ok: false, error: error.message });
+  } finally {
+    try {
+      await browser.close();
+    } catch (error) {
+      fatal ??= error;
+      results.push({ name: "Edge browser exited and profile cleaned", ok: false, error: error.message });
+    }
+  }
+  printReport();
+  if (fatal || results.some((result) => !result.ok)) {
+    process.exitCode = 1;
+  }
+}
+
+async function skipReason() {
+  if (!existsSync(EDGE_EXE)) {
+    return `Microsoft Edge not found at ${EDGE_EXE}`;
+  }
+  if (typeof WebSocket !== "function") {
+    return "Node global WebSocket is unavailable; run with Node 24 or newer";
+  }
+  try {
+    const response = await fetch("https://esm.sh/react@18.3.1", { signal: AbortSignal.timeout(7_000) });
+    if (!response.ok) {
+      return `network preflight to esm.sh returned HTTP ${response.status}`;
+    }
+  } catch (error) {
+    return `network preflight to esm.sh failed (${error.message})`;
+  }
+  return null;
+}
+
+async function launchEdge() {
+  await mkdir(PROFILE_DIR, { recursive: true });
+  const profile = join(PROFILE_DIR, `profile-${process.pid}-${Date.now()}`);
+  await mkdir(profile, { recursive: true });
+  const args = [
+    "--headless=new",
+    "--disable-gpu",
+    "--no-sandbox",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${profile}`,
+    "about:blank",
+  ];
+  const child = spawn(EDGE_EXE, args, { stdio: ["ignore", "ignore", "pipe"] });
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(chunk.toString()));
+  try {
+    const port = await readDevToolsPort(profile, child, stderr);
+    const target = await browserTarget(port);
+    const page = new CdpSession(target.webSocketDebuggerUrl);
+    await page.open();
+    await page.call("Page.enable");
+    await page.call("Runtime.enable");
+    await page.call("Log.enable");
+    await page.call("Emulation.setDeviceMetricsOverride", VIEWPORT);
+    return { page, close: () => closeBrowser(child, profile, page) };
+  } catch (error) {
+    await closeBrowser(child, profile);
+    throw error;
+  }
+}
+
+async function readDevToolsPort(profile, child, stderr) {
+  const activePort = join(profile, "DevToolsActivePort");
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) {
+      throw new Error(`Edge exited before DevTools opened: ${stderr.join("").trim()}`);
+    }
+    if (existsSync(activePort)) {
+      const [port] = (await readFile(activePort, "utf8")).trim().split(/\r?\n/);
+      return port;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for ${activePort}`);
+}
+
+async function browserTarget(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(5_000) });
+  const targets = await response.json();
+  const target = targets.find((item) => item.type === "page" && item.webSocketDebuggerUrl);
+  if (!target) {
+    throw new Error("No page target exposed by DevTools");
+  }
+  return target;
+}
+
+async function closeBrowser(child, profile, page) {
+  await page?.call("Browser.close", {}, 2_000).catch(() => undefined);
+  page?.close();
+  if (child.exitCode == null) {
+    child.kill("SIGTERM");
+    await waitForExit(child, 3_000);
+  }
+  if (child.exitCode == null) {
+    child.kill("SIGKILL");
+    await waitForExit(child, 3_000);
+  }
+  await removeProfile(profile);
+}
+
+async function runSuite(page) {
+  console.log("bureau-canvas e2e: config view");
+  await withInstance("config", {}, {}, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await renderAndScreenshot(page, ".card", "config cards", "config.png");
+    await checkConfigView(page, instance.opened.url);
+  });
+  console.log("bureau-canvas e2e: committed pipeline by input");
+  await withInstance("committed-open", { pipeline: "agent-eligible-pipeline" }, {}, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await renderAndScreenshot(page, ".react-flow__node .flow-card", "committed pipeline", "committed-pipeline-open.png");
+    await checkPipelineView(page, instance.opened.url, "agent-eligible-pipeline", "opened input");
+  });
+  console.log("bureau-canvas e2e: committed pipeline by intent");
+  await withInstance("committed-intent", {}, {}, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await postIntent(instance.opened.url, "agent-eligible-pipeline");
+    await renderAndScreenshot(page, ".react-flow__node .flow-card", "intent pipeline", "committed-pipeline-intent.png");
+    await checkPipelineView(page, instance.opened.url, "agent-eligible-pipeline", "open-pipeline intent");
+  });
+  console.log("bureau-canvas e2e: reference pipeline");
+  const payload = JSON.parse(await readFile(REFERENCE_FIXTURE, "utf8"));
+  await withInstance("reference", { pipeline: "fix-failing-test" }, { payload }, async (instance) => {
+    await navigate(page, instance.opened.url);
+    await renderAndScreenshot(page, ".react-flow__node .flow-card", "reference pipeline", "reference-pipeline.png");
+    await checkReferenceState(instance.opened.url);
+    await checkPipelineView(page, instance.opened.url, "fix-failing-test", "reference fixture");
+  });
+}
+
+async function withInstance(name, input, options, fn) {
+  const instanceId = `bureau-e2e-${name}-${Date.now()}`;
+  const opened = await canvas.openBureauCanvas({ instanceId, input }, options);
+  const instance = { opened, close: () => canvas.closeBureauCanvas({ instanceId }) };
+  try {
+    await fn(instance);
+  } finally {
+    await instance.close();
+  }
+}
+
+async function navigate(page, url) {
+  page.resetDiagnostics();
+  const loaded = page.waitForEvent("Page.loadEventFired", 20_000);
+  await page.call("Page.navigate", { url }, 10_000);
+  await loaded;
+}
+
+async function waitForRender(page, selector, label) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const ready = await evaluate(page, `Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+    if (ready) {
+      await delay(500);
+      return;
+    }
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${label}; diagnostics: ${formatDiagnostics(page.diagnostics)}`);
+}
+
+async function renderAndScreenshot(page, selector, label, fileName) {
+  try {
+    await waitForRender(page, selector, label);
+  } finally {
+    await screenshot(page, fileName);
+  }
+}
+
+async function checkConfigView(page, url) {
+  const state = await fetchState(url);
+  await record("config renders without uncaught errors or console errors", () => assertNoDiagnostics(page));
+  await record("config has a card for each assignment, role, repo, and pipeline", async () => {
+    const counts = await evaluate(page, domCountsExpression());
+    assert.deepEqual(counts, {
+      assignments: state.config.view.assignments.length,
+      roles: state.config.view.roles.length,
+      repos: state.config.view.repos.length,
+      pipelines: state.config.view.pipelines.length,
+    });
+  });
+  await record("config cards do not overlap", async () => assertNoOverlap(await boxes(page, ".card")));
+  await record("config elements do not overflow the viewport horizontally", async () => {
+    assert.deepEqual(await evaluate(page, overflowExpression()), []);
+  });
+}
+
+async function checkPipelineView(page, url, name, label) {
+  const state = await fetchState(url);
+  const pipeline = state.pipelines[name];
+  await record(`pipeline ${label} renders without uncaught errors or console errors`, () => assertNoDiagnostics(page));
+  await record(`pipeline ${label} has one node per step and terminal`, async () => {
+    assert.equal(await evaluate(page, `document.querySelectorAll(".react-flow__node .flow-card").length`), pipeline.layout.steps.length + pipeline.layout.terminals.length);
+  });
+  await record(`pipeline ${label} has one SVG edge path per state edge`, async () => {
+    assert.equal(await evaluate(page, `document.querySelectorAll(".react-flow__edge-path").length`), pipeline.layout.edges.length);
+  });
+  if (name === "agent-eligible-pipeline") {
+    await record(`pipeline ${label} verify has exactly success and failure control edges`, () => {
+      const outcomes = pipeline.layout.edges.filter((edge) => edge.source === "verify" && edge.relation === "control").map((edge) => edge.outcome).sort();
+      assert.deepEqual(outcomes, ["failure", "success"]);
+    });
+  }
+  await record(`pipeline ${label} step cards do not overlap`, async () => assertNoOverlap(await boxes(page, ".react-flow__node .flow-card:not(.terminal-pill)")));
+  await record(`pipeline ${label} edge labels do not overlap`, async () => assertNoOverlap(await boxes(page, edgeLabelSelector())));
+  await record(`pipeline ${label} legend colours match rendered edge colours`, async () => {
+    assert.deepEqual(await evaluate(page, legendExpression()), []);
+  });
+  await record(`pipeline ${label} zoom controls and minimap exist`, async () => {
+    assert.deepEqual(await evaluate(page, `({ controls: Boolean(document.querySelector(".react-flow__controls")), minimap: Boolean(document.querySelector(".react-flow__minimap")) })`), { controls: true, minimap: true });
+  });
+}
+
+async function checkReferenceState(url) {
+  const state = await fetchState(url);
+  const pipeline = state.pipelines["fix-failing-test"];
+  await record("reference fixture exercises nine steps, retry routes, concurrent group, and four-outcome decision", () => {
+    const retries = pipeline.layout.edges.filter((edge) => edge.target === "propose" && ["passed", "verdict", "verify"].includes(edge.source)).map((edge) => `${edge.source}:${edge.route}`).sort();
+    const passed = pipeline.layout.edges.filter((edge) => edge.source === "passed" && edge.relation === "control").map((edge) => edge.outcome).sort();
+    const members = pipeline.layout.steps.filter((step) => step.parentId === "run-checks").map((step) => step.id).sort();
+    assert.deepEqual({ steps: pipeline.layout.steps.length, retries, passed, members }, {
+      steps: 9,
+      retries: ["passed:back", "verdict:back", "verify:back"],
+      passed: ["blocked", "failure", "no-work", "success"],
+      members: ["apply", "review"],
+    });
+  });
+}
+
+async function postIntent(url, pipeline) {
+  const response = await fetch(new URL("/intent", url), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "open-pipeline", pipeline }),
+  });
+  if (!response.ok) {
+    throw new Error(`open-pipeline intent failed with HTTP ${response.status}`);
+  }
+}
+
+async function fetchState(url) {
+  return fetch(new URL("/state", url), { signal: AbortSignal.timeout(5_000) }).then((response) => response.json());
+}
+
+async function screenshot(page, fileName) {
+  const result = await page.call("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }, 15_000);
+  const path = join(SCREENSHOT_DIR, fileName);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, Buffer.from(result.data, "base64"));
+  screenshots.push(path);
+}
+
+async function record(name, fn) {
+  try {
+    await fn();
+    results.push({ name, ok: true });
+  } catch (error) {
+    results.push({ name, ok: false, error: error.message });
+  }
+}
+
+async function evaluate(page, expression) {
+  const result = await page.call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, 10_000);
+  if (result.exceptionDetails) {
+    throw new Error(exceptionText(result.exceptionDetails));
+  }
+  return result.result?.value;
+}
+
+function assertNoDiagnostics(page) {
+  assert.deepEqual(page.diagnostics, [], formatDiagnostics(page.diagnostics));
+}
+
+function assertNoOverlap(items) {
+  const overlaps = [];
+  for (let left = 0; left < items.length; left += 1) {
+    for (let right = left + 1; right < items.length; right += 1) {
+      if (intersects(items[left], items[right])) {
+        overlaps.push(`${items[left].label} overlaps ${items[right].label}`);
+      }
+    }
+  }
+  assert.deepEqual(overlaps, []);
+}
+
+function intersects(left, right) {
+  return left.right > right.left && right.right > left.left && left.bottom > right.top && right.bottom > left.top;
+}
+
+async function boxes(page, selector) {
+  return evaluate(page, `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).map((element, index) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      label: element.dataset.ref || element.textContent.trim().replace(/\\s+/g, " ").slice(0, 80) || \`${selector}#\${index}\`,
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    };
+  }).filter((box) => box.right > box.left && box.bottom > box.top)`);
+}
+
+function domCountsExpression() {
+  return `({
+    assignments: document.querySelectorAll('.card--assignment').length,
+    roles: document.querySelectorAll('.card--role').length,
+    repos: document.querySelectorAll('.card--repo').length,
+    pipelines: document.querySelectorAll('.card--pipeline').length,
+  })`;
+}
+
+function overflowExpression() {
+  return `Array.from(document.querySelectorAll("body *")).flatMap((element) => {
+    const rect = element.getBoundingClientRect();
+    const clientWidth = document.documentElement.clientWidth;
+    if (rect.width <= 0 || rect.height <= 0 || rect.right <= clientWidth + 1) {
+      return [];
+    }
+    return [{ tag: element.tagName.toLowerCase(), className: element.className?.toString?.() ?? "", right: Math.round(rect.right), clientWidth }];
+  })`;
+}
+
+function edgeLabelSelector() {
+  return ".react-flow__edge-text, .react-flow__edge-textwrapper, .react-flow__edge-label, .react-flow__edge-labels [class*='label']";
+}
+
+function legendExpression() {
+  return `(() => {
+    const edgeNames = new Map([["success", "success"], ["failure", "failure"], ["blocked", "blocked"], ["no-work", "no-work"], ["data", "inputs_from"], ["observes", "over"]]);
+    const used = Array.from(document.querySelectorAll(".react-flow__edge")).map((edge) => {
+      const key = Array.from(edge.classList).find((name) => name.startsWith("flow-edge--"))?.replace("flow-edge--", "");
+      const path = edge.querySelector(".react-flow__edge-path");
+      return key && path ? { key, label: edgeNames.get(key), color: getComputedStyle(path).stroke } : null;
+    }).filter(Boolean);
+    const legends = Object.fromEntries(Array.from(document.querySelectorAll(".legend-item")).map((item) => {
+      const swatch = item.querySelector(".legend-swatch");
+      const style = getComputedStyle(swatch);
+      const text = item.textContent.trim();
+      return [text, style.backgroundColor === "rgba(0, 0, 0, 0)" ? style.borderTopColor : style.backgroundColor];
+    }));
+    return Array.from(new Map(used.map((item) => [item.label, item.color]))).flatMap(([label, color]) => legends[label] === color ? [] : [{ label, edge: color, legend: legends[label] ?? null }]);
+  })()`;
+}
+
+function printReport() {
+  console.log("Bureau canvas e2e assertions:");
+  for (const result of results) {
+    console.log(`${result.ok ? "PASS" : "FAIL"} ${result.name}${result.error ? ` — ${result.error}` : ""}`);
+  }
+  console.log("Screenshots:");
+  for (const path of screenshots) {
+    console.log(`- ${path}`);
+  }
+}
+
+function formatDiagnostics(diagnostics) {
+  return diagnostics.map((item) => `${item.kind}: ${item.text}`).join("\n");
+}
+
+function consoleText(args = []) {
+  return args.map((arg) => arg.value ?? arg.description ?? arg.unserializableValue ?? "").join(" ");
+}
+
+function exceptionText(details) {
+  const exception = details?.exceptionDetails?.exception ?? details?.exception;
+  return exception?.description ?? exception?.value ?? details?.text ?? "unknown exception";
+}
+
+async function messageText(data) {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString("utf8");
+  }
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  return String(data);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function onceExit(child) {
+  return new Promise((resolve) => child.once("exit", resolve));
+}
+
+async function waitForExit(child, timeout) {
+  if (child.exitCode != null) {
+    return true;
+  }
+  return Promise.race([onceExit(child).then(() => true), delay(timeout).then(() => false)]);
+}
+
+async function removeProfile(profile) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await rm(profile, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+  throw new Error(`could not remove Edge profile ${profile}: ${lastError?.message}`);
+}
+
+async function withTimeout(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+main().catch((error) => {
+  console.error(`bureau-canvas e2e failed: ${error.stack ?? error.message}`);
+  process.exitCode = 1;
+});
