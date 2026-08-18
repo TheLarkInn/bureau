@@ -91,6 +91,7 @@ export function resolveInput(input = {}) {
 export async function openBureauCanvas(ctx, options = {}) {
     const input = resolveInput(ctx.input ?? {});
     const state = await buildState({ ...input, instanceId: ctx.instanceId }, options);
+    subjects.set(ctx.instanceId, subjectFromState(state));
     let entry = servers.get(ctx.instanceId);
 
     if (!entry) {
@@ -111,6 +112,7 @@ export async function closeBureauCanvas(ctx) {
     }
 
     servers.delete(ctx.instanceId);
+    subjects.delete(ctx.instanceId);
     await closeServer(entry);
 }
 
@@ -143,11 +145,25 @@ export async function buildState(input, options = {}) {
 }
 
 async function loadConfigPayload(dir, options) {
+    if (options.payload) {
+        return resultFromPayload(options.payload, dir);
+    }
     const result = await findings(dir, findingsOptions(options));
     if (["binary-missing", "dir-missing"].includes(result.state)) {
         return fallbackResult(dir, result);
     }
     return result;
+}
+
+function resultFromPayload(payload, fallbackDir) {
+    return {
+        ok: Boolean(payload.ok),
+        state: "validated",
+        dir: payload.dir ?? fallbackDir,
+        errors: payload.errors ?? [],
+        config: payload.config ?? null,
+        findings: payload.findings ?? [],
+    };
 }
 
 function findingsOptions(options) {
@@ -281,14 +297,19 @@ function generalFindings(findingsList) {
     return findingsList.filter((finding) => !itemKeyForFinding(finding));
 }
 
+function subjectFromState(state) {
+    return {
+        dir: state.dir,
+        ...(state.pipeline ? { pipeline: state.pipeline } : {}),
+    };
+}
+
 function selectedPipeline(state, name) {
     if (!name) {
         return null;
     }
-    if (!state.pipelines[name]) {
-        return { name, missing: true, placeholder: "Pipeline drill-down will render here in a later issue." };
-    }
-    return { name, missing: false, placeholder: "Pipeline drill-down will render here in a later issue." };
+    const missing = !state.pipelines[name];
+    return missing ? { name, missing, notice: `No pipeline named \`${name}\` in this config.` } : { name, missing };
 }
 
 async function startServer(state) {
@@ -348,12 +369,20 @@ async function handleRequest(entry, request, response) {
 
 async function handleIntent(entry, request, response) {
     const intent = await readIntent(request);
+    if (intent?.kind === "back-to-config") {
+        entry.state = { ...entry.state, pipeline: null, selectedPipeline: null };
+        subjects.set(entry.state.instanceId, subjectFromState(entry.state));
+        publishState(entry);
+        sendJson(response, { ok: true, state: entry.state }, false);
+        return;
+    }
     if (intent?.kind !== "open-pipeline" || typeof intent.pipeline !== "string") {
         sendStatus(response, 400);
         return;
     }
     entry.state = { ...entry.state, pipeline: intent.pipeline };
     entry.state.selectedPipeline = selectedPipeline(entry.state, intent.pipeline);
+    subjects.set(entry.state.instanceId, subjectFromState(entry.state));
     publishState(entry);
     sendJson(response, { ok: true, state: entry.state }, false);
 }

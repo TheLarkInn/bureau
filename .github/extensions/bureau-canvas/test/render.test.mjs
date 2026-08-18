@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -9,6 +10,11 @@ const canvas = await import("../extension.mjs");
 const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
 const bureauStub = fileURLToPath(new URL("./fixtures/findings-bureau.mjs", import.meta.url));
 const validDir = fileURLToPath(new URL("./fixtures/findings-valid/.bureau", import.meta.url));
+const referenceUrl = new URL("./fixtures/reference-payload.json", import.meta.url);
+
+async function payloadFixture(url) {
+  return JSON.parse(await readFile(url, "utf8"));
+}
 
 async function openInstance(instanceId, input = {}, options = {}) {
   const opened = await canvas.openBureauCanvas({ instanceId, input }, options);
@@ -113,7 +119,7 @@ test("real validate payload does not use the fixture", async () => {
   }
 });
 
-test("pipeline intent updates state with drill-down placeholder", async () => {
+test("pipeline intent selects a pipeline that carries its own step diagram", async () => {
   const instance = await openInstance("bureau-render-intent-test");
 
   try {
@@ -124,25 +130,22 @@ test("pipeline intent updates state with drill-down placeholder", async () => {
     });
     const result = await response.json();
     const state = await fetch(new URL("/state", instance.opened.url)).then((reply) => reply.json());
+    const drawn = state.pipelines["agent-eligible-pipeline"];
 
     assert.deepEqual(
       {
         ok: result.ok,
         selected: result.state.selectedPipeline,
         persisted: state.selectedPipeline,
+        steps: drawn.view.steps.length,
+        routed: drawn.layout.edges.every((edge) => Boolean(edge.route)),
       },
       {
         ok: true,
-        selected: {
-          name: "agent-eligible-pipeline",
-          missing: false,
-          placeholder: "Pipeline drill-down will render here in a later issue.",
-        },
-        persisted: {
-          name: "agent-eligible-pipeline",
-          missing: false,
-          placeholder: "Pipeline drill-down will render here in a later issue.",
-        },
+        selected: { name: "agent-eligible-pipeline", missing: false },
+        persisted: { name: "agent-eligible-pipeline", missing: false },
+        steps: 3,
+        routed: true,
       },
     );
   } finally {
@@ -150,6 +153,114 @@ test("pipeline intent updates state with drill-down placeholder", async () => {
   }
 });
 
+
+test("committed pipeline view keeps absent branches absent", async () => {
+  const instance = await openInstance("bureau-render-committed-pipeline-test", { pipeline: "agent-eligible-pipeline" });
+
+  try {
+    const page = await fetch(instance.opened.url).then((response) => response.text());
+    const state = await fetch(new URL("/state", instance.opened.url)).then((response) => response.json());
+    const pipeline = state.pipelines["agent-eligible-pipeline"];
+    const verifyEdges = pipeline.layout.edges.filter((edge) => edge.source === "verify" && edge.relation === "control");
+
+    assert.deepEqual(
+      {
+        selected: state.selectedPipeline.name,
+        steps: pipeline.layout.steps.length,
+        reachedTerminals: pipeline.view.terminals.filter((terminal) => pipeline.layout.edges.some((edge) => edge.target === terminal.id)).length,
+        verifyOutcomes: verifyEdges.map((edge) => edge.outcome).sort(),
+        markup: ["edge--data", "edge--observes", "back-button", "card--terminal"].map((text) => page.includes(text)),
+      },
+      {
+        selected: "agent-eligible-pipeline",
+        steps: 3,
+        reachedTerminals: 2,
+        verifyOutcomes: ["failure", "success"],
+        markup: [true, true, true, true],
+      },
+    );
+  } finally {
+    await instance.close();
+  }
+});
+
+test("reference pipeline state carries retry routes and concurrent membership", async () => {
+  const payload = await payloadFixture(referenceUrl);
+  const instance = await openInstance(
+    "bureau-render-reference-pipeline-test",
+    { pipeline: "fix-failing-test" },
+    { payload },
+  );
+
+  try {
+    const state = await fetch(new URL("/state", instance.opened.url)).then((response) => response.json());
+    const pipeline = state.pipelines["fix-failing-test"];
+    const retries = pipeline.layout.edges
+      .filter((edge) => edge.target === "propose" && ["passed", "verdict", "verify"].includes(edge.source))
+      .map((edge) => `${edge.source}:${edge.route}`)
+      .sort();
+    const passedOutcomes = pipeline.layout.edges
+      .filter((edge) => edge.source === "passed" && edge.relation === "control")
+      .map((edge) => edge.outcome)
+      .sort();
+
+    assert.deepEqual(
+      {
+        steps: pipeline.layout.steps.length,
+        concurrentMembers: pipeline.layout.steps.filter((step) => step.parentId === "run-checks").map((step) => step.id).sort(),
+        memberControlEdges: pipeline.layout.edges.filter((edge) => ["apply", "review"].includes(edge.source) && edge.relation === "control").length,
+        retries,
+        passedOutcomes,
+        relations: [...new Set(pipeline.layout.edges.map((edge) => edge.relation))].sort(),
+      },
+      {
+        steps: 9,
+        concurrentMembers: ["apply", "review"],
+        memberControlEdges: 0,
+        retries: ["passed:back", "verdict:back", "verify:back"],
+        passedOutcomes: ["blocked", "failure", "no-work", "success"],
+        relations: ["control", "data", "observes"],
+      },
+    );
+  } finally {
+    await instance.close();
+  }
+});
+
+test("back to config intent clears selected pipeline", async () => {
+  const instance = await openInstance("bureau-render-back-test", { pipeline: "agent-eligible-pipeline" });
+
+  try {
+    const response = await fetch(new URL("/intent", instance.opened.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "back-to-config" }),
+    });
+    const result = await response.json();
+
+    assert.deepEqual({ ok: result.ok, pipeline: result.state.pipeline, selected: result.state.selectedPipeline }, { ok: true, pipeline: null, selected: null });
+  } finally {
+    await instance.close();
+  }
+});
+
+test("focus and reload keep the selected pipeline subject", async () => {
+  const instanceId = "bureau-render-actions-selected-test";
+  const instance = await openInstance(instanceId, { pipeline: "agent-eligible-pipeline" });
+  const actions = canvas.canvasActions();
+
+  try {
+    const focus = await actions.find((action) => action.name === "focus").handler({ instanceId, input: { kind: "step", name: "verify" } });
+    const reload = await actions.find((action) => action.name === "reload").handler({ instanceId, input: {} });
+
+    assert.deepEqual(
+      { focusSubject: focus.subject.pipeline, reloadScope: reload.scope, reloadPipeline: reload.subject.pipeline },
+      { focusSubject: "agent-eligible-pipeline", reloadScope: "pipeline", reloadPipeline: "agent-eligible-pipeline" },
+    );
+  } finally {
+    await instance.close();
+  }
+});
 test("request handling still refuses unrelated POSTs and path traversal", async () => {
   const instance = await openInstance("bureau-render-security-test");
 

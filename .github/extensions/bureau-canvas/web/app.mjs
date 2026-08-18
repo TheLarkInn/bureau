@@ -1,6 +1,7 @@
 const CARD_WIDTH = 216;
 const CARD_HEIGHT = 112;
 const CARD_PAD = 64;
+const MEMBER_PAD = 24;
 
 const summary = document.querySelector("#summary");
 const status = document.querySelector("#status");
@@ -11,11 +12,13 @@ const drillDown = document.querySelector("#drill-down");
 const generalFindings = document.querySelector("#general-findings");
 
 let currentState = null;
+let selectedStep = null;
 
 await loadState();
 
 const events = new EventSource("./events");
-events.addEventListener("state", (event) => render(JSON.parse(event.data)));
+events.addEventListener("state", (event) => receiveState(JSON.parse(event.data)));
+events.addEventListener("focus", (event) => receiveFocus(JSON.parse(event.data)));
 
 async function loadState() {
   const response = await fetch("./state", { cache: "no-store" });
@@ -25,11 +28,31 @@ async function loadState() {
   render(await response.json());
 }
 
+function receiveState(payload) {
+  if (payload?.config) {
+    render(payload);
+  }
+}
+
+function receiveFocus(payload) {
+  if (payload?.focus?.kind === "step") {
+    selectedStep = payload.focus.step ?? payload.focus.name;
+    render(currentState);
+  }
+  if (payload?.focus?.kind === "pipeline") {
+    requestPipeline(payload.focus.name ?? payload.focus.pipeline);
+  }
+}
+
 function render(state) {
   currentState = state;
   renderHeader(state);
   renderFindings(generalFindings, state.generalFindings ?? []);
-  renderCards(state);
+  if (state.selectedPipeline) {
+    renderPipeline(state, state.selectedPipeline.name);
+  } else {
+    renderConfig(state);
+  }
   renderDrillDown(state.selectedPipeline);
 }
 
@@ -43,12 +66,27 @@ function renderHeader(state) {
   );
 }
 
-function renderCards(state) {
+function renderConfig(state) {
   const layout = state.config?.layout ?? { items: [], edges: [] };
   const byId = new Map(layout.items.map((item) => [item.id, item]));
   setSurfaceSize(layout.items);
-  edgeLayer.replaceChildren(...layout.edges.map((edge) => edgeLine(edge, byId)).filter(Boolean));
-  cardLayer.replaceChildren(...layout.items.map((item) => cardFor(state, item)));
+  edgeLayer.replaceChildren(...layout.edges.map((edge) => configEdge(edge, byId)).filter(Boolean));
+  cardLayer.replaceChildren(...layout.items.map((item) => configCard(state, item)));
+}
+
+function renderPipeline(state, name) {
+  const pipeline = state.pipelines?.[name];
+  const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
+  const items = [...layout.steps, ...layout.terminals];
+  const byId = new Map(items.map((item) => [item.id, item]));
+  setSurfaceSize(items);
+  edgeLayer.replaceChildren(...pipelineEdges(layout.edges, byId));
+  cardLayer.replaceChildren(
+    pipelineToolbar(name),
+    ...concurrentBoxes(layout.steps),
+    ...layout.steps.map((step) => stepCard(state, name, step)),
+    ...layout.terminals.map(terminalCard),
+  );
 }
 
 function setSurfaceSize(items) {
@@ -61,47 +99,134 @@ function setSurfaceSize(items) {
   edgeLayer.setAttribute("height", height);
 }
 
-function edgeLine(edge, byId) {
+function configEdge(edge, byId) {
   const source = byId.get(edge.source);
   const target = byId.get(edge.target);
   if (!source || !target) {
     return null;
   }
+  return svgLine(source.x + CARD_WIDTH, source.y + CARD_HEIGHT / 2, target.x, target.y + CARD_HEIGHT / 2, "edge-path");
+}
+
+function pipelineEdges(edges, byId) {
+  return edges.flatMap((edge) => {
+    const source = byId.get(edge.source);
+    const target = byId.get(edge.target);
+    if (!source || !target) {
+      return [];
+    }
+    const path = routePath(edge.route, source, target);
+    const line = svgPath(path, `edge-path ${edgeClass(edge)}`);
+    const label = edgeLabel(edge, path.midX, path.midY);
+    return label ? [line, label] : [line];
+  });
+}
+
+function routePath(route, source, target) {
+  const start = startPoint(route, source);
+  const end = endPoint(route, target);
+  const midX = route === "back" ? Math.min(start.x, end.x) - CARD_PAD : (start.x + end.x) / 2;
+  const midY = (start.y + end.y) / 2;
+  if (route === "spine") {
+    return { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, midX, midY };
+  }
+  if (route === "back") {
+    return { d: `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`, midX, midY };
+  }
+  return { d: `M ${start.x} ${start.y} C ${midX} ${start.y}, ${midX} ${end.y}, ${end.x} ${end.y}`, midX, midY };
+}
+
+function startPoint(route, item) {
+  if (route === "spine") {
+    return { x: item.x + CARD_WIDTH / 2, y: item.y + CARD_HEIGHT };
+  }
+  if (route === "back") {
+    return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
+  }
+  return { x: item.x + CARD_WIDTH, y: item.y + CARD_HEIGHT / 2 };
+}
+
+function endPoint(route, item) {
+  if (route === "spine") {
+    return { x: item.x + CARD_WIDTH / 2, y: item.y };
+  }
+  if (route === "back") {
+    return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
+  }
+  return { x: item.x, y: item.y + CARD_HEIGHT / 2 };
+}
+
+function edgeClass(edge) {
+  if (edge.relation === "data") {
+    return "edge--data";
+  }
+  if (edge.relation === "observes") {
+    return "edge--observes";
+  }
+  return `edge--${edge.outcome}`;
+}
+
+function edgeLabel(edge, x, y) {
+  const text = edge.relation === "control" ? edge.outcome : edge.relation;
+  if (!text) {
+    return null;
+  }
+  const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+  label.setAttribute("class", "edge-label");
+  label.setAttribute("x", x + 4);
+  label.setAttribute("y", y - 4);
+  label.textContent = text;
+  return label;
+}
+
+function svgLine(x1, y1, x2, y2, className) {
   const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", source.x + CARD_WIDTH);
-  line.setAttribute("y1", source.y + CARD_HEIGHT / 2);
-  line.setAttribute("x2", target.x);
-  line.setAttribute("y2", target.y + CARD_HEIGHT / 2);
+  line.setAttribute("class", className);
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", y1);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
   line.setAttribute("stroke", "currentColor");
-  line.setAttribute("stroke-width", "2");
   return line;
 }
 
-function cardFor(state, item) {
+function svgPath(path, className) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  element.setAttribute("class", className);
+  element.setAttribute("d", path.d);
+  return element;
+}
+
+function configCard(state, item) {
   const data = dataFor(state, item);
-  const card = document.createElement("article");
-  card.className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
-  card.style.transform = `translate(${item.x}px, ${item.y}px)`;
+  const card = baseCard(`card card--${item.kind}${item.orphan ? " card--orphan" : ""}`, item);
   card.dataset.ref = item.id;
-  card.append(cardBody(state, item, data));
+  card.append(configCardBody(state, item, data));
   return card;
 }
 
-function cardBody(state, item, data) {
+function baseCard(className, item) {
+  const card = document.createElement("article");
+  card.className = className;
+  card.style.transform = `translate(${item.x}px, ${item.y}px)`;
+  return card;
+}
+
+function configCardBody(state, item, data) {
   if (item.kind === "pipeline") {
     const button = document.createElement("button");
     button.className = "card-button";
     button.type = "button";
-    button.append(...cardContents(state, item, data));
+    button.append(...configCardContents(state, item, data));
     button.addEventListener("click", () => requestPipeline(item.name));
     return button;
   }
   const body = document.createElement("div");
-  body.append(...cardContents(state, item, data));
+  body.append(...configCardContents(state, item, data));
   return body;
 }
 
-function cardContents(state, item, data) {
+function configCardContents(state, item, data) {
   return [
     title(item.name),
     detailFor(item, data),
@@ -188,8 +313,8 @@ function repoChips(state, repo) {
 }
 
 function pipelineChips(state, pipeline) {
-  const summary = state.pipelines?.[pipeline.name]?.summary ?? { kindCounts: {} };
-  return Object.entries(summary.kindCounts).map(([kind, count]) => labelChip(`${kind}×${count}`));
+  const pipelineSummary = state.pipelines?.[pipeline.name]?.summary ?? { kindCounts: {} };
+  return Object.entries(pipelineSummary.kindCounts).map(([kind, count]) => labelChip(`${kind}×${count}`));
 }
 
 function chipRow(chips) {
@@ -239,8 +364,127 @@ function stepBadge(state, step) {
   return badge;
 }
 
+function pipelineToolbar(name) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "pipeline-toolbar";
+  toolbar.append(backButton(), title(name), legend());
+  return toolbar;
+}
+
+function backButton() {
+  const button = document.createElement("button");
+  button.className = "back-button";
+  button.type = "button";
+  button.textContent = "Back to config";
+  button.addEventListener("click", backToConfig);
+  return button;
+}
+
+function legend() {
+  const row = document.createElement("div");
+  row.className = "legend";
+  row.setAttribute("aria-label", "Edge legend");
+  row.append(
+    legendItem("success", "var(--bureau-teal)"),
+    legendItem("failure", "var(--bureau-red)"),
+    legendItem("blocked", "var(--bureau-amber)"),
+    legendItem("no-work", "var(--bureau-grey)"),
+    legendItem("data dashed", "var(--bureau-blue)"),
+    legendItem("observes dotted", "var(--bureau-yellow)"),
+  );
+  return row;
+}
+
+function legendItem(text, color) {
+  const item = document.createElement("span");
+  const swatch = document.createElement("span");
+  swatch.className = "legend-swatch";
+  swatch.style.setProperty("--swatch", color);
+  item.append(swatch, ` ${text}`);
+  return item;
+}
+
+function concurrentBoxes(steps) {
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  return steps.filter((step) => step.kind === "concurrent").map((step) => concurrentBox(step, byId));
+}
+
+function concurrentBox(step, byId) {
+  const members = (step.fields.members ?? []).map((member) => byId.get(member)).filter(Boolean);
+  const left = Math.min(step.x, ...members.map((member) => member.x)) - MEMBER_PAD;
+  const top = Math.min(step.y, ...members.map((member) => member.y)) - MEMBER_PAD;
+  const right = Math.max(step.x + CARD_WIDTH, ...members.map((member) => member.x + CARD_WIDTH)) + MEMBER_PAD;
+  const bottom = Math.max(step.y + CARD_HEIGHT, ...members.map((member) => member.y + CARD_HEIGHT)) + MEMBER_PAD;
+  const box = document.createElement("div");
+  box.className = "concurrent-box";
+  box.style.transform = `translate(${left}px, ${top}px)`;
+  box.style.width = `${right - left}px`;
+  box.style.height = `${bottom - top}px`;
+  return box;
+}
+
+function stepCard(state, pipelineName, step) {
+  const className = [
+    "card",
+    "step-card",
+    `card--${step.kind}`,
+    step.parentId ? "card--member" : "",
+    selectedStep === step.name ? "is-highlighted" : "",
+    unreachableClass(state, pipelineName, step),
+  ].filter(Boolean).join(" ");
+  const card = baseCard(className, step);
+  const button = document.createElement("button");
+  button.className = "step-button";
+  button.type = "button";
+  button.append(...[title(step.name), stepDetail(step), stepChips(step), findingList(state.findingsByStep?.[`pipeline:${pipelineName}/${step.name}`] ?? [])].filter(Boolean));
+  button.addEventListener("click", () => selectStep(step.name));
+  card.dataset.ref = `pipeline:${pipelineName}/${step.name}`;
+  card.append(button);
+  return card;
+}
+
+function unreachableClass(state, pipelineName, step) {
+  const findings = state.findingsByStep?.[`pipeline:${pipelineName}/${step.name}`] ?? [];
+  return findings.some((finding) => /unreachable/i.test(finding.message ?? "")) ? "card--unreachable" : "";
+}
+
+function stepDetail(step) {
+  const line = document.createElement("p");
+  line.className = "detail";
+  line.textContent = stepDetailText(step);
+  return line;
+}
+
+function stepDetailText(step) {
+  if (step.kind === "deterministic") {
+    return step.fields.run ?? "run command not set";
+  }
+  if (step.kind === "agent") {
+    return `role: ${step.fields.role ?? "not set"}`;
+  }
+  if (step.kind === "decision") {
+    return `over: ${step.fields.over ?? "not set"}`;
+  }
+  return `${step.fields.members?.length ?? 0} in parallel`;
+}
+
+function stepChips(step) {
+  const chips = [
+    step.parentId ? { text: `member of ${step.parentId}` } : null,
+    step.fields.trust ? { text: `trust: ${step.fields.trust}` } : null,
+    step.fields.maxAttempts > 1 ? { text: `attempts: ${step.fields.maxAttempts}` } : null,
+  ].filter(Boolean);
+  return chipRow(chips) ?? document.createElement("span");
+}
+
+function terminalCard(terminal) {
+  const card = baseCard("card step-card card--terminal", terminal);
+  card.append(title(terminal.name));
+  return card;
+}
+
 function findingList(findings) {
-  if (findings.length === 0) {
+  if (!findings || findings.length === 0) {
     return null;
   }
   const list = document.createElement("div");
@@ -275,23 +519,42 @@ function clearHighlights() {
   }
 }
 
+function selectStep(name) {
+  selectedStep = name;
+  for (const element of document.querySelectorAll(".step-card")) {
+    element.classList.toggle("is-highlighted", element.textContent.includes(name));
+  }
+}
+
 async function requestPipeline(name) {
+  const result = await postIntent({ kind: "open-pipeline", pipeline: name });
+  if (result?.ok) {
+    render(result.state);
+  }
+}
+
+async function backToConfig() {
+  const result = await postIntent({ kind: "back-to-config" });
+  if (result?.ok) {
+    selectedStep = null;
+    render(result.state);
+  }
+}
+
+async function postIntent(body) {
   const response = await fetch("./intent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: "open-pipeline", pipeline: name }),
+    body: JSON.stringify(body),
   });
-  if (response.ok) {
-    const result = await response.json();
-    render(result.state);
-  }
+  return response.ok ? response.json() : null;
 }
 
 function renderDrillDown(selected) {
   drillDown.hidden = !selected;
   drillDown.replaceChildren();
   if (selected) {
-    drillDown.append(title(selected.name), textLine(selected.placeholder));
+    drillDown.append(textLine(selected.missing ? `${selected.name} is not present.` : "Select a step to inspect it. No edits are available in this view."));
   }
 }
 

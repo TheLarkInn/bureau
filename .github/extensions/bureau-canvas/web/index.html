@@ -19,6 +19,8 @@
         --bureau-magenta: var(--true-color-pink, #bf3989);
         --bureau-teal: var(--true-color-green, #1a7f37);
         --bureau-yellow: var(--true-color-yellow, #9a6700);
+        --bureau-red: var(--true-color-red, #cf222e);
+        --bureau-amber: var(--true-color-yellow, #9a6700);
         --bureau-red-muted: var(--true-color-red-muted, #ffebe9);
         --bureau-yellow-muted: var(--true-color-yellow-muted, #fff8c5);
       }
@@ -181,10 +183,113 @@
         opacity: var(--bureau-dim-opacity, 0.35);
       }
 
-      .has-highlight .is-highlighted {
+      .has-highlight .is-highlighted,
+      .step-card.is-highlighted {
         opacity: 1;
         outline: 2px solid var(--color-focus-outline, #0969da);
         outline-offset: var(--bureau-space-1);
+      }
+      .pipeline-toolbar,
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--bureau-space-2);
+      }
+
+      .back-button {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--bureau-radius);
+        padding: var(--bureau-space-1) var(--bureau-space-2);
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .back-button:focus-visible,
+      .step-button:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: var(--bureau-space-1);
+      }
+
+      .legend-swatch {
+        display: inline-block;
+        width: var(--bureau-space-4);
+        height: var(--bureau-space-1);
+        border-radius: var(--bureau-radius);
+        background: var(--swatch, var(--bureau-grey));
+        vertical-align: middle;
+      }
+
+      .step-card {
+        width: var(--bureau-card-width);
+        min-height: var(--bureau-card-min-height);
+      }
+
+      .step-button {
+        display: grid;
+        gap: var(--bureau-space-2);
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+      }
+
+      .card--deterministic { --accent: var(--bureau-blue); }
+      .card--agent { --accent: var(--bureau-magenta); }
+      .card--decision { --accent: var(--bureau-yellow); }
+      .card--concurrent { --accent: var(--bureau-teal); }
+      .card--terminal {
+        --accent: var(--bureau-grey);
+        min-height: auto;
+        border-radius: 999px;
+      }
+
+      .card--member {
+        background: var(--background-color-default, #ffffff);
+      }
+
+      .card--unreachable {
+        outline: 2px dashed var(--bureau-red);
+        outline-offset: var(--bureau-space-1);
+      }
+
+      .concurrent-box {
+        position: absolute;
+        box-sizing: border-box;
+        border: 1px dashed var(--bureau-teal);
+        border-radius: var(--bureau-radius);
+        background: transparent;
+        pointer-events: none;
+      }
+
+      .edge-path {
+        fill: none;
+        stroke-width: 2;
+      }
+
+      .edge--success { stroke: var(--bureau-teal); }
+      .edge--failure { stroke: var(--bureau-red); }
+      .edge--blocked { stroke: var(--bureau-amber); }
+      .edge--no-work { stroke: var(--bureau-grey); }
+      .edge--data {
+        stroke: var(--bureau-blue);
+        stroke-dasharray: 7 5;
+      }
+      .edge--observes {
+        stroke: var(--bureau-yellow);
+        stroke-dasharray: 2 5;
+      }
+
+      .edge-label {
+        fill: var(--text-color-muted, #656d76);
+        font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+        font-size: var(--text-code-inline, 12px);
       }
     </style>
   </head>
