@@ -66,6 +66,8 @@ function App() {
     "main",
     { className: "app-shell" },
     h(Header, { state }),
+    h(DraftBar, { plan: state.plan }),
+    state.selectedPipeline ? null : h(CreateBar, { dir: state.dir }),
     h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
     state.selectedPipeline
       ? h(PipelineView, { state, selectedStep, setSelectedStep })
@@ -100,6 +102,85 @@ function Header({ state }) {
       h("p", {}, state.validation?.dir ?? state.dir),
       h("p", {}, `${view.orphans.length} orphan${view.orphans.length === 1 ? "" : "s"}`),
     ),
+  );
+}
+
+/**
+ * Unsaved work has to look unsaved. Every card looked saved until now because
+ * everything always was; a pending create, rename or delete must read
+ * differently and be discardable.
+ */
+function DraftBar({ plan }) {
+  if (!plan) {
+    return null;
+  }
+  const pending = plan.writes.length + plan.removals.length;
+  return h(
+    "section",
+    { className: "draft-bar", "data-testid": "draft-bar" },
+    h("p", {}, `${pending} unsaved change${pending === 1 ? "" : "s"}`),
+    h("ul", { className: "draft-list" }, [
+      ...plan.writes.map((path) => h("li", { key: `w:${path}` }, `write ${shortPath(path)}`)),
+      ...plan.removals.map((path) => h("li", { key: `r:${path}` }, `delete ${shortPath(path)}`)),
+    ]),
+    h(
+      "div",
+      { className: "draft-actions" },
+      h("button", { type: "button", onClick: () => postIntent({ kind: "save-plan" }).then(publishLocalState) }, "Save"),
+      h("button", { type: "button", onClick: () => postIntent({ kind: "discard-plan" }).then(publishLocalState) }, "Discard"),
+    ),
+  );
+}
+
+function shortPath(path) {
+  return String(path).replaceAll("\\", "/").split("/").slice(-2).join("/");
+}
+
+/** Create controls, one per kind, scaffolded so a new entity is valid at once. */
+function CreateBar({ dir }) {
+  const [kind, setKind] = useState("role");
+  const [name, setName] = useState("");
+  const submit = (event) => {
+    event.preventDefault();
+    if (!name.trim()) {
+      return;
+    }
+    postIntent({ kind: "create", input: { dir, kind, name: name.trim(), fields: {} } }).then((result) => {
+      setName("");
+      publishLocalState(result);
+    });
+  };
+  return h(
+    "form",
+    { className: "create-bar", onSubmit: submit, "data-testid": "create-bar" },
+    h(
+      "select",
+      { value: kind, onChange: (event) => setKind(event.target.value), "aria-label": "New entity kind" },
+      ["repo", "role", "assignment", "pipeline"].map((option) => h("option", { key: option, value: option }, option)),
+    ),
+    h("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "name", "aria-label": "New entity name" }),
+    h("button", { type: "submit" }, "Create"),
+  );
+}
+
+/** Delete asks first and shows what breaks; the entry-step case reads louder. */
+function DeleteControl({ dir, kind, name }) {
+  const [preflight, setPreflight] = useState(null);
+  const ask = () => postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => setPreflight(response?.result ?? null));
+  const confirm = () => postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
+    setPreflight(null);
+    publishLocalState(result);
+  });
+  if (!preflight) {
+    return h("button", { type: "button", className: "card-action", onClick: ask }, "Delete");
+  }
+  return h(
+    "div",
+    { className: `preflight${preflight.referrers?.length ? " preflight--blocking" : ""}`, "data-testid": "preflight" },
+    h("p", {}, preflight.referrers?.length ? `${preflight.referrers.length} reference${preflight.referrers.length === 1 ? "" : "s"}` : "Nothing references this"),
+    h("ul", {}, (preflight.referrers ?? []).map((item) => h("li", { key: item.name, className: `severity-${item.severity}` }, item.message))),
+    h("button", { type: "button", onClick: confirm }, "Confirm delete"),
+    h("button", { type: "button", onClick: () => setPreflight(null) }, "Cancel"),
   );
 }
 
@@ -153,12 +234,14 @@ function configEdge(edge, byId) {
 function ConfigCard({ state, item }) {
   const data = configData(state, item);
   const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}`;
+  const deletable = ["repo", "role", "assignment", "pipeline"].includes(item.kind);
   return h(
     "article",
     { className, style: { transform: `translate(${item.x}px, ${item.y}px)` }, "data-ref": item.id },
     item.kind === "pipeline"
       ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data))
       : h("div", {}, configCardContent(state, item, data)),
+    deletable ? h(DeleteControl, { dir: state.dir, kind: item.kind, name: item.name }) : null,
   );
 }
 

@@ -96,8 +96,7 @@
       .app-header {
         display: flex;
         align-items: flex-start;
-        justify-content: space-between;
-        gap: var(--space-5);
+        justify-content: space-between;        gap: var(--space-5);
         padding: var(--space-4) var(--space-5);
         border-bottom: 1px solid var(--border-color-default, #d0d7de);
       }
@@ -189,6 +188,84 @@
 
       .card {
         position: absolute;
+      }
+      /* A pending change must not look like saved state. */
+      .draft-bar {
+        margin: 0 0 12px;
+        padding: 10px 14px;
+        border: 1px dashed var(--true-color-orange, #cca700);
+        border-radius: 8px;
+        background: var(--background-color-default, #fff);
+      }
+      .draft-bar p {
+        margin: 0 0 6px;
+        font-weight: var(--font-weight-semibold, 600);
+      }
+      .draft-list {
+        margin: 0 0 8px;
+        padding-left: 18px;
+        color: var(--text-color-muted, #656d76);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .draft-actions button,
+      .create-bar button,
+      .card-action,
+      .preflight button {
+        margin-right: 6px;
+        padding: 4px 10px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #fff);
+        color: var(--text-color-default, #1f2328);
+        font: inherit;
+        cursor: pointer;
+      }
+      .create-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 12px;
+      }
+      .create-bar select,
+      .create-bar input {
+        height: 30px;
+        padding: 4px 8px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #fff);
+        color: var(--text-color-default, #1f2328);
+        font: inherit;
+      }
+      .card-action {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        font-size: var(--text-code-inline, 12px);
+      }
+      .preflight {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        padding: 8px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #fff);
+        font-size: var(--text-code-inline, 12px);
+      }
+      /* Friction proportional to consequence: a referenced delete reads louder. */
+      .preflight--blocking {
+        border-color: var(--true-color-red, #cf222e);
+      }
+      .preflight ul {
+        margin: 4px 0 8px;
+        padding-left: 16px;
+        color: var(--text-color-muted, #656d76);
+      }
+      .severity-entry-step {
+        color: var(--true-color-red, #cf222e);
+        font-weight: var(--font-weight-semibold, 600);
       }
 
       .card-button, .step-button, .back-button {
