@@ -5,7 +5,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bureau::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
+use bureau::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust, WorkItem};
 use bureau::mcp::{BUREAU_STEP_REQUEST, BUREAU_STEP_RESULT, Paths, Session, serve};
 use serde_json::json;
 
@@ -41,6 +41,7 @@ fn request(worktree: &Path) -> StepRequest {
         run_id: "run-42".to_owned(),
         step: "implement".to_owned(),
         worktree: worktree.to_path_buf(),
+        item: WorkItem::default(),
         trust: Trust::Maintainer,
         inputs: BTreeMap::from([("issue".to_owned(), json!(42))]),
         artifacts: BTreeMap::new(),

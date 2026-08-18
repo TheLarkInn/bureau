@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use bureau::adapters::{AdapterKind, claude, copilot};
 use bureau::config::{Permission, Role, StepDef, StepKind};
-use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust};
+use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust, WorkItem};
 use bureau::process::SpawnRequest;
 
 /// Joins argv for one-line comparisons (unit separator).
@@ -87,6 +87,7 @@ fn request(worktree: &Path) -> StepRequest {
         run_id: "run-1".to_owned(),
         step: "review".to_owned(),
         worktree: worktree.to_path_buf(),
+        item: WorkItem::default(),
         trust: Trust::Derived,
         inputs: BTreeMap::new(),
         artifacts: BTreeMap::new(),

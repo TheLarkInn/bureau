@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use bureau::contract::{
-    Artifact, DecodeError, SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust,
+    Artifact, DecodeError, SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust, WorkItem,
 };
 
 fn sample_request() -> StepRequest {
@@ -14,6 +14,13 @@ fn sample_request() -> StepRequest {
         run_id: "run-1".to_owned(),
         step: "propose".to_owned(),
         worktree: PathBuf::from("/tmp/wt"),
+        item: WorkItem {
+            external_id: "acme/web#42".to_owned(),
+            title: "Fix the flaky login test".to_owned(),
+            body: "Fails intermittently on CI.".to_owned(),
+            url: "https://example.invalid/acme/web/issues/42".to_owned(),
+            labels: vec!["bug".to_owned()],
+        },
         trust: Trust::Maintainer,
         inputs: BTreeMap::from([("test_output".to_owned(), serde_json::json!("FAIL"))]),
         artifacts: BTreeMap::from([("diff".to_owned(), PathBuf::from("artifacts/diff.patch"))]),
@@ -119,4 +126,26 @@ fn trust_wire_form_is_snake_case() {
         serde_json::to_string(&Trust::Trusted).expect("serialize"),
         "\"trusted\""
     );
+}
+
+#[test]
+fn a_request_carries_the_work_item() {
+    let text = String::from_utf8(sample_request().to_json().expect("serialize")).expect("utf8");
+    let carried = [
+        "acme/web#42",
+        "Fix the flaky login test",
+        "Fails intermittently on CI.",
+        "https://example.invalid/acme/web/issues/42",
+    ];
+    assert!(
+        carried.iter().all(|part| text.contains(part)),
+        "wire form: {text}"
+    );
+}
+
+#[test]
+fn a_request_without_an_item_still_parses() {
+    let bytes = br#"{"schema":"v2","run_id":"r","step":"s","worktree":".","trust":"trusted","inputs":{},"artifacts":{}}"#;
+    let request = StepRequest::from_json(bytes).expect("item is optional on the wire");
+    assert_eq!(request.item, WorkItem::default());
 }

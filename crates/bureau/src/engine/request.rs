@@ -70,6 +70,7 @@ pub(super) fn build(ctx: &RunCtx, step: &StepDef, worktree: &Path) -> StepReques
         run_id: ctx.plan.run_id.clone(),
         step: step.name.clone(),
         worktree: worktree.to_path_buf(),
+        item: (&ctx.plan.item).into(),
         trust: request_trust(ctx, step),
         inputs: collect_outputs(ctx, step),
         artifacts: collect_artifacts(ctx, step),

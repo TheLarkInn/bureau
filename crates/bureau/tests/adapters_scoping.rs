@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bureau::adapters::fake::{self, Chunk, Stream, Transcript};
 use bureau::adapters::{AdapterKind, claude, copilot};
 use bureau::config::{Permission, Role, StepDef, StepKind};
-use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust};
+use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust, WorkItem};
 use bureau::process::{REDACTED, Secret, SpawnRequest};
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
@@ -84,6 +84,7 @@ fn request(worktree: &Path) -> StepRequest {
         run_id: "run-1".to_owned(),
         step: "review".to_owned(),
         worktree: worktree.to_path_buf(),
+        item: WorkItem::default(),
         trust: Trust::Derived,
         inputs: BTreeMap::new(),
         artifacts: BTreeMap::new(),

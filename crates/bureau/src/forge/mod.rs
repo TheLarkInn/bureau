@@ -58,6 +58,34 @@ impl Item {
     }
 }
 
+impl From<&Item> for crate::contract::WorkItem {
+    /// Projects a work item onto the step contract. `trust` is not
+    /// carried: `StepRequest::trust` already holds the request's floor.
+    ///
+    /// Destructured on purpose, and one-way on purpose. Destructuring
+    /// makes a new [`Item`] field a compile error here, so carrying or
+    /// dropping it is an explicit decision; the reverse conversion is
+    /// deliberately absent, because a step's copy must never become a
+    /// source of truth for the forge (DESIGN.md section 3).
+    fn from(item: &Item) -> Self {
+        let Item {
+            external_id,
+            title,
+            body,
+            url,
+            labels,
+            trust: _,
+        } = item;
+        Self {
+            external_id: external_id.clone(),
+            title: title.clone(),
+            body: body.clone(),
+            url: url.clone(),
+            labels: labels.clone(),
+        }
+    }
+}
+
 /// An open pull request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pr {
