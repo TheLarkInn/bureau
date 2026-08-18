@@ -145,8 +145,9 @@ async fn read_usage(path: std::path::PathBuf) -> Usage {
 /// Assembles the session, the `bureau-io` MCP config, and the spawn
 /// request. The CLI needs the server *definition* to launch it — the
 /// `--allow-tool=bureau-io` flag alone references a server it cannot
-/// find (issue #17) — so we write the config and point
-/// `--additional-mcp-config` at it.
+/// find. `--additional-mcp-config` is a no-op in the shipped CLI, so we
+/// write the workspace config the CLI *does* read: `.mcp.json` in the
+/// run worktree (the spawn's working directory).
 fn prepare(
     role: &Role,
     step: &StepDef,
@@ -157,17 +158,12 @@ fn prepare(
 ) -> Result<(Session, PathBuf, SpawnRequest), String> {
     let session = Session::create(request).map_err(|_| "creating bureau-io session failed")?;
     let telemetry = session.dir().join("copilot-otel.jsonl");
-    let config = session.dir().join("mcp.json");
-    real::write_mcp_config(&config)
+    real::write_mcp_config(&request.worktree.join(".mcp.json"))
         .map_err(|e| format!("writing bureau-io MCP config failed: {e}"))?;
     let mut built = spawn_request(role, step, request, secrets, log);
     built.timeout = timeout;
     built.cancel = super::cancel_path(request);
     built.env.extend(session.env().clone());
-    built.argv.push(format!(
-        "--additional-mcp-config=@{}",
-        config.to_string_lossy()
-    ));
     enable_telemetry(&mut built.env, &telemetry);
     Ok((session, telemetry, built))
 }

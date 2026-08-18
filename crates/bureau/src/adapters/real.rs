@@ -150,13 +150,9 @@ fn env_value(name: &str) -> Option<String> {
         .and_then(|value| value.into_string().ok())
 }
 
-/// Reads credential variables from the daemon's environment.
-///
-/// Reading is safe — only `set_var` is `unsafe` on edition 2024. A
-/// missing or empty variable is not forwarded; the engine resolves
-/// repo credentials itself, so that is never an error here. Callers
-/// gate through [`scoped_credentials`] so a role without the mapped
-/// grant receives nothing.
+/// Reads credential variables from the daemon's environment; missing or
+/// empty values are skipped. Callers gate through [`scoped_credentials`]
+/// so a role without the mapped grant receives nothing.
 pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
     let found = |name: &str| {
         env_value(name)
@@ -164,6 +160,13 @@ pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
             .map(|value| (name.to_owned(), value))
     };
     names.iter().copied().filter_map(found).collect()
+}
+
+/// The non-secret runtime environment (PATH, HOME, …) every step
+/// subprocess needs, read from the daemon. Contains no credentials.
+#[must_use]
+pub fn runtime_env() -> BTreeMap<String, String> {
+    daemon_credentials(&RUNTIME_VARS).into_iter().collect()
 }
 
 /// Reads `names` from the daemon's environment when `permissions` hold

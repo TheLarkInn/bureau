@@ -21,6 +21,7 @@ use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trus
 use crate::process::{Secret, SharedLog, SpawnResult};
 
 pub use crate::config::AdapterKind;
+pub use real::runtime_env;
 pub use usage::{Execution, Usage};
 
 type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = Execution> + Send + 'a>>;
