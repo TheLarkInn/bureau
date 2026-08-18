@@ -14,12 +14,15 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths --deny-tool='shell(git push)'` |
-//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell(git:*) --allow-all-paths` |
+//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell --allow-all-paths --deny-tool='shell(git push)'` |
+//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell --allow-all-paths` |
 //! | anything else                 | `--deny-tool='shell(*)'` |
 //!
 //! `repo:write` grants editing the run worktree (`write` +
-//! `--allow-all-paths`), not only the git shell — see issue #16.
+//! `--allow-all-paths`), not only the git shell — see issue #16 — and
+//! the whole shell, not only `git`, so the agent can run the build and
+//! test commands its own instructions tell it to run (DESIGN.md section
+//! 10, "shell breadth").
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
@@ -72,8 +75,14 @@ const MCP_CONFIG: &str = r#"{"mcpServers":{"bureau-io":{"type":"local","command"
 /// only run `git` — `shell(git:*)` alone left every `apply_patch`/edit
 /// denied (issue #16). So `repo:write` adds the file-edit tool plus
 /// `--allow-all-paths` (the worktree sits under `BUREAU_HOME`, outside
-/// any repo root the CLI would otherwise verify paths against). `git
-/// push` stays gated behind `repo:push`.
+/// any repo root the CLI would otherwise verify paths against).
+///
+/// The shell is granted whole, not just `git`. A step told to validate
+/// its own edit needs the repo's build and test commands, and the
+/// grantable unit here is the command stem, so an allowlist would have
+/// to name every tool a repository happens to use. `git push` stays
+/// gated behind `repo:push`: denial beats any allow, so the push
+/// boundary survives the wider grant.
 fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
@@ -81,7 +90,7 @@ fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     }
     let mut flags = vec![
         "--allow-tool=write".to_owned(),
-        "--allow-tool=shell(git:*)".to_owned(),
+        "--allow-tool=shell".to_owned(),
         "--allow-all-paths".to_owned(),
     ];
     if !push {
