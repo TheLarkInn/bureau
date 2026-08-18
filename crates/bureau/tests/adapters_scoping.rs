@@ -173,6 +173,22 @@ fn claude_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
     claude::spawn_request(&role, &step(), &request(dir), Vec::new(), None)
 }
 
+/// Deterministic steps run with a cleared environment, so they need the
+/// runtime PATH forwarded explicitly or `sh -c "cargo test"` fails with
+/// `cargo: not found`. `runtime_env` carries only non-secret runtime
+/// variables — never credentials.
+#[test]
+fn runtime_env_carries_path_and_home_but_no_credentials() {
+    let env = bureau::adapters::runtime_env();
+    let path_ok = std::env::var_os("PATH").is_some_and(|p| !p.is_empty());
+    let seen = (
+        env.contains_key("PATH") == path_ok,
+        env.contains_key("HOME") == std::env::var_os("HOME").is_some(),
+        env.contains_key("GH_TOKEN") || env.contains_key("ANTHROPIC_API_KEY"),
+    );
+    assert_eq!(seen, (true, true, false));
+}
+
 /// The fake adapter threads the run's scrub list into the replay
 /// spawn: a fixture echoing a credential is redacted before the
 /// captured output becomes the step result's message.

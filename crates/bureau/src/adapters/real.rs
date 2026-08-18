@@ -166,6 +166,14 @@ pub fn daemon_credentials(names: &[&str]) -> Vec<(String, String)> {
     names.iter().copied().filter_map(found).collect()
 }
 
+/// The non-secret runtime environment (PATH, HOME, …) every step
+/// subprocess needs, read from the daemon. Contains no credentials.
+/// Deterministic steps run with a cleared environment, so without this
+/// `sh -c "cargo test"` fails with `cargo: not found`.
+pub fn runtime_env() -> BTreeMap<String, String> {
+    daemon_credentials(&RUNTIME_VARS).into_iter().collect()
+}
+
 /// Reads `names` from the daemon's environment when `permissions` hold
 /// any of `grants`, and reads nothing otherwise — the section-10 check
 /// before spawn, applied at the one place credentials cross over.

@@ -124,6 +124,11 @@ async fn publish_artifacts(
 /// redacted from the log. The engine's own mirror and push paths
 /// resolve their credentials straight from the plan, never via a
 /// step's environment.
+///
+/// It DOES receive the runtime PATH and HOME: the spawn clears the
+/// environment (`env_clear`), so without them `sh -c "cargo test"` fails
+/// with `cargo: not found` even when the daemon can see cargo. Only
+/// non-secret runtime variables are forwarded, never credentials.
 async fn deterministic(
     ctx: &RunCtx,
     wt: &WtCtx,
@@ -138,7 +143,7 @@ async fn deterministic(
             step.run.clone().unwrap_or_default(),
         ],
         dir: wt.worktree.path().to_path_buf(),
-        env: BTreeMap::new(),
+        env: adapters::runtime_env(),
         stdin: request.to_json().unwrap_or_default(),
         timeout,
         secrets: ctx.secrets(),
