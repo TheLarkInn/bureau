@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bureau</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bureau-space-1: 0.25rem;
+        --bureau-space-2: 0.5rem;
+        --bureau-space-3: 0.75rem;
+        --bureau-space-4: 1rem;
+        --bureau-card-width: 13.5rem;
+        --bureau-card-min-height: 7rem;
+        --bureau-radius: 0.5rem;
+        --bureau-grey: var(--text-color-muted, #656d76);
+        --bureau-blue: var(--true-color-blue, #0969da);
+        --bureau-magenta: var(--true-color-pink, #bf3989);
+        --bureau-teal: var(--true-color-green, #1a7f37);
+        --bureau-yellow: var(--true-color-yellow, #9a6700);
+        --bureau-red-muted: var(--true-color-red-muted, #ffebe9);
+        --bureau-yellow-muted: var(--true-color-yellow-muted, #fff8c5);
+      }
+
+      body {
+        margin: 0;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+        font-size: var(--text-body-medium, 14px);
+        line-height: var(--leading-body-medium, 20px);
+      }
+
+      main {
+        display: grid;
+        gap: var(--bureau-space-4);
+        min-width: max-content;
+        padding: var(--bureau-space-4);
+      }
+
+      header {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: var(--bureau-space-4);
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-family: var(--font-sans-display, var(--font-sans, sans-serif));
+        font-size: var(--text-title-large, 26px);
+        font-weight: var(--font-weight-semibold, 600);
+        line-height: var(--leading-title-large, 32px);
+      }
+
+      h2 {
+        font-size: var(--text-body-medium, 14px);
+        font-weight: var(--font-weight-semibold, 600);
+      }
+
+      code {
+        font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+
+      .muted,
+      .detail {
+        color: var(--text-color-muted, #656d76);
+      }
+
+      .toolbar,
+      .chips,
+      .step-list,
+      .findings {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--bureau-space-2);
+      }
+
+      .chip,
+      .finding,
+      .step-badge {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--bureau-radius);
+        padding: var(--bureau-space-1) var(--bureau-space-2);
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font: inherit;
+      }
+
+      .permission-chip {
+        cursor: help;
+      }
+
+      .status,
+      .placeholder {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--bureau-radius);
+        padding: var(--bureau-space-3);
+      }
+
+      .surface {
+        position: relative;
+        overflow: auto;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--bureau-radius);
+        min-height: calc(var(--bureau-card-min-height) * 4);
+      }
+
+      .edge-layer,
+      .card-layer {
+        position: absolute;
+        inset: 0;
+      }
+
+      .edge-layer {
+        color: var(--border-color-default, #d0d7de);
+        pointer-events: none;
+      }
+
+      .card {
+        position: absolute;
+        box-sizing: border-box;
+        display: grid;
+        gap: var(--bureau-space-2);
+        width: var(--bureau-card-width);
+        min-height: var(--bureau-card-min-height);
+        padding: var(--bureau-space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-top: var(--bureau-space-1) solid var(--accent, var(--bureau-grey));
+        border-radius: var(--bureau-radius);
+        background: var(--background-color-default, #ffffff);
+        box-shadow: none;
+      }
+
+      .card--work-source { --accent: var(--bureau-grey); }
+      .card--assignment { --accent: var(--bureau-blue); }
+      .card--role { --accent: var(--bureau-magenta); }
+      .card--repo { --accent: var(--bureau-teal); }
+      .card--pipeline { --accent: var(--bureau-yellow); }
+
+      .card--orphan {
+        outline: 1px dashed var(--border-color-default, #d0d7de);
+        outline-offset: var(--bureau-space-1);
+      }
+
+      .card-button {
+        display: grid;
+        gap: var(--bureau-space-2);
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: start;
+        cursor: pointer;
+      }
+
+      .card-button:focus-visible,
+      .permission-chip:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: var(--bureau-space-1);
+      }
+
+      .finding--validation {
+        background: var(--bureau-red-muted);
+      }
+
+      .finding--advisory {
+        background: var(--bureau-yellow-muted);
+      }
+
+      .has-highlight .card,
+      .has-highlight .step-badge {
+        opacity: var(--bureau-dim-opacity, 0.35);
+      }
+
+      .has-highlight .is-highlighted {
+        opacity: 1;
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: var(--bureau-space-1);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Bureau config</h1>
+          <p id="summary" class="muted">Loading…</p>
+        </div>
+        <div id="status" class="status" aria-live="polite">Waiting for state…</div>
+      </header>
+      <section id="general-findings" class="findings" aria-label="General findings"></section>
+      <section id="config-view" class="surface" aria-label="Bureau config view">
+        <svg id="edges" class="edge-layer" aria-hidden="true"></svg>
+        <div id="cards" class="card-layer"></div>
+      </section>
+      <aside id="drill-down" class="placeholder" hidden></aside>
+    </main>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

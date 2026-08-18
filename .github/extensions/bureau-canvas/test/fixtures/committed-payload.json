@@ -1,0 +1,122 @@
+{
+  "ok": true,
+  "errors": [],
+  "dir": ".bureau",
+  "config": {
+    "repos": {
+      "bureau": {
+        "url": "https://github.com/TheLarkInn/bureau.git",
+        "forge": "github",
+        "access": "push",
+        "credential": "github-main"
+      }
+    },
+    "roles": {
+      "implementer": {
+        "name": "implementer",
+        "agent": "/bureau:implementer",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "repo:write", "model:invoke"],
+        "min_trust": "maintainer"
+      },
+      "reviewer": {
+        "name": "reviewer",
+        "agent": "/bureau:reviewer",
+        "adapter": "copilot",
+        "permissions": ["repo:read", "model:invoke"],
+        "min_trust": "derived"
+      }
+    },
+    "assignments": {
+      "agent-eligible": {
+        "name": "agent-eligible",
+        "work": {
+          "forge": "github",
+          "source": "TheLarkInn/bureau",
+          "filter": "is:open label:agent-eligible",
+          "approval_label": null
+        },
+        "repos": ["bureau"],
+        "pipeline": "agent-eligible-pipeline",
+        "role": "implementer",
+        "verify": "cargo test --offline",
+        "branch_prefix": "bureau/",
+        "limits": {
+          "max_concurrent": 1,
+          "max_runs_per_hour": 4,
+          "max_runs_per_day": null,
+          "max_open_prs": null,
+          "max_cost_per_day_usd": null,
+          "max_run_hours": null
+        }
+      }
+    },
+    "pipelines": {
+      "agent-eligible-pipeline": {
+        "name": "agent-eligible-pipeline",
+        "steps": [
+          {
+            "name": "implement",
+            "type": "agent",
+            "run": null,
+            "role": "implementer",
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "verify",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": "done",
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "verify",
+            "type": "deterministic",
+            "run": "cargo test --offline",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "review",
+            "on_failure": "escalate",
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "review",
+            "type": "agent",
+            "run": null,
+            "role": "reviewer",
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "done",
+            "on_failure": "escalate",
+            "on_blocked": "escalate",
+            "on_no_work": "done",
+            "inputs_from": ["implement", "verify"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          }
+        ]
+      }
+    }
+  }
+}

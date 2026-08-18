@@ -1,0 +1,48 @@
+{
+  "ok": true,
+  "errors": [],
+  "dir": ".bureau",
+  "config": {
+    "repos": {},
+    "roles": {},
+    "assignments": {},
+    "pipelines": {
+      "terminal-rail": {
+        "name": "terminal-rail",
+        "steps": [
+          {
+            "name": "claim",
+            "type": "deterministic",
+            "run": "claim next item",
+            "on": {},
+            "steps": [],
+            "next": "build",
+            "on_failure": "escalate",
+            "inputs_from": [],
+            "max_attempts": 1
+          },
+          {
+            "name": "build",
+            "type": "deterministic",
+            "run": "build",
+            "on": {},
+            "steps": [],
+            "next": "verify",
+            "inputs_from": [],
+            "max_attempts": 1
+          },
+          {
+            "name": "verify",
+            "type": "deterministic",
+            "run": "verify",
+            "on": {},
+            "steps": [],
+            "next": "done",
+            "inputs_from": [],
+            "max_attempts": 1
+          }
+        ]
+      }
+    }
+  }
+}
