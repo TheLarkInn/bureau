@@ -1,0 +1,359 @@
+// Run-event overlay: the one reducer both live (SSE-driven) and replay
+// (timeline-driven) modes feed. `applyEvent(state, event)` is pure — same
+// event stream in, same overlay out — so the headless test suite exercises
+// this module directly (test/overlay.test.mjs).
+//
+// Overlays key by step NAME, never by layout node id: collapsing a
+// concurrent step's members out of the graph changes node ids, while the
+// run log only ever names steps. resolveOverlay() turns the projection into
+// per-node classes, per-edge animation flags, and expansion hints a React
+// Flow view applies to the static pipeline graph.
+
+export const STEP_PENDING = "pending";
+export const STEP_RUNNING = "running";
+export const STEP_COMPLETED = "completed";
+export const STEP_SKIPPED = "skipped";
+export const MEMBER_RUNNING = "running";
+export const MEMBER_CANCELLED = "cancelled";
+export const PAUSED_MESSAGE = /paused at a step boundary/u;
+
+export const EVENTS = {
+  runStarted: "run_started",
+  stepStarted: "step_started",
+  output: "output",
+  stepFinished: "step_finished",
+  groupStarted: "group_started",
+  groupMemberStarted: "group_member_started",
+  groupMemberFinished: "group_member_finished",
+  groupMemberCancelled: "group_member_cancelled",
+  groupFinished: "group_finished",
+  runFinished: "run_finished",
+};
+
+export function emptyOverlay() {
+  return {
+    runId: null,
+    assignment: null,
+    status: "idle",
+    steps: {},
+    groups: {},
+    current: null,
+    transitions: [],
+    lastSeq: -1,
+  };
+}
+
+/** Scrubbing rebuilds from `emptyOverlay()`: any prefix of a log replays clean. */
+export function applyEvents(events) {
+  return (events ?? []).reduce(applyEvent, emptyOverlay());
+}
+
+/** Replay position T: every event with at_ms <= T applied in log order. */
+export function stateUpTo(events, atMs) {
+  return applyEvents((events ?? []).filter((event) => eventMs(event) <= atMs));
+}
+
+export function applyEvent(overlay, event) {
+  const handler = HANDLERS[event?.kind];
+  return handler ? handler(overlay, event) : overlay;
+}
+
+const HANDLERS = {
+  [EVENTS.runStarted]: runStarted,
+  [EVENTS.stepStarted]: stepStarted,
+  [EVENTS.output]: output,
+  [EVENTS.stepFinished]: stepFinished,
+  [EVENTS.groupStarted]: groupStarted,
+  [EVENTS.groupMemberStarted]: groupMemberStarted,
+  [EVENTS.groupMemberFinished]: groupMemberFinished,
+  [EVENTS.groupMemberCancelled]: groupMemberCancelled,
+  [EVENTS.groupFinished]: groupFinished,
+  [EVENTS.runFinished]: runFinished,
+};
+
+function runStarted(overlay, event) {
+  return withEvent(overlay, event, {
+    runId: event.data?.run_id ?? overlay.runId,
+    assignment: event.data?.assignment ?? overlay.assignment,
+    status: "running",
+  });
+}
+
+function stepStarted(overlay, event) {
+  const step = stepName(event);
+  const parent = parentOf(overlay, step);
+  let next = withEvent(overlay, event, {
+    steps: {
+      ...overlay.steps,
+      [step]: {
+        outcome: null,
+        state: STEP_RUNNING,
+        attempts: (overlay.steps[step]?.attempts ?? 0) + 1,
+        startedAt: eventMs(event),
+      },
+    },
+    current: step,
+    transitions: [...overlay.transitions, { from: previousStep(overlay, step), to: step, outcome: lastOutcome(overlay) }],
+  });
+  if (parent) {
+    next = { ...next, groups: { ...next.groups, [parent]: { ...next.groups[parent], state: "running" } } };
+  }
+  return next;
+}
+
+function output(overlay, event) {
+  // The engine's pause marker lands as a run-level output line, not a
+  // dedicated kind; the message text is the only signal in the log.
+  const text = event.data?.data ?? "";
+  if (event.data?.stream === "run" && PAUSED_MESSAGE.test(text)) {
+    return withEvent(overlay, event, { status: "paused" });
+  }
+  return withEvent(overlay, event, {});
+}
+
+function stepFinished(overlay, event) {
+  const step = stepName(event);
+  const outcome = event.data?.outcome ?? null;
+  const parent = parentOf(overlay, step);
+  const next = withEvent(overlay, event, {
+    steps: {
+      ...overlay.steps,
+      [step]: { ...(overlay.steps[step] ?? {}), state: STEP_COMPLETED, outcome, finishedAt: eventMs(event) },
+    },
+    current: overlay.current === step ? null : overlay.current,
+  });
+  if (parent && next.groups[parent]?.state === "finished") {
+    return { ...next, groups: { ...next.groups, [parent]: { ...next.groups[parent], state: "running", outcome: null } } };
+  }
+  return next;
+}
+
+function groupStarted(overlay, event) {
+  const group = event.data?.group;
+  if (!group) {
+    return overlay;
+  }
+  const members = {};
+  for (const name of event.data?.members ?? []) {
+    members[name] = { state: STEP_PENDING, outcome: null, attempts: 0 };
+  }
+  return withEvent(overlay, event, {
+    groups: {
+      ...overlay.groups,
+      [group]: {
+        state: "running",
+        members,
+        maxConcurrent: event.data?.max_concurrent ?? null,
+        startedAt: eventMs(event),
+      },
+    },
+    current: group,
+  });
+}
+
+function groupMemberStarted(overlay, event) {
+  return updateMember(overlay, event, (member) => ({
+    ...member,
+    state: MEMBER_RUNNING,
+    attempts: member.attempts + 1,
+    startedAt: eventMs(event),
+  }));
+}
+
+function groupMemberFinished(overlay, event) {
+  return updateMember(overlay, event, (member) => ({
+    ...member,
+    state: STEP_COMPLETED,
+    outcome: event.data?.result?.outcome ?? null,
+    finishedAt: eventMs(event),
+  }));
+}
+
+function groupMemberCancelled(overlay, event) {
+  return updateMember(overlay, event, (member) => ({
+    ...member,
+    state: MEMBER_CANCELLED,
+    reason: event.data?.reason ?? null,
+    finishedAt: eventMs(event),
+  }));
+}
+
+function groupFinished(overlay, event) {
+  const group = event.data?.group;
+  if (!overlay.groups[group]) {
+    return overlay;
+  }
+  return withEvent(overlay, event, {
+    groups: {
+      ...overlay.groups,
+      [group]: { ...overlay.groups[group], state: "finished", outcome: event.data?.result?.outcome ?? null, finishedAt: eventMs(event) },
+    },
+    current: overlay.current === group ? null : overlay.current,
+  });
+}
+
+function runFinished(overlay, event) {
+  return withEvent(overlay, event, { status: "finished", outcome: event.data?.outcome ?? null, current: null });
+}
+
+function updateMember(overlay, event, change) {
+  const { group, member } = event.data ?? {};
+  const record = overlay.groups[group]?.members?.[member];
+  if (!record) {
+    return overlay;
+  }
+  return withEvent(overlay, event, {
+    groups: {
+      ...overlay.groups,
+      [group]: { ...overlay.groups[group], members: { ...overlay.groups[group].members, [member]: change(record) } },
+    },
+  });
+}
+
+function withEvent(overlay, event, changes) {
+  const seq = typeof event?.seq === "number" ? event.seq : overlay.lastSeq;
+  return { ...overlay, ...changes, lastSeq: Math.max(overlay.lastSeq, seq) };
+}
+
+function stepName(event) {
+  return event.data?.step ?? "";
+}
+
+/** The step that just handed off: the current one, else the last completed. */
+function previousStep(overlay, nextStep) {
+  if (overlay.current) {
+    return overlay.current;
+  }
+  const last = overlay.transitions.at(-1);
+  return last?.to ?? null;
+}
+
+function parentOf(overlay, step) {
+  return Object.keys(overlay.groups).find((name) => overlay.groups[name].members[step]) ?? null;
+}
+
+function lastOutcome(overlay) {
+  const last = overlay.transitions.at(-1);
+  const from = overlay.current ?? last?.to ?? null;
+  return from ? (overlay.steps[from]?.outcome ?? null) : null;
+}
+
+function eventMs(event) {
+  return typeof event?.at_ms === "number" ? event.at_ms : 0;
+}
+
+/**
+ * Projection onto the static pipeline graph. Layout steps keep their ids;
+ * overlays match on `step.name`. Concurrent members (`parentId` set) collapse
+ * into the group card until their group starts; once finished the expansion
+ * is sticky — replay scrubbing replays the prefix, so it re-expands — and
+ * `collapsed` lets the user fold a finished group away again. Edges touching
+ * a hidden member are remapped onto the group node so the fan-out stays
+ * visible instead of vanishing.
+ */
+export function resolveOverlay(pipeline, overlay, options = {}) {
+  const layout = pipeline?.layout ?? { steps: [], edges: [], terminals: [] };
+  const collapsed = options.collapsed ?? new Set();
+  const hidden = new Set();
+  for (const step of layout.steps ?? []) {
+    if (step.parentId && groupHidden(overlay, collapsed, step.parentId)) {
+      hidden.add(step.id);
+    }
+  }
+  const parentById = new Map();
+  for (const step of layout.steps ?? []) {
+    if (step.parentId) {
+      parentById.set(step.id, step.parentId);
+    }
+  }
+  const remap = (id) => {
+    let current = id;
+    while (hidden.has(current)) {
+      current = parentById.get(current) ?? current;
+    }
+    return current;
+  };
+  const nodes = (layout.steps ?? [])
+    .filter((step) => !hidden.has(step.id))
+    .map((step) => ({ id: step.id, name: step.name, className: stepClass(overlay, step), paused: isPausedAt(overlay, step) }));
+  const animated = new Set(animatedEdges(overlay, layout.edges ?? []));
+  const expanded = new Set(Object.keys(overlay.groups).filter((name) => !groupHidden(overlay, collapsed, name)));
+  return {
+    nodes,
+    animatedEdges: animated,
+    expandedGroups: expanded,
+    overlayGroups: overlay.groups,
+    remapEdge: remap,
+    onToggleGroup: options.onToggleGroup ?? null,
+  };
+}
+
+function stepClass(overlay, step) {
+  // A concurrent member's state lives under its group record, keyed by name.
+  if (step.parentId) {
+    const member = overlay.groups[step.parentId]?.members?.[step.name];
+    if (member) {
+      return member.state === STEP_PENDING ? "overlay-pending" : member.state === MEMBER_RUNNING || member.state === "running" ? "overlay-running" : member.state === MEMBER_CANCELLED ? "overlay-cancelled" : `overlay-${member.outcome ?? "no-work"}`;
+    }
+  }
+  const record = overlay.steps[step.name] ?? groupRecord(overlay, step.name);
+  if (!record) {
+    return overlay.status === "idle" ? "" : "overlay-pending";
+  }
+  if (record.state === "running" || record.state === STEP_RUNNING) {
+    return "overlay-running";
+  }
+  return `overlay-${record.outcome ?? "no-work"}`;
+}
+
+function groupRecord(overlay, name) {
+  const group = overlay.groups[name];
+  if (!group) {
+    return null;
+  }
+  if (group.state === "finished") {
+    return { state: STEP_COMPLETED, outcome: group.outcome };
+  }
+  return { state: "running" };
+}
+
+/** Paused shows on the last active step — a plain step or the group card. */
+function isPausedAt(overlay, step) {
+  if (overlay.status !== "paused") {
+    return false;
+  }
+  if (overlay.current === step.name) {
+    return true;
+  }
+  // The engine clears current at a boundary; the paused step is the last one
+  // that completed, or the group whose members were mid-flight.
+  const last = overlay.transitions.at(-1);
+  if (last?.to === step.name) {
+    return true;
+  }
+  return Boolean(overlay.groups[step.name] && overlay.groups[step.name].state === "running");
+}
+
+function animatedEdges(overlay, edges) {
+  const last = overlay.transitions.at(-1);
+  if (!last?.from) {
+    return [];
+  }
+  const candidates = edges
+    .filter((edge) => edge.relation === "control")
+    .filter((edge) => matchesStep(edges, edge.source, last.from) && matchesStep(edges, edge.target, last.to));
+  const named = candidates.filter((edge) => edge.outcome === last.outcome);
+  return (named.length ? named : candidates).map((edge) => edge.id);
+}
+
+function matchesStep(edges, endpoint, stepName) {
+  return endpoint === stepName || endpoint === `step:${stepName}`;
+}
+
+function groupHidden(overlay, collapsed, groupName) {
+  const group = overlay.groups[groupName];
+  if (!group) {
+    return true;
+  }
+  return group.state === "finished" && collapsed.has(groupName);
+}

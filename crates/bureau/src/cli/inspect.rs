@@ -1,4 +1,5 @@
-//! `list`, `show`, and `cancel`: the read-side verbs over run dirs.
+//! `list`, `show`, `cancel`, `pause`, and `resume`: the verbs over run
+//! dirs, read-side plus the control markers.
 //!
 //! The event log is the only source of truth; state is always replayed,
 //! never trusted from the cache.
@@ -14,6 +15,10 @@ use bureau::runlog::{
 
 /// The marker file the engine checks between steps.
 const CANCEL_FILE: &str = "CANCEL";
+
+/// The marker file that pauses the run at a step boundary; the same
+/// name as the engine's `PAUSE_FILE`.
+const PAUSE_FILE: &str = "PAUSE";
 
 /// `<run_id>  <status>  <assignment>`; an unreadable or absent log
 /// shows `unknown`.
@@ -79,16 +84,58 @@ fn print_tail(events: &[Event]) {
     }
 }
 
+/// The run's directory, or exit code 2 when no such run exists.
+fn existing_dir(runs: &Path, run_id: &str) -> Option<std::path::PathBuf> {
+    let dir = runlog::run_dir(runs, run_id);
+    if !dir.is_dir() {
+        out::error(format_args!("no such run: `{run_id}`"));
+        return None;
+    }
+    Some(dir)
+}
+
+/// One line per event: `#<seq> <kind> <gist>`.
+fn print_events(events: &[Event]) {
+    for event in events {
+        out::line(format_args!(
+            "#{} {} {}",
+            event.seq,
+            kind_name(event.kind),
+            gist(event)
+        ));
+    }
+}
+
+/// `show <run-id> --events`: with `--json`, the parsed event log as a
+/// JSON array; otherwise one line per event.
+///
+/// # Errors
+/// Propagates an unreadable event log or a serialization failure.
+pub fn show_events(runs: &Path, run_id: &str, json: bool) -> anyhow::Result<i32> {
+    let Some(dir) = existing_dir(runs, run_id) else {
+        return Ok(2);
+    };
+    let events = runlog::read_events(&dir).context("reading run events")?;
+    if json {
+        let text = serde_json::to_string(&events).context("serializing events")?;
+        out::line(format_args!("{text}"));
+    } else {
+        print_events(&events);
+    }
+    Ok(0)
+}
+
 /// `show <run-id>`: the replayed state, then the last five events.
 ///
 /// # Errors
 /// Propagates an unreadable or headerless event log.
-pub fn show(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
-    let dir = runlog::run_dir(runs, run_id);
-    if !dir.is_dir() {
-        out::error(format_args!("no such run: `{run_id}`"));
-        return Ok(2);
+pub fn show(runs: &Path, run_id: &str, events: bool, json: bool) -> anyhow::Result<i32> {
+    if events {
+        return show_events(runs, run_id, json);
     }
+    let Some(dir) = existing_dir(runs, run_id) else {
+        return Ok(2);
+    };
     let events = runlog::read_events(&dir).context("reading run events")?;
     let state = runlog::replay(events.clone()).context("run log has no run_started event")?;
     print_state(&state);
@@ -109,16 +156,54 @@ fn finished(dir: &Path) -> bool {
 /// # Errors
 /// Propagates a failure to write the marker.
 pub fn cancel(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
-    let dir = runlog::run_dir(runs, run_id);
-    if !dir.is_dir() {
-        out::error(format_args!("no such run: `{run_id}`"));
+    let Some(dir) = existing_dir(runs, run_id) else {
         return Ok(2);
-    }
+    };
     if finished(&dir) {
         out::line(format_args!("run `{run_id}` is already finished"));
         return Ok(1);
     }
     std::fs::write(dir.join(CANCEL_FILE), "cancelled\n").context("writing CANCEL marker")?;
     out::line(format_args!("run `{run_id}` marked for cancellation"));
+    Ok(0)
+}
+
+/// `pause <run-id>`: writes the PAUSE marker; the run exits cleanly at
+/// its next step boundary, resumable from its event log.
+///
+/// # Errors
+/// Propagates a failure to write the marker.
+pub fn pause(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
+    let Some(dir) = existing_dir(runs, run_id) else {
+        return Ok(2);
+    };
+    if finished(&dir) {
+        out::line(format_args!("run `{run_id}` is already finished"));
+        return Ok(1);
+    }
+    std::fs::write(dir.join(PAUSE_FILE), "paused\n").context("writing PAUSE marker")?;
+    out::line(format_args!("run `{run_id}` marked to pause"));
+    Ok(0)
+}
+
+/// `resume <run-id>`: removes the PAUSE marker. Run continuation is the
+/// existing `bureau run` re-entry (or the reconcile loop), not this
+/// verb.
+///
+/// # Errors
+/// Propagates a failure to remove the marker.
+pub fn resume(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
+    let Some(dir) = existing_dir(runs, run_id) else {
+        return Ok(2);
+    };
+    let marker = dir.join(PAUSE_FILE);
+    if !marker.exists() {
+        out::line(format_args!("run `{run_id}` is not paused"));
+        return Ok(1);
+    }
+    std::fs::remove_file(marker).context("removing PAUSE marker")?;
+    out::line(format_args!(
+        "run `{run_id}` pause cleared; resume it with `bureau run` or the reconcile loop"
+    ));
     Ok(0)
 }

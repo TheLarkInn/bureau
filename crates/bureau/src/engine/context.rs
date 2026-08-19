@@ -90,6 +90,13 @@ impl RunCtx {
         stream::lock(&self.log).dir().join("CANCEL")
     }
 
+    /// The run-directory marker that pauses the run at a step boundary.
+    /// The name stays a literal here so this module and `control` do
+    /// not depend on each other.
+    pub(super) fn pause_path(&self) -> PathBuf {
+        stream::lock(&self.log).dir().join("PAUSE")
+    }
+
     pub(super) fn begin_attempt(&mut self, step: &str) {
         *self.attempts.entry(step.to_owned()).or_insert(0) += 1;
     }

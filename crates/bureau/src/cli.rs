@@ -1,4 +1,7 @@
-//! The command line; verbs are verbs and the hard cap is 15.
+//! The command line; verbs are verbs and the hard cap is 17.
+//!
+//! `pause` and `resume` took the last two slots; reconcile a smaller
+//! surface before the total grows again.
 
 mod command;
 mod inspect;
@@ -154,26 +157,37 @@ async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
     run::retry(&run_id, &paths(settings, config_cache, runs, state, cache)?).await
 }
 
+/// Shows a run's summary, its events, or both as JSON.
+fn show_command(
+    run_id: &str,
+    events: bool,
+    json: bool,
+    runs: Option<std::path::PathBuf>,
+) -> anyhow::Result<i32> {
+    inspect::show(&runs_path(runs)?, run_id, events, json)
+}
+
+/// Every non-run-directory verb: the caller dispatched it already.
+fn unreachable_non_run() -> i32 {
+    unreachable!("handled by the caller")
+}
+
 /// Dispatches verbs that work against run directories.
 async fn run_side(verb: Verb) -> anyhow::Result<i32> {
     match verb {
         Verb::Run { .. } => run_command(verb).await,
         Verb::Retry { .. } => retry_command(verb).await,
         Verb::List { runs } => Ok(inspect::list(&runs_path(runs)?)),
-        Verb::Show { run_id, runs } => inspect::show(&runs_path(runs)?, &run_id),
+        Verb::Show {
+            run_id,
+            events,
+            json,
+            runs,
+        } => show_command(&run_id, events, json, runs),
         Verb::Cancel { run_id, runs } => inspect::cancel(&runs_path(runs)?, &run_id),
-        Verb::Version
-        | Verb::Validate { .. }
-        | Verb::Reconcile(_)
-        | Verb::Watch { .. }
-        | Verb::Init { .. }
-        | Verb::Setup { .. }
-        | Verb::Doctor { .. }
-        | Verb::Repair { .. }
-        | Verb::Mcp { .. }
-        | Verb::Fake { .. } => {
-            unreachable!("handled by the caller")
-        }
+        Verb::Pause { run_id, runs } => inspect::pause(&runs_path(runs)?, &run_id),
+        Verb::Resume { run_id, runs } => inspect::resume(&runs_path(runs)?, &run_id),
+        _ => Ok(unreachable_non_run()),
     }
 }
 

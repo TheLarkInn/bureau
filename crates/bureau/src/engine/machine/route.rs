@@ -115,6 +115,9 @@ async fn boundary_stop(ctx: &RunCtx) -> Option<Stop> {
     if let Some(reason) = control::cancel_reason(ctx) {
         return Some(Stop::Fail(reason));
     }
+    if control::pause_requested(ctx) {
+        return Some(Stop::Pause);
+    }
     if ctx.remaining().is_zero() {
         return Some(Stop::Escalate(control::deadline_message(ctx)));
     }

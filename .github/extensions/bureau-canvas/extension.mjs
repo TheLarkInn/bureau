@@ -7,7 +7,9 @@ import { actions } from "./lib/actions.mjs";
 import { applyPlan, create, crudActions, emptyPlan, remove as removeEntity, rename } from "./lib/crud.mjs";
 import { findings } from "./lib/findings.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
-import { configView, pipelineView } from "./lib/view.mjs";
+import { arrangementFor, readLayout, savePipeline } from "./lib/pipeline.mjs";
+import { createRunTail, listRuns, parseEvents, readRunEvents, runBureau, runsDir } from "./lib/runs.mjs";
+import { configView, pipelineView, relationView } from "./lib/view.mjs";
 
 const CANVAS_ID = "bureau";
 const DISPLAY_NAME = "Bureau";
@@ -117,7 +119,7 @@ export async function openBureauCanvas(ctx, options = {}) {
     let entry = servers.get(ctx.instanceId);
 
     if (!entry) {
-        entry = await startServer(state);
+        entry = await startServer(state, options);
         servers.set(ctx.instanceId, entry);
     } else {
         entry.state = state;
@@ -153,7 +155,8 @@ export async function buildState(input, options = {}) {
     const result = await loadConfigPayload(input.dir, options);
     const payload = payloadFromResult(result);
     const view = configView(payload);
-    const pipelines = pipelineStates(payload, result.config);
+    const layouts = await loadLayoutSidecar(input.dir, options);
+    const pipelines = pipelineStates(payload, result.config, layouts);
     const state = {
         ...input,
         status: statusFor(result),
@@ -162,11 +165,19 @@ export async function buildState(input, options = {}) {
         findingsByItem: findingsByItem(result.findings ?? []),
         findingsByStep: findingsByStep(result.findings ?? []),
         generalFindings: generalFindings(result.findings ?? []),
-        config: { view, layout: configLayout(view) },
+        config: { view, layout: configLayout(view), relation: relationView(payload) },
         pipelines,
         plan: planSummary(input.instanceId),
     };
     return { ...state, selectedPipeline: selectedPipeline(state, input.pipeline) };
+}
+
+/** The editor's node positions; a missing or unreadable sidecar means none. */
+async function loadLayoutSidecar(dir, options) {
+    if (options.layouts) {
+        return options.layouts;
+    }
+    return readLayout(dir);
 }
 
 async function loadConfigPayload(dir, options) {
@@ -228,15 +239,22 @@ function payloadFromResult(result) {
     };
 }
 
-function pipelineStates(payload, config) {
+function pipelineStates(payload, config, layouts = {}) {
     const names = Object.keys(config?.pipelines ?? {}).sort();
-    return Object.fromEntries(names.map((name) => [name, pipelineState(payload, config, name)]));
+    return Object.fromEntries(names.map((name) => [name, pipelineState(payload, config, name, layouts)]));
 }
 
-function pipelineState(payload, config, name) {
+function pipelineState(payload, config, name, layouts = {}) {
     const view = pipelineView(payload, name);
     const layout = pipelineLayout(view);
-    return { view, layout, handles: pipelineHandles(layout), containers: pipelineContainers(layout), summary: pipelineSummary(view, config) };
+    return {
+        view,
+        layout,
+        handles: pipelineHandles(layout),
+        containers: pipelineContainers(layout),
+        summary: pipelineSummary(view, config),
+        arrangement: arrangementFor(layouts, name),
+    };
 }
 
 function pipelineSummary(view, config) {
@@ -338,13 +356,19 @@ function selectedPipeline(state, name) {
     return missing ? { name, missing, notice: `No pipeline named \`${name}\` in this config.` } : { name, missing };
 }
 
-async function startServer(state) {
-    const entry = { clients: new Set(), server: undefined, state, url: "" };
+async function startServer(state, options = {}) {
+    const entry = { clients: new Set(), runTail: undefined, server: undefined, state, url: "" };
     const server = createServer((request, response) => {
         void handleRequest(entry, request, response).catch(() => sendStatus(response, 500));
     });
 
     entry.server = server;
+    entry.runTail = createRunTail({
+        dir: options.runsDir ?? runsDir(),
+        publish: (payload) => publishRunEvent(entry, payload),
+        ...(typeof options.runTailIntervalMs === "number" ? { intervalMs: options.runTailIntervalMs } : {}),
+    });
+    entry.runTail.start();
     await listen(server);
     const address = server.address();
     if (!address || typeof address === "string") {
@@ -366,6 +390,7 @@ function listen(server) {
 }
 
 async function closeServer(entry) {
+    entry.runTail?.stop();
     for (const client of entry.clients) {
         client.end();
     }
@@ -388,9 +413,74 @@ async function handleRequest(entry, request, response) {
         sendJson(response, entry.state, request.method === "HEAD");
     } else if (pathname === "/events") {
         sendEvents(entry, request, response);
+    } else if (pathname === "/runs") {
+        sendJson(response, { runs: await listRuns(runsRoot(entry)) }, request.method === "HEAD");
+    } else if (pathname.startsWith("/runs/") && pathname.endsWith("/events")) {
+        const runId = pathname.slice("/runs/".length, -"/events".length);
+        await sendRunEvents(runId, entry, response, request.method === "HEAD");
     } else {
         await sendStatic(pathname, response, request.method === "HEAD");
     }
+}
+
+/** The runs root this server observes; overridable for tests. */
+function runsRoot(entry) {
+    return entry.options?.runsDir ?? runsDir();
+}
+
+/** One run's full event log: the CLI's replay when a binary is on hand, the raw log otherwise. */
+async function sendRunEvents(runId, entry, response, headOnly) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
+        sendStatus(response, 400);
+        return;
+    }
+    const dir = runsRoot(entry);
+    const run = await runBureau(["show", runId, "--events", "--json", "--runs", dir], entry.options ?? {});
+    if (run === null) {
+        await sendRunEventsFromLog(runId, dir, response, headOnly);
+        return;
+    }
+    if (run.code !== 0) {
+        if (lacksEventsFlag(run)) {
+            await sendRunEventsFromLog(runId, dir, response, headOnly);
+            return;
+        }
+        sendStatus(response, 404);
+        return;
+    }
+    sendJson(response, { run_id: runId, events: parseJson(run.stdout) ?? [] }, headOnly);
+}
+
+/** A `bureau` on PATH can predate `show --events --json`; read the log directly instead of failing. */
+function lacksEventsFlag(run) {
+    return /unexpected argument/u.test(`${run.stderr ?? ""}${run.stdout ?? ""}`);
+}
+
+async function sendRunEventsFromLog(runId, dir, response, headOnly) {
+    const events = await readRunEvents(dir, runId);
+    if (!events) {
+        sendStatus(response, 404);
+        return;
+    }
+    sendJson(response, { run_id: runId, events, source: "log" }, headOnly);
+}
+
+const RUN_CONTROL_VERBS = { "pause-run": "pause", "resume-run": "resume", "cancel-run": "cancel" };
+
+/** Pause, resume, and cancel are the CLI's; the canvas never writes run markers itself. */
+async function runControlIntent(entry, intent, response) {
+    if (typeof intent.run_id !== "string" || intent.run_id.length === 0) {
+        sendStatus(response, 400);
+        return;
+    }
+    const verb = RUN_CONTROL_VERBS[intent.kind];
+    const dir = runsRoot(entry);
+    const run = await runBureau([verb, intent.run_id, "--runs", dir], entry.options ?? {});
+    if (run === null) {
+        sendJson(response, { ok: false, error: "bureau binary not available" }, false);
+        return;
+    }
+    sendJson(response, { ok: run.code === 0, exit_code: run.code, output: `${run.stdout}${run.stderr}`.trim() }, false);
 }
 
 const CRUD_INTENTS = { create, delete: removeEntity, rename };
@@ -403,6 +493,14 @@ async function handleIntent(entry, request, response) {
     }
     if (intent?.kind === "save-plan" || intent?.kind === "discard-plan") {
         await runPlanIntent(entry, intent, response);
+        return;
+    }
+    if (intent?.kind === "save-pipeline") {
+        await runSavePipelineIntent(entry, intent, response);
+        return;
+    }
+    if (RUN_CONTROL_VERBS[intent?.kind]) {
+        await runControlIntent(entry, intent, response);
         return;
     }
     if (intent?.kind === "back-to-config") {
@@ -457,6 +555,31 @@ async function runCrudIntent(entry, intent, response) {
     } catch (error) {
         sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
     }
+}
+
+/**
+ * The editor's save. `savePipeline` owns the round-trip guarantee: findings
+ * that name the edited pipeline revert the file, so state only refreshes on
+ * a clean save and the findings come back for the UI to mark.
+ */
+async function runSavePipelineIntent(entry, intent, response) {
+    try {
+        const dir = entry.state.dir;
+        const result = await savePipeline(
+            { dir, pipeline: intent.pipeline, view: intent.view, layout: intent.layout ?? null },
+            savePipelineOptions(entry),
+        );
+        if (result.saved) {
+            await refreshState(entry);
+        }
+        sendJson(response, { ok: result.saved, findings: result.findings, path: result.path, state: entry.state }, false);
+    } catch (error) {
+        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
+    }
+}
+
+function savePipelineOptions(entry) {
+    return entry.options?.savePipelineDeps ?? {};
 }
 
 async function runPlanIntent(entry, intent, response) {
@@ -514,6 +637,13 @@ function sendEvents(entry, request, response) {
 function publishState(entry) {
     for (const client of entry.clients) {
         writeStateEvent(client, entry.state);
+    }
+}
+
+/** Forwards one appended run-log event to every SSE client. */
+function publishRunEvent(entry, payload) {
+    for (const client of entry.clients) {
+        client.write(`event: run-event\ndata: ${JSON.stringify(payload)}\n\n`);
     }
 }
 

@@ -67,13 +67,25 @@ async function locateCandidates(dir, options) {
     const resolved = await Promise.all(options.candidates.map((candidate) => commandFor(candidate)));
     return resolved.filter(Boolean);
   }
-  const explicit = options.binary ?? options.env.BUREAU_CANVAS_BUREAU;
+  return bureauCandidates({ binary: options.binary, cwd: options.cwd, env: options.env, anchor: dir });
+}
+
+/**
+ * Every usable `bureau` invocation, most-preferred first: an explicit
+ * override, then `PATH`, then the workspace's `target/debug/`. Shared by
+ * config validation and the run verbs so they all honor the same lookup.
+ */
+export async function bureauCandidates(options = {}) {
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  const explicit = options.binary ?? env.BUREAU_CANVAS_BUREAU;
   if (explicit) {
     const command = await commandFor(explicit);
     return command ? [command] : [];
   }
 
-  const found = [await findOnPath("bureau", options.env), await findInWorkspace(dir, options.cwd)];
+  const anchor = options.anchor ?? cwd;
+  const found = [await findOnPath("bureau", env), await findInWorkspace(anchor, cwd)];
   return found.filter(Boolean).map((command) => wslBridged(command));
 }
 

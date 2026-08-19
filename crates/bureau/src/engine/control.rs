@@ -1,4 +1,4 @@
-//! Run cancellation and deadline messages.
+//! Run cancellation, pause, and deadline messages.
 
 use super::context::RunCtx;
 use super::deadline;
@@ -15,6 +15,12 @@ pub(super) fn cancel_reason(ctx: &RunCtx) -> Option<String> {
     } else {
         reason.to_owned()
     })
+}
+
+/// Whether the run-directory PAUSE marker is present. An empty file
+/// still pauses: its existence, not its contents, is the request.
+pub(super) fn pause_requested(ctx: &RunCtx) -> bool {
+    ctx.pause_path().exists()
 }
 
 pub(super) fn deadline_message(ctx: &RunCtx) -> String {

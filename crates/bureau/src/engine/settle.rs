@@ -54,6 +54,18 @@ pub(super) async fn escalate(ctx: &RunCtx, message: String) -> (StepOutcome, Str
     }
 }
 
+fn close(ctx: RunCtx) -> RunOutcome {
+    let (run_id, cost_usd) = (ctx.plan.run_id.clone(), ctx.cost_usd);
+    teardown(ctx.log);
+    RunOutcome {
+        run_id,
+        outcome: StepOutcome::NoWork,
+        cost_usd,
+        message: String::new(),
+        pr: None,
+    }
+}
+
 /// Appends the run's message and `run_finished`, then tears the log
 /// down. The worktree guard must already have dropped.
 pub(super) fn finish(
@@ -71,13 +83,23 @@ pub(super) fn finish(
     let finished =
         runlog::run_finished_full(outcome, &message, ctx.cost_usd, pr.as_ref(), disposition);
     context::append(&ctx, EventKind::RunFinished, finished);
-    let (run_id, cost_usd) = (ctx.plan.run_id.clone(), ctx.cost_usd);
-    teardown(ctx.log);
-    RunOutcome {
-        run_id,
-        outcome,
-        cost_usd,
-        message,
-        pr,
-    }
+    let mut settled = close(ctx);
+    settled.outcome = outcome;
+    settled.message = message;
+    settled.pr = pr;
+    settled
+}
+
+/// A paused run exits unfinished, without a terminal event: the log
+/// closes and re-entry resumes the run from its events.
+pub(super) fn paused(ctx: RunCtx) -> RunOutcome {
+    let message = "run paused at a step boundary; remove the PAUSE marker and resume".to_owned();
+    context::append(
+        &ctx,
+        EventKind::Output,
+        runlog::output(None, "run", &message),
+    );
+    let mut settled = close(ctx);
+    settled.message = message;
+    settled
 }
