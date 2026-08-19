@@ -79,12 +79,37 @@ pub enum Verb {
     Show {
         /// The run id.
         run_id: String,
+        /// Lists the run's events instead of the state summary.
+        #[arg(long)]
+        events: bool,
+        /// With --events, emits the parsed events as a JSON array.
+        #[arg(long, requires = "events")]
+        json: bool,
         /// Directory holding run directories.
         #[arg(long)]
         runs: Option<PathBuf>,
     },
     /// Cancels a running run by writing its CANCEL marker.
     Cancel {
+        /// The run id.
+        run_id: String,
+        /// Directory holding run directories.
+        #[arg(long)]
+        runs: Option<PathBuf>,
+    },
+    /// Pauses a running run at its next step boundary by writing its
+    /// PAUSE marker.
+    Pause {
+        /// The run id.
+        run_id: String,
+        /// Directory holding run directories.
+        #[arg(long)]
+        runs: Option<PathBuf>,
+    },
+    /// Clears a run's PAUSE marker so the next `bureau run` re-entry
+    /// (or the reconcile loop) resumes it; this verb does not itself
+    /// continue the run.
+    Resume {
         /// The run id.
         run_id: String,
         /// Directory holding run directories.

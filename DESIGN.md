@@ -1,5 +1,66 @@
 # Build a local agent work runner
 
+> ## ⛔ ENFORCED RULES — READ BEFORE ANY CODE CHANGE ⛔
+>
+> These rules are **deny-level**: CI fails and the change is rejected if any is
+> violated. They are enforced by `bash scripts/lint.sh` (repository policy +
+> `cargo fmt --check` + clippy + the vendored dylint lints in
+> `lints/rust-lints`, configured by `dylint.toml`).
+>
+> **Before finishing ANY change, run all gates and fix every finding:**
+>
+> ```sh
+> cargo fmt --all
+> bash scripts/lint.sh
+> cargo test --offline
+> ```
+>
+> ### Hard limits (deny-level)
+>
+> | Limit | Value | Enforced by |
+> |---|---|---|
+> | Function length | 25 lines | clippy `too_many_lines` |
+> | Cognitive complexity | 4 — each `assert!` and `.await` costs 1 | clippy `cognitive_complexity` |
+> | File length | 300 lines | `scripts/check-rust-policy.sh` |
+> | `#[allow]`/`#[expect]` in source | **zero** | policy script + clippy `allow_attributes` |
+> | `unsafe` | **zero** | `unsafe_code = "forbid"` |
+> | Compiler warnings | **zero** | `warnings = "deny"` |
+>
+> Clippy groups at deny: `all`, `cargo`, `complexity`, `correctness`,
+> `nursery`, `pedantic`, `perf`, `style`, `suspicious`.
+>
+> Two deliberate lint adjustments (root `Cargo.toml` comments carry the
+> reasons): `allow_attributes` is `deny`, not `forbid` — `forbid` breaks
+> spec-approved derive macros (clap); `multiple_crate_versions` is `allow` —
+> reqwest's own tree requires both syn 2 and syn 3.
+>
+> ### dylint module architecture (dylint.toml) — MANDATORY
+>
+> `dylint.toml` is the workspace module architecture and is **exhaustive**:
+>
+> - Every top-level module of every crate must be listed under
+>   `[module_dependencies.allow]`.
+> - Every cross-module dependency must be declared there as a
+>   `"<crate>:<module>" = [...]` edge.
+> - **Adding a module or a cross-module `use` means updating `dylint.toml` in
+>   the same change — the lint fails otherwise.** The lint flags both
+>   undeclared edges and, within a crate, declared edges no longer present in
+>   code.
+> - Never add a dependency edge that is not already declared without editing
+>   `dylint.toml` in the same commit.
+>
+> ### Writing tests under these limits
+>
+> A test function fits at most ~3 assert-family calls. So:
+>
+> 1. Table-drive: one assert inside a loop over cases.
+> 2. Or aggregate values into a tuple/`Vec` and assert once.
+> 3. `.expect()` and `?` are free — use them for setup.
+>
+> Pattern to copy: `crates/bureau/tests/process_contract.rs`.
+>
+> ---
+
 You are building a new project from scratch in this empty repository. Read this
 entire brief before writing anything. It is the authoritative spec and it overrides
 conventions you would otherwise assume, including anything you know about a project
@@ -100,13 +161,12 @@ creep. If you find yourself building one, stop and tell me the spec is wrong.
 | A second execution engine (Temporal etc.) | One engine. |
 | A content-addressed artifact store | Directories and files. Add CAS when a measured problem demands it. |
 | Merge arbitration / "who lands first" election | The forge has a merge queue. Use it. |
-| A web UI | CLI and log files. Revisit after a month of real use. |
 | Multi-tenancy, org models, human authz | One developer, one machine. PR review of the config repo IS the authorization model. |
 | An issue/PR/comment data model of your own | The forge is the database. |
 | A general host-capability matching engine | You are in a container. Provision the environment; do not match against the host. |
 | Self-update machinery | `git pull`. |
 | A proc-macro crate, a trait-heavy plugin system, or generics for their own sake | Concrete types until duplication proves otherwise. |
-| More than 15 CLI verbs | Hard cap. |
+| More than 17 CLI verbs | Hard cap; `pause` and `resume` named the last two. |
 
 Target for the complete system, all layers: **under 15,000 lines**. The reference
 implementation is 330,000 lines and ~190 CLI verbs for the same feature set. Almost
@@ -1045,13 +1105,19 @@ Top-level commands after this phase:
 
 ```text
 validate version run list show cancel retry fake
-reconcile init setup doctor repair mcp
+reconcile init setup doctor repair mcp pause resume
 ```
 
-Fourteen total. `mcp` is hidden from normal help. Add no other top-level verb.
+Seventeen total, `pause` and `resume` included. `mcp` is hidden from normal
+help. Add no other top-level verb.
 
-Explicitly defer output-specific gate types, mid-run human pause states,
-cron/signals, webhook listener, scratch/sparse workspaces, timeout salvage,
+`pause <run-id>` is a control verb: it writes the run's PAUSE marker, blocking
+step transitions at the next step boundary. `resume <run-id>` clears it;
+continuation happens through `bureau run` re-entry or the reconcile loop, not
+from `resume` itself. This supersedes the mid-run human pause deferral below.
+
+Explicitly defer output-specific gate types, cron/signals, webhook listener,
+scratch/sparse workspaces, timeout salvage,
 per-step cost caps, and log-derived limit sets. The section 3 non-goals remain
 hard.
 

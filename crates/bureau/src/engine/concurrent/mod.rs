@@ -13,6 +13,7 @@ use crate::config::{Completion, StepDef};
 use crate::runlog::{self, EventKind, GroupRecord};
 
 use super::context::{self, RunCtx, WtCtx};
+use super::control;
 
 struct State {
     snapshot: String,
@@ -155,6 +156,12 @@ fn start_available(
     state: &mut State,
     schedule: &mut schedule::Schedule,
 ) {
+    // While the PAUSE marker exists, no member starts: the engine is
+    // level-triggered, so this condition drains the group without
+    // fan-out and `resume` re-runs it once the marker is removed.
+    if control::pause_requested(ctx) {
+        return;
+    }
     for name in schedule.fill(ctx, &wt.mirror, root, &state.snapshot) {
         let attempt = state.attempts.entry(name.clone()).or_insert(0);
         *attempt = attempt.saturating_add(1);

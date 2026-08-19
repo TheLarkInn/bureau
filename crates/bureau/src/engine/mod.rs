@@ -10,7 +10,8 @@
 //! 2. Steps: follow explicit edges; a missing branch aborts (fails
 //!    closed). Decision steps only route — no code, no retry budget, no
 //!    events. Between steps, a `CANCEL` marker file in the run directory
-//!    aborts the run (`bureau cancel <run-id>` writes it).
+//!    aborts the run (`bureau cancel <run-id>` writes it); a `PAUSE`
+//!    marker instead exits the engine unfinished, resumable on re-entry.
 //! 3. Terminals: `done` → `Success` (push + PR; `NoWork` when nothing
 //!    changed), `abort` → `Failure`, `escalate` → `Blocked` plus a
 //!    comment on the work item.

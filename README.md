@@ -100,6 +100,8 @@ bureau list                  # every run
 bureau show <run-id>         # replayed state of one run
 bureau watch                 # live terminal dashboard of local state
 bureau cancel <run-id>       # write the run's CANCEL marker
+bureau pause <run-id>        # write the run's PAUSE marker
+bureau resume <run-id>       # clear it; run re-entry or reconcile continues
 bureau retry <run-id>        # new run for the item an earlier run targeted
 ```
 
@@ -115,8 +117,8 @@ plain-text snapshot and exits.
 
 The fixed home layout contains `settings.yaml`, `credentials/`, `state.db`,
 `runs/`, `checkout-cache/`, and `config-cache/`. Explicit path overrides are
-available for contained deployments; `list`, `show`, and `cancel` take only
-`--runs`.
+available for contained deployments; `list`, `show`, `cancel`, `pause`, and
+`resume` take only `--runs`.
 
 Each run writes `runs/<run-id>/`: `events.jsonl` (append-only, fsync'd,
 secret-scrubbed — the only source of truth), `state.json` (derived

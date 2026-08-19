@@ -126,14 +126,28 @@ fn prepare_stop(error: plugins::PrepareError) -> Stop {
     }
 }
 
+/// Resolves a non-pause stop into the settle triple.
+async fn resolve_stop(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    stop: Stop,
+) -> (StepOutcome, String, Option<crate::forge::Pr>) {
+    match stop {
+        Stop::Done => finalize::finalize(ctx, wt).await,
+        Stop::Fail(message) => (StepOutcome::Failure, message, None),
+        Stop::Escalate(message) => settle::escalate(ctx, message).await,
+        Stop::Pause => unreachable!("handled by end_run"),
+    }
+}
+
 /// Resolves the machine's stop reason into the run's outcome. The
 /// worktree guard drops here, before the log closes.
 async fn end_run(ctx: RunCtx, wt: WtCtx, stop: Stop) -> RunOutcome {
-    let (outcome, message, pr) = match stop {
-        Stop::Done => finalize::finalize(&ctx, &wt).await,
-        Stop::Fail(message) => (StepOutcome::Failure, message, None),
-        Stop::Escalate(message) => settle::escalate(&ctx, message).await,
-    };
+    if matches!(stop, Stop::Pause) {
+        drop(wt);
+        return settle::paused(ctx);
+    }
+    let (outcome, message, pr) = resolve_stop(&ctx, &wt, stop).await;
     drop(wt);
     settle::finish(ctx, outcome, message, pr)
 }

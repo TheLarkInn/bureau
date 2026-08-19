@@ -22,6 +22,59 @@ export function configView(payload) {
   return view;
 }
 
+/**
+ * The config relation graph (Q16): assignment → pipeline/role/repos, plus
+ * role usage from agent steps. Read-only; editing stays in the pipeline
+ * editor and the existing forms.
+ */
+export function relationView(payload) {
+  const config = configOf(payload);
+  if (!config) {
+    return { nodes: [], edges: [] };
+  }
+  const nodes = relationNodes(config);
+  const edges = relationEdges(config, new Set(nodes.map((node) => node.id)));
+  return { nodes, edges };
+}
+
+function relationNodes(config) {
+  return [
+    ...entries(config.assignments).map(([name]) => ({ id: `assignment:${name}`, kind: "assignment", name })),
+    ...entries(config.pipelines).map(([name]) => ({ id: `pipeline:${name}`, kind: "pipeline", name })),
+    ...entries(config.roles).map(([name]) => ({ id: `role:${name}`, kind: "role", name })),
+    ...entries(config.repos).map(([name]) => ({ id: `repo:${name}`, kind: "repo", name })),
+  ];
+}
+
+function relationEdges(config, ids) {
+  return [
+    ...entries(config.assignments).flatMap(([name, assignment]) => assignmentRelations(name, assignment)),
+    ...entries(config.pipelines).flatMap(([name, pipeline]) => pipelineRelations(name, pipeline)),
+  ].filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+}
+
+function assignmentRelations(name, assignment) {
+  return [
+    relationEdge("pipeline", `assignment:${name}`, `pipeline:${assignment.pipeline}`),
+    relationEdge("role", `assignment:${name}`, `role:${assignment.role}`),
+    ...(assignment.repos ?? []).map((repo) => relationEdge("repo", `assignment:${name}`, `repo:${repo}`)),
+  ];
+}
+
+function pipelineRelations(name, pipeline) {
+  const roles = [];
+  for (const step of pipeline.steps ?? []) {
+    if (step.type === "agent" && step.role && !roles.includes(step.role)) {
+      roles.push(step.role);
+    }
+  }
+  return roles.map((role) => relationEdge("role", `pipeline:${name}`, `role:${role}`));
+}
+
+function relationEdge(relation, source, target) {
+  return { id: `${relation}:${source}->${target}`, source, target, relation };
+}
+
 export function pipelineView(payload, name) {
   const pipeline = configOf(payload)?.pipelines?.[name];
   if (!pipeline) {

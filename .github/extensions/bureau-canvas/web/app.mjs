@@ -12,6 +12,12 @@ import {
   Position,
   ReactFlow,
 } from "@xyflow/react";
+// graph-overlays: mode switcher plus live/replay overlay controllers. The
+// pipeline graph rendering below stays as-is; overlay modes only restyle it.
+import { ModeSwitcher } from "./modes.js";
+import { useLiveOverlay } from "./live/live.js";
+import { useReplayOverlay } from "./replay/replay.js";
+import { resolveOverlay } from "./live/overlay.js";
 
 const h = React.createElement;
 const CARD_WIDTH = 240;
@@ -365,14 +371,31 @@ function StepBadges({ state, name }) {
 function PipelineView({ state, selectedStep, setSelectedStep }) {
   const name = state.selectedPipeline.name;
   const pipeline = state.pipelines?.[name];
-  const flow = useMemo(() => toFlow(pipeline, state, selectedStep), [pipeline, state, selectedStep]);
+  // graph-overlays: design keeps the static graph; live and replay restyle
+  // it from run events via the shared reducer in web/live/overlay.js.
+  const [mode, setMode] = useState("design");
+  const live = useLiveOverlay();
+  const replay = useReplayOverlay();
+  const active = mode === "live" ? live : mode === "replay" ? replay : null;
+  const flow = useMemo(
+    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
+    [pipeline, state, selectedStep, active?.decoration],
+  );
   return h(
     "section",
     { className: "view-shell view-shell--pipeline" },
     h(
       "section",
       { className: "pipeline-main" },
-      h("div", { className: "pipeline-toolbar" }, h("button", { className: "back-button", type: "button", onClick: backToConfig }, "Back to config"), h("h2", {}, name)),
+      h(
+        "div",
+        { className: "pipeline-toolbar" },
+        h("button", { className: "back-button", type: "button", onClick: backToConfig }, "Back to config"),
+        h("h2", {}, name),
+        h(ModeSwitcher, { mode, onMode: setMode }),
+        h("a", { className: "editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit"),
+        active?.controls ?? null,
+      ),
       h(
         "div",
         { className: "pipeline-flow" },
@@ -397,17 +420,39 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   );
 }
 
-function toFlow(pipeline, state, selectedStep) {
+function toFlow(pipeline, state, selectedStep, decoration = null) {
   const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
   const handles = pipeline?.handles ?? { items: {}, edges: {} };
+  // graph-overlays: live/replay restyle the static layout; hidden members
+  // collapse into their group node and their edges remap onto it.
+  const resolved = decoration ? resolveOverlay(pipeline, decoration.overlay, decoration) : null;
+  const visible = new Set((resolved?.nodes ?? layout.steps).map((node) => node.id));
   const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame));
-  const steps = layout.steps.map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep));
+  const steps = layout.steps
+    .filter((step) => visible.has(step.id))
+    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved));
   const terminals = layout.terminals.map((terminal) => flowTerminal(terminal, handles.items[terminal.id]));
   const backIndexes = routeIndexes(layout.edges, "back");
   return {
     nodes: [...frames, ...steps, ...terminals],
-    edges: layout.edges.map((edge) => flowEdge(edge, handles.edges[edge.id], backIndexes.get(edge.id) ?? 0)),
+    edges: overlayEdges(layout.edges, handles, backIndexes, resolved),
   };
+}
+
+/** Remap hidden-member edges onto their group node and drop the duplicates. */
+function overlayEdges(edges, handles, backIndexes, resolved) {
+  const seen = new Set();
+  const drawn = [];
+  for (const edge of edges) {
+    const remapped = resolved ? { ...edge, source: resolved.remapEdge(edge.source), target: resolved.remapEdge(edge.target) } : edge;
+    const key = `${remapped.source}->${remapped.target}:${remapped.outcome ?? remapped.relation}`;
+    if (remapped.source === remapped.target || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    drawn.push(flowEdge(remapped, handles.edges[edge.id], backIndexes.get(edge.id) ?? 0, resolved, edge.id));
+  }
+  return drawn;
 }
 
 function flowFrame(frame) {
@@ -423,16 +468,36 @@ function flowFrame(frame) {
   };
 }
 
-function flowStep(step, state, pipelineName, handles, selectedStep) {
+function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
   const ref = `pipeline:${pipelineName}/${step.name}`;
+  const node = resolved?.nodes.find((item) => item.id === step.id) ?? null;
   return {
     id: step.id,
     type: "stepCard",
     position: { x: step.x, y: step.y },
-    data: { step, handles: handles ?? emptyHandles(), findings: state.findingsByStep?.[ref] ?? [], selected: selectedStep === step.name },
+    data: {
+      step,
+      handles: handles ?? emptyHandles(),
+      findings: state.findingsByStep?.[ref] ?? [],
+      selected: selectedStep === step.name,
+      overlayClass: node?.className ?? "",
+      paused: Boolean(node?.paused),
+      expanded: resolved?.expandedGroups.has(step.name) ?? false,
+      members: memberRows(resolved, step),
+      onToggleGroup: resolved?.onToggleGroup ?? null,
+    },
     style: { width: CARD_WIDTH },
     draggable: false,
   };
+}
+
+/** Expanded groups surface one outcome row per member on the group card. */
+function memberRows(resolved, step) {
+  if (!resolved || !resolved.expandedGroups.has(step.name)) {
+    return null;
+  }
+  const members = resolved.overlayGroups[step.name]?.members ?? {};
+  return Object.entries(members).map(([name, record]) => ({ name, ...record }));
 }
 
 function flowTerminal(terminal, handles) {
@@ -446,16 +511,18 @@ function flowTerminal(terminal, handles) {
   };
 }
 
-function flowEdge(edge, endpoints, backIndex) {
+function flowEdge(edge, endpoints, backIndex, resolved, originalId) {
   const key = edge.relation === "control" ? edge.outcome : edge.relation;
+  const animated = resolved?.animatedEdges.has(originalId ?? edge.id) ?? false;
   return {
-    id: edge.id,
+    id: resolved ? `overlay:${originalId}` : edge.id,
     source: edge.source,
     target: edge.target,
     sourceHandle: endpoints?.source,
     targetHandle: endpoints?.target,
     type: "routed",
-    className: `flow-edge--${key}`,
+    className: `flow-edge--${key}${animated ? " flow-edge--live" : ""}`,
+    animated,
     markerEnd: { type: MarkerType.ArrowClosed, color: edgeColors[key] ?? edgeColors.success },
     data: {
       label: edgeLabelText(edge),
@@ -523,17 +590,49 @@ function edgeCaptionPosition({ data, labelX, labelY, sourceX, sourceY, targetX }
 
 function StepCard({ data }) {
   const step = data.step;
-  const className = ["flow-card", `flow-card--${step.kind}`, step.parentId ? "flow-card--member" : "", data.selected ? "is-highlighted" : "", unreachableClass(data.findings)].filter(Boolean).join(" ");
+  const className = [
+    "flow-card",
+    `flow-card--${step.kind}`,
+    step.parentId ? "flow-card--member" : "",
+    data.selected ? "is-highlighted" : "",
+    data.overlayClass ?? "",
+    data.paused ? "overlay-paused" : "",
+    unreachableClass(data.findings),
+  ].filter(Boolean).join(" ");
   return h(
     "article",
     { className },
     h(Handles, { handles: data.handles }),
     h("button", { className: "step-button", type: "button" },
       h("p", { className: "kind-label" }, step.kind),
-      h("h2", {}, step.name),
+      h("h2", {}, step.name, data.paused ? h("span", { className: "paused-badge" }, "paused") : null),
       h("p", { className: "detail", title: stepDetail(step) }, stepDetail(step)),
       h(Chips, { chips: stepChips(step) }),
+      data.expanded ? h(MemberList, { members: data.members ?? [], group: step.name, onToggleGroup: data.onToggleGroup }) : null,
       h(Findings, { findings: data.findings }),
+    ),
+  );
+}
+
+/** Expanded groups list member outcomes on the group card itself. */
+function MemberList({ members, group, onToggleGroup }) {
+  return h(
+    "div",
+    { className: "member-list" },
+    h(
+      "button",
+      { className: "member-collapse", type: "button", onClick: (event) => { event.stopPropagation(); onToggleGroup?.(group); } },
+      "collapse",
+    ),
+    h(
+      "ul",
+      {},
+      members.map((member) =>
+        h("li", { key: member.name, className: `member-row member-row--${member.outcome ?? member.state}` },
+          h("span", { className: "member-name" }, member.name),
+          h("span", { className: "member-outcome" }, member.outcome ?? member.state),
+        ),
+      ),
     ),
   );
 }

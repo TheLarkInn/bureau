@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bureau — pipeline editor</title>
+    <!-- Same vendored modules as index.html; keep the two import maps in lockstep. -->
+    <link rel="stylesheet" href="./vendor/xyflow-react.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "./vendor/react.mjs",
+          "react/jsx-runtime": "./vendor/react-jsx-runtime.mjs",
+          "react-dom": "./vendor/react-dom.mjs",
+          "react-dom/client": "./vendor/react-dom-client.mjs",
+          "@xyflow/react": "./vendor/xyflow-react.mjs"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --space-1: 0.25rem;
+        --space-2: 0.5rem;
+        --space-3: 0.75rem;
+        --space-4: 1rem;
+        --radius: 0.625rem;
+        --kind-deterministic: var(--true-color-blue, #0969da);
+        --kind-agent: var(--true-color-purple, #8250df);
+        --kind-decision: var(--true-color-yellow, #9a6700);
+        --kind-concurrent: var(--true-color-green, #1a7f37);
+        --outcome-success: var(--true-color-green, #1a7f37);
+        --outcome-failure: var(--true-color-red, #d1242f);
+        --outcome-blocked: var(--true-color-yellow, #9a6700);
+        --outcome-no-work: var(--text-color-muted, #656d76);
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; }
+      .app-shell { display: flex; flex-direction: column; height: 100vh; }
+      .app-header { display: flex; justify-content: space-between; align-items: baseline; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-color-default, #d0d7de); }
+      .app-header h1 { font-size: 1.1rem; margin: 0; }
+      .summary, .muted { color: var(--text-color-muted, #656d76); margin: 0; }
+      .editor-tabs button { margin-left: var(--space-2); }
+      .editor-tabs .is-active { font-weight: 600; text-decoration: underline; }
+      .editor-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      .editor-toolbar { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-color-default, #d0d7de); }
+      .editor-toolbar h2 { margin: 0; font-size: 1rem; flex: 1; }
+      .editor-status--hints { color: var(--outcome-blocked); }
+      .editor-main { display: flex; flex: 1; min-height: 0; }
+      .editor-flow { flex: 1; min-width: 0; }
+      .editor-panel { width: 21rem; border-left: 1px solid var(--border-color-default, #d0d7de); overflow-y: auto; padding: var(--space-3); }
+      .editor-card { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); padding: var(--space-2) var(--space-3); background: var(--bg-color-default, Canvas); width: 15rem; }
+      .editor-card h2 { margin: 0; font-size: 0.95rem; }
+      .kind-label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; margin: 0; }
+      .editor-card--deterministic .kind-label { color: var(--kind-deterministic); }
+      .editor-card--agent .kind-label { color: var(--kind-agent); }
+      .editor-card--decision { border-style: dashed; border-width: 2px; border-color: var(--kind-decision); transform: rotate(0.001deg); }
+      .editor-card--decision .kind-label { color: var(--kind-decision); }
+      .editor-card--concurrent .kind-label { color: var(--kind-concurrent); }
+      .editor-card--hint { outline: 2px solid var(--outcome-blocked); }
+      .editor-terminal { border-radius: 999px; border: 1px solid var(--border-color-default, #d0d7de); padding: var(--space-1) var(--space-4); text-align: center; width: 8.5rem; }
+      .editor-terminal h2 { margin: 0; font-size: 0.85rem; }
+      .editor-handle { width: 0.6rem; height: 0.6rem; }
+      .editor-hints { color: var(--outcome-blocked); font-size: 0.8rem; margin: var(--space-1) 0 0; padding-left: var(--space-4); }
+      .editor-step label { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); font-size: 0.8rem; }
+      .editor-step-head { display: flex; justify-content: space-between; align-items: baseline; }
+      .editor-edges { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); margin-bottom: var(--space-2); }
+      .editor-edges label { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); font-size: 0.8rem; }
+      .relation-flow { flex: 1; min-height: 0; }
+      .relation-card { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); padding: var(--space-2) var(--space-3); background: var(--bg-color-default, Canvas); }
+      .relation-card h2 { margin: 0; font-size: 0.95rem; }
+      .edge-caption { font-size: 0.7rem; padding: 0 var(--space-1); background: var(--bg-color-default, Canvas); }
+      .is-highlighted { outline: 2px solid var(--kind-deterministic); }
+    </style>
+  </head>
+  <body>
+    <div id="editor-root"></div>
+    <script type="module">
+      const root = document.querySelector("#editor-root");
+      window.addEventListener("error", (event) => {
+        root.replaceChildren(fallback(event.error ?? event.message));
+      });
+      try {
+        await import("./editor/index.mjs");
+      } catch (error) {
+        root.replaceChildren(fallback(error));
+      }
+      function fallback(error) {
+        const shell = document.createElement("main");
+        shell.className = "app-shell";
+        const message = document.createElement("p");
+        message.className = "status";
+        message.textContent = `Editor could not start: ${error?.stack || error?.message || String(error)}`;
+        shell.append(message);
+        return shell;
+      }
+    </script>
+  </body>
+</html>

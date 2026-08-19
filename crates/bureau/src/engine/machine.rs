@@ -1,4 +1,4 @@
-//! The state machine: step entry, the gates, and the CANCEL check.
+//! The state machine: step entry, the gates, and the CANCEL/PAUSE checks.
 
 use super::context::{self, RunCtx, WtCtx};
 use super::{RunPlan, checkpoint, execute};
@@ -17,6 +17,9 @@ pub(super) enum Stop {
     Fail(String),
     /// `escalate`: comment for a human, outcome Blocked.
     Escalate(String),
+    /// The PAUSE marker appeared at a step boundary; the run exits
+    /// unfinished and resumes where it left off.
+    Pause,
 }
 
 /// The machine loop: route, check CANCEL, run steps, stop at terminals.

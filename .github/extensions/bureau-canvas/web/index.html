@@ -413,6 +413,12 @@
         gap: var(--space-3);
       }
 
+      /* pipeline-editor: affordance into the editor surface (editor.html). */
+      .pipeline-toolbar .editor-link {
+        margin-left: auto;
+        font-size: 0.85rem;
+      }
+
       .pipeline-flow {
         min-height: 44rem;
         border: 1px solid var(--border-color-default, #d0d7de);
@@ -517,6 +523,35 @@
 
       .has-highlight .card, .has-highlight .step-badge { opacity: 0.35; }
       .has-highlight .is-highlighted, .flow-card.is-highlighted { opacity: 1; outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
+
+      /* graph-overlays: live/replay mode UI and run-event overlay states. */
+      .mode-switcher { display: flex; gap: 0; margin-left: var(--space-4); border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; overflow: hidden; }
+      .mode-tab { border: 0; padding: var(--space-1) var(--space-3); background: var(--background-color-default, #ffffff); color: var(--text-color-muted, #656d76); cursor: pointer; text-transform: capitalize; }
+      .mode-tab--active { background: var(--color-focus-outline, #0969da); color: #ffffff; }
+      .run-picker { max-width: 22rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; background: var(--background-color-default, #ffffff); color: inherit; font: inherit; }
+      .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; gap: var(--space-2); }
+      .run-control { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 3px 10px; background: var(--background-color-default, #ffffff); color: inherit; cursor: pointer; }
+      .run-control--active { border-color: var(--color-focus-outline, #0969da); color: var(--color-focus-outline, #0969da); }
+      .run-control--danger { color: var(--outcome-failure); }
+      .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
+      .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .replay-scrubber { width: 16rem; }
+      .overlay-pending { opacity: 0.35; }
+      .overlay-running { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
+      .overlay-success { --accent: var(--outcome-success); }
+      .overlay-failure { --accent: var(--outcome-failure); }
+      .overlay-blocked { --accent: var(--outcome-blocked); }
+      .overlay-no-work { --accent: var(--outcome-no-work); }
+      .paused-badge { margin-left: var(--space-2); padding: 0 var(--space-2); border: 1px solid var(--outcome-blocked); border-radius: 999px; color: var(--outcome-blocked); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; }
+      .member-list ul { margin: 0; padding-left: 0; list-style: none; }
+      .member-row { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--text-code-inline, 12px); }
+      .member-row--success { color: var(--outcome-success); }
+      .member-row--failure { color: var(--outcome-failure); }
+      .member-row--blocked { color: var(--outcome-blocked); }
+      .member-row--running { color: var(--color-focus-outline, #0969da); }
+      .member-collapse { border: 0; padding: 0; background: none; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); cursor: pointer; text-align: left; }
+      .react-flow__edge.animated .react-flow__edge-path { stroke-dasharray: 8 6; animation: overlay-edge-flow 0.8s linear infinite; }
+      @keyframes overlay-edge-flow { to { stroke-dashoffset: -14; } }
 
       .fallback-shell {
         display: grid;
