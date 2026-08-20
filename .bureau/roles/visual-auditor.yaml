@@ -1,0 +1,7 @@
+name: visual-auditor
+agent: /bureau:reviewer
+adapter: copilot
+permissions:
+- repo:read
+- model:invoke
+min_trust: derived

@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-19T21:44:00Z",
+  "title": "Design System: Bureau Canvas",
+  "extensions": {
+    "colorMeta": {
+      "accent-blue": {
+        "role": "primary",
+        "displayName": "Primer Link Blue",
+        "canonical": "#0969da",
+        "tonalRamp": ["#032a57", "#05408a", "#0757ba", "#0969da", "#2f81f7", "#6cb0fb", "#a3d0fd", "#ddf4ff"]
+      },
+      "kind-role-purple": {
+        "role": "secondary",
+        "displayName": "Role Purple",
+        "canonical": "#8250df",
+        "tonalRamp": ["#3b1f6e", "#512a97", "#6a3ec0", "#8250df", "#a475f9", "#c3a1fc", "#dcc9fe", "#f5edff"]
+      },
+      "kind-repo-green": {
+        "role": "tertiary",
+        "displayName": "Worktree Green",
+        "canonical": "#1a7f37",
+        "tonalRamp": ["#083b19", "#0e5a26", "#136f31", "#1a7f37", "#2da160", "#5dc185", "#96d9ae", "#d1f2dd"]
+      },
+      "kind-pipeline-amber": {
+        "role": "tertiary",
+        "displayName": "Ledger Amber",
+        "canonical": "#9a6700",
+        "tonalRamp": ["#4d3200", "#6d4800", "#845800", "#9a6700", "#bf8700", "#d9a014", "#f0b72f", "#f8e3a1"]
+      },
+      "outcome-failure-red": {
+        "role": "tertiary",
+        "displayName": "Outcome Failure Red",
+        "canonical": "#cf222e",
+        "tonalRamp": ["#5c0e15", "#86141d", "#ad1a24", "#cf222e", "#e5534b", "#f08279", "#f8b3ad", "#ffebe9"]
+      },
+      "fg-default": {
+        "role": "neutral",
+        "displayName": "Ink Default",
+        "canonical": "#1f2328",
+        "tonalRamp": ["#0d1117", "#151b21", "#1f2328", "#32383f", "#57606a", "#8c959f", "#c6cdd5", "#f6f8fa"]
+      },
+      "fg-muted": {
+        "role": "neutral",
+        "displayName": "Bench Gray",
+        "canonical": "#656d76",
+        "tonalRamp": ["#1f2328", "#32383f", "#424a53", "#656d76", "#8c959f", "#b1bac4", "#d0d7de", "#f6f8fa"]
+      },
+      "border-default": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d0d7de",
+        "tonalRamp": ["#32383f", "#57606a", "#8c959f", "#b1bac4", "#d0d7de", "#dee4ea", "#eaeef2", "#f6f8fa"]
+      },
+      "bg-default": {
+        "role": "neutral",
+        "displayName": "Sheet White",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#57606a", "#8c959f", "#b1bac4", "#d0d7de", "#eaeef2", "#f6f8fa", "#fbfcfd", "#ffffff"]
+      }
+    },
+    "shadows": [
+      { "name": "chrome-lift", "value": "0 10px 24px rgba(31,35,40,0.08)", "purpose": "Menus and persistent panels above the bench." },
+      { "name": "overlay-lift", "value": "0 8px 24px rgb(0 0 0 / 28%)", "purpose": "Transient overlays above everything." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for state transitions; never bounce or elastic." }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Graph Node Card",
+      "kind": "custom",
+      "refersTo": "node-card",
+      "description": "The signature drafting-table unit: a 15rem flat card with hairline border carrying one pipeline step.",
+      "html": "<div class=\"ds-node-card\"><span class=\"ds-node-kind\">ROLE</span><div class=\"ds-node-title\">Implementer</div><div class=\"ds-node-handle\">roles/implementer.yaml</div></div>",
+      "css": ".ds-node-card { width: 15rem; background: #ffffff; color: #1f2328; border: 1px solid #d0d7de; border-radius: 0.625rem; padding: 12px 16px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; } .ds-node-card:hover { box-shadow: 0 4px 16px rgba(31,35,40,0.10); } .ds-node-kind { display: inline-block; background: #8250df; color: #ffffff; border-radius: 999px; padding: 2px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; } .ds-node-title { font-size: 14px; font-weight: 700; margin-top: 6px; } .ds-node-handle { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace; font-size: 12px; color: #656d76; margin-top: 4px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single loud action on a surface; Primer blue, gently squared.",
+      "html": "<button class=\"ds-btn-primary\">Approve run</button>",
+      "css": ".ds-btn-primary { background: #0969da; color: #ffffff; border: none; border-radius: 6px; padding: 6px 14px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; font-size: 14px; font-weight: 700; transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: #0757ba; } .ds-btn-primary:focus-visible { outline: 2px solid #0969da; outline-offset: 2px; }"
+    },
+    {
+      "name": "Kind Badge",
+      "kind": "chip",
+      "refersTo": "badge-kind",
+      "description": "Pill marker that names a graph kind; semantic hue, never interactive.",
+      "html": "<span class=\"ds-badge ds-badge-role\">ROLE</span> <span class=\"ds-badge ds-badge-repo\">REPO</span>",
+      "css": ".ds-badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #ffffff; } .ds-badge-role { background: #8250df; } .ds-badge-repo { background: #1a7f37; }"
+    },
+    {
+      "name": "Outcome Badge",
+      "kind": "chip",
+      "refersTo": "badge-outcome",
+      "description": "Run-outcome marker: green success, red failure, amber blocked, gray no-work.",
+      "html": "<span class=\"ds-out ds-out-fail\">FAILURE</span> <span class=\"ds-out ds-out-ok\">SUCCESS</span>",
+      "css": ".ds-out { display: inline-block; border-radius: 999px; padding: 2px 10px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #ffffff; } .ds-out-fail { background: #cf222e; } .ds-out-ok { background: #1a7f37; }"
+    },
+    {
+      "name": "Field Input",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Hairline-stroked field; blue border shift on focus, washed red on error.",
+      "html": "<input class=\"ds-input\" type=\"text\" value=\"fix/flaky-test\" />",
+      "css": ".ds-input { background: #ffffff; color: #1f2328; border: 1px solid #d0d7de; border-radius: 6px; padding: 6px 10px; font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace; font-size: 12px; transition: border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1); } .ds-input:hover { border-color: #8c959f; } .ds-input:focus-visible { border-color: #0969da; outline: none; box-shadow: 0 0 0 2px rgba(9,105,218,0.25); }"
+    },
+    {
+      "name": "App Header",
+      "kind": "nav",
+      "refersTo": "nav-header",
+      "description": "Hairline-separated bench header: title left, run metadata in mono right.",
+      "html": "<header class=\"ds-header\"><div class=\"ds-header-title\">Bureau</div><div class=\"ds-header-meta\">run 4f2a · $1.83 / $50</div></header>",
+      "css": ".ds-header { display: flex; align-items: baseline; justify-content: space-between; padding: 1rem 1.5rem; background: #ffffff; border-bottom: 1px solid #d0d7de; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; } .ds-header-title { font-size: 1.25rem; line-height: 1.5rem; font-weight: 700; color: #1f2328; } .ds-header-meta { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace; font-size: 12px; color: #656d76; }"
+    },
+    {
+      "name": "Finding Banner",
+      "kind": "card",
+      "refersTo": "finding-banner",
+      "description": "Inline validation/advisory finding: washed semantic background, no resting shadow.",
+      "html": "<div class=\"ds-finding\">pipeline.yaml: step 'review' has no incoming edge</div>",
+      "css": ".ds-finding { background: #ffebe9; color: #cf222e; border: 1px solid rgba(207,34,46,0.3); border-radius: 6px; padding: 8px 12px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; font-size: 14px; }"
+    },
+    {
+      "name": "Overflow Menu",
+      "kind": "custom",
+      "refersTo": "menu-overflow",
+      "description": "Chrome-lift menu: the one ambient shadow permitted above the bench.",
+      "html": "<div class=\"ds-menu\"><div class=\"ds-menu-item\">Duplicate pipeline</div><div class=\"ds-menu-item\">Archive</div></div>",
+      "css": ".ds-menu { background: #ffffff; border: 1px solid #d0d7de; border-radius: 0.625rem; box-shadow: 0 10px 24px rgba(31,35,40,0.08); padding: 6px; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; min-width: 12rem; } .ds-menu-item { padding: 6px 10px; border-radius: 6px; font-size: 14px; color: #1f2328; } .ds-menu-item:hover { background: rgba(9,105,218,0.08); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Drafting Table",
+    "overview": "Bureau Canvas treats pipelines as drawings under a lamp. The chrome is sheet-metal neutral — a GitHub Primer-derived light surface that any developer already knows how to read — so the graph itself carries all expression. Precision tools, not decoration: pill badges, mono identifiers, and color-coded kinds are the only personality. The system is deliberately indistinguishable from Primer; familiarity is the feature. Ambient shadow is allowed only on persistent chrome; resting content surfaces stay flat.",
+    "keyCharacteristics": [
+      "Primer-native light palette with color-scheme: light dark declared",
+      "Color-coded graph semantics: every node kind and outcome owns a hue",
+      "Pill badges and mono IDs as the signature density markers",
+      "Flat content, ambient chrome",
+      "4px-rem spacing scale (--space-1 through --space-5)"
+    ],
+    "rules": [
+      { "name": "The Hue-Has-Meaning Rule", "body": "Saturated color is never ornamental: blue, purple, green, and amber each name a graph kind, outcome, or relation. If a hue carries no semantic, it does not ship.", "section": "colors" },
+      { "name": "The Bench Gray Rule", "body": "Anything contextual — work sources, terminal states, explanatory text — renders in Bench Gray, never a tinted variant.", "section": "colors" },
+      { "name": "The One Loud Voice Rule", "body": "Weight 700 is the only loud voice; it belongs to headlines, titles, and labels. Body text never bolds for emphasis — it restructures instead.", "section": "typography" },
+      { "name": "The Flat Bench Rule", "body": "Drawings lie flat on the table. Shadows answer state (hover, selection, open menu) or chrome — never styling.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reserve saturated hue for graph semantics: blue=assignment/data, purple=role/agent/observes, green=repo/success, amber=pipeline/decision/blocked.",
+      "Do keep spacing on the 0.25-1.5rem scale and corners at 0.625rem (6px for inner controls, 999px for badges).",
+      "Do render identifiers, hashes, and handles in 12px mono.",
+      "Do let ambient shadow appear only on chrome: menus, persistent panels, overlays."
+    ],
+    "donts": [
+      "Don't use color decoratively — a hue without a semantic is a defect.",
+      "Don't add resting shadows to content cards; the bench is flat.",
+      "Don't introduce font weights outside 400/700, or display faces outside the system stack.",
+      "Don't wrap panels in nested cards; hairline borders divide, fills don't."
+    ]
+  }
+}
