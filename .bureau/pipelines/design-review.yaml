@@ -1,0 +1,42 @@
+name: design-review
+# Evidence-only review loop for UI-change work items: impeccable design
+# critique and deterministic audit run as concurrent evidence steps against
+# the change's detached worktree, then a reviewer weighs both reports
+# against the work item and publishes the gate decision. No step edits the
+# repository; publication is a forge comment by the reviewer role's adapter.
+steps:
+- name: inspect
+  type: concurrent
+  steps:
+  - critique
+  - audit
+  completion: all
+  next: review
+  on_failure: review
+  on_blocked: escalate
+  on_no_work: done
+- name: critique
+  type: agent
+  role: design-reviewer
+  completion: null
+  next: null
+  on_failure: null
+  on_blocked: null
+  on_no_work: null
+- name: audit
+  type: agent
+  role: visual-auditor
+  completion: null
+  next: null
+  on_failure: null
+  on_blocked: null
+  on_no_work: null
+- name: review
+  type: agent
+  role: design-reviewer
+  inputs_from:
+  - inspect
+  next: done
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: done
