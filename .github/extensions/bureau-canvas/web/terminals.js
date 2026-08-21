@@ -2,7 +2,7 @@
 export const TERMINAL_COPY = {
   done: { label: "Publish", detail: "Push the branch and open a pull request" },
   abort: { label: "Failed", detail: "Add the assignment's abort label and stop" },
-  escalate: { label: "Needs human", detail: "Add the escalation label, comment, and stop" },
+  escalate: { label: "Needs human", detail: "Comment on the work item, add the escalation label, and stop" },
 };
 
 export function terminalCopy(name) {
