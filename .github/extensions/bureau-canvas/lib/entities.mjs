@@ -212,6 +212,43 @@ export function withDeclaredName(text, path, to) {
   return render(view, parsed.doc, parsed.style);
 }
 
+/**
+ * Replaces an assignment's ordered `repos` list.
+ *
+ * Order is meaning here: the first entry is the primary repo, and the branch
+ * lands there (DESIGN.md section 6), so this takes the whole list rather than
+ * an add or a remove.
+ */
+export function withAssignmentRepos(text, path, repos) {
+  return withAssignmentValue(text, path, "repos", [...repos]);
+}
+
+/** Points an assignment at a role by name. */
+export function withAssignmentRole(text, path, role) {
+  return withAssignmentValue(text, path, "role", role);
+}
+
+/**
+ * Replaces an assignment's `limits` block.
+ *
+ * A disabled limit is written as an explicit `null` rather than dropped:
+ * that is the shape the committed files already use, and it keeps any
+ * comment above a key anchored to the key it explains.
+ */
+export function withAssignmentLimits(text, path, limits) {
+  return withAssignmentValue(text, path, "limits", { ...limits });
+}
+
+function withAssignmentValue(text, path, key, value) {
+  const parsed = parse(text, { path });
+  const view = structuredClone(parsed.view);
+  if (view.kind === "pipeline") {
+    throw new Error(`${path} is a pipeline, not an assignment`);
+  }
+  view.value[key] = value;
+  return render(view, parsed.doc, parsed.style);
+}
+
 function createdStyleFor(lineEnding) {
   return { lineEnding, finalNewline: true, indentSeq: false, flowCollectionPadding: false, lineWidth: 0 };
 }

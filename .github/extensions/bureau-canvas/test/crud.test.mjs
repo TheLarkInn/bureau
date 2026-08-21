@@ -141,13 +141,13 @@ test("renaming a role cascades to every referrer and still validates", { skip: n
   });
 });
 
-test("declares three verbs and no reserved names", () => {
+test("declares its verbs and no reserved names", () => {
   assert.deepEqual(
     {
       names: crudActions.map((action) => action.name).sort(),
       reserved: crudActions.some((action) => action.name.startsWith("canvas.")),
       schemas: crudActions.every((action) => Boolean(action.inputSchema) && Boolean(action.handler)),
     },
-    { names: ["create", "delete", "rename"], reserved: false, schemas: true },
+    { names: ["create", "delete", "rename", "set_limits", "set_repos", "set_role"], reserved: false, schemas: true },
   );
 });

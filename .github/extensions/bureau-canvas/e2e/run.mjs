@@ -396,8 +396,20 @@ async function renderAndScreenshot(page, selector, label, fileName) {
 async function checkConfigView(page, url) {
   const state = await fetchState(url);
   await record("config renders without uncaught errors or console errors", () => assertNoDiagnostics(page));
-  await record("config has a card for each assignment, role, repo, and pipeline", async () => {
-    const counts = await evaluate(page, domCountsExpression());
+  await record("the landing has one card per assignment", async () => {
+    const counts = await evaluate(page, assignmentCountsExpression());
+    assert.deepEqual(counts, {
+      assignments: state.config.view.assignments.length,
+    });
+  });
+  await record("assignment cards do not overlap", async () => assertNoOverlap(await boxes(page, ".assignment-card")));
+  await record("the relation graph starts collapsed", async () => {
+    assert.equal(await evaluate(page, `document.querySelector(".relation-section").open`), false);
+  });
+  await record("opening the relation graph shows a card per config item", async () => {
+    await evaluate(page, `document.querySelector(".relation-section summary").click()`);
+    await waitForRender(page, ".relation-section .card", "relation graph cards");
+    const counts = await evaluate(page, relationCountsExpression());
     assert.deepEqual(counts, {
       assignments: state.config.view.assignments.length,
       roles: state.config.view.roles.length,
@@ -405,11 +417,8 @@ async function checkConfigView(page, url) {
       pipelines: state.config.view.pipelines.length,
     });
   });
-  await record("config cards do not overlap", async () => assertNoOverlap(await boxes(page, ".card")));
-  await record("config fits every card inside the surface", async () => {
-    // The old assertion checked page overflow, which only made sense for a
-    // static surface. Now that this pans and zooms like the pipeline view, the
-    // property worth protecting is that `fitView` leaves nothing clipped.
+  await record("the relation graph fits every card inside the surface", async () => {
+    // The graph still pans and zooms; `fitView` must leave nothing clipped.
     assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
 }
@@ -421,42 +430,59 @@ async function checkDetailExpansion(page) {
     "cargo test --offline -- --skip timeout_kills_the_whole_process_group --nocapture";
   await withInstance("detail", {}, { payload }, async (instance) => {
     await navigate(page, instance.opened.url);
-    await waitForRender(page, ".card", "config cards");
-    const before = await evaluate(page, truncatedDetailExpression());
-    await record("config truncates a long detail before it is opened", () => {
-      assert.deepEqual({ truncated: before.truncated, expanded: before.expanded }, { truncated: true, expanded: false });
+    await waitForRender(page, ".assignment-card", "assignment cards");
+    const before = await evaluate(page, assignmentDetailExpression());
+    await record("the assignment card starts collapsed", () => {
+      assert.deepEqual({ expanded: before.expanded, hasDetail: before.hasDetail }, { expanded: false, hasDetail: false });
     });
-    await evaluate(page, `document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle").click()`);
-    const after = await evaluate(page, truncatedDetailExpression());
-    await record("config reveals the full detail on click", () => {
+    await evaluate(page, `document.querySelector("[data-ref='assignment:agent-eligible'] .assignment-head").click()`);
+    const after = await evaluate(page, assignmentDetailExpression());
+    await record("clicking expands the assignment to show its full verify command", () => {
       assert.deepEqual(
-        { truncated: after.truncated, expanded: after.expanded, sameText: after.text === before.text },
-        { truncated: false, expanded: true, sameText: true },
+        { expanded: after.expanded, hasDetail: after.hasDetail, hasFullVerify: after.verifyText.includes("--nocapture") },
+        { expanded: true, hasDetail: true, hasFullVerify: true },
       );
     });
   });
 }
 
-/** Whether the assignment's `verify` line is clipped, and its full text. */
-function truncatedDetailExpression() {
+/** The collapsed/expanded state of one assignment card and its verify text. */
+function assignmentDetailExpression() {
   return `(() => {
-    const detail = document.querySelector("[data-ref='assignment:agent-eligible'] .detail-toggle");
-    if (!detail) { return { truncated: null }; }
+    const card = document.querySelector("[data-ref='assignment:agent-eligible']");
+    if (!card) { return { expanded: null }; }
+    const head = card.querySelector(".assignment-head");
+    const detail = card.querySelector(".assignment-detail");
     return {
-      truncated: detail.scrollWidth > detail.clientWidth + 1,
-      expanded: detail.getAttribute("aria-expanded") === "true",
-      text: detail.textContent,
+      expanded: head?.getAttribute("aria-expanded") === "true",
+      hasDetail: Boolean(detail),
+      verifyText: detail?.textContent ?? "",
     };
   })()`;
 }
 
+function assignmentCountsExpression() {
+  return `({
+    assignments: document.querySelectorAll('.assignment-card').length,
+  })`;
+}
+
+function relationCountsExpression() {
+  return `({
+    assignments: document.querySelectorAll('.relation-section .card--assignment').length,
+    roles: document.querySelectorAll('.relation-section .card--role').length,
+    repos: document.querySelectorAll('.relation-section .card--repo').length,
+    pipelines: document.querySelectorAll('.relation-section .card--pipeline').length,
+  })`;
+}
+
 function clippedCardsExpression() {
   return `(() => {
-    const surface = document.querySelector(".config-flow");
+    const surface = document.querySelector(".relation-section .config-flow");
     if (!surface) { return ["missing .config-flow"]; }
     const frame = surface.getBoundingClientRect();
     const slack = 1;
-    return [...document.querySelectorAll(".card")]
+    return [...document.querySelectorAll(".relation-section .card")]
       .filter((card) => {
         const box = card.getBoundingClientRect();
         return box.left < frame.left - slack || box.right > frame.right + slack
@@ -579,15 +605,6 @@ async function boxes(page, selector) {
       bottom: rect.bottom,
     };
   }).filter((box) => box.right > box.left && box.bottom > box.top)`);
-}
-
-function domCountsExpression() {
-  return `({
-    assignments: document.querySelectorAll('.card--assignment').length,
-    roles: document.querySelectorAll('.card--role').length,
-    repos: document.querySelectorAll('.card--repo').length,
-    pipelines: document.querySelectorAll('.card--pipeline').length,
-  })`;
 }
 
 function overflowExpression() {
