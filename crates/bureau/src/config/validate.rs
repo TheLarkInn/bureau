@@ -140,6 +140,8 @@ fn check_text(errors: &mut Vec<ConfigError>, name: &str, a: &Assignment, path: &
         ("branch_prefix", a.branch_prefix.as_str()),
         ("work.source", a.work.source.as_str()),
         ("work.filter", a.work.filter.as_str()),
+        ("work.abort_label", a.work.abort_label.as_str()),
+        ("work.escalate_label", a.work.escalate_label.as_str()),
     ];
     for (field, value) in fields {
         if value.trim().is_empty() {
@@ -227,6 +229,17 @@ fn check_assignment(errors: &mut Vec<ConfigError>, config: &Config, name: &str, 
     check_limits(errors, name, &a.limits, &path);
     check_text(errors, name, a, &path);
     check_approval_label(errors, name, a, &path);
+    if a.work
+        .abort_label
+        .trim()
+        .eq_ignore_ascii_case(a.work.escalate_label.trim())
+    {
+        push(
+            errors,
+            path.clone(),
+            format!("assignment `{name}`: abort and escalation labels must differ"),
+        );
+    }
     check_ado_approval(errors, config, name, a, &path);
 }
 

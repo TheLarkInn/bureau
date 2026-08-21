@@ -240,6 +240,8 @@ fn assignment() -> Assignment {
             source: "fake".to_owned(),
             filter: "*".to_owned(),
             approval_label: None,
+            abort_label: "bureau:failed".to_owned(),
+            escalate_label: "bureau:needs-human".to_owned(),
         },
         repos: vec!["main".to_owned()],
         pipeline: "stack-verify".to_owned(),

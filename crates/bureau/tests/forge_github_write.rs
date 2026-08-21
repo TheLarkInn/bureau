@@ -1,5 +1,4 @@
-//! Offline tests for the GitHub forge's write calls: `create_pr`,
-//! `comment`, `set_labels`, and error mapping (DESIGN.md layer 7).
+//! Offline tests for GitHub forge writes and error mapping (DESIGN.md layer 7).
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -193,6 +192,61 @@ async fn set_labels_puts_the_label_list() {
         request.contains(r#"{"labels":["a","b"]}"#),
     );
     assert_eq!(got, (true, true));
+}
+
+#[tokio::test]
+async fn update_labels_preserves_unrelated_labels() {
+    let replies = vec![response(200, "[]"), response(200, "{}")];
+    let server = TestServer::start(|_| replies);
+    server
+        .forge()
+        .update_labels(
+            "o/r#4",
+            &["bureau:needs-human".to_owned()],
+            &["bureau:failed".to_owned()],
+        )
+        .await
+        .expect("update labels");
+    let requests = server.requests();
+    let got = requests
+        .iter()
+        .map(|request| request.lines().next())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        got,
+        [
+            Some("POST /repos/o/r/issues/4/labels HTTP/1.1"),
+            Some("DELETE /repos/o/r/issues/4/labels/bureau:failed HTTP/1.1"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn update_labels_provisions_a_missing_github_label() {
+    let replies = vec![
+        response(422, r#"{"message":"label does not exist"}"#),
+        response(201, "{}"),
+        response(200, "[]"),
+    ];
+    let server = TestServer::start(|_| replies);
+    server
+        .forge()
+        .update_labels("o/r#4", &["bureau:needs-human".to_owned()], &[])
+        .await
+        .expect("provision and add label");
+    let requests = server.requests();
+    let got = requests
+        .iter()
+        .map(|request| request.lines().next())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        got,
+        [
+            Some("POST /repos/o/r/issues/4/labels HTTP/1.1"),
+            Some("POST /repos/o/r/labels HTTP/1.1"),
+            Some("POST /repos/o/r/issues/4/labels HTTP/1.1"),
+        ]
+    );
 }
 
 #[tokio::test]

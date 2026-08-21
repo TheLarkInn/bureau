@@ -37,6 +37,7 @@ test.describe("pipeline owns execution details", () => {
 
     await expect(card.page.locator(".terminal-pill--done")).toContainText("Publish");
     await expect(card.page.locator(".terminal-pill--escalate")).toContainText("Needs human");
+    await expect(card.page.locator(".terminal-pill--escalate")).toContainText("bureau:needs-human");
     await expect(card.page.locator(".terminal-pill--abort")).toHaveCount(0);
   });
 

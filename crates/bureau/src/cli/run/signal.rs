@@ -4,7 +4,6 @@ use crate::cli::out;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use bureau::contract::StepOutcome;
 use bureau::engine::{Engine, RunOutcome, RunPlan};
 use bureau::state::Store;
 
@@ -51,12 +50,9 @@ fn ensure_started(
     Ok(())
 }
 
-fn persist_cancel(
-    engine: &Engine,
-    store: &Store,
+fn prepare_cancel(
     snapshot: &bureau::runlog::RunSnapshot,
     secrets: &[bureau::process::Secret],
-    runs_dir: &std::path::Path,
     directory: &std::path::Path,
 ) -> anyhow::Result<()> {
     std::fs::write(
@@ -64,10 +60,36 @@ fn persist_cancel(
         "cancelled by second shutdown signal",
     )
     .context("writing cancellation marker")?;
-    ensure_started(directory, snapshot, secrets)?;
-    engine.block(snapshot, "cancelled by second shutdown signal")?;
-    bureau::state::project_run(store, runs_dir, &snapshot.run_id)?;
-    Ok(())
+    ensure_started(directory, snapshot, secrets)
+}
+
+fn persisted_outcome(runs_dir: &std::path::Path, run_id: &str) -> anyhow::Result<RunOutcome> {
+    let directory = bureau::runlog::run_dir(runs_dir, run_id);
+    let state = bureau::runlog::replay_state(&directory)?;
+    let data = state
+        .finished
+        .ok_or_else(|| anyhow::anyhow!("cancelled run has no terminal event"))?;
+    Ok(RunOutcome {
+        run_id: run_id.to_owned(),
+        outcome: data.outcome,
+        cost_usd: data.cost_usd,
+        message: data.message,
+        pr: data.pr,
+    })
+}
+
+fn cancellation_ready(
+    prepared: anyhow::Result<()>,
+    released: Result<(), bureau::state::Error>,
+) -> anyhow::Result<()> {
+    match (prepared, released) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Err(prepared), Err(released)) => Err(anyhow::anyhow!(
+            "{prepared}; releasing the run lease also failed: {released}"
+        )),
+    }
 }
 
 fn cancel_run(
@@ -77,13 +99,22 @@ fn cancel_run(
     snapshot: &bureau::runlog::RunSnapshot,
     secrets: &[bureau::process::Secret],
     runs_dir: &std::path::Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RunOutcome> {
     let directory = bureau::runlog::run_dir(runs_dir, &snapshot.run_id);
-    let persisted = persist_cancel(engine, store, snapshot, secrets, runs_dir, &directory);
+    let terminal = prepare_cancel(snapshot, secrets, &directory)
+        .and_then(|()| {
+            engine
+                .abort(snapshot, "cancelled by second shutdown signal")
+                .map_err(Into::into)
+        })
+        .and_then(|()| {
+            bureau::state::project_run(store, runs_dir, &snapshot.run_id)
+                .map(|_| ())
+                .map_err(Into::into)
+        });
     let released = owner.map_or(Ok(()), bureau::state::LeaseOwner::release);
-    persisted?;
-    released?;
-    Ok(())
+    cancellation_ready(terminal, released)?;
+    persisted_outcome(runs_dir, &snapshot.run_id)
 }
 
 async fn drain_supervision<F>(
@@ -115,16 +146,6 @@ where
     }
 }
 
-fn cancelled(run_id: String) -> RunOutcome {
-    RunOutcome {
-        run_id,
-        outcome: StepOutcome::Blocked,
-        cost_usd: 0.0,
-        message: "cancelled by second shutdown signal".to_owned(),
-        pr: None,
-    }
-}
-
 pub(super) async fn run(
     engine: Arc<Engine>,
     store: Arc<Store>,
@@ -140,16 +161,14 @@ pub(super) async fn run(
     let result = await_supervision(supervised.as_mut(), &mut signals).await;
     let Some((outcome, projection)) = result else {
         drop(supervised);
-        tokio::task::yield_now().await;
-        cancel_run(
+        return cancel_run(
             &engine,
             &store,
             owner.as_ref(),
             &snapshot,
             &secrets,
             &runs_dir,
-        )?;
-        return Ok(cancelled(run_id));
+        );
     };
     projection.context("projecting terminal run state")?;
     Ok(outcome)

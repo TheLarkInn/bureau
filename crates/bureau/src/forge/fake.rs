@@ -21,6 +21,26 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn updated_labels(
+    items: &mut [Item],
+    item_id: &str,
+    add: &[String],
+    remove: &[String],
+) -> Vec<String> {
+    items
+        .iter_mut()
+        .find(|item| item.external_id == item_id)
+        .map_or_else(Vec::new, |item| {
+            item.labels.retain(|label| !remove.contains(label));
+            for label in add {
+                if !item.labels.contains(label) {
+                    item.labels.push(label.clone());
+                }
+            }
+            item.labels.clone()
+        })
+}
+
 /// An in-memory [`Forge`] driven entirely by construction-time state.
 #[derive(Debug, Default)]
 pub struct FakeForge {
@@ -51,7 +71,16 @@ impl FakeForge {
     /// The labels currently set on an item.
     #[must_use]
     pub fn labels_of(&self, item_id: &str) -> Vec<String> {
-        lock(&self.labels).get(item_id).cloned().unwrap_or_default()
+        lock(&self.labels)
+            .get(item_id)
+            .cloned()
+            .or_else(|| {
+                lock(&self.items)
+                    .iter()
+                    .find(|item| item.external_id == item_id)
+                    .map(|item| item.labels.clone())
+            })
+            .unwrap_or_default()
     }
 
     /// Removes an item, as the forge would when it is closed.
@@ -104,6 +133,20 @@ impl Forge for FakeForge {
             item.labels = labels.to_vec();
         }
         lock(&self.labels).insert(item_id.to_owned(), labels.to_vec());
+        Ok(())
+    }
+
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error> {
+        let labels = {
+            let mut items = lock(&self.items);
+            updated_labels(&mut items, item_id, add, remove)
+        };
+        lock(&self.labels).insert(item_id.to_owned(), labels);
         Ok(())
     }
 }

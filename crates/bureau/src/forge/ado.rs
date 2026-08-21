@@ -3,6 +3,7 @@
 //! `query` takes `project/repo`; `open_prs`/`create_pr` take the registry
 //! URL or bare `project/repo`; `comment`/`set_labels` take `{project}/{id}`.
 
+mod labels;
 mod status;
 
 use async_trait::async_trait;
@@ -49,6 +50,7 @@ struct WorkItemFields {
 #[serde(default)]
 struct RawWorkItem {
     id: u64,
+    rev: u64,
     fields: WorkItemFields,
     #[serde(rename = "_links")]
     links: serde_json::Value,
@@ -130,14 +132,7 @@ fn work_item(project: &str, raw: RawWorkItem) -> Item {
         title: raw.fields.title,
         body: raw.fields.description,
         url: url.to_owned(),
-        labels: raw
-            .fields
-            .tags
-            .split(';')
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .map(str::to_owned)
-            .collect(),
+        labels: labels::parse(&raw.fields.tags),
         trust: Trust::Untrusted,
     }
 }
@@ -278,21 +273,15 @@ impl Forge for AdoForge {
     }
 
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error> {
-        let (project, id) = item_parts(item_id)?;
-        let url = self.url(&format!(
-            "/{project}/_apis/wit/workitems/{id}?api-version=7.1"
-        ));
-        // SET replaces: the patch value is exactly `labels`, not a union.
-        let patch = serde_json::json!([{
-            "op": "add",
-            "path": "/fields/System.Tags",
-            "value": labels.join("; "),
-        }]);
-        let request = self
-            .request(reqwest::Method::PATCH, &url)
-            .header("content-type", "application/json-patch+json")
-            .body(patch.to_string());
-        let _: serde_json::Value = decode(request.send().await?).await?;
-        Ok(())
+        labels::set(self, item_id, labels).await
+    }
+
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error> {
+        labels::update(self, item_id, add, remove).await
     }
 }

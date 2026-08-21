@@ -203,6 +203,8 @@ work:
   forge: github
   source: "example/code"
   filter: "label:agent-eligible"
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [code]
 pipeline: fix-failing-test
 role: worker

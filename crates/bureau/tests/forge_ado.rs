@@ -9,7 +9,9 @@ use bureau::forge::ado::AdoForge;
 use bureau::forge::{Error, Forge, Item, PrRequest};
 use bureau::process::Secret;
 
-/// `Basic` of `:hunter2` — the empty-user PAT form ADO expects.
+#[path = "forge_ado/labels.rs"]
+mod labels;
+
 const AUTH: &str = "Basic Omh1bnRlcjI=";
 const WIQL: &str = "SELECT [System.Id] FROM WorkItems WHERE [System.Tags] CONTAINS 'agent'";
 const REGISTRY_URL: &str = "https://dev.azure.com/microsoft/Odsp/_git/odsp-web";
@@ -34,7 +36,6 @@ const PRS_REPLY: &str = concat!(
 );
 const CREATED_REPLY: &str = r#"{"pullRequestId":9,"sourceRefName":"refs/heads/bureau/fix","title":"Fix","url":"https://example/pr/9"}"#;
 
-/// A request exactly as the stub received it.
 #[derive(Clone)]
 struct Request {
     method: String,
@@ -43,7 +44,6 @@ struct Request {
     body: String,
 }
 
-/// A loopback server answering each canned `(status, body)` once.
 struct Stub {
     url: String,
     requests: Arc<Mutex<Vec<Request>>>,

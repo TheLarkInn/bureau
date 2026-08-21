@@ -150,7 +150,7 @@ fn write_config(dir: &Path, url: &str, implement: &str, review: &str) {
     );
     let implementer = "name: implementer\nagent: /bureau:implementer\nadapter: fake\npermissions: [repo:read, repo:write, repo:push, pr:write]\nmin_trust: untrusted\n";
     let reviewer = "name: reviewer\nagent: /bureau:reviewer\nadapter: fake\npermissions: [repo:read, pr:write]\nmin_trust: untrusted\n";
-    let assignment = "name: fix-failing-test\nwork:\n  forge: github\n  source: fake\n  filter: '*'\nrepos: [main]\npipeline: fix-failing-test\nrole: implementer\nverify: test -f impl.txt\nbranch_prefix: bureau/fix/\n".to_owned();
+    let assignment = "name: fix-failing-test\nwork:\n  forge: github\n  source: fake\n  filter: '*'\n  abort_label: bureau:failed\n  escalate_label: bureau:needs-human\nrepos: [main]\npipeline: fix-failing-test\nrole: implementer\nverify: test -f impl.txt\nbranch_prefix: bureau/fix/\n".to_owned();
     let pipeline = PIPELINE
         .replace("{IMPLEMENT}", implement)
         .replace("{REVIEW}", review);

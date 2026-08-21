@@ -77,19 +77,51 @@ pub(super) fn finished(runs_dir: &Path) -> std::io::Result<Vec<TerminalRecord>> 
     Ok(records)
 }
 
-pub(super) fn block(runs_dir: &Path, snapshot: &RunSnapshot, message: &str) -> std::io::Result<()> {
+fn recovery_message(terminal: runlog::RunTerminal, message: &str) -> String {
+    match terminal {
+        runlog::RunTerminal::Done => message.to_owned(),
+        runlog::RunTerminal::Abort => {
+            format!("{message} (forge label unavailable during recovery)")
+        }
+        runlog::RunTerminal::Escalate => {
+            format!("{message} (forge label and comment unavailable during recovery)")
+        }
+    }
+}
+
+const fn recovery_outcome(terminal: runlog::RunTerminal) -> crate::contract::StepOutcome {
+    match terminal {
+        runlog::RunTerminal::Abort => crate::contract::StepOutcome::Failure,
+        runlog::RunTerminal::Done | runlog::RunTerminal::Escalate => {
+            crate::contract::StepOutcome::Blocked
+        }
+    }
+}
+
+pub(super) fn finish(
+    runs_dir: &Path,
+    snapshot: &RunSnapshot,
+    terminal: runlog::RunTerminal,
+    message: &str,
+) -> std::io::Result<()> {
+    let _terminal = runlog::lock_terminal_append();
     let directory = runlog::run_dir(runs_dir, &snapshot.run_id);
     let state = runlog::replay_state(&directory)?;
+    if state.finished.is_some() {
+        return Ok(());
+    }
     let mut log = runlog::RunLog::resume(&directory, &[])?;
+    let message = recovery_message(terminal, message);
     log.append(
         runlog::EventKind::Output,
-        runlog::output(None, "run", message),
+        runlog::output(None, "run", &message),
     )?;
-    let outcome = crate::contract::StepOutcome::Blocked;
+    let outcome = recovery_outcome(terminal);
     let disposition = runlog::TerminalDisposition::for_outcome(outcome, state.pr.is_some());
     let finished = runlog::run_finished_full(
+        Some(terminal),
         outcome,
-        message,
+        &message,
         measured_cost(&state),
         state.pr.as_ref(),
         disposition,

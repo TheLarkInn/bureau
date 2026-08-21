@@ -415,6 +415,7 @@ function AssignmentDetail({ state, assignment }) {
     { className: "assignment-detail" },
     h(DetailRow, { label: "work source" }, h(WorkSourceField, { assignment })),
     h(DetailRow, { label: "work rules" }, h(AssignmentRuntimeField, { assignment })),
+    h(DetailRow, { label: "forge signals" }, h(TerminalLabelsField, { assignment })),
     h(DetailRow, { label: "repos" }, h(ReposField, { state, assignment })),
     h(DetailRow, { label: "pipeline" }, h(PipelineLink, { state, name: assignment.pipeline })),
     h(DetailRow, { label: "limits" }, h(LimitsField, { assignment })),
@@ -458,8 +459,19 @@ function PipelineLink({ state, name }) {
 }
 
 function confirmClosingEditor() {
-  const editor = document.querySelector(".ws-open, .repos-editor, .limits-editor, .assignment-runtime-editor");
+  const editor = document.querySelector(".ws-open, .repos-editor, .limits-editor, .assignment-runtime-editor, .terminal-label-editor");
   return !editor || window.confirm("Discard the unsaved field changes?");
+}
+
+function runtimeFields(assignment, changes = {}) {
+  return {
+    filter: assignment.work?.filter ?? "",
+    approval_label: assignment.work?.approvalLabel ?? null,
+    abort_label: assignment.work?.abortLabel ?? "",
+    escalate_label: assignment.work?.escalateLabel ?? "",
+    branch_prefix: assignment.branchPrefix ?? "",
+    ...changes,
+  };
 }
 
 function AssignmentRuntimeField({ assignment }) {
@@ -503,14 +515,11 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
   const save = () => {
     setBusy(true);
     setError(null);
-    const input = {
-      assignment: assignment.name,
-      fields: {
-        filter: fields.filter.trim(),
-        approval_label: fields.approval_label.trim() || null,
-        branch_prefix: fields.branch_prefix.trim(),
-      },
-    };
+    const input = { assignment: assignment.name, fields: runtimeFields(assignment, {
+      filter: fields.filter.trim(),
+      approval_label: fields.approval_label.trim() || null,
+      branch_prefix: fields.branch_prefix.trim(),
+    }) };
     postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
       setBusy(false);
       if (result?.ok) {
@@ -546,6 +555,89 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h("div", { className: "actions" },
       h("button", { type: "button", className: "btn btn--primary", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save work rules"),
+      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
+  );
+}
+
+function TerminalLabelsField({ assignment }) {
+  const [editing, setEditing] = useState(false);
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setEditing, trigger);
+  if (editing) {
+    return h(TerminalLabelsEditor, { assignment, onDone: close });
+  }
+  return h(
+    "button",
+    {
+      ref: trigger,
+      type: "button",
+      className: "terminal-label-value",
+      title: "Change the labels Bureau applies at terminal states",
+      onClick: () => setEditing(true),
+    },
+    h(TerminalSignal, { kind: "abort", label: assignment.work?.abortLabel }),
+    h(TerminalSignal, { kind: "escalate", label: assignment.work?.escalateLabel }),
+  );
+}
+
+function TerminalSignal({ kind, label }) {
+  const copy = terminalCopy(kind);
+  return h(
+    "span",
+    { className: `terminal-signal terminal-signal--${kind}` },
+    h("span", { className: "terminal-signal__name" }, copy.label),
+    h("code", {}, label || "not configured"),
+  );
+}
+
+function TerminalLabelsEditor({ assignment, onDone }) {
+  const initial = {
+    abort_label: assignment.work?.abortLabel ?? "",
+    escalate_label: assignment.work?.escalateLabel ?? "",
+  };
+  const [fields, setFields] = useState(initial);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
+  const invalid = !fields.abort_label.trim() || !fields.escalate_label.trim()
+    || fields.abort_label.trim() === fields.escalate_label.trim();
+  const set = (field, value) => setFields((current) => ({ ...current, [field]: value }));
+  const save = () => {
+    setBusy(true);
+    setError(null);
+    const labels = {
+      abort_label: fields.abort_label.trim(),
+      escalate_label: fields.escalate_label.trim(),
+    };
+    const input = { assignment: assignment.name, fields: runtimeFields(assignment, labels) };
+    postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      setBusy(false);
+      if (result?.ok) {
+        publishLocalState(result);
+        onDone();
+      } else {
+        setError(result?.error ?? "could not save those forge signals");
+      }
+    });
+  };
+  return h(
+    "div",
+    { className: "terminal-label-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
+    h("label", {}, "Failed run label", h("input", {
+      className: "form-control form-control--mono",
+      value: fields.abort_label,
+      onChange: (event) => set("abort_label", event.target.value),
+    })),
+    h("label", {}, "Needs-human label", h("input", {
+      className: "form-control form-control--mono",
+      value: fields.escalate_label,
+      onChange: (event) => set("escalate_label", event.target.value),
+    })),
+    h("p", { className: "note" }, "Bureau preserves unrelated work-item labels."),
+    invalid ? h("p", { className: "note note--err" }, "Both labels are required and must differ.") : null,
+    error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
+    h("div", { className: "actions" },
+      h("button", { type: "button", className: "btn btn--primary", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save forge signals"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
   );
 }
@@ -1031,6 +1123,8 @@ function WorkSourceEditor({ assignment, onDone }) {
       source: derived.source,
       filter: derived.filter,
       approval_label: assignment.work?.approvalLabel ?? null,
+      abort_label: assignment.work?.abortLabel ?? "",
+      escalate_label: assignment.work?.escalateLabel ?? "",
     };
     postIntent({ kind: "set-work-source", input: { assignment: assignment.name, work } }).then((result) => {
       setBusy(false);
@@ -1204,7 +1298,9 @@ function toFlow(pipeline, state, selectedStep, decoration = null) {
   const steps = layout.steps
     .filter((step) => visible.has(step.id))
     .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved));
-  const terminals = layout.terminals.map((terminal) => flowTerminal(terminal, handles.items[terminal.id]));
+  const labels = labelsForPipeline(state, layout.name);
+  const terminals = layout.terminals.map((terminal) =>
+    flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name]));
   const backIndexes = routeIndexes(layout.edges, "back");
   return {
     nodes: [...frames, ...steps, ...terminals],
@@ -1273,15 +1369,25 @@ function memberRows(resolved, step) {
   return Object.entries(members).map(([name, record]) => ({ name, ...record }));
 }
 
-function flowTerminal(terminal, handles) {
+function flowTerminal(terminal, handles, label) {
   return {
     id: terminal.id,
     type: "terminalPill",
     position: { x: terminal.x, y: terminal.y + 26 },
-    data: { terminal, handles: handles ?? emptyHandles() },
-    style: { width: 136 },
+    data: { terminal, handles: handles ?? emptyHandles(), label },
+    style: { width: 176 },
     draggable: false,
   };
+}
+
+function labelsForPipeline(state, pipeline) {
+  const assignments = (state.config?.view?.assignments ?? [])
+    .filter((assignment) => assignment.pipeline === pipeline);
+  const one = (key) => {
+    const labels = [...new Set(assignments.map((assignment) => assignment.work?.[key]).filter(Boolean))];
+    return labels.length === 1 ? labels[0] : null;
+  };
+  return { abort: one("abortLabel"), escalate: one("escalateLabel") };
 }
 
 function flowEdge(edge, endpoints, backIndex, resolved, originalId) {
@@ -1418,6 +1524,7 @@ function TerminalPill({ data }) {
     h(Handles, { handles: data.handles }),
     h("h2", {}, copy.label),
     h("p", { className: "terminal-detail" }, copy.detail),
+    data.label ? h("code", { className: "terminal-forge-label" }, data.label) : null,
     h("code", { className: "terminal-key" }, data.terminal.name),
   );
 }

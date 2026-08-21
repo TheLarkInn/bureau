@@ -10,7 +10,7 @@ use crate::contract::StepOutcome;
 use crate::git::{CheckoutCache, Worktree, credential_for};
 use crate::process::Secret;
 use crate::runlog::RunLog;
-use crate::runlog::{self, EventKind};
+use crate::runlog::{self, EventKind, RunTerminal};
 
 /// The run branch: `<branch_prefix><pipeline>/<run_id>`.
 fn branch_name(plan: &RunPlan) -> String {
@@ -104,11 +104,13 @@ fn append_started(ctx: &mut RunCtx) -> Result<(), String> {
     Ok(())
 }
 
-fn setup_failure(mut ctx: RunCtx, message: String) -> RunOutcome {
+async fn setup_failure(mut ctx: RunCtx, message: String) -> RunOutcome {
     if let Err(error) = append_started(&mut ctx) {
         return RunOutcome::bare(&ctx.plan.run_id, StepOutcome::Failure, error);
     }
-    settle::finish(ctx, StepOutcome::Failure, message, None)
+    let raw = (StepOutcome::Failure, message, None);
+    let result = settle::project(&ctx, RunTerminal::Abort, raw).await;
+    settle::finish(ctx, result)
 }
 
 fn prepare_plugins(ctx: &mut RunCtx, wt: &WtCtx) -> Result<(), plugins::PrepareError> {
@@ -126,18 +128,26 @@ fn prepare_stop(error: plugins::PrepareError) -> Stop {
     }
 }
 
-/// Resolves a non-pause stop into the settle triple.
-async fn resolve_stop(
-    ctx: &RunCtx,
-    wt: &WtCtx,
-    stop: Stop,
-) -> (StepOutcome, String, Option<crate::forge::Pr>) {
-    match stop {
-        Stop::Done => finalize::finalize(ctx, wt).await,
-        Stop::Fail(message) => (StepOutcome::Failure, message, None),
-        Stop::Escalate(message) => settle::escalate(ctx, message).await,
-        Stop::Pause => unreachable!("handled by end_run"),
+const fn done_terminal(outcome: StepOutcome) -> RunTerminal {
+    match outcome {
+        StepOutcome::Success | StepOutcome::NoWork => RunTerminal::Done,
+        StepOutcome::Failure => RunTerminal::Abort,
+        StepOutcome::Blocked => RunTerminal::Escalate,
     }
+}
+
+/// Resolves a non-pause stop into the settle triple.
+async fn resolve_stop(ctx: &RunCtx, wt: &WtCtx, stop: Stop) -> settle::TerminalResult {
+    let (terminal, raw) = match stop {
+        Stop::Done => {
+            let raw = finalize::finalize(ctx, wt).await;
+            (done_terminal(raw.0), raw)
+        }
+        Stop::Fail(message) => (RunTerminal::Abort, (StepOutcome::Failure, message, None)),
+        Stop::Escalate(message) => (RunTerminal::Escalate, (StepOutcome::Blocked, message, None)),
+        Stop::Pause => unreachable!("handled by end_run"),
+    };
+    settle::project(ctx, terminal, raw).await
 }
 
 /// Resolves the machine's stop reason into the run's outcome. The
@@ -147,9 +157,9 @@ async fn end_run(ctx: RunCtx, wt: WtCtx, stop: Stop) -> RunOutcome {
         drop(wt);
         return settle::paused(ctx);
     }
-    let (outcome, message, pr) = resolve_stop(&ctx, &wt, stop).await;
+    let result = resolve_stop(&ctx, &wt, stop).await;
     drop(wt);
-    settle::finish(ctx, outcome, message, pr)
+    settle::finish(ctx, result)
 }
 
 async fn run_prepared(mut ctx: RunCtx, wt: WtCtx) -> RunOutcome {
@@ -177,12 +187,17 @@ async fn with_worktree(mut ctx: RunCtx, wt: WtCtx) -> RunOutcome {
     start_prepared(ctx, wt, prepared).await
 }
 
+async fn finish_worktree(ctx: RunCtx, result: Result<WtCtx, String>) -> RunOutcome {
+    match result {
+        Ok(wt) => with_worktree(ctx, wt).await,
+        Err(message) => setup_failure(ctx, message).await,
+    }
+}
+
 /// Runs the worktree phase, the machine loop, and the settle phase.
 async fn run_to_terminal(cache: &CheckoutCache, ctx: RunCtx) -> RunOutcome {
-    match worktree_phase(cache, &ctx).await {
-        Ok(wt) => with_worktree(ctx, wt).await,
-        Err(message) => setup_failure(ctx, message),
-    }
+    let result = worktree_phase(cache, &ctx).await;
+    finish_worktree(ctx, result).await
 }
 
 /// The open phase's verdict.
@@ -266,7 +281,7 @@ pub(super) async fn run(runs_dir: &Path, cache: &CheckoutCache, plan: &RunPlan) 
     let dir = runlog::run_dir(runs_dir, &plan.run_id);
     match open(&dir, runs_dir, plan) {
         Ok(Open::Finished(outcome)) => outcome,
-        Ok(Open::Running(ctx)) => run_to_terminal(cache, *ctx).await,
+        Ok(Open::Running(ctx)) => Box::pin(run_to_terminal(cache, *ctx)).await,
         Err(message) => RunOutcome::bare(&plan.run_id, StepOutcome::Failure, message),
     }
 }

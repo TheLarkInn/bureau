@@ -61,6 +61,8 @@ work:
   source: "Odsp/odsp-web"
   filter: "[System.Tags] CONTAINS 'agent-eligible'"
   approval_label: agent-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [odsp-web]
 pipeline: fix-failing-test
 role: implementer

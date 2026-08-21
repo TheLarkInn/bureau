@@ -174,4 +174,12 @@ pub trait Forge: Send + Sync {
 
     /// Replaces a work item's labels.
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error>;
+
+    /// Adds and removes named labels without changing unrelated labels.
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error>;
 }

@@ -34,7 +34,9 @@
           "forge": "github",
           "source": "TheLarkInn/bureau",
           "filter": "is:open label:agent-eligible",
-          "approval_label": null
+          "approval_label": null,
+          "abort_label": "bureau:failed",
+          "escalate_label": "bureau:needs-human"
         },
         "repos": ["bureau"],
         "pipeline": "agent-eligible-pipeline",

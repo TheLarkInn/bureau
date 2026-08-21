@@ -350,6 +350,8 @@ work:
       AND [System.Tags] CONTAINS 'agent-eligible'
       AND [System.State] = 'Active'
   approval_label: agent-approved # optional; required when ADO input must become maintainer
+  abort_label: bureau:failed      # added when the pipeline reaches `abort`
+  escalate_label: bureau:needs-human # added when it reaches `escalate`
 repos: [odsp-web, spo.core, augloop]   # first is primary; the branch lands there
 pipeline: fix-failing-test
 role: implementer
@@ -368,6 +370,11 @@ limits:
 search syntax for GitHub. Do not invent a filter language and do not reduce this to a
 label list. A label list cannot express "assigned to me AND not blocked AND in this
 area path," and you will hit that limit immediately.
+
+`abort_label` and `escalate_label` are required and must differ. Bureau adds the
+matching label without replacing unrelated forge labels, removes the other terminal
+label, and clears both after `done`. Label-delivery failures are recorded in the run
+message; they never erase the terminal result.
 
 `limits` is a kill switch that stops a runaway loop from costing $400 overnight. It is
 not chargeback and not cost accounting — that would imply multi-tenancy, which is a

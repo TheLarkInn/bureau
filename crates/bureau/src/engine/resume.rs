@@ -131,6 +131,7 @@ fn legacy_finished(state: &RunState) -> RunFinishedData {
         RunStatus::Running => StepOutcome::Failure,
     };
     RunFinishedData {
+        terminal: None,
         outcome,
         message: format!("run already finished: {}", edge::outcome_key(outcome)),
         cost_usd: 0.0,

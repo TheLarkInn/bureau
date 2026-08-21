@@ -103,7 +103,7 @@ pub fn write_finished_run(runs: &Path, run_id: &str, at_ms: u64, cost_usd: f64) 
     let started = &runlog::run_started_for_item(run_id, "demo", "42");
     let step_start = &runlog::step_started("work");
     let step_done = &runlog::step_finished("work", ok);
-    let finished = &runlog::run_finished_full(ok, "done", cost_usd, None, None);
+    let finished = &runlog::run_finished_full(None, ok, "done", cost_usd, None, None);
     let lines = [
         line(0, at_ms, "run_started", started),
         line(1, at_ms + 100, "step_started", step_start),
@@ -214,6 +214,8 @@ work:
   forge: github
   source: "example/code"
   filter: "label:agent-eligible"
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [code]
 pipeline: fix-failing-test
 role: worker

@@ -51,6 +51,8 @@ work:
   forge: ado
   source: "project/main"
   filter: "[System.Tags] CONTAINS 'agent-eligible'"
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [main]
 pipeline: fix-test
 role: implementer

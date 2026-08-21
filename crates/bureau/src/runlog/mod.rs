@@ -14,13 +14,14 @@ mod group;
 mod group_state;
 mod snapshot;
 mod state;
+mod terminal;
 
 pub use bureau_plugin::PluginSource;
 pub use event::{
     BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData, RunFinishedData,
-    RunStartedData, StepFinishedData, StepStartedData, TerminalDisposition, branch_pushed,
-    checkpoint, output, pr_created, run_finished, run_finished_full, run_started,
-    run_started_for_item, run_started_snapshot, step_finished, step_finished_full, step_started,
+    RunStartedData, StepFinishedData, StepStartedData, branch_pushed, checkpoint, output,
+    pr_created, run_finished, run_finished_full, run_started, run_started_for_item,
+    run_started_snapshot, step_finished, step_finished_full, step_started,
 };
 pub use gist::{gist, kind_name, outcome_name, status_text};
 pub use group::{
@@ -30,11 +31,13 @@ pub use group::{
 };
 pub use snapshot::{ConfigSource, RunSnapshot};
 pub use state::{RunState, RunStatus, StepRecord};
+pub use terminal::{RunTerminal, TerminalDisposition};
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -49,6 +52,13 @@ pub const EVENTS_FILE: &str = "events.jsonl";
 
 /// The derived state cache file name within a run directory.
 pub const STATE_FILE: &str = "state.json";
+static TERMINAL_APPEND: Mutex<()> = Mutex::new(());
+
+pub(crate) fn lock_terminal_append() -> MutexGuard<'static, ()> {
+    TERMINAL_APPEND
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Durable state for one concurrent group member.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

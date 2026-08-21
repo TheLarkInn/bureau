@@ -174,7 +174,7 @@ fn write_valid(root: &Path) {
     .expect("role");
     std::fs::write(
         config.join("assignments/work.yaml"),
-        "name: work\nwork:\n  forge: github\n  source: acme/main\n  filter: is:issue\nrepos: [main]\npipeline: work\nrole: worker\nverify: \"true\"\nbranch_prefix: bureau/\n",
+        "name: work\nwork:\n  forge: github\n  source: acme/main\n  filter: is:issue\n  abort_label: bureau:failed\n  escalate_label: bureau:needs-human\nrepos: [main]\npipeline: work\nrole: worker\nverify: \"true\"\nbranch_prefix: bureau/\n",
     )
     .expect("assignment");
     std::fs::write(
