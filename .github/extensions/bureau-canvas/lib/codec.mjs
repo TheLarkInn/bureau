@@ -273,6 +273,13 @@ function applyMapChange(yamlDoc, path, before, after) {
 
 /** Removes dropped items from the back, then inserts added ones in place. */
 function applySequenceChange(yamlDoc, path, before, after) {
+  // The passes below are set-based, so a pure reorder would be a no-op. Where
+  // order carries meaning — an assignment's `repos`, whose first entry is the
+  // repo the branch lands in — the sequence is rewritten instead.
+  if (reordered(before, after)) {
+    yamlDoc.setIn(path, after);
+    return;
+  }
   const kept = new Set(after.map(serialize));
   for (let index = before.length - 1; index >= 0; index -= 1) {
     if (!kept.has(serialize(before[index]))) {
@@ -290,8 +297,15 @@ function applySequenceChange(yamlDoc, path, before, after) {
   }
 }
 
-function insertAt(yamlDoc, path, index, item) {
-  const sequence = yamlDoc.getIn(path);
+/** Whether the items common to both lists appear in a different order. */
+function reordered(before, after) {
+  const wanted = after.map(serialize);
+  const kept = before.map(serialize).filter((item) => wanted.includes(item));
+  const target = wanted.filter((item) => kept.includes(item));
+  return kept.some((item, index) => item !== target[index]);
+}
+
+function insertAt(yamlDoc, path, index, item) {  const sequence = yamlDoc.getIn(path);
   const node = yamlDoc.createNode(item);
   if (sequence?.items && index <= sequence.items.length) {
     sequence.items.splice(index, 0, node);

@@ -39,6 +39,7 @@ test("declared action names avoid the reserved prefix", () => {
       ["focus", false],
       ["reload", false],
       ["set_field", false],
+      ["set_work_source", false],
       ["rewire", false],
       ["save", false],
     ],

@@ -10,6 +10,8 @@ import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } fro
 import { arrangementFor, readLayout, savePipeline } from "./lib/pipeline.mjs";
 import { createRunTail, listRuns, parseEvents, readRunEvents, runBureau, runsDir } from "./lib/runs.mjs";
 import { configView, pipelineView, relationView } from "./lib/view.mjs";
+import { deriveWorkSource } from "./lib/worksource.mjs";
+import { resolveRepoUrl } from "./lib/repourl.mjs";
 
 const CANVAS_ID = "bureau";
 const DISPLAY_NAME = "Bureau";
@@ -487,6 +489,33 @@ const CRUD_INTENTS = { create, delete: removeEntity, rename };
 
 async function handleIntent(entry, request, response) {
     const intent = await readIntent(request);
+    if (intent?.kind === "derive-work-source") {
+        // A preview only: deriving reads the URL and changes nothing, so the
+        // paste field can show what it would write before anything is written.
+        sendJson(response, { ok: true, derived: deriveWorkSource(intent.url) }, false);
+        return;
+    }
+    if (intent?.kind === "set-work-source") {
+        await runWorkSourceIntent(entry, intent, response);
+        return;
+    }
+    if (intent?.kind === "resolve-repo") {
+        // A preview only: resolving reads the URL and changes nothing.
+        sendJson(response, { ok: true, resolved: resolveRepoUrl(intent.url) }, false);
+        return;
+    }
+    if (intent?.kind === "set-role") {
+        await runPlanAction(entry, intent, response, "set_role");
+        return;
+    }
+    if (intent?.kind === "set-repos") {
+        await runPlanAction(entry, intent, response, "set_repos");
+        return;
+    }
+    if (intent?.kind === "set-limits") {
+        await runPlanAction(entry, intent, response, "set_limits");
+        return;
+    }
     if (CRUD_INTENTS[intent?.kind]) {
         await runCrudIntent(entry, intent, response);
         return;
@@ -542,6 +571,44 @@ function parseJson(text) {
 
 function requestPath(request) {
     return new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+}
+
+/**
+ * Sets one assignment's work source and writes it. `set_work_source`
+ * validates the draft before storing it, so a bad derivation throws here
+ * rather than reaching the file.
+ */
+async function runWorkSourceIntent(entry, intent, response) {
+    const deps = actionDependencies();
+    const input = { dir: entry.state.dir, ...intent.input };
+    const ctx = { instanceId: entry.state.instanceId, input };
+    const setAction = actions.find((candidate) => candidate.name === "set_work_source");
+    const saveAction = actions.find((candidate) => candidate.name === "save");
+    try {
+        await setAction.handler(ctx, deps);
+        const result = await saveAction.handler({ instanceId: ctx.instanceId, input: { dir: input.dir, assignment: input.assignment } }, deps);
+        await refreshState(entry);
+        sendJson(response, { ok: true, result, state: entry.state }, false);
+    } catch (error) {
+        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
+    }
+}
+
+/**
+ * Runs one plan-producing crud verb and republishes state, so the pending
+ * writes appear in the draft bar before anything reaches disk.
+ */
+async function runPlanAction(entry, intent, response, name) {
+    const deps = actionDependencies();
+    const ctx = { instanceId: entry.state.instanceId, input: { dir: entry.state.dir, ...intent.input } };
+    const verb = crudActions.find((candidate) => candidate.name === name);
+    try {
+        const result = await verb.handler(ctx, deps);
+        await refreshState(entry);
+        sendJson(response, { ok: true, result, state: entry.state }, false);
+    } catch (error) {
+        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
+    }
 }
 
 /** Runs one CRUD verb and republishes state so a pending plan is visible. */

@@ -8,11 +8,98 @@
 // reloading cannot undo. Legality is still `bureau validate`'s call; this
 // module reports consequences and produces file text.
 
-import { createText, renameReference, withDeclaredName, withRepo, withoutRepo } from "./entities.mjs";
+import { choicesFor, createText, renameReference, withAssignmentLimits, withAssignmentRepos, withAssignmentRole, withDeclaredName, withRepo, withoutRepo } from "./entities.mjs";
 import { deleteFile, listNames, pathFor } from "./files.mjs";
 import { blocksDelete, referrers } from "./preflight.mjs";
 
 const KIND_ENUM = ["repo", "role", "assignment", "pipeline"];
+/** Sourced from the entity descriptors, which mirror the Rust enums. */
+const PERMISSION_ENUM = choicesFor("role", "permissions") ?? [];
+
+/**
+ * The whole ordered list in one call, plus an optional registry entry to
+ * create alongside it. Adding an unlisted repo touches two files — the
+ * registry is shared by every assignment — and both belong to one plan so
+ * neither can land without the other.
+ */
+/**
+ * Points an assignment at a role, optionally creating that role in the same
+ * plan. Roles are shared with every pipeline step that names them, so this
+ * only chooses or creates: renaming and deleting belong to the role itself,
+ * where all its referrers are visible.
+ */
+/**
+ * Every limit an assignment may set. A `null` disables one, which means
+ * unlimited — except `max_run_hours`, where it means the system default.
+ * Counts are at least 1: a zero would compute headroom as permanently zero,
+ * which reads as a typo but behaves as a pause.
+ */
+const LIMIT_KEYS = [
+  "max_concurrent", "max_runs_per_hour", "max_runs_per_day",
+  "max_open_prs", "max_cost_per_day_usd", "max_run_hours",
+];
+
+const SET_LIMITS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    assignment: { type: "string" },
+    limits: {
+      type: "object",
+      additionalProperties: false,
+      properties: Object.fromEntries(LIMIT_KEYS.map((key) => [key, { type: ["number", "null"], minimum: 1 }])),
+    },
+  },
+  required: ["assignment", "limits"],
+};
+
+const SET_ROLE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    assignment: { type: "string" },
+    role: { type: "string", description: "The role the assignment names." },
+    create: {
+      type: "object",
+      additionalProperties: false,
+      description: "Fields for a new roles/<role>.yaml written in the same plan.",
+      properties: {
+        agent: { type: "string", description: "A plugin invocation like /plugin:agent, or a path to an agent .md." },
+        adapter: { type: "string", enum: ["copilot", "claude", "fake"] },
+        permissions: { type: "array", items: { type: "string", enum: PERMISSION_ENUM } },
+        min_trust: { type: "string", enum: ["untrusted", "derived", "maintainer", "trusted"] },
+      },
+      required: ["agent", "adapter", "permissions", "min_trust"],
+    },
+  },
+  required: ["assignment", "role"],
+};
+
+const SET_REPOS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    assignment: { type: "string" },
+    repos: { type: "array", items: { type: "string" }, description: "The ordered list; the first entry is the primary repo." },
+    register: {
+      type: "object",
+      additionalProperties: false,
+      description: "A new repos.yaml entry to write in the same plan.",
+      properties: {
+        name: { type: "string" },
+        url: { type: "string" },
+        forge: { type: "string", enum: ["github", "ado"] },
+        access: { type: "string", enum: ["read", "pr", "push"] },
+        credential: { type: "string" },
+      },
+      required: ["name", "url", "forge", "access", "credential"],
+    },
+  },
+  required: ["assignment", "repos"],
+};
 
 const CREATE_SCHEMA = {
   type: "object",
@@ -70,6 +157,24 @@ export const crudActions = [
     inputSchema: RENAME_SCHEMA,
     handler: rename,
   },
+  {
+    name: "set_repos",
+    description: "Plan an assignment's ordered repos list, optionally registering a new repo in repos.yaml in the same plan.",
+    inputSchema: SET_REPOS_SCHEMA,
+    handler: setRepos,
+  },
+  {
+    name: "set_role",
+    description: "Plan the role an assignment names, optionally creating that role in the same plan.",
+    inputSchema: SET_ROLE_SCHEMA,
+    handler: setRole,
+  },
+  {
+    name: "set_limits",
+    description: "Plan an assignment's limits block. A null disables one limit, which means unlimited.",
+    inputSchema: SET_LIMITS_SCHEMA,
+    handler: setLimits,
+  },
 ];
 
 export function emptyPlan() {
@@ -112,6 +217,73 @@ export async function rename(ctx, deps = {}) {
     removals: [...plan.removals, { path: source, kind, name: from }],
   };
   return record(ctx, deps, next, { action: "rename", kind, from, to, cascaded: cascade.length });
+}
+
+/**
+ * The assignment's limits block. Every key is written, disabled ones as
+ * `null`, so the block keeps a stable shape and any comment above a key
+ * stays anchored to it.
+ */
+export async function setLimits(ctx, deps = {}) {
+  const { dir, plan } = await context(ctx, deps);
+  const { assignment, limits } = ctx.input;
+  const path = pathFor(dir, "assignment", assignment);
+  const text = withAssignmentLimits(await read(deps, path), path, fullLimits(limits));
+  const next = { ...plan, writes: [...plan.writes, { path, text }] };
+  return record(ctx, deps, next, { action: "set_limits", assignment, limits: fullLimits(limits) });
+}
+
+function fullLimits(limits) {
+  return Object.fromEntries(LIMIT_KEYS.map((key) => [key, limits[key] ?? null]));
+}
+
+/**
+ * The role an assignment names, and the role file itself when one is being
+ * created, in a single plan. Creating never overwrites an existing role: it
+ * is shared, so silently changing its grants would change what every
+ * pipeline step naming it may do.
+ */
+export async function setRole(ctx, deps = {}) {
+  const { dir, plan, payload } = await context(ctx, deps);
+  const { assignment, role, create } = ctx.input;
+  const created = create ? [roleWrite(dir, payload, role, create)] : [];
+  const path = pathFor(dir, "assignment", assignment);
+  const text = withAssignmentRole(await read(deps, path), path, role);
+  const next = { ...plan, writes: [...plan.writes, ...created, { path, text }] };
+  return record(ctx, deps, next, { action: "set_role", assignment, role, created: Boolean(create) });
+}
+
+function roleWrite(dir, payload, role, fields) {
+  const known = payload?.config?.roles ?? {};
+  if (Object.hasOwn(known, role)) {
+    throw new Error(`\`${role}\` already exists; choose it instead of creating it`);
+  }
+  return { path: pathFor(dir, "role", role), text: createText("role", role, fields) };
+}
+
+/**
+ * The assignment's list, and the registry entry when one is being added, in
+ * a single plan. Registering never edits an entry that already exists: the
+ * registry is shared, so silently changing a repo's access would change what
+ * every other assignment using it may do.
+ */
+export async function setRepos(ctx, deps = {}) {
+  const { dir, plan, payload } = await context(ctx, deps);
+  const { assignment, repos, register } = ctx.input;
+  const registered = register ? [await registerWrite(dir, plan, payload, register)] : [];
+  const path = pathFor(dir, "assignment", assignment);
+  const text = withAssignmentRepos(await read(deps, path), path, repos);
+  const next = { ...plan, writes: [...plan.writes, ...registered, { path, text }] };
+  return record(ctx, deps, next, { action: "set_repos", assignment, repos, registered: Boolean(register) });
+}
+
+async function registerWrite(dir, plan, payload, register) {
+  const known = payload?.config?.repos ?? {};
+  if (Object.hasOwn(known, register.name)) {
+    throw new Error(`\`${register.name}\` is already in the registry; rename this one or use the existing entry`);
+  }
+  const { name, ...fields } = register;
+  return repoWrite(dir, plan, name, fields);
 }
 
 async function cascadeWrites(dir, payload, kind, from, to, deps) {

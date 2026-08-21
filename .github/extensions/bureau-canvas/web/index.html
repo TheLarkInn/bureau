@@ -200,7 +200,6 @@
         border-top: 4px solid var(--accent, var(--kind-terminal));
         border-radius: var(--radius);
         background: var(--background-color-default, #ffffff);
-        box-shadow: 0 10px 24px rgba(31, 35, 40, 0.08);
       }
 
       .card {
@@ -399,6 +398,531 @@
       .card--expanded > .card-button {
         overflow: visible;
       }
+
+      /* Assignment-first landing: a vertical stack of cards, flat on the
+         bench (no resting shadow per the Flat Bench rule). */
+      .view-shell--config {
+        align-content: start;
+        max-width: 56rem;
+      }
+      .config-heading {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+      .assignment-stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+      .assignment-card {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-top: 4px solid var(--kind-assignment);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+      .assignment-head {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        grid-template-areas: "kind name" "glance glance";
+        column-gap: var(--space-3);
+        row-gap: var(--space-1);
+        width: 100%;
+        padding: var(--space-3);
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .assignment-head .kind-label { grid-area: kind; }
+      .assignment-head .assignment-name {
+        grid-area: name;
+        font-weight: 700;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-default, #1f2328);
+      }
+      .assignment-head .assignment-glance {
+        grid-area: glance;
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .assignment-head:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .assignment-detail {
+        display: grid;
+        gap: var(--space-2);
+        padding: 0 var(--space-3) var(--space-3);
+      }
+      .detail-row {
+        display: grid;
+        grid-template-columns: 7.5rem 1fr;
+        gap: var(--space-3);
+        align-items: start;
+      }
+      .detail-label {
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-color-muted, #656d76);
+      }
+      .detail-value { min-width: 0; }
+      .detail-value code { word-break: break-word; }
+      .ref {
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .ref--role { color: var(--kind-role); }
+      .ref--pipeline { color: var(--kind-pipeline); }
+      .ref-link {
+        border: 0;
+        background: none;
+        padding: 0;
+        cursor: pointer;
+        text-decoration: underline dotted;
+      }
+      .repo-chip { border-color: var(--kind-repo); }
+      .orphan-strip {
+        border: 1px dashed var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        padding: var(--space-3);
+      }
+      .orphan-strip h3 { margin-bottom: var(--space-2); }
+      .orphan-chip--repo { border-color: var(--kind-repo); }
+      .orphan-chip--role { border-color: var(--kind-role); }
+      .orphan-chip--pipeline { border-color: var(--kind-pipeline); }
+      /* Work source: paste a board or issues URL and confirm what it derives. */
+      .ws-value {
+        border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-default, #1f2328);
+        text-decoration: underline dotted var(--text-color-muted, #656d76);
+        text-underline-offset: 3px;
+      }
+      .ws-value:hover { color: var(--kind-assignment); text-decoration-color: var(--kind-assignment); }
+      .ws-value:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .ws-open {
+        display: grid;
+        gap: var(--space-3);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .paste-input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .paste-input:focus {
+        outline: 0;
+        border-color: var(--kind-assignment);
+        box-shadow: 0 0 0 1px var(--kind-assignment);
+      }
+      .derived {
+        display: grid;
+        gap: var(--space-2);
+        border-top: 1px solid var(--border-color-default, #d0d7de);
+        padding-top: var(--space-3);
+      }
+      .derived-row {
+        display: grid;
+        grid-template-columns: 4rem 1fr;
+        gap: var(--space-3);
+        align-items: start;
+      }
+      .derived-row code { word-break: break-word; }
+      .pill {
+        justify-self: start;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        padding: 0.125rem 0.5rem;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .pill--github { border-color: var(--kind-assignment); color: var(--kind-assignment); }
+      .pill--ado { border-color: var(--kind-role); color: var(--kind-role); }
+      .note { font-size: var(--text-code-inline, 12px); color: var(--text-color-muted, #656d76); }
+      .note--warn { color: var(--kind-pipeline); }
+      .note--err { color: var(--outcome-failure); }
+      .btn {
+        padding: 5px 12px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-size: var(--text-code-inline, 12px);
+        cursor: pointer;
+      }
+      .btn:hover:not(:disabled) { border-color: var(--text-color-muted, #656d76); }
+      .btn:disabled { opacity: 0.45; cursor: default; }
+      .btn--primary {
+        background: var(--kind-assignment);
+        border-color: var(--kind-assignment);
+        color: var(--color-white, #ffffff);
+      }
+      .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+      /* Role: a capability summary that opens into a picker or a new role. */
+      .rolebox {
+        width: 100%;
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-2) var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        /* An inner control steps down from the card radius. */
+        border-radius: 6px;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .rolebox:hover { border-color: var(--kind-role); }
+      .rolebox:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .rolebox-top { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+      .rolename {
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--kind-role);
+      }
+      .role-editor {
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .role-preview {
+        display: grid;
+        gap: var(--space-2);
+        border-top: 1px solid var(--border-color-default, #d0d7de);
+        padding-top: var(--space-2);
+      }
+      /* These rows sit one level inside an assignment row, so their label
+         column steps down the way `.derived-row` does. */
+      .role-editor .detail-row,
+      .role-preview .detail-row {
+        grid-template-columns: 4rem 1fr;
+      }
+      .role-editor .detail-value,
+      .role-preview .detail-value { min-width: 0; }
+      .role-select, .role-input {
+        width: 100%;
+        padding: 5px 8px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .role-input { font-family: var(--font-mono, monospace); }
+      .role-select:focus, .role-input:focus {
+        outline: 0;
+        border-color: var(--kind-assignment);
+        box-shadow: 0 0 0 1px var(--kind-assignment);
+      }
+      /* A constant annotation, so Bench Gray rather than a tint of its own. */
+      .trust {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        padding: 0 0.45rem;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+      }
+      .perm {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        padding: 0.125rem 0.5rem;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+        white-space: nowrap;
+      }
+      .perm--write { border-color: var(--kind-pipeline); color: var(--kind-pipeline); }
+      /* Elevated past write. Same "judgment required" hue rather than the
+         failure red, which names a failed outcome; the fill carries the
+         escalation so no second meaning is borrowed. */
+      .perm--push {
+        border-color: var(--kind-pipeline);
+        background: var(--kind-pipeline);
+        color: var(--color-white, #ffffff);
+      }
+      .perm--model { border-color: var(--kind-role); color: var(--kind-role); }
+      .perm-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+      .perm-toggle {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        padding: 0.125rem 0.5rem;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+        background: none;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      /* Selection adds a fill, so it never rests on hue alone, and each grade
+         keeps the colour its saved chip uses. */
+      .perm-toggle[aria-pressed="true"] {
+        color: var(--text-color-default, #1f2328);
+        background: color-mix(in srgb, var(--text-color-muted, #656d76) 12%, transparent);
+        border-color: var(--text-color-muted, #656d76);
+      }
+      .perm-toggle[aria-pressed="true"][data-risk="model"] {
+        border-color: var(--kind-role);
+        color: var(--kind-role);
+        background: color-mix(in srgb, var(--kind-role) 12%, transparent);
+      }
+      .perm-toggle[aria-pressed="true"][data-risk="write"] {
+        border-color: var(--kind-pipeline);
+        color: var(--kind-pipeline);
+        background: color-mix(in srgb, var(--kind-pipeline) 14%, transparent);
+      }
+      .perm-toggle[aria-pressed="true"][data-risk="push"] {
+        border-color: var(--kind-pipeline);
+        background: var(--kind-pipeline);
+        color: var(--color-white, #ffffff);
+      }
+      .perm-toggle:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+
+      /* Repos: a ranked list, because the first entry is where the branch lands. */
+      .repos-value {
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .repos-value:hover .chip { border-color: var(--kind-repo); }
+      .repos-value:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .repo-chip--primary { border-color: var(--kind-repo); color: var(--kind-repo); }
+      .repos-editor {
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .repos-preview {
+        display: grid;
+        gap: var(--space-2);
+        border-top: 1px solid var(--border-color-default, #d0d7de);
+        padding-top: var(--space-2);
+      }
+      /* One level inside an assignment row, so the label column steps down. */
+      .repos-editor .detail-row,
+      .repos-preview .detail-row { grid-template-columns: 4rem 1fr; }
+      .repos-editor .detail-value,
+      .repos-preview .detail-value { min-width: 0; }
+      .repo-known { display: grid; gap: var(--space-1); }
+      .repo-row {
+        display: grid;
+        grid-template-columns: auto auto 1fr auto auto auto;
+        gap: var(--space-2);
+        align-items: center;
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        min-width: 0;
+      }
+      .repo-known .repo-row { grid-template-columns: 1fr auto auto; }
+      /* The landing repo, marked on the edge rather than by position alone. */
+      .repo-row--primary { border-left: 4px solid var(--kind-repo); }
+      .repo-row--broken {
+        border-color: var(--outcome-failure);
+        background: var(--finding-validation);
+      }
+      /* Not registered, so its access is unknown rather than known-wrong. */
+      .repo-row--unknown {
+        border-color: var(--kind-pipeline);
+        background: var(--finding-advisory);
+      }
+      .repo-rank {
+        width: 1.25rem;
+        text-align: right;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+      }
+      .repo-name {
+        min-width: 0;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* Its own cell: the sentence explaining rank must not truncate with the name. */
+      .repo-primary {
+        min-width: 0;
+        font-size: var(--text-code-inline, 12px);
+        color: var(--kind-repo);
+      }
+      .repo-move { display: flex; gap: var(--space-1); }
+      .access {
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        padding: 0 0.45rem;
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+        white-space: nowrap;
+      }
+      /* Only these two can take a branch, so only these two carry a hue. */
+      .access--push { border-color: var(--kind-repo); color: var(--kind-repo); }
+      .access--pr { border-color: var(--kind-assignment); color: var(--kind-assignment); }
+      .access--unknown { border-color: var(--kind-pipeline); color: var(--kind-pipeline); }
+      .icon-btn {
+        padding: 3px 6px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .icon-btn:hover:not(:disabled) { border-color: var(--kind-assignment); color: var(--kind-assignment); }
+      /* Fade the glyph, not the border: a bounded control is still a control. */
+      .icon-btn:disabled { color: color-mix(in srgb, var(--text-color-muted, #656d76) 45%, transparent); cursor: default; }
+      .icon-btn:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+
+      /* Limits: a kill switch, so an uncapped one is never silent. */
+      .limits-value {
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .limits-value:hover .chip { border-color: var(--kind-assignment); }
+      .limits-value:hover .chip--off { border-color: var(--kind-pipeline); }
+      .limits-value:hover .chip--none { border-color: var(--outcome-failure); }
+      .limits-value:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      /* Uncapped: dashed, because the value is absent rather than low. */
+      .chip--off { border-style: dashed; border-color: var(--kind-pipeline); color: var(--kind-pipeline); }
+      /* Nothing bounded at all, which "N unlimited" would understate. */
+      .chip--none {
+        border-color: var(--outcome-failure);
+        background: var(--finding-validation);
+        color: var(--outcome-failure);
+      }
+      .limits-editor {
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .limit-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) 7rem auto;
+        gap: var(--space-2);
+        align-items: center;
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+      }
+      .limit-row--off { border-color: var(--kind-pipeline); background: var(--finding-advisory); }
+      .limit-name {
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .limit-unit {
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+        white-space: nowrap;
+      }
+      .limit-input {
+        width: 100%;
+        padding: 4px 8px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .limit-input:focus {
+        outline: 0;
+        border-color: var(--kind-assignment);
+        box-shadow: 0 0 0 1px var(--kind-assignment);
+      }
+      /* The documented input Error state, for a limit that is on but unusable. */
+      .limit-input--invalid {
+        border-color: var(--outcome-failure);
+        background: var(--finding-validation);
+        color: var(--outcome-failure);
+      }
+      .switch {
+        padding: 0 0.5rem;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        background: none;
+        color: var(--text-color-muted, #656d76);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+        cursor: pointer;
+      }
+      /* On adds a fill so state is not hue alone. Neutral, because a capped
+         limit's saved chip carries no hue either — and amber already means
+         uncapped in this same row. */
+      .switch[aria-pressed="true"] {
+        border-color: var(--text-color-muted, #656d76);
+        color: var(--text-color-default, #1f2328);
+        background: color-mix(in srgb, var(--text-color-muted, #656d76) 12%, transparent);
+      }
+      .switch:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .limits-dirty {
+        margin-left: auto;
+        font-size: var(--text-code-inline, 12px);
+        color: var(--text-color-muted, #656d76);
+      }
+
+      .relation-section summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: var(--text-color-muted, #656d76);
+        padding: var(--space-2) 0;
+      }
+      .relation-section[open] summary { color: var(--text-color-default, #1f2328); }
+      .relation-section .config-flow { margin-top: var(--space-2); }
 
       .pipeline-main {
         display: grid;

@@ -99,7 +99,24 @@ testable without a browser:
 ```sh
 node --test .github/extensions/bureau-canvas/test/*.test.mjs   # offline, in scripts/lint.sh
 node .github/extensions/bureau-canvas/e2e/run.mjs              # opt-in, needs Edge
+
+cd .github/extensions/bureau-canvas/e2e/playwright             # browser, in scripts/lint.sh
+npm ci && npx playwright install --with-deps chromium
+npx playwright test
 ```
+
+The Playwright suite covers the assignment card's editable controls, which
+the offline tests cannot see: what each field shows at rest, what opens when
+it is clicked, and which actions it refuses. It runs against the host's own
+hermetic mode — `BUREAU_CANVAS_TEST=1` points the binary lookup at a path
+that does not exist, so every run serves the same bundled sample with no
+`bureau` binary and no network. `scripts/lint.sh` skips it with a notice when
+`node_modules` is absent, so a fresh clone still runs every other gate; CI
+installs the browser, so there it always runs.
+
+Rules that need a second repo or role to express — reordering repos, and the
+read-only-primary warning — are asserted in the offline suite instead, since
+the bundled sample registers only one repo.
 
 Two suites pin the two-host split (Q12). `test/bundle.test.mjs` checks the
 shared bundle headlessly: both pages pin the same import map, every web module

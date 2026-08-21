@@ -5,6 +5,7 @@ import { join, relative, resolve } from "node:path";
 import { advisories as loadAdvisories } from "./advisories.mjs";
 import { parse, render } from "./codec.mjs";
 import { configView, pipelineView } from "./view.mjs";
+import { deriveWorkSource } from "./worksource.mjs";
 
 const SUBJECT_SCHEMA = {
   type: "object",
@@ -13,6 +14,7 @@ const SUBJECT_SCHEMA = {
     dir: { type: "string", description: "Config directory to read." },
     pipeline: { type: "string", description: "Pipeline to describe or select." },
     role: { type: "string", description: "Role to edit." },
+    assignment: { type: "string", description: "Assignment to edit." },
   },
 };
 
@@ -66,8 +68,29 @@ const SAVE_SCHEMA = {
     dir: { type: "string" },
     pipeline: { type: "string" },
     role: { type: "string" },
+    assignment: { type: "string" },
     force: { type: "boolean" },
   },
+};
+
+/**
+ * Either a URL to derive the work source from, or the three fields set
+ * explicitly — the manual path a derivation this cannot make must fall back
+ * to.
+ */
+const SET_WORK_SOURCE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    assignment: { type: "string", description: "Assignment whose work source changes." },
+    url: { type: "string", description: "A board, query, or issues URL to derive forge, source, and filter from." },
+    forge: { type: "string", enum: ["github", "ado"] },
+    source: { type: "string" },
+    filter: { type: "string" },
+    approval_label: { type: ["string", "null"] },
+  },
+  required: ["assignment"],
 };
 
 const FIELD_NAMES = new Map([
@@ -108,6 +131,12 @@ export const actions = [
     description: "Set an editable field on a pipeline step or role and validate the draft.",
     inputSchema: SET_FIELD_SCHEMA,
     handler: setField,
+  },
+  {
+    name: "set_work_source",
+    description: "Set an assignment's work source from a pasted board/issues URL, or from explicit fields, and validate the draft.",
+    inputSchema: SET_WORK_SOURCE_SCHEMA,
+    handler: setWorkSource,
   },
   {
     name: "rewire",
@@ -168,6 +197,47 @@ export async function rewire(ctx, deps = {}) {
     const key = (edge) => edge.source === input.step && edge.outcome === input.outcome && edge.relation === "control";
     draft.view.edges = input.target == null ? draft.view.edges.filter((edge) => !key(edge)) : upsertEdge(draft.view.edges, input, key);
   });
+}
+
+/**
+ * Sets an assignment's `work` block, either from a pasted forge URL or from
+ * explicit fields. The derivation is refused rather than guessed at when the
+ * URL is not one it understands, so a wrong filter never reaches the file.
+ */
+export async function setWorkSource(ctx, deps = {}) {
+  return mutate(ctx, deps, (draft, input) => {
+    const work = draft.view.value?.work;
+    if (!work || typeof work !== "object") {
+      throw new Error(`\`${input.assignment}\` has no \`work\` block to set`);
+    }
+    Object.assign(work, workChanges(input));
+  });
+}
+
+/** The `work` fields one call changes, from a URL or from explicit values. */
+function workChanges(input) {
+  const derived = input.url ? derivedWork(input.url) : {};
+  const explicit = pickPresent(input, ["forge", "source", "filter"]);
+  const changes = { ...derived, ...explicit };
+  if ("approval_label" in input) {
+    changes.approval_label = input.approval_label;
+  }
+  if (Object.keys(changes).length === 0) {
+    throw new Error("pass a `url` to derive from, or `forge`/`source`/`filter` to set directly");
+  }
+  return changes;
+}
+
+function derivedWork(url) {
+  const result = deriveWorkSource(url);
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  return { forge: result.forge, source: result.source, filter: result.filter };
+}
+
+function pickPresent(input, keys) {
+  return Object.fromEntries(keys.filter((key) => input[key] != null).map((key) => [key, input[key]]));
 }
 
 export async function save(ctx, deps = {}) {
@@ -240,7 +310,7 @@ async function loadDraft(subject, deps) {
 
 function draftPayload(draft, subject) {
   const validation = draft.validation ?? { ok: true, state: "draft", dir: subject.dir, errors: [], findings: [] };
-  const scope = draft.view.kind === "pipeline" ? "pipeline" : "role";
+  const scope = draft.view.kind === "pipeline" ? "pipeline" : (subject.assignment ? "assignment" : "role");
   return {
     scope,
     subject,
@@ -259,7 +329,10 @@ function draftFor(ctx, deps, subject) {
 }
 
 function sameSubject(left, right) {
-  return resolve(left.dir) === resolve(right.dir) && left.pipeline === right.pipeline && left.role === right.role;
+  return resolve(left.dir) === resolve(right.dir)
+    && left.pipeline === right.pipeline
+    && left.role === right.role
+    && left.assignment === right.assignment;
 }
 
 function getDraft(ctx, deps) {
@@ -342,27 +415,18 @@ async function scratchCopy(dir) {
 
 async function documentPath(subject, deps) {
   if (subject.role) {
-    return rolePath(subject, deps);
+    return namedPath(subject, deps, "roles", subject.role);
   }
-  return pipelinePath(subject, deps);
+  if (subject.assignment) {
+    return namedPath(subject, deps, "assignments", subject.assignment);
+  }
+  return namedPath(subject, deps, "pipelines", subject.pipeline);
 }
 
-async function rolePath(subject, deps) {
+/** The `.yaml`/`.yml` file for one named config item, preferring `.yaml`. */
+async function namedPath(subject, deps, folder, name) {
   const base = resolve(subject.dir);
-  const role = subject.role;
-  const candidates = [join(base, "roles", `${role}.yaml`), join(base, "roles", `${role}.yml`)];
-  for (const candidate of candidates) {
-    if (await exists(deps, candidate)) {
-      return candidate;
-    }
-  }
-  return candidates[0];
-}
-
-async function pipelinePath(subject, deps) {
-  const base = resolve(subject.dir);
-  const pipeline = subject.pipeline;
-  const candidates = [join(base, "pipelines", `${pipeline}.yaml`), join(base, "pipelines", `${pipeline}.yml`)];
+  const candidates = [join(base, folder, `${name}.yaml`), join(base, folder, `${name}.yml`)];
   for (const candidate of candidates) {
     if (await exists(deps, candidate)) {
       return candidate;
@@ -388,11 +452,14 @@ function subjectFor(ctx, deps) {
   const saved = deps.getSubject?.(ctx.instanceId) ?? {};
   const input = ctx.input ?? {};
   const role = input.role ?? saved.role ?? null;
-  const pipeline = role ? null : (input.pipeline ?? pipelineName(input) ?? saved.pipeline ?? null);
+  const assignment = input.assignment ?? (role ? null : saved.assignment) ?? null;
+  const owned = role || assignment;
+  const pipeline = owned ? null : (input.pipeline ?? pipelineName(input) ?? saved.pipeline ?? null);
   return {
     dir: input.dir ?? saved.dir ?? ".bureau",
     ...(pipeline ? { pipeline } : {}),
     ...(role ? { role } : {}),
+    ...(assignment && !role ? { assignment } : {}),
   };
 }
 

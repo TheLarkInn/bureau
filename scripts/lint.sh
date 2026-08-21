@@ -31,7 +31,20 @@ canvas_tests() {
     fi
 }
 
+# Browser tests for the assignment card controls. Skipped with a notice when
+# the browser is not installed, so a fresh clone still runs every other gate;
+# CI installs it, so there the suite always runs.
+canvas_browser_tests() {
+    local dir=.github/extensions/bureau-canvas/e2e/playwright
+    if [ ! -d "$dir/node_modules" ]; then
+        echo "skipping canvas browser tests: run 'npm ci && npx playwright install --with-deps chromium' in $dir" >&2
+        return 0
+    fi
+    (cd "$dir" && npx playwright test)
+}
+
 canvas_tests
+canvas_browser_tests
 ./scripts/check-rust-policy.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
