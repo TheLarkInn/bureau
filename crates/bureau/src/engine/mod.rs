@@ -37,6 +37,7 @@ mod execute;
 mod finalize;
 mod gitcmd;
 mod machine;
+mod panic;
 mod plugins;
 mod recovery;
 mod request;
@@ -53,7 +54,7 @@ use crate::contract::StepOutcome;
 use crate::forge::{Forge, Item, Pr};
 use crate::git::CheckoutCache;
 use crate::process::Secret;
-use crate::runlog::{RunFinishedData, RunSnapshot};
+use crate::runlog::{RunFinishedData, RunSnapshot, RunTerminal};
 
 pub use crate::state::TerminalRecord;
 
@@ -168,26 +169,6 @@ impl RunOutcome {
     }
 }
 
-/// Awaits the machine's task; a panic inside it is data, not an unwind.
-struct AbortTask(tokio::task::JoinHandle<RunOutcome>);
-
-impl Drop for AbortTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
-async fn joined(run_id: String, mut task: AbortTask) -> RunOutcome {
-    match (&mut task.0).await {
-        Ok(outcome) => outcome,
-        Err(error) => RunOutcome::bare(
-            &run_id,
-            StepOutcome::Failure,
-            format!("run task failed: {error}"),
-        ),
-    }
-}
-
 /// The engine: runs pipelines in worktrees, logging every event.
 pub struct Engine {
     /// Where run directories live.
@@ -207,26 +188,22 @@ impl Engine {
         }
     }
 
-    /// Runs a pipeline to a terminal. Never panics across the boundary:
-    /// the machine runs in its own task and a join failure becomes a
-    /// [`StepOutcome::Failure`] outcome.
+    /// Runs a pipeline to a terminal. A panic becomes a
+    /// [`StepOutcome::Failure`] outcome instead of crossing this boundary.
     ///
     /// If `runs_dir/plan.run_id` already exists, the run resumes from its
     /// event log; a finished run returns its recorded outcome untouched.
     pub async fn run(&self, plan: &RunPlan) -> RunOutcome {
         let (runs_dir, cache, plan) = (self.runs_dir.clone(), self.cache.clone(), plan.clone());
         let run_id = plan.run_id.clone();
-        let spawned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            tokio::spawn(async move { drive::run(&runs_dir, &cache, &plan).await })
-        }));
-        match spawned {
-            Ok(task) => joined(run_id, AbortTask(task)).await,
-            Err(_) => RunOutcome::bare(
+        let future = Box::pin(drive::run(&runs_dir, &cache, &plan));
+        panic::CatchUnwind::new(future).await.unwrap_or_else(|_| {
+            RunOutcome::bare(
                 &run_id,
                 StepOutcome::Failure,
-                "run task panicked before spawn".to_owned(),
-            ),
-        }
+                "run task panicked".to_owned(),
+            )
+        })
     }
 
     /// Immutable snapshots for started runs lacking a terminal event.
@@ -250,7 +227,15 @@ impl Engine {
     /// # Errors
     /// Propagates run-log open, append, and close failures.
     pub fn block(&self, snapshot: &RunSnapshot, message: &str) -> std::io::Result<()> {
-        recovery::block(&self.runs_dir, snapshot, message)
+        recovery::finish(&self.runs_dir, snapshot, RunTerminal::Escalate, message)
+    }
+
+    /// Marks an unfinished durable snapshot aborted without executing it.
+    ///
+    /// # Errors
+    /// Propagates run-log open, append, and close failures.
+    pub fn abort(&self, snapshot: &RunSnapshot, message: &str) -> std::io::Result<()> {
+        recovery::finish(&self.runs_dir, snapshot, RunTerminal::Abort, message)
     }
 }
 

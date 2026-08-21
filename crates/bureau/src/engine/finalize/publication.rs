@@ -1,7 +1,7 @@
 //! Typed gates immediately before external publication.
 
 use super::super::context::{self, RunCtx};
-use super::super::{approval, control, settle};
+use super::super::{approval, control};
 use crate::contract::StepOutcome;
 use crate::forge::Pr;
 
@@ -23,9 +23,9 @@ pub(super) async fn check(ctx: &RunCtx) -> Result<(), Error> {
     approval::check(ctx).await.map_err(Error::Escalate)
 }
 
-pub(super) async fn stop(ctx: &RunCtx, error: Error) -> (StepOutcome, String, Option<Pr>) {
+pub(super) fn stop(error: Error) -> (StepOutcome, String, Option<Pr>) {
     match error {
         Error::Failure(message) => (StepOutcome::Failure, message, None),
-        Error::Escalate(message) => settle::escalate(ctx, message).await,
+        Error::Escalate(message) => (StepOutcome::Blocked, message, None),
     }
 }

@@ -120,7 +120,7 @@ async fn finish_push(
 ) -> (StepOutcome, String, Option<Pr>) {
     match pushed {
         Ok(commit) => pull_request::open(ctx, wt, url, &commit).await,
-        Err(error) => publication::stop(ctx, error).await,
+        Err(error) => publication::stop(error),
     }
 }
 
@@ -137,7 +137,7 @@ async fn push_target(
 async fn push_pr(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     let target = match landing_target(ctx, wt) {
         Ok(target) => target,
-        Err(error) => return publication::stop(ctx, error).await,
+        Err(error) => return publication::stop(error),
     };
     push_target(ctx, wt, target).await
 }
@@ -157,7 +157,7 @@ async fn land_result(
 async fn land(ctx: &RunCtx, wt: &WtCtx) -> (StepOutcome, String, Option<Pr>) {
     match land_result(ctx, wt).await {
         Ok(result) => result,
-        Err(error) => publication::stop(ctx, error).await,
+        Err(error) => publication::stop(error),
     }
 }
 

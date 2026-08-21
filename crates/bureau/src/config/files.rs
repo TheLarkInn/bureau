@@ -145,6 +145,12 @@ pub struct WorkSource {
     /// Label that admits the item and grades it as maintainer-approved.
     #[serde(default)]
     pub approval_label: Option<String>,
+    /// Label added when a run reaches the `abort` terminal.
+    #[serde(default)]
+    pub abort_label: String,
+    /// Label added when a run reaches the `escalate` terminal.
+    #[serde(default)]
+    pub escalate_label: String,
 }
 
 /// Per-assignment limits; a kill switch, not chargeback.

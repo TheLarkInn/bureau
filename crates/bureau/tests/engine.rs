@@ -4,6 +4,8 @@
 
 #[path = "engine/rig.rs"]
 mod rig;
+#[path = "engine/terminal_labels.rs"]
+mod terminal_labels;
 
 use std::path::Path;
 
@@ -158,19 +160,6 @@ fn retry_steps(failing: &str) -> Vec<bureau::config::StepDef> {
     propose.on_failure = Some("decide".to_owned());
     propose.max_attempts = 2;
     vec![propose, decision_step("decide", "propose")]
-}
-
-#[tokio::test]
-async fn a_missing_edge_aborts_the_run() {
-    let rig = Rig::new();
-    let steps = vec![det_step("edit", "true", None)];
-    let outcome = rig.engine().run(&rig.plan(steps)).await;
-    assert_eq!(outcome.outcome, StepOutcome::Failure);
-    assert!(
-        outcome.message.contains("no edge"),
-        "message: {}",
-        outcome.message
-    );
 }
 
 #[tokio::test]

@@ -80,8 +80,10 @@ const SET_WORK_SOURCE_SCHEMA = {
         source: { type: "string" },
         filter: { type: "string" },
         approval_label: { type: ["string", "null"] },
+        abort_label: { type: "string", minLength: 1 },
+        escalate_label: { type: "string", minLength: 1 },
       },
-      required: ["forge", "source", "filter", "approval_label"],
+      required: ["forge", "source", "filter", "approval_label", "abort_label", "escalate_label"],
     },
   },
   required: ["assignment", "work"],
@@ -99,9 +101,11 @@ const SET_ASSIGNMENT_RUNTIME_SCHEMA = {
       properties: {
         filter: { type: "string", minLength: 1 },
         approval_label: { type: ["string", "null"] },
+        abort_label: { type: "string", minLength: 1 },
+        escalate_label: { type: "string", minLength: 1 },
         branch_prefix: { type: "string", minLength: 1 },
       },
-      required: ["filter", "approval_label", "branch_prefix"],
+      required: ["filter", "approval_label", "abort_label", "escalate_label", "branch_prefix"],
     },
   },
   required: ["assignment", "fields"],
@@ -207,7 +211,7 @@ export const crudActions = [
   },
   {
     name: "set_assignment_runtime",
-    description: "Plan an assignment's filter, approval label, and branch prefix.",
+    description: "Plan an assignment's work rules, terminal labels, and branch prefix.",
     inputSchema: SET_ASSIGNMENT_RUNTIME_SCHEMA,
     handler: setAssignmentRuntime,
   },
@@ -292,8 +296,9 @@ export async function setLimits(ctx, deps = {}) {
 }
 
 export async function setWorkSourcePlan(ctx, deps = {}) {
+  const { assignment } = ctx.input;
+  const work = validatedTerminalLabels(ctx.input.work);
   const { dir, plan } = await context(ctx, deps);
-  const { assignment, work } = ctx.input;
   const path = pathFor(dir, "assignment", assignment);
   const text = withAssignmentWork(await plannedText(deps, plan, path), path, work);
   const next = withWrites(plan, [{ path, text }]);
@@ -301,12 +306,25 @@ export async function setWorkSourcePlan(ctx, deps = {}) {
 }
 
 export async function setAssignmentRuntime(ctx, deps = {}) {
+  const { assignment } = ctx.input;
+  const fields = validatedTerminalLabels(ctx.input.fields);
   const { dir, plan } = await context(ctx, deps);
-  const { assignment, fields } = ctx.input;
   const path = pathFor(dir, "assignment", assignment);
   const text = withAssignmentRuntime(await plannedText(deps, plan, path), path, fields);
   const next = withWrites(plan, [{ path, text }]);
   return record(ctx, deps, next, { action: "set_assignment_runtime", assignment, fields });
+}
+
+function validatedTerminalLabels(fields) {
+  const abort = fields.abort_label?.trim();
+  const escalate = fields.escalate_label?.trim();
+  if (!abort || !escalate) {
+    throw new Error("abort and escalation labels are required");
+  }
+  if (abort.toLowerCase() === escalate.toLowerCase()) {
+    throw new Error("abort and escalation labels must differ");
+  }
+  return { ...fields, abort_label: abort, escalate_label: escalate };
 }
 
 function fullLimits(limits) {

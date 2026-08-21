@@ -99,7 +99,7 @@ fn write_config(root: &Path) {
     write(
         root,
         "assignments/demo.yaml",
-        "name: demo\nwork:\n  forge: github\n  source: example/code\n  filter: is:issue\nrepos: [code]\npipeline: fix-failing-test\nrole: worker\nverify: \"true\"\nbranch_prefix: bureau/\n",
+        "name: demo\nwork:\n  forge: github\n  source: example/code\n  filter: is:issue\n  abort_label: bureau:failed\n  escalate_label: bureau:needs-human\nrepos: [code]\npipeline: fix-failing-test\nrole: worker\nverify: \"true\"\nbranch_prefix: bureau/\n",
     );
     write(
         root,

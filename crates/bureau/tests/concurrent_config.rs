@@ -53,6 +53,8 @@ work:
   forge: github
   source: acme/main
   filter: is:issue
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [main]
 pipeline: inspect
 role: reviewer

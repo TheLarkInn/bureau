@@ -29,21 +29,17 @@ async fn observed(ctx: &RunCtx, repo: &str, branch: &str) -> Result<Option<Pr>, 
     Ok(prs.into_iter().find(|pr| pr.branch == branch))
 }
 
-async fn finish_timeout(
+fn finish_timeout(
     ctx: &RunCtx,
     commit: &str,
     observation: Result<Option<Pr>, PublicationError>,
 ) -> (StepOutcome, String, Option<Pr>) {
     match observation {
         Ok(Some(pr)) => record_pr(ctx, pr, commit),
-        Ok(None) => {
-            publication::stop(
-                ctx,
-                PublicationError::Escalate("pull request creation timed out".to_owned()),
-            )
-            .await
-        }
-        Err(error) => publication::stop(ctx, error).await,
+        Ok(None) => publication::stop(PublicationError::Escalate(
+            "pull request creation timed out".to_owned(),
+        )),
+        Err(error) => publication::stop(error),
     }
 }
 
@@ -54,10 +50,10 @@ async fn recover_timeout(
     commit: &str,
 ) -> (StepOutcome, String, Option<Pr>) {
     let observation = observed(ctx, repo, branch).await;
-    finish_timeout(ctx, commit, observation).await
+    finish_timeout(ctx, commit, observation)
 }
 
-async fn finish_recovery(
+fn finish_recovery(
     ctx: &RunCtx,
     commit: &str,
     error: &crate::forge::Error,
@@ -70,20 +66,14 @@ async fn finish_recovery(
             None,
         ),
         Ok(Some(pr)) => record_pr(ctx, pr, commit),
-        Err(PublicationError::Escalate(message)) => {
-            publication::stop(
-                ctx,
-                PublicationError::Escalate(format!("opening PR was ambiguous: {error}; {message}")),
-            )
-            .await
-        }
+        Err(PublicationError::Escalate(message)) => publication::stop(PublicationError::Escalate(
+            format!("opening PR was ambiguous: {error}; {message}"),
+        )),
         Err(observed) => {
             let detail = publication_message(observed);
-            publication::stop(
-                ctx,
-                PublicationError::Escalate(format!("opening PR was ambiguous: {error}; {detail}")),
-            )
-            .await
+            publication::stop(PublicationError::Escalate(format!(
+                "opening PR was ambiguous: {error}; {detail}"
+            )))
         }
     }
 }
@@ -96,7 +86,7 @@ async fn recover_create(
     error: crate::forge::Error,
 ) -> (StepOutcome, String, Option<Pr>) {
     let observation = observed(ctx, repo, branch).await;
-    finish_recovery(ctx, commit, &error, observation).await
+    finish_recovery(ctx, commit, &error, observation)
 }
 
 async fn finish_create(
@@ -170,7 +160,7 @@ async fn create(
 ) -> (StepOutcome, String, Option<Pr>) {
     match create_result(ctx, wt, repo, commit).await {
         Ok(result) => result,
-        Err(error) => publication::stop(ctx, error).await,
+        Err(error) => publication::stop(error),
     }
 }
 
@@ -184,7 +174,7 @@ async fn finish_observation(
     match observation {
         Ok(Some(pr)) => record_pr(ctx, pr, commit),
         Ok(None) => create(ctx, wt, repo, commit).await,
-        Err(error) => publication::stop(ctx, error).await,
+        Err(error) => publication::stop(error),
     }
 }
 

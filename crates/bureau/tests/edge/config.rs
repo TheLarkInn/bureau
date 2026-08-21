@@ -42,6 +42,8 @@ work:
   forge: ado
   source: "Odsp/odsp-web"
   filter: "[System.WorkItemType] = 'Bug'"
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [odsp-web, augloop]
 pipeline: fix-failing-test
 role: implementer

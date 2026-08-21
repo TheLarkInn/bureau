@@ -603,6 +603,48 @@
         color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
       }
+      .terminal-label-value {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .terminal-signal {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-1) var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        box-shadow: inset 0 3px 0 var(--accent);
+      }
+      .terminal-signal--abort { --accent: var(--outcome-failure); }
+      .terminal-signal--escalate { --accent: var(--outcome-blocked); }
+      .terminal-signal__name { font-weight: 700; }
+      .terminal-label-value:hover .terminal-signal { background: var(--surface-subtle); }
+      .terminal-label-value:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .terminal-label-editor {
+        display: grid;
+        gap: var(--space-3);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .terminal-label-editor label {
+        display: grid;
+        gap: var(--space-1);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
       .paste-input {
         width: 100%;
       }
@@ -680,8 +722,7 @@
         min-width: 0;
       }
       .repo-known .repo-row { grid-template-columns: 1fr auto auto; }
-      /* The landing repo, marked on the edge rather than by position alone. */
-      .repo-row--primary { border-left: 4px solid var(--kind-repo); }
+      .repo-row--primary { border-color: var(--kind-repo); }
       .repo-row--broken {
         border-color: var(--outcome-failure);
         background: var(--finding-validation);
@@ -874,6 +915,15 @@
       .terminal-key {
         color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
+      }
+      .terminal-forge-label {
+        max-width: 100%;
+        overflow: hidden;
+        padding: 0.125rem 0.4rem;
+        border: 1px solid var(--accent);
+        border-radius: 999px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .concurrent-frame {

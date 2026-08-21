@@ -4,6 +4,8 @@ work:
   source: TheLarkInn/bureau
   filter: is:open label:ui-change
   approval_label: null
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos:
 - bureau
 pipeline: design-review

@@ -11,8 +11,8 @@ use bureau::contract::StepOutcome;
 use bureau::engine::{RunPlan, TerminalRecord};
 use bureau::forge::Pr;
 use bureau::runlog::RunFinishedData;
-use bureau::runlog::TerminalDisposition;
 use bureau::runlog::{EventKind, RunLog, RunStartedData, run_started_snapshot};
+use bureau::runlog::{RunTerminal, TerminalDisposition};
 use bureau::state::{LeaseOwner, Store};
 
 #[test]
@@ -44,6 +44,25 @@ fn run_snapshot_round_trips_through_the_started_event() {
 }
 
 #[test]
+fn old_snapshot_without_terminal_labels_still_decodes() {
+    let rig = rig::Rig::new();
+    let mut value = run_started_snapshot(&rig.plan(Vec::new()).snapshot());
+    let work = &mut value["snapshot"]["assignment"]["work"];
+    work.as_object_mut()
+        .expect("work object")
+        .remove("abort_label");
+    work.as_object_mut()
+        .expect("work object")
+        .remove("escalate_label");
+    let decoded: RunStartedData = serde_json::from_value(value).expect("old snapshot decodes");
+    let work = decoded.snapshot.expect("snapshot").assignment.work;
+    assert_eq!(
+        (work.abort_label, work.escalate_label),
+        (String::new(), String::new())
+    );
+}
+
+#[test]
 fn engine_discovers_and_rehydrates_unfinished_snapshot() {
     let rig = rig::Rig::new();
     let plan = rig.plan(Vec::new());
@@ -64,6 +83,24 @@ fn engine_discovers_and_rehydrates_unfinished_snapshot() {
     );
 }
 
+fn check_blocked(data: RunFinishedData, pr: Pr) {
+    let actual = (
+        data.cost_usd,
+        data.pr,
+        data.disposition,
+        data.terminal,
+        data.message.contains("unavailable during recovery"),
+    );
+    let expected = (
+        4.25,
+        Some(pr),
+        Some(TerminalDisposition::Proposed),
+        Some(RunTerminal::Escalate),
+        true,
+    );
+    assert_eq!(actual, expected);
+}
+
 #[test]
 fn blocked_recovery_preserves_cost_and_pull_request() {
     let rig = rig::Rig::new();
@@ -74,14 +111,53 @@ fn blocked_recovery_preserves_cost_and_pull_request() {
     engine
         .block(&plan.snapshot(), "credential missing")
         .expect("block");
-    let finished = engine.finished().expect("finished").pop().expect("one");
+    let record = engine.finished().expect("finished").pop().expect("one");
+    check_blocked(record.finished, pr);
+}
+
+#[test]
+fn forced_recovery_cancellation_records_abort() {
+    let rig = rig::Rig::new();
+    let plan = rig.plan(Vec::new());
+    let engine = rig.engine();
+    write_recovery_history(&engine, &plan, &recovery_pr());
+    engine.abort(&plan.snapshot(), "cancelled").expect("abort");
+    let finished = engine
+        .finished()
+        .expect("finished")
+        .pop()
+        .expect("one")
+        .finished;
     assert_eq!(
+        (finished.terminal, finished.outcome, finished.message),
         (
-            finished.finished.cost_usd,
-            finished.finished.pr,
-            finished.finished.disposition,
-        ),
-        (4.25, Some(pr), Some(TerminalDisposition::Proposed))
+            Some(RunTerminal::Abort),
+            StepOutcome::Failure,
+            "cancelled (forge label unavailable during recovery)".to_owned(),
+        )
+    );
+}
+
+#[test]
+fn recovery_does_not_overwrite_an_existing_terminal() {
+    let rig = rig::Rig::new();
+    let plan = rig.plan(Vec::new());
+    let engine = rig.engine();
+    write_recovery_history(&engine, &plan, &recovery_pr());
+    engine.abort(&plan.snapshot(), "first").expect("first");
+    engine.block(&plan.snapshot(), "second").expect("second");
+    let finished = engine
+        .finished()
+        .expect("finished")
+        .pop()
+        .expect("one")
+        .finished;
+    assert_eq!(
+        (finished.terminal, finished.message),
+        (
+            Some(RunTerminal::Abort),
+            "first (forge label unavailable during recovery)".to_owned(),
+        )
     );
 }
 
@@ -113,6 +189,7 @@ fn terminal_record(plan: &RunPlan) -> TerminalRecord {
     TerminalRecord {
         snapshot: plan.snapshot(),
         finished: RunFinishedData {
+            terminal: None,
             outcome: StepOutcome::NoWork,
             message: "done".to_owned(),
             cost_usd: 0.0,

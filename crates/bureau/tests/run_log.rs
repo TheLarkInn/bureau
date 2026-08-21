@@ -80,13 +80,18 @@ fn expected_state(run_id: &str, started_at_ms: u64) -> RunState {
         base_commit: None,
         pushed_commit: None,
         pr: None,
-        finished: Some(runlog::RunFinishedData {
-            outcome: StepOutcome::Success,
-            message: String::new(),
-            cost_usd: 0.0,
-            pr: None,
-            disposition: None,
-        }),
+        finished: Some(finished()),
+    }
+}
+
+const fn finished() -> runlog::RunFinishedData {
+    runlog::RunFinishedData {
+        terminal: None,
+        outcome: StepOutcome::Success,
+        message: String::new(),
+        cost_usd: 0.0,
+        pr: None,
+        disposition: None,
     }
 }
 

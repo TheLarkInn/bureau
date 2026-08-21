@@ -74,6 +74,8 @@ const DESCRIPTORS = {
         source: fields.work?.source ?? "",
         filter: fields.work?.filter ?? "",
         approval_label: fields.work?.approval_label ?? null,
+        abort_label: fields.work?.abort_label ?? "bureau:failed",
+        escalate_label: fields.work?.escalate_label ?? "bureau:needs-human",
       },
       repos: fields.repos ?? [],
       pipeline: fields.pipeline ?? "",
@@ -239,7 +241,7 @@ export function withAssignmentWork(text, path, work) {
   return withAssignmentValue(text, path, "work", { ...work });
 }
 
-/** Replaces the runtime-facing work filter, approval gate, and branch prefix. */
+/** Replaces runtime-facing work rules and terminal labels. */
 export function withAssignmentRuntime(text, path, fields) {
   const parsed = parse(text, { path });
   const view = structuredClone(parsed.view);
@@ -250,6 +252,8 @@ export function withAssignmentRuntime(text, path, fields) {
     ...view.value.work,
     filter: fields.filter,
     approval_label: fields.approval_label,
+    abort_label: fields.abort_label,
+    escalate_label: fields.escalate_label,
   };
   view.value.branch_prefix = fields.branch_prefix;
   return render(view, parsed.doc, parsed.style);

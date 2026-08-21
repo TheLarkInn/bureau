@@ -182,6 +182,8 @@ assignment:                          # becomes assignments/<name>.yaml
     forge: github
     source: acme/web                 # owner/name
     filter: "is:open label:agent-eligible"   # forge-native query (see below)
+    abort_label: bureau:failed
+    escalate_label: bureau:needs-human
   primary_repo: web
   context_repos: []                  # extra read-only context repos
   verify: "cargo test --workspace"   # run by a deterministic step
@@ -230,6 +232,8 @@ work:
   forge: github
   source: acme/web            # owner/name (a URL also works)
   filter: "is:open label:agent-eligible"   # GitHub issue-search syntax
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 ```
 
 - `filter` is GitHub issue-search syntax. bureau appends `repo:acme/web`
@@ -262,6 +266,8 @@ work:
       AND [System.Tags] CONTAINS 'agent-eligible'
       AND [System.State] = 'Active'
   approval_label: agent-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 ```
 
 - `filter` is a WIQL `WHERE` fragment; bureau never parses it.

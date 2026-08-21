@@ -130,7 +130,6 @@ const fn generous() -> Limits {
     }
 }
 
-/// The fixture assignment: one repo, the `fix` pipeline.
 fn assignment(limits: Limits) -> Assignment {
     Assignment {
         name: ASSIGNMENT.to_owned(),
@@ -139,6 +138,8 @@ fn assignment(limits: Limits) -> Assignment {
             source: "fake".to_owned(),
             filter: "*".to_owned(),
             approval_label: None,
+            abort_label: "bureau:failed".to_owned(),
+            escalate_label: "bureau:needs-human".to_owned(),
         },
         repos: vec!["main".to_owned()],
         pipeline: "fix".to_owned(),

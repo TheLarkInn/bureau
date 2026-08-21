@@ -63,6 +63,8 @@ work:
   source: "Odsp/odsp-web"
   filter: "[System.Tags] CONTAINS 'agent-eligible'"
   approval_label: agent-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [odsp-web]
 pipeline: fix-failing-test
 role: implementer
@@ -213,6 +215,23 @@ fn approved_or_non_ado_configs_load() {
     assert!(
         labeled && Config::load(dir_two.path()).is_ok(),
         "labeled ADO and unlabeled GitHub configs both load"
+    );
+}
+
+#[test]
+fn terminal_labels_must_differ_ignoring_case() {
+    let dir = TestDir::new("terminal-labels");
+    let assignment = ASSIGNMENT.replace(
+        "  escalate_label: bureau:needs-human",
+        "  escalate_label: BUREAU:FAILED",
+    );
+    let mut files = base_files();
+    files[3] = ("assignments/fix-flaky-tests.yaml", &assignment);
+    write_files(&dir, &files);
+    let found = errors(&dir);
+    assert!(
+        found.iter().any(|error| error.contains("must differ")),
+        "case-only label variants must fail: {found:?}"
     );
 }
 

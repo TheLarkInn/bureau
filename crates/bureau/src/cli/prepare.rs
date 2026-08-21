@@ -167,6 +167,8 @@ mod tests {
                 source: "acme/web".to_owned(),
                 filter: "*".to_owned(),
                 approval_label: None,
+                abort_label: "bureau:failed".to_owned(),
+                escalate_label: "bureau:needs-human".to_owned(),
             },
             repos: repos.iter().map(|name| (*name).to_owned()).collect(),
             pipeline: "fix".to_owned(),

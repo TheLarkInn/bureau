@@ -1,8 +1,8 @@
 /** Human copy for the three pipeline terminals. Wire names stay unchanged. */
 export const TERMINAL_COPY = {
   done: { label: "Publish", detail: "Push the branch and open a pull request" },
-  abort: { label: "Failed", detail: "Stop without publishing" },
-  escalate: { label: "Needs human", detail: "Comment on the work item and stop" },
+  abort: { label: "Failed", detail: "Add the assignment's abort label and stop" },
+  escalate: { label: "Needs human", detail: "Add the escalation label, comment, and stop" },
 };
 
 export function terminalCopy(name) {

@@ -27,6 +27,10 @@ test("committed config projects counts, use refs, and primary repo", async () =>
       pipelines: view.pipelines.length,
       orphans: view.orphans.length,
       primaryRepo: view.assignments[0].primaryRepo,
+      terminalLabels: [
+        view.assignments[0].work.abortLabel,
+        view.assignments[0].work.escalateLabel,
+      ],
     },
     {
       dir: ".bureau",
@@ -36,6 +40,7 @@ test("committed config projects counts, use refs, and primary repo", async () =>
       pipelines: 1,
       orphans: 0,
       primaryRepo: "bureau",
+      terminalLabels: ["bureau:failed", "bureau:needs-human"],
     },
   );
 

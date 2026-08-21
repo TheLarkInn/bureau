@@ -71,6 +71,8 @@ work:
   filter: |
     [System.WorkItemType] = 'Bug'
       AND [System.Tags] CONTAINS 'agent-eligible'
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos: [odsp-web, augloop]
 pipeline: fix-failing-test
 role: implementer

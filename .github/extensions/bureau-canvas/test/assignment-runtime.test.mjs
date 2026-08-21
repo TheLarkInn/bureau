@@ -12,6 +12,8 @@ work:
   source: owner/repo
   filter: is:open
   approval_label: ready
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos:
 - repo
 pipeline: build
@@ -39,7 +41,14 @@ test("assignment edits compose into one draft write", async () => {
       input: {
         dir,
         assignment: "work",
-        work: { forge: "ado", source: "Org/Project", filter: "initial", approval_label: null },
+        work: {
+          forge: "ado",
+          source: "Org/Project",
+          filter: "initial",
+          approval_label: null,
+          abort_label: "bureau:failed",
+          escalate_label: "bureau:needs-human",
+        },
       },
     }, deps);
     await runtimeAction.handler({
@@ -47,7 +56,13 @@ test("assignment edits compose into one draft write", async () => {
       input: {
         dir,
         assignment: "work",
-        fields: { filter: "is:open label:ready", approval_label: null, branch_prefix: "bureau/" },
+        fields: {
+          filter: "is:open label:ready",
+          approval_label: null,
+          abort_label: "agent-failed",
+          escalate_label: "needs-owner",
+          branch_prefix: "bureau/",
+        },
       },
     }, deps);
     await limitsAction.handler({
@@ -58,12 +73,35 @@ test("assignment edits compose into one draft write", async () => {
     assert.deepEqual(
       {
         oneWrite: plan.writes.length,
-        fields: ["forge: ado", "source: Org/Project", "filter: is:open label:ready", "approval_label: null", "branch_prefix: bureau/", "max_concurrent: 2"]
+        fields: ["forge: ado", "source: Org/Project", "filter: is:open label:ready", "approval_label: null", "abort_label: agent-failed", "escalate_label: needs-owner", "branch_prefix: bureau/", "max_concurrent: 2"]
           .map((line) => text.includes(line)),
       },
-      { oneWrite: 1, fields: [true, true, true, true, true, true] },
+      { oneWrite: 1, fields: [true, true, true, true, true, true, true, true] },
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assignment rejects blank or identical terminal labels", async () => {
+  const runtimeAction = crudActions.find((candidate) => candidate.name === "set_assignment_runtime");
+  const deps = { loadFindings: async () => ({ config: {} }) };
+  const cases = [
+    ["", "needs-owner", "required"],
+    ["same", "same", "must differ"],
+    ["Failed", "failed", "must differ"],
+  ];
+  for (const [abort_label, escalate_label, message] of cases) {
+    await assert.rejects(
+      runtimeAction.handler({
+        instanceId: "invalid-labels",
+        input: {
+          dir: ".bureau",
+          assignment: "work",
+          fields: { filter: "is:open", approval_label: null, abort_label, escalate_label, branch_prefix: "bureau/" },
+        },
+      }, deps),
+      new RegExp(message, "u"),
+    );
   }
 });

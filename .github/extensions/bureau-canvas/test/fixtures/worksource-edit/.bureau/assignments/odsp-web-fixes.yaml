@@ -4,6 +4,8 @@ work:
   source: TheLarkInn/bureau
   # A narrow filter keeps the loop from claiming the whole backlog at once.
   filter: is:open label:agent-eligible
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
 repos:
 - bureau
 pipeline: agent-eligible-pipeline

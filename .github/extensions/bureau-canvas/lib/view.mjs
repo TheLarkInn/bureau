@@ -200,6 +200,8 @@ function workItem(work = {}) {
   if (work.approval_label != null) {
     item.approvalLabel = work.approval_label;
   }
+  item.abortLabel = work.abort_label ?? null;
+  item.escalateLabel = work.escalate_label ?? null;
   return item;
 }
 

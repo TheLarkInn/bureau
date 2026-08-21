@@ -13,6 +13,15 @@ test.describe("assignment work rules", () => {
     ]);
   });
 
+  test("shows the forge labels applied by failed and escalated terminals", async ({ card }) => {
+    const signals = card.page.locator(".terminal-label-value .terminal-signal");
+
+    await expect(signals).toHaveText([
+      "Failedbureau:failed",
+      "Needs humanbureau:needs-human",
+    ]);
+  });
+
   test("edits all runtime fields through one reviewable draft", async ({ card, canvas }) => {
     const path = join(canvas.dir, "assignments", "agent-eligible.yaml");
     const before = await readFile(path, "utf8");
@@ -33,6 +42,17 @@ test.describe("assignment work rules", () => {
     await card.page.keyboard.press("Escape");
 
     await expect(card.page.locator(".runtime-value")).toContainText("branches: bureau/");
+  });
+
+  test("edits terminal labels as one reviewable draft", async ({ card }) => {
+    await card.page.locator(".terminal-label-value").click();
+    await card.page.getByLabel("Failed run label").fill("agent-failed");
+    await card.page.getByLabel("Needs-human label").fill("needs-owner");
+    await card.page.getByRole("button", { name: "Save forge signals" }).click();
+
+    await expect(card.page.locator("[data-testid='draft-bar']")).toBeVisible();
+    await expect(card.page.locator(".terminal-label-value")).toContainText("agent-failed");
+    await expect(card.page.locator(".terminal-label-value")).toContainText("needs-owner");
   });
 
   test("collapsing an assignment cannot silently discard an open editor", async ({ card }) => {

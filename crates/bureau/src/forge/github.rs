@@ -1,5 +1,6 @@
 //! GitHub REST forge; registry arguments accept URLs or bare `owner/name`.
 
+mod labels;
 mod status;
 
 use async_trait::async_trait;
@@ -67,7 +68,6 @@ fn repo_name(source: &str) -> Result<String, Error> {
     }
 }
 
-/// Trust grade from GitHub's `author_association` (DESIGN.md layer 9).
 fn trust(association: &str) -> Trust {
     match association {
         "OWNER" | "MEMBER" | "COLLABORATOR" => Trust::Maintainer,
@@ -286,13 +286,15 @@ impl Forge for GitHubForge {
     }
 
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error> {
-        let (repo, number) = split_item_id(item_id)?;
-        let url = format!("{}/repos/{repo}/issues/{number}/labels", self.base_url);
-        let resp = self
-            .request(Method::PUT, &url)
-            .json(&serde_json::json!({ "labels": labels }))
-            .send()
-            .await?;
-        ensure_ok(resp).await
+        labels::set(self, item_id, labels).await
+    }
+
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error> {
+        labels::update(self, item_id, add, remove).await
     }
 }

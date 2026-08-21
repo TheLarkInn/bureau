@@ -151,7 +151,7 @@ fn init_uses_the_production_settings_guard() {
     let home = TestDir::new();
     let request = home.0.join("init.yaml");
     let yaml = format!(
-        "settings:\n{}repositories:\n  code:\n    url: https://github.com/example/code\n    forge: github\n    access: pr\n    credential: work\nassignment:\n  name: first\n  work:\n    forge: github\n    source: example/code\n    filter: is:issue\n  primary_repo: code\n  verify: cargo test\n  branch_prefix: bureau/\n  adapter: copilot\nfirst_pipeline:\n  kind: fixed\n",
+        "settings:\n{}repositories:\n  code:\n    url: https://github.com/example/code\n    forge: github\n    access: pr\n    credential: work\nassignment:\n  name: first\n  work:\n    forge: github\n    source: example/code\n    filter: is:issue\n    abort_label: bureau:failed\n    escalate_label: bureau:needs-human\n  primary_repo: code\n  verify: cargo test\n  branch_prefix: bureau/\n  adapter: copilot\nfirst_pipeline:\n  kind: fixed\n",
         indent(&settings("repo"), 2)
     );
     std::fs::write(home.0.join("settings.yaml"), settings("existing")).expect("settings");
