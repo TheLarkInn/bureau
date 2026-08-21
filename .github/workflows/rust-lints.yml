@@ -25,5 +25,19 @@ jobs:
       # one here rather than lose the coverage.
       - name: Build bureau for the canvas tests
         run: cargo build --bin bureau
+      # Browser tests for the assignment card controls. `lint.sh` skips them
+      # when node_modules is absent, so install here to keep them enforced.
+      - name: Install canvas browser test dependencies
+        working-directory: .github/extensions/bureau-canvas/e2e/playwright
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - name: Run all lint gates
         run: ./scripts/lint.sh
+      - name: Upload browser test report
+        if: failure()
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: playwright-report
+          path: .github/extensions/bureau-canvas/e2e/playwright/playwright-report/
+          retention-days: 7
