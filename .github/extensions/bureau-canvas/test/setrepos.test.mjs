@@ -72,7 +72,10 @@ async function run(input) {
       loadFindings: async () => ({
         ok: true,
         state: "validated",
-        config: { repos: { "odsp-web": {}, "spo.core": {} }, assignments: { "odsp-web-fixes": {} } },
+        config: {
+          repos: { "odsp-web": { access: "push" }, "spo.core": { access: "pr" } },
+          assignments: { "odsp-web-fixes": {} },
+        },
       }),
     };
     const result = await action("set_repos").handler({ instanceId: "repos", input: { dir, ...input } }, deps);

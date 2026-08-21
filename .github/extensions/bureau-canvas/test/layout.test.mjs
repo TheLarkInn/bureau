@@ -114,13 +114,12 @@ test("config layout uses fixed columns and detached orphans", async () => {
 
   assert.deepEqual(
     {
-      work: itemById(layout.items, "work-source:agent-eligible").column,
       assignment: itemById(layout.items, "assignment:agent-eligible").column,
       repo: itemById(layout.items, "repo:bureau").column,
       pipeline: itemById(layout.items, "pipeline:agent-eligible-pipeline").column,
       orphanDetached: unused.orphan && unused.y > mainMaxY,
     },
-    { work: 0, assignment: 1, repo: 2, pipeline: 3, orphanDetached: true },
+    { assignment: 0, repo: 3, pipeline: 1, orphanDetached: true },
   );
 });
 

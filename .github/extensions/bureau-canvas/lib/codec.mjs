@@ -18,6 +18,11 @@ export function parse(text, options = {}) {
   return { view, doc: { yamlDoc, normalized, view: structuredClone(view) }, style };
 }
 
+/** Parses a config document without projecting it into an editor view. */
+export function parseValue(text) {
+  return YAML.parseDocument(normalizeLineEndings(text)).toJS() ?? {};
+}
+
 export function render(view, doc, style) {
   const yamlDoc = YAML.parseDocument(doc.normalized, { keepSourceTokens: true });
   // Field and edge edits address steps by their original index, so they run
@@ -407,10 +412,23 @@ function applyStepFieldChanges(yamlDoc, stepIndex, originalSteps, nextSteps) {
       continue;
     }
     for (const [viewField, yamlField] of mutableFields()) {
-      if (step.fields?.[viewField] !== original.fields?.[viewField]) {
-        yamlDoc.setIn(["steps", index, yamlField], step.fields?.[viewField] ?? null);
-      }
+      applyStepValueChange(yamlDoc, ["steps", index, yamlField], viewField,
+        original.fields?.[viewField], step.fields?.[viewField]);
     }
+  }
+}
+
+function applyStepValueChange(yamlDoc, path, field, before, after) {
+  if (after === undefined || !changedValue(before, after)) {
+    return;
+  }
+  const omitted = after == null
+    || (field === "inputsFrom" && Array.isArray(after) && after.length === 0)
+    || (field === "maxAttempts" && after === 1);
+  if (omitted) {
+    yamlDoc.deleteIn(path);
+  } else {
+    applyValueChange(yamlDoc, path, before, after);
   }
 }
 
@@ -420,6 +438,10 @@ function mutableFields() {
     ["role", "role"],
     ["trust", "trust"],
     ["over", "over"],
+    ["inputsFrom", "inputs_from"],
+    ["members", "steps"],
+    ["completion", "completion"],
+    ["maxConcurrent", "max_concurrent"],
     ["maxAttempts", "max_attempts"],
     ["timeoutSecs", "timeout_secs"],
   ];

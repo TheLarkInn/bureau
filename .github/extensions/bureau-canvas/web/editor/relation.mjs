@@ -1,9 +1,9 @@
-// The config relation graph (Q16): assignment → pipeline → role → repos as
-// one read-mostly view. Editing happens in the pipeline editor and the
-// existing forms; this graph is how the relations read at a glance.
+// The config relation graph (Q16): assignments point at pipelines and repos;
+// pipelines point at the roles their agent steps actually use. Editing
+// happens in the pipeline editor and the existing forms.
 
 import React from "react";
-import { Background, Controls, MiniMap, ReactFlow } from "@xyflow/react";
+import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";
 
 const h = React.createElement;
 const NODE_WIDTH = 240;
@@ -55,6 +55,8 @@ function toFlow(relation) {
       source: edge.source,
       target: edge.target,
       type: "smoothstep",
+      focusable: false,
+      selectable: false,
       label: edge.relation,
       style: { stroke: "var(--border-color-default, #d0d7de)", strokeWidth: 1.4 },
     })),
@@ -78,6 +80,8 @@ function RelationCard({ data }) {
   return h(
     "article",
     { className: `relation-card relation-card--${node.kind}`, "data-ref": node.id },
+    h(Handle, { id: "in", type: "target", position: Position.Left }),
+    h(Handle, { id: "out", type: "source", position: Position.Right }),
     h("p", { className: "kind-label" }, node.kind),
     h("h2", {}, node.name),
   );

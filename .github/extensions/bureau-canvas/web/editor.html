@@ -6,6 +6,8 @@
     <title>Bureau — pipeline editor</title>
     <!-- Same vendored modules as index.html; keep the two import maps in lockstep. -->
     <link rel="stylesheet" href="./vendor/xyflow-react.css" />
+    <link rel="stylesheet" href="./controls.css" />
+    <link rel="stylesheet" href="./relation.css" />
     <script type="importmap">
       {
         "imports": {
@@ -24,53 +26,266 @@
         --space-2: 0.5rem;
         --space-3: 0.75rem;
         --space-4: 1rem;
+        --space-5: 1.5rem;
         --radius: 0.625rem;
         --kind-deterministic: var(--true-color-blue, #0969da);
         --kind-agent: var(--true-color-purple, #8250df);
         --kind-decision: var(--true-color-yellow, #9a6700);
         --kind-concurrent: var(--true-color-green, #1a7f37);
         --outcome-success: var(--true-color-green, #1a7f37);
-        --outcome-failure: var(--true-color-red, #d1242f);
+        --outcome-failure: var(--true-color-red, #cf222e);
         --outcome-blocked: var(--true-color-yellow, #9a6700);
         --outcome-no-work: var(--text-color-muted, #656d76);
+        --surface-subtle: #f6f8fa;
+        --surface-hover: #eaeef2;
+        --surface-active: #d0d7de;
+        --finding-validation: var(--true-color-red-muted, #ffebe9);
+        --finding-advisory: var(--true-color-yellow-muted, #fff8c5);
       }
       * { box-sizing: border-box; }
-      body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; }
-      .app-shell { display: flex; flex-direction: column; height: 100vh; }
-      .app-header { display: flex; justify-content: space-between; align-items: baseline; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-color-default, #d0d7de); }
-      .app-header h1 { font-size: 1.1rem; margin: 0; }
-      .summary, .muted { color: var(--text-color-muted, #656d76); margin: 0; }
-      .editor-tabs button { margin-left: var(--space-2); }
-      .editor-tabs .is-active { font-weight: 600; text-decoration: underline; }
+      body {
+        margin: 0;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+        font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+        font-size: var(--text-body-medium, 14px);
+        line-height: var(--leading-body-medium, 20px);
+      }
+      h1, h2, h3, p { margin: 0; }
+      h1 { font-size: var(--text-title-large, 1.25rem); line-height: 1.5rem; font-weight: 700; }
+      h2 { font-size: var(--text-title-medium, 1rem); line-height: 1.25rem; font-weight: 700; }
+      h3 {
+        color: var(--text-color-muted, #656d76);
+        font-size: 0.78rem;
+        line-height: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .app-shell { display: flex; flex-direction: column; height: 100vh; background: var(--background-color-default, #ffffff); }
+      .app-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: var(--space-4);
+        padding: var(--space-3) var(--space-5);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+      }
+      .editor-heading { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+      .summary, .muted { color: var(--text-color-muted, #656d76); }
+      .editor-tabs {
+        display: inline-flex;
+        padding: 2px;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 8px;
+        background: var(--surface-subtle);
+      }
+      .editor-tab {
+        padding: 4px 12px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text-color-muted, #656d76);
+        cursor: pointer;
+      }
+      .editor-tab.is-active {
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-default, #1f2328);
+      }
       .editor-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-      .editor-toolbar { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-color-default, #d0d7de); }
-      .editor-toolbar h2 { margin: 0; font-size: 1rem; flex: 1; }
+      .editor-view { display: flex; flex: 1; min-height: 0; }
+      .editor-view[hidden] { display: none; }
+      .editor-toolbar {
+        display: grid;
+        grid-template-columns: minmax(8rem, 1fr) auto auto auto auto auto;
+        gap: var(--space-3);
+        align-items: center;
+        padding: var(--space-3) var(--space-5);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+      }
+      .editor-toolbar-add { display: flex; align-items: center; gap: var(--space-2); }
+      .editor-status { color: var(--text-color-muted, #656d76); white-space: nowrap; }
       .editor-status--hints { color: var(--outcome-blocked); }
-      .editor-main { display: flex; flex: 1; min-height: 0; }
-      .editor-flow { flex: 1; min-width: 0; }
-      .editor-panel { width: 21rem; border-left: 1px solid var(--border-color-default, #d0d7de); overflow-y: auto; padding: var(--space-3); }
-      .editor-card { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); padding: var(--space-2) var(--space-3); background: var(--bg-color-default, Canvas); width: 15rem; }
-      .editor-card h2 { margin: 0; font-size: 0.95rem; }
-      .kind-label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem; margin: 0; }
-      .editor-card--deterministic .kind-label { color: var(--kind-deterministic); }
-      .editor-card--agent .kind-label { color: var(--kind-agent); }
-      .editor-card--decision { border-style: dashed; border-width: 2px; border-color: var(--kind-decision); transform: rotate(0.001deg); }
-      .editor-card--decision .kind-label { color: var(--kind-decision); }
-      .editor-card--concurrent .kind-label { color: var(--kind-concurrent); }
-      .editor-card--hint { outline: 2px solid var(--outcome-blocked); }
-      .editor-terminal { border-radius: 999px; border: 1px solid var(--border-color-default, #d0d7de); padding: var(--space-1) var(--space-4); text-align: center; width: 8.5rem; }
-      .editor-terminal h2 { margin: 0; font-size: 0.85rem; }
-      .editor-handle { width: 0.6rem; height: 0.6rem; }
-      .editor-hints { color: var(--outcome-blocked); font-size: 0.8rem; margin: var(--space-1) 0 0; padding-left: var(--space-4); }
-      .editor-step label { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); font-size: 0.8rem; }
-      .editor-step-head { display: flex; justify-content: space-between; align-items: baseline; }
-      .editor-edges { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); margin-bottom: var(--space-2); }
-      .editor-edges label { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); font-size: 0.8rem; }
-      .relation-flow { flex: 1; min-height: 0; }
-      .relation-card { border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius); padding: var(--space-2) var(--space-3); background: var(--bg-color-default, Canvas); }
-      .relation-card h2 { margin: 0; font-size: 0.95rem; }
-      .edge-caption { font-size: 0.7rem; padding: 0 var(--space-1); background: var(--bg-color-default, Canvas); }
-      .is-highlighted { outline: 2px solid var(--kind-deterministic); }
+      .editor-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 20rem;
+        flex: 1;
+        min-height: 0;
+      }
+      .editor-flow { min-width: 0; min-height: 0; background: var(--background-color-default, #ffffff); }
+      .editor-panel {
+        min-width: 0;
+        overflow-y: auto;
+        padding: var(--space-4);
+        border-left: 1px solid var(--border-color-default, #d0d7de);
+        background: var(--surface-subtle);
+      }
+      .panel-section { display: grid; gap: var(--space-3); margin-bottom: var(--space-5); }
+      .editor-empty { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); }
+      .editor-legend {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        color: var(--text-color-muted, #656d76);
+        font-size: 11px;
+      }
+      .legend-swatch { display: inline-flex; align-items: center; gap: 4px; }
+      .legend-swatch::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--text-color-muted, #656d76);
+        content: "";
+      }
+      .legend-swatch--success::before { background: var(--outcome-success); }
+      .legend-swatch--failure::before { background: var(--outcome-failure); }
+      .legend-swatch--blocked::before { background: var(--outcome-blocked); }
+      .legend-swatch--data::before { background: var(--relation-data); }
+      .editor-edges .editor-check {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: var(--space-2);
+      }
+      .editor-check input { margin: 0; }
+      .editor-issues button {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .editor-issues button:hover { text-decoration: underline; }
+      .editor-card {
+        width: 15rem;
+        min-height: 7rem;
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-3) var(--space-4);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-top: 4px solid var(--accent, var(--text-color-muted, #656d76));
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+      .editor-card h2 { font-size: 1rem; }
+      .editor-card .detail {
+        overflow: hidden;
+        color: var(--text-color-muted, #656d76);
+        font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+        font-size: var(--text-code-inline, 12px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .kind-label {
+        justify-self: start;
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: var(--color-white, #ffffff);
+        font-size: var(--text-code-inline, 12px);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .editor-card--deterministic { --accent: var(--kind-deterministic); }
+      .editor-card--agent { --accent: var(--kind-agent); }
+      .editor-card--decision { --accent: var(--kind-decision); border-style: dashed; border-width: 2px; }
+      .editor-card--concurrent { --accent: var(--kind-concurrent); }
+      .editor-card--hint { outline: 2px solid var(--outcome-blocked); outline-offset: 2px; }
+      .editor-card__issue-count {
+        justify-self: start;
+        padding: 0.125rem 0.5rem;
+        border: 1px solid var(--outcome-blocked);
+        border-radius: 999px;
+        color: var(--outcome-blocked);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .editor-terminal {
+        width: 11rem;
+        display: grid;
+        gap: 2px;
+        padding: var(--space-2) var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        text-align: left;
+      }
+      .editor-terminal h2 { font-size: 1rem; }
+      .editor-terminal p { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .editor-terminal--done { border-top: 3px solid var(--outcome-success); }
+      .editor-terminal--abort { border-top: 3px solid var(--outcome-failure); }
+      .editor-terminal--escalate { border-top: 3px solid var(--outcome-blocked); }
+      .editor-handle { width: 0.65rem; height: 0.65rem; }
+      .editor-handle--success { background: var(--outcome-success); }
+      .editor-handle--failure { background: var(--outcome-failure); }
+      .editor-handle--blocked { background: var(--outcome-blocked); }
+      .editor-handle--no-work { background: var(--outcome-no-work); }
+      .editor-handle--data { background: var(--kind-deterministic); }
+      .editor-handle--observes { background: var(--kind-agent); }
+      .editor-edge--success .react-flow__edge-path { stroke: var(--outcome-success); }
+      .editor-edge--failure .react-flow__edge-path { stroke: var(--outcome-failure); }
+      .editor-edge--blocked .react-flow__edge-path { stroke: var(--outcome-blocked); }
+      .editor-edge--no-work .react-flow__edge-path { stroke: var(--outcome-no-work); }
+      .editor-edge--data .react-flow__edge-path { stroke: var(--kind-deterministic); stroke-dasharray: 6 4; }
+      .editor-edge--observes .react-flow__edge-path { stroke: var(--kind-agent); stroke-dasharray: 6 4; }
+      .editor-issues {
+        display: grid;
+        gap: var(--space-2);
+        margin: 0;
+        padding-left: var(--space-4);
+        color: var(--outcome-blocked);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .editor-step label, .editor-edges label {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        margin-bottom: var(--space-2);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .editor-step-head { display: flex; justify-content: space-between; align-items: center; }
+      .editor-edges {
+        margin: 0 0 var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+      }
+      .editor-edges legend { padding: 0 var(--space-1); color: var(--text-color-muted, #656d76); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+      .editor-textarea { min-height: 5rem; resize: vertical; }
+      .editor-danger-zone {
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-3);
+        border: 1px solid var(--outcome-failure);
+        border-radius: 6px;
+        background: var(--finding-validation);
+        color: var(--outcome-failure);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .editor-danger-actions { display: flex; gap: var(--space-2); }
+      @media (max-width: 56rem) {
+        .editor-legend,
+        .react-flow__minimap { display: none; }
+      }
+      .edge-caption {
+        position: absolute;
+        width: max-content;
+        padding: 1px var(--space-1);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 999px;
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+        pointer-events: none;
+      }
+      .is-highlighted { outline: 2px solid var(--kind-deterministic); outline-offset: 2px; }
+      @media (max-width: 56rem) {
+        .editor-main { grid-template-columns: minmax(0, 1fr) 17rem; }
+        .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; }
+      }
     </style>
   </head>
   <body>

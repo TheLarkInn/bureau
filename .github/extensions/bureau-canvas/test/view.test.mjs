@@ -78,7 +78,7 @@ test("absent blocked outcome produces no control edge", async () => {
   );
 });
 
-test("reference pipeline projects nine steps, three terminals, and retry edges", async () => {
+test("reference pipeline projects nine steps, referenced terminals, and retry edges", async () => {
   const view = pipelineView(await fixture(referenceUrl), "fix-failing-test");
   const retrySources = view.edges
     .filter(
@@ -94,7 +94,7 @@ test("reference pipeline projects nine steps, three terminals, and retry edges",
     { steps: view.steps.length, terminals: view.terminals.length, retrySources },
     {
       steps: 9,
-      terminals: 3,
+      terminals: 2,
       retrySources: ["passed:failure", "verdict:failure", "verify:failure"],
     },
   );

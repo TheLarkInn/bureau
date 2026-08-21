@@ -23,9 +23,10 @@ export function configView(payload) {
 }
 
 /**
- * The config relation graph (Q16): assignment → pipeline/role/repos, plus
- * role usage from agent steps. Read-only; editing stays in the pipeline
- * editor and the existing forms.
+ * The config relation graph (Q16): assignment → pipeline/repos, then each
+ * pipeline → the roles its agent steps actually use. Assignment `role` is a
+ * scaffold-era field the engine never reads, so showing that edge would make
+ * a non-operational declaration look like runtime behavior.
  */
 export function relationView(payload) {
   const config = configOf(payload);
@@ -56,7 +57,6 @@ function relationEdges(config, ids) {
 function assignmentRelations(name, assignment) {
   return [
     relationEdge("pipeline", `assignment:${name}`, `pipeline:${assignment.pipeline}`),
-    relationEdge("role", `assignment:${name}`, `role:${assignment.role}`),
     ...(assignment.repos ?? []).map((repo) => relationEdge("repo", `assignment:${name}`, `repo:${repo}`)),
   ];
 }
@@ -81,11 +81,13 @@ export function pipelineView(payload, name) {
     return emptyPipelineView(name);
   }
   const parentByMember = memberParents(pipeline);
+  const edges = edgeItems(pipeline, parentByMember);
+  const usedTerminals = new Set(edges.filter((edge) => edge.target.startsWith("terminal:")).map((edge) => edge.target));
   return {
     name: pipeline.name ?? name,
     steps: stepItems(pipeline, parentByMember),
-    terminals: TERMINALS.map(terminalItem),
-    edges: edgeItems(pipeline, parentByMember),
+    terminals: TERMINALS.map(terminalItem).filter((terminal) => usedTerminals.has(terminal.id)),
+    edges,
   };
 }
 
@@ -187,9 +189,8 @@ function assignmentItems(config) {
     work: workItem(assignment.work),
     repos: assignment.repos ?? [],
     primaryRepo: assignment.repos?.[0] ?? null,
-    role: assignment.role,
     pipeline: assignment.pipeline,
-    verify: assignment.verify,
+    branchPrefix: assignment.branch_prefix,
     limits: limitsItem(assignment.limits),
   }));
 }

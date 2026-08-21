@@ -3,7 +3,7 @@
 // take it all away again.
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -148,6 +148,63 @@ test("declares its verbs and no reserved names", () => {
       reserved: crudActions.some((action) => action.name.startsWith("canvas.")),
       schemas: crudActions.every((action) => Boolean(action.inputSchema) && Boolean(action.handler)),
     },
-    { names: ["create", "delete", "rename", "set_limits", "set_repos", "set_role"], reserved: false, schemas: true },
+    {
+      names: ["create", "delete", "plan_work_source", "rename", "set_assignment_runtime", "set_limits", "set_repos"],
+      reserved: false,
+      schemas: true,
+    },
+  );
+});
+
+test("create refuses a name already present in config", async () => {
+  const message = await create({
+    instanceId: "duplicate",
+    input: { dir: ".bureau", kind: "pipeline", name: "build" },
+  }, {
+    getPlan: () => emptyPlan(),
+    loadFindings: async () => ({ config: { pipelines: { build: {} } } }),
+  }).then(() => null, (error) => error.message);
+
+  assert.equal(message, "`build` already exists; choose another name");
+});
+
+test("configuring a pending assignment preserves safe create semantics", async () => {
+  await mkdir(scratchRoot, { recursive: true });
+  const dir = await mkdtemp(join(scratchRoot, "pending-create-"));
+  let plan = emptyPlan();
+  const deps = {
+    getPlan: () => plan,
+    setPlan: (_id, next) => { plan = next; },
+    loadFindings: async () => ({ config: {} }),
+  };
+  try {
+    await create({ instanceId: "pending", input: { dir, kind: "assignment", name: "work" } }, deps);
+    const setLimits = crudActions.find((action) => action.name === "set_limits");
+    await setLimits.handler({ instanceId: "pending", input: { dir, assignment: "work", limits: { max_concurrent: 2 } } }, deps);
+    await applyPlan(dir, plan);
+
+    assert.deepEqual(
+      { create: plan.writes[0].create, written: (await readFile(join(dir, "assignments", "work.yaml"), "utf8")).includes("max_concurrent: 2") },
+      { create: true, written: true },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("different repos compose into one pending registry write", async () => {
+  let plan = emptyPlan();
+  const deps = {
+    getPlan: () => plan,
+    setPlan: (_id, next) => { plan = next; },
+    loadFindings: async () => ({ config: { repos: {} } }),
+  };
+  const fields = { url: "https://x/y.git", forge: "github", access: "push", credential: "github-main" };
+  await create({ instanceId: "repos", input: { dir: ".bureau", kind: "repo", name: "one", fields } }, deps);
+  await create({ instanceId: "repos", input: { dir: ".bureau", kind: "repo", name: "two", fields } }, deps);
+
+  assert.deepEqual(
+    { writes: plan.writes.length, entries: ["one:", "two:"].map((name) => plan.writes[0].text.includes(name)) },
+    { writes: 1, entries: [true, true] },
   );
 });

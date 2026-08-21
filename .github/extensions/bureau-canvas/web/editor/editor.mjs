@@ -6,7 +6,7 @@
 // server's `save-pipeline` intent, which owns validation and the revert.
 // Node positions ride along as the layout sidecar (Q10).
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -21,6 +21,7 @@ import {
 } from "@xyflow/react";
 
 import { layoutPipeline } from "../layout.js";
+import { terminalCopy, terminalOption } from "../terminals.js";
 
 const h = React.createElement;
 const OUTCOMES = ["success", "failure", "blocked", "no-work"];
@@ -35,12 +36,14 @@ const CONTROL_FIELDS = [
 const NODE_TYPES = { stepNode: StepNode, terminalNode: TerminalNode };
 const EDGE_TYPES = { outcome: OutcomeEdge };
 
-export function PipelineEditor({ state, name, onSaved }) {
+export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const pipeline = state.pipelines?.[name];
   const [draft, setDraft] = useState(null);
   const [positions, setPositions] = useState(() => ({ ...(pipeline?.arrangement ?? {}) }));
+  const [layoutDirty, setLayoutDirty] = useState(false);
   const [selected, setSelected] = useState(null);
   const [saveResult, setSaveResult] = useState(null);
+  const [flowApi, setFlowApi] = useState(null);
 
   const view = useMemo(() => draft ?? editableView(pipeline?.view), [draft, pipeline]);
   const hints = useMemo(() => problems(view), [view]);
@@ -51,11 +54,69 @@ export function PipelineEditor({ state, name, onSaved }) {
     setSaveResult(null);
   };
   const selectedStep = view.steps.find((step) => step.name === selected) ?? null;
+  const dirty = draft != null || layoutDirty;
+  const invalidNumbers = view.steps.some((step) =>
+    !positiveInteger(step.fields.maxAttempts)
+    || (step.kind === "concurrent" && !positiveInteger(step.fields.maxConcurrent ?? 1)));
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    const beforeUnload = (event) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    const escape = (event) => event.key === "Escape" && setSelected(null);
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    const refit = () => flowApi?.fitView({ padding: 0.22, duration: 150 });
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, [flowApi]);
+  const focusStep = (step) => {
+    setSelected(step);
+    const node = flow.nodes.find((candidate) => candidate.id === step);
+    if (node && flowApi) {
+      flowApi.setCenter(node.position.x + 120, node.position.y + 60, { zoom: 1, duration: 250 });
+    }
+  };
+  const discard = () => {
+    setDraft(null);
+    setPositions({ ...(pipeline?.arrangement ?? {}) });
+    setLayoutDirty(false);
+    setSaveResult(null);
+    setSelected(null);
+  };
+  const saveCurrent = () => save({
+    setSaveResult,
+    setDraft,
+    setLayoutDirty,
+    onSaved,
+    name,
+    view,
+    positions,
+  });
 
   return h(
     "section",
     { className: "editor-shell" },
-    h(EditorToolbar, { name, view, dirty: draft != null, hints, saveResult, onSave: () => save(setSaveResult, onSaved, name, view, positions), onAdd: (kind) => addStep(name, view, kind, edit, setSelected) }),
+    h(EditorToolbar, {
+      name,
+      view,
+      dirty,
+      hints,
+      saveResult,
+      invalidNumbers,
+      onSave: saveCurrent,
+      onDiscard: discard,
+      onAdd: (kind) => addStep(name, view, kind, edit, setSelected),
+    }),
     h(
       "div",
       { className: "editor-main" },
@@ -73,27 +134,57 @@ export function PipelineEditor({ state, name, onSaved }) {
             fitViewOptions: { padding: 0.22 },
             minZoom: 0.2,
             maxZoom: 1.5,
-            nodesDraggable: true,
-            nodesConnectable: true,
+            onInit: setFlowApi,
             deleteKeyCode: null,
             proOptions: { hideAttribution: true },
-            onNodeClick: (_, node) => setSelected(node.type === "stepNode" ? node.id : null),
-            onNodeDragStop: (_, node) => setPositions((current) => ({ ...current, [node.id]: { x: Math.round(node.position.x), y: Math.round(node.position.y) } })),
+            onNodeClick: (_, node) => {
+              if (node.type === "stepNode") {
+                setSelected(node.id);
+              }
+            },
+            onNodeKeyDown: (event, node) => {
+              if (node.type === "stepNode" && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                setSelected(node.id);
+              }
+            },
+            onNodeDragStop: (_, node) => {
+              setPositions((current) => ({ ...current, [node.id]: { x: Math.round(node.position.x), y: Math.round(node.position.y) } }));
+              setLayoutDirty(true);
+              setSaveResult(null);
+            },
             onConnect: (connection) => connect(view, connection, edit),
-            onEdgeClick: (_, edge) => edge.data?.editable && edit(setEdge(view, edge.data.sourceStep, edge.data.outcome, null)),
           },
           h(Background, { gap: 24, size: 1.5 }),
           h(Controls),
-          h(MiniMap, { pannable: true, zoomable: true }),
+          h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
         ),
       ),
       h(SidePanel, {
         view,
         step: selectedStep,
+        roles: state.config?.view?.roles ?? [],
         hints,
         saveResult,
         onChange: (next) => edit(next),
         onClose: () => setSelected(null),
+        onIssue: focusStep,
+        onRename: selectedStep ? (to) => {
+          const next = renameStep(view, selectedStep.name, to);
+          if (next !== view) {
+            setPositions((current) => {
+              const position = current[selectedStep.name];
+              if (!position) {
+                return current;
+              }
+              const moved = { ...current, [to]: position };
+              delete moved[selectedStep.name];
+              return moved;
+            });
+            edit(next);
+            setSelected(to);
+          }
+        } : null,
         onDelete: selectedStep ? () => {
           edit(removeStep(view, selectedStep.name));
           setSelected(null);
@@ -178,10 +269,19 @@ function outcomeFromHandle(handle) {
 // --- layout + flow projection ---
 
 function toFlow(view, positions, hints, saveResult) {
-  const auto = layoutPipeline(view);
+  const edges = effectiveEdges(view);
+  const terminals = referencedTerminals(edges);
+  const auto = layoutPipeline({ ...view, edges, terminals });
   const marked = new Map();
   for (const hint of hints) {
     marked.set(hint.step, [...(marked.get(hint.step) ?? []), hint.message]);
+  }
+
+  function referencedTerminals(edges) {
+    const used = new Set(edges.filter((edge) => edge.target.startsWith("terminal:")).map((edge) => edge.target));
+    return TERMINALS
+      .map((name) => ({ id: `terminal:${name}`, name, type: "terminal" }))
+      .filter((terminal) => used.has(terminal.id));
   }
   for (const finding of saveResult?.findings ?? []) {
     const target = finding.target ?? {};
@@ -193,6 +293,46 @@ function toFlow(view, positions, hints, saveResult) {
     nodes: auto.nodes.map((node) => flowNode(node, positions, marked)),
     edges: flowEdges(view),
   };
+}
+
+function effectiveEdges(view) {
+  const ordinary = view.edges.filter((edge) => {
+    const source = view.steps.find((step) => step.name === edge.source);
+    return edge.relation === "control" && source?.kind !== "decision";
+  });
+  const decisions = view.steps
+    .filter((step) => step.kind === "decision")
+    .flatMap((step) => Object.entries(step.fields.on ?? {})
+      .filter(([outcome, target]) => OUTCOMES.includes(outcome) && present(target))
+      .map(([outcome, target]) => ({
+        id: `control:${step.name}:${outcome}->${TERMINALS.includes(target) ? `terminal:${target}` : target}`,
+        source: step.name,
+        target: TERMINALS.includes(target) ? `terminal:${target}` : target,
+        relation: "control",
+        outcome,
+      })));
+  const dependencies = view.steps.flatMap((step) => [
+    ...(step.fields.inputsFrom ?? []).filter(present).map((source) => ({
+      id: `data:${source}->${step.name}`,
+      source,
+      target: step.name,
+      relation: "data",
+    })),
+    ...(step.kind === "decision" && present(step.fields.over) ? [{
+      id: `observes:${step.fields.over}->${step.name}`,
+      source: step.fields.over,
+      target: step.name,
+      relation: "observes",
+    }] : []),
+  ]);
+  return [...ordinary, ...decisions, ...dependencies];
+}
+
+function minimapColor(node) {
+  if (node.type === "terminalNode") {
+    return "var(--text-color-muted, #656d76)";
+  }
+  return `var(--kind-${node.data?.step?.kind}, #656d76)`;
 }
 
 function flowNode(node, positions, marked) {
@@ -211,44 +351,86 @@ function flowNode(node, positions, marked) {
 }
 
 function flowEdges(view) {
-  return view.edges.map((edge) => ({
+  const edges = effectiveEdges(view).map((edge) => ({
     id: edge.id,
     source: edge.source,
     target: edge.target,
     sourceHandle: `out:${edge.outcome ?? edge.relation}`,
     targetHandle: "in",
     type: "outcome",
+    focusable: false,
+    selectable: false,
     label: edge.relation === "control" ? edge.outcome : edge.relation,
     className: `editor-edge--${edge.relation === "control" ? edge.outcome : edge.relation}`,
     markerEnd: { type: MarkerType.ArrowClosed },
     data: edge.relation === "control" ? { editable: true, sourceStep: edge.source, outcome: edge.outcome } : { editable: false },
   }));
+  return spreadParallelLabels(edges);
+}
+
+function spreadParallelLabels(edges) {
+  const groups = new Map();
+  const terminalTargets = [...new Set(edges.filter((edge) => edge.target.startsWith("terminal:")).map((edge) => edge.target))].sort();
+  for (const edge of edges) {
+    const key = edge.target.startsWith("terminal:") ? edge.target : `${edge.source}->${edge.target}`;
+    groups.set(key, [...(groups.get(key) ?? []), edge]);
+  }
+  return edges.map((edge) => {
+    const terminalLabel = edge.target.startsWith("terminal:");
+    const key = terminalLabel ? edge.target : `${edge.source}->${edge.target}`;
+    const siblings = groups.get(key);
+    const index = siblings.indexOf(edge);
+    const labelOffset = (index - (siblings.length - 1) / 2) * 28;
+    return {
+      ...edge,
+      data: { ...edge.data, labelOffset, terminalLabel, terminalColumn: terminalTargets.indexOf(edge.target) },
+    };
+  });
 }
 
 // --- nodes ---
 
 function StepNode({ data, selected }) {
   const step = data.step;
+  const detail = stepDetail(step);
   const classes = ["editor-card", `editor-card--${step.kind}`, data.hints.length ? "editor-card--hint" : "", selected ? "is-highlighted" : ""].filter(Boolean).join(" ");
   return h(
     "article",
     { className: classes, "data-ref": step.name },
-    h(Handle, { id: "in", type: "target", position: Position.Top, className: "editor-handle" }),
+    h(Handle, { id: "in", type: "target", position: Position.Left, className: "editor-handle" }),
     OUTCOMES.map((outcome) =>
       h(Handle, {
         key: outcome,
         id: `out:${outcome}`,
         type: "source",
-        position: Position.Bottom,
+        position: Position.Right,
         className: `editor-handle editor-handle--${outcome}`,
-        style: { left: `${10 + OUTCOMES.indexOf(outcome) * 26}%` },
+        style: { top: `${14 + OUTCOMES.indexOf(outcome) * 24}%` },
         title: outcome,
       }),
     ),
+    h(Handle, {
+      id: "out:data",
+      type: "source",
+      position: Position.Bottom,
+      className: "editor-handle editor-handle--data",
+      style: { left: "38%" },
+      title: "inputs_from",
+    }),
+    h(Handle, {
+      id: "out:observes",
+      type: "source",
+      position: Position.Bottom,
+      className: "editor-handle editor-handle--observes",
+      style: { left: "62%" },
+      title: "observes",
+    }),
     h("p", { className: "kind-label" }, step.kind),
     h("h2", {}, step.name),
-    h("p", { className: "detail" }, stepDetail(step)),
-    data.hints.length ? h("ul", { className: "editor-hints" }, data.hints.map((message) => h("li", { key: message }, message))) : null,
+    h("p", { className: "detail", title: detail }, detail),
+    data.hints.length
+      ? h("span", { className: "editor-card__issue-count" }, `${data.hints.length} issue${data.hints.length === 1 ? "" : "s"}`)
+      : null,
   );
 }
 
@@ -266,46 +448,64 @@ function stepDetail(step) {
 }
 
 function TerminalNode({ data }) {
+  const copy = terminalCopy(data.name);
   return h(
     "article",
     { className: `editor-terminal editor-terminal--${data.name}` },
-    h(Handle, { id: "in", type: "target", position: Position.Top, className: "editor-handle" }),
-    h("h2", {}, data.name),
+    h(Handle, { id: "in", type: "target", position: Position.Left, className: "editor-handle" }),
+    h("h2", {}, copy.label),
+    h("p", {}, copy.detail),
   );
 }
 
-function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label }) {
+function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label, data }) {
   const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, offset: 16 });
+  const captionX = data?.terminalLabel ? targetX - 72 - data.terminalColumn * 56 : labelX;
+  const captionY = (data?.terminalLabel ? targetY : labelY) + (data?.labelOffset ?? 0);
   return h(
     React.Fragment,
     null,
     h(BaseEdge, { id, path, markerEnd }),
     label
-      ? h(EdgeLabelRenderer, null, h("div", { className: "react-flow__edge-label edge-caption", style: { transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` } }, label))
+      ? h(EdgeLabelRenderer, null, h("div", {
+          className: "react-flow__edge-label edge-caption",
+          style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
+        }, label))
       : null,
   );
 }
 
 // --- toolbar + side panel ---
 
-function EditorToolbar({ name, dirty, hints, saveResult, onSave, onAdd }) {
+function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDiscard, onAdd }) {
   const [kind, setKind] = useState("deterministic");
   return h(
     "div",
     { className: "editor-toolbar" },
-    h("h2", {}, name),
+    h("h2", {}, "Steps"),
     h(
       "span",
       { className: "editor-toolbar-add" },
       h(
         "select",
-        { value: kind, onChange: (event) => setKind(event.target.value), "aria-label": "New step kind" },
+        {
+          className: "form-control form-select",
+          value: kind,
+          onChange: (event) => setKind(event.target.value),
+          "aria-label": "New step kind",
+        },
         STEP_KINDS.map((option) => h("option", { key: option, value: option }, option)),
       ),
-      h("button", { type: "button", onClick: () => onAdd(kind) }, "Add step"),
+      h("button", { type: "button", className: "btn", onClick: () => onAdd(kind) }, "+ Add step"),
     ),
     h("span", { className: `editor-status${hints.length ? " editor-status--hints" : ""}` }, statusText(dirty, hints, saveResult)),
-    h("button", { type: "button", className: "editor-save", disabled: !dirty, onClick: onSave }, "Save"),
+    h("span", { className: "editor-legend", "aria-label": "Edge legend" },
+      h("span", { className: "legend-swatch legend-swatch--success" }, "success"),
+      h("span", { className: "legend-swatch legend-swatch--failure" }, "failure"),
+      h("span", { className: "legend-swatch legend-swatch--blocked" }, "blocked"),
+      h("span", { className: "legend-swatch legend-swatch--data" }, "data")),
+    dirty ? h("button", { type: "button", className: "btn", onClick: onDiscard }, "Discard changes") : null,
+    h("button", { type: "button", className: "btn btn--primary", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
   );
 }
 
@@ -314,38 +514,95 @@ function statusText(dirty, hints, saveResult) {
     return "save reverted — see findings";
   }
   if (hints.length) {
-    return `${hints.length} hint${hints.length === 1 ? "" : "s"}`;
+    return `${hints.length} issue${hints.length === 1 ? "" : "s"}`;
   }
   return dirty ? "unsaved edits" : "saved";
 }
 
-function SidePanel({ view, step, hints, saveResult, onChange, onClose, onDelete }) {
+function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, onDelete, onIssue, onRename }) {
   return h(
     "aside",
     { className: "editor-panel" },
     step
-      ? h(StepEditor, { view, step, onChange, onClose, onDelete })
-      : h("p", { className: "muted" }, "Select a step to edit it. Drag between a bottom outcome handle and another node to rewire."),
+      ? h(StepEditor, { view, step, roles, onChange, onClose, onDelete, onRename })
+      : h(
+          "div",
+          { className: "editor-empty" },
+          h("h3", {}, "Edit a step"),
+          h("p", { className: "muted" }, "Select a step to edit its fields and outcomes."),
+          h("p", { className: "muted" }, "Drag from a right-edge outcome handle to another node to rewire."),
+        ),
     hints.length
-      ? h("section", { className: "panel-section" }, h("h3", {}, `Hints (${hints.length})`), h("ul", { className: "editor-hints" }, hints.map((hint) => h("li", { key: `${hint.step}:${hint.message}` }, `${hint.step}: ${hint.message}`))))
+      ? h("section", { className: "panel-section" }, h("h3", {}, `Issues (${hints.length})`), h("ul", { className: "editor-issues" }, hints.map((hint) =>
+          h("li", { key: `${hint.step}:${hint.message}` },
+            h("button", { type: "button", onClick: () => onIssue(hint.step) }, `${hint.step}: ${hint.message}`)))))
       : null,
     saveResult && !saveResult.ok
-      ? h("section", { className: "panel-section" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-hints" }, (saveResult.findings ?? []).map((finding, index) => h("li", { key: index }, finding.message))))
+      ? h("section", { className: "panel-section" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
+          (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
+            .map((finding, index) => h("li", { key: index }, finding.message))))
       : null,
   );
 }
 
-function StepEditor({ view, step, onChange, onClose, onDelete }) {
+function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [name, setName] = useState(step.name);
+  useEffect(() => setName(step.name), [step.name]);
   const set = (field, value) => onChange(setField(view, step.name, field, value));
+  const nameProblem = !name.trim()
+    ? "A step name cannot be empty."
+    : view.steps.some((candidate) => candidate.name !== step.name && candidate.name === name.trim())
+      ? `A step named \`${name.trim()}\` already exists.`
+      : null;
+  const commitName = () => {
+    if (!nameProblem && name.trim() !== step.name) {
+      onRename(name.trim());
+    }
+  };
   return h(
     "section",
     { className: "panel-section editor-step" },
-    h("div", { className: "editor-step-head" }, h("h3", {}, step.name), h("button", { type: "button", onClick: onClose }, "Close")),
-    h("label", {}, "name", h("input", { value: step.name, onChange: (event) => onChange(renameStep(view, step.name, event.target.value)) })),
-    h(KindFields, { step, set }),
+    h("div", { className: "editor-step-head" },
+      h("div", {}, h("h3", {}, step.name), h("span", { className: "kind-label" }, step.kind)),
+      h("button", { type: "button", className: "btn btn--small", onClick: onClose }, "Close")),
+    h("label", {}, "name", h("input", {
+      className: `form-control form-control--mono${nameProblem ? " form-control--invalid" : ""}`,
+      value: name,
+      onChange: (event) => setName(event.target.value),
+      onBlur: commitName,
+      onKeyDown: (event) => {
+        if (event.key === "Enter") {
+          commitName();
+        }
+      },
+    })),
+    nameProblem ? h("p", { className: "editor-hints" }, nameProblem) : null,
+    h(KindFields, { view, step, roles, set }),
+    h(DependencyFields, { view, step, set }),
     h(EdgeEditor, { view, step, onChange }),
-    h("label", {}, "max attempts", h("input", { type: "number", min: 1, value: step.fields.maxAttempts ?? 1, onChange: (event) => set("maxAttempts", Number(event.target.value) || 1) })),
-    h("button", { type: "button", className: "card-action", onClick: onDelete }, "Delete step"),
+    h("label", {}, "max attempts", h("input", {
+      type: "number",
+      min: 1,
+      className: `form-control form-control--mono${positiveInteger(step.fields.maxAttempts) ? "" : " form-control--invalid"}`,
+      value: step.fields.maxAttempts ?? "",
+      onChange: (event) => set("maxAttempts", numberInput(event.target.value)),
+    })),
+    positiveInteger(step.fields.maxAttempts) ? null : h("p", { className: "editor-hints" }, "Max attempts must be a whole number of at least 1."),
+    confirmDelete
+      ? h(
+          "div",
+          { className: "editor-danger-zone" },
+          h("p", {}, `Delete \`${step.name}\` and every edge connected to it?`),
+          h("div", { className: "editor-danger-actions" },
+            h("button", { type: "button", className: "btn btn--danger", onClick: onDelete }, "Delete step"),
+            h("button", { type: "button", className: "btn", onClick: () => setConfirmDelete(false) }, "Keep step")),
+        )
+      : h("button", {
+          type: "button",
+          className: "btn btn--danger",
+          onClick: () => setConfirmDelete(true),
+        }, "Delete step"),
   );
 }
 
@@ -354,6 +611,14 @@ function setField(view, name, field, value) {
     ...view,
     steps: view.steps.map((step) => (step.name === name ? { ...step, fields: { ...step.fields, [field]: value } } : step)),
   };
+}
+
+function positiveInteger(value) {
+  return Number.isInteger(value) && value >= 1;
+}
+
+function numberInput(value) {
+  return value === "" ? null : Number(value);
 }
 
 function renameStep(view, from, to) {
@@ -380,28 +645,96 @@ function renameStep(view, from, to) {
     ...edge,
     source: edge.source === from ? to : edge.source,
     target: edge.target === from ? to : edge.target,
-  }));
+  })).map((edge) => ({ ...edge, id: edgeIdentifier(edge) }));
   return syncSteps({ ...view, steps, edges });
 }
 
-function KindFields({ step, set }) {
+function edgeIdentifier(edge) {
+  const outcome = edge.outcome ? `:${edge.outcome}` : "";
+  return `${edge.relation}:${edge.source}${outcome}->${edge.target}`;
+}
+
+function KindFields({ view, step, roles, set }) {
   if (step.kind === "deterministic") {
-    return h("label", {}, "run", h("textarea", { value: step.fields.run ?? "", onChange: (event) => set("run", event.target.value) }));
+    return h("label", {}, "run", h("textarea", {
+      className: "form-control form-control--mono editor-textarea",
+      value: step.fields.run ?? "",
+      onChange: (event) => set("run", event.target.value),
+    }));
   }
   if (step.kind === "agent") {
     return h(React.Fragment, null,
-      h("label", {}, "role", h("input", { value: step.fields.role ?? "", onChange: (event) => set("role", event.target.value) })),
-      h("label", {}, "trust", h("input", { value: step.fields.trust ?? "", onChange: (event) => set("trust", event.target.value || null) })),
+      h("label", {}, "role", h("select", {
+        className: "form-control form-select",
+        "aria-label": "Step role",
+        value: step.fields.role ?? "",
+        onChange: (event) => set("role", event.target.value),
+      },
+      h("option", { value: "" }, "Choose a role"),
+      roles.map((role) => h("option", { key: role.name, value: role.name }, role.name)))),
+      h("label", {}, "minimum trust", h("select", {
+        className: "form-control form-select",
+        "aria-label": "Minimum trust",
+        value: step.fields.trust ?? "",
+        onChange: (event) => set("trust", event.target.value || null),
+      },
+      h("option", { value: "" }, "Inherit from role"),
+      ["untrusted", "derived", "maintainer", "trusted"].map((trust) =>
+        h("option", { key: trust, value: trust }, trust)))),
     );
   }
   if (step.kind === "decision") {
-    return h("label", {}, "over", h("input", { value: step.fields.over ?? "", onChange: (event) => set("over", event.target.value) }));
+    return h("label", {}, "observe step", h("select", {
+      className: "form-control form-select",
+      value: step.fields.over ?? "",
+      onChange: (event) => set("over", event.target.value),
+    },
+    h("option", { value: "" }, "Choose a step"),
+    view.steps.filter((candidate) => candidate.name !== step.name).map((candidate) =>
+      h("option", { key: candidate.name, value: candidate.name }, candidate.name))));
   }
   return h(React.Fragment, null,
     h("label", {}, "members (comma-separated)", h("input", {
+      className: "form-control form-control--mono",
       value: (step.fields.members ?? []).join(", "),
       onChange: (event) => set("members", event.target.value.split(",").map((member) => member.trim()).filter(Boolean)),
     })),
+    h("label", {}, "completion", h("select", {
+      className: "form-control form-select",
+      value: step.fields.completion ?? "all",
+      onChange: (event) => set("completion", event.target.value),
+    },
+    h("option", { value: "all" }, "Wait for all members"),
+    h("option", { value: "stop_on_failure" }, "Stop on first failure"))),
+    h("label", {}, "maximum concurrent members", h("input", {
+      type: "number",
+      min: 1,
+      className: `form-control form-control--mono${positiveInteger(step.fields.maxConcurrent ?? 1) ? "" : " form-control--invalid"}`,
+      value: step.fields.maxConcurrent ?? "",
+      placeholder: "unlimited",
+      onChange: (event) => set("maxConcurrent", numberInput(event.target.value)),
+    })),
+  );
+}
+
+function DependencyFields({ view, step, set }) {
+  const candidates = view.steps.filter((candidate) => candidate.name !== step.name);
+  return h(
+    "fieldset",
+    { className: "editor-edges" },
+    h("legend", {}, "data inputs"),
+    candidates.map((candidate) => {
+      const checked = (step.fields.inputsFrom ?? []).includes(candidate.name);
+      return h("label", { className: "editor-check", key: candidate.name },
+        h("input", {
+          type: "checkbox",
+          checked,
+          onChange: () => set("inputsFrom", checked
+            ? step.fields.inputsFrom.filter((name) => name !== candidate.name)
+            : [...(step.fields.inputsFrom ?? []), candidate.name]),
+        }),
+        candidate.name);
+    }),
   );
 }
 
@@ -421,16 +754,23 @@ function EdgeEditor({ view, step, onChange }) {
 
 function OutcomeSelect({ view, step, outcome, onChange }) {
   const current = edgeTarget(view, step.name, outcome);
+  const valid = current == null || validTarget(view, current);
   return h(
     "label",
     {},
     outcome,
     h(
       "select",
-      { value: current ?? "", onChange: (event) => onChange(setEdge(view, step.name, outcome, event.target.value || null)) },
+      {
+        className: `form-control form-select${valid ? "" : " form-control--invalid"}`,
+        "aria-invalid": valid ? undefined : "true",
+        value: current ?? "",
+        onChange: (event) => onChange(setEdge(view, step.name, outcome, event.target.value || null)),
+      },
       h("option", { value: "" }, "abort (default)"),
+      valid ? null : h("option", { value: current }, `Unknown target: ${current}`),
       view.steps.filter((candidate) => candidate.name !== step.name).map((candidate) => h("option", { key: candidate.name, value: candidate.name }, candidate.name)),
-      TERMINALS.map((terminal) => h("option", { key: terminal, value: terminal }, `terminal: ${terminal}`)),
+      TERMINALS.map((terminal) => h("option", { key: terminal, value: terminal }, terminalOption(terminal))),
     ),
   );
 }
@@ -443,29 +783,43 @@ function DecisionEditor({ view, step, onChange }) {
     { className: "editor-edges" },
     h("legend", {}, "on (all four outcomes required)"),
     OUTCOMES.map((outcome) =>
-      h(
-        "label",
-        { key: outcome },
-        outcome,
-        h(
-          "select",
-          {
-            value: on[outcome] ?? "",
-            onChange: (event) => onChange(setField(view, step.name, "on", { ...on, [outcome]: event.target.value })),
-          },
-          h("option", { value: "" }, "—"),
-          view.steps.filter((candidate) => candidate.name !== step.name).map((candidate) => h("option", { key: candidate.name, value: candidate.name }, candidate.name)),
-          TERMINALS.map((terminal) => h("option", { key: terminal, value: terminal }, `terminal: ${terminal}`)),
-        ),
-      ),
-    ),
+      h(DecisionOutcomeSelect, { key: outcome, view, step, outcome, on, onChange })),
     gaps.length ? h("p", { className: "editor-hints" }, gaps.join("; ")) : null,
+  );
+}
+
+function DecisionOutcomeSelect({ view, step, outcome, on, onChange }) {
+  const target = on[outcome] ?? "";
+  const valid = !target || validTarget(view, target);
+  return h(
+    "label",
+    {},
+    outcome,
+    h(
+      "select",
+      {
+        className: `form-control form-select${valid ? "" : " form-control--invalid"}`,
+        "aria-invalid": valid ? undefined : "true",
+        value: target,
+        onChange: (event) => onChange(setField(view, step.name, "on", { ...on, [outcome]: event.target.value })),
+      },
+      h("option", { value: "" }, "—"),
+      valid ? null : h("option", { value: target }, `Unknown target: ${target}`),
+      view.steps.filter((candidate) => candidate.name !== step.name).map((candidate) =>
+        h("option", { key: candidate.name, value: candidate.name }, candidate.name)),
+      TERMINALS.map((terminal) =>
+        h("option", { key: terminal, value: terminal }, terminalOption(terminal))),
+    ),
   );
 }
 
 function edgeTarget(view, source, outcome) {
   const edge = view.edges.find((candidate) => candidate.relation === "control" && candidate.source === source && candidate.outcome === outcome);
   return edge ? plainTarget(edge.target) : null;
+}
+
+function validTarget(view, target) {
+  return TERMINALS.includes(target) || view.steps.some((step) => step.name === target);
 }
 
 function plainTarget(target) {
@@ -486,14 +840,30 @@ function present(value) {
 }
 
 function problems(view) {
-  const reached = new Set(view.edges.filter((edge) => edge.relation === "control").map((edge) => edge.target));
+  const edges = effectiveEdges(view);
+  const reached = new Set(edges.filter((edge) => edge.relation === "control").map((edge) => edge.target));
   const known = new Set([...view.steps.map((step) => step.name), ...TERMINALS.map((name) => `terminal:${name}`)]);
   return [
     ...view.steps.filter((step, index) => index > 0 && !reached.has(step.name)).map((step) => ({ step: step.name, message: "step is not reachable by any control edge" })),
-    ...view.edges
+    ...edges
       .filter((edge) => edge.relation === "control" && !known.has(edge.target))
       .map((edge) => ({ step: edge.source, message: `\`${edge.outcome}\` edge points at \`${plainTarget(edge.target)}\`, which does not exist` })),
-    ...view.steps.flatMap((step) => decisionGaps(step).map((message) => ({ step: step.name, message }))),
+    // Ordinary steps fail closed: omitted outcomes route to abort by design.
+    // Only decisions promise an explicit four-way outcome map.
+    ...view.steps
+      .filter((step) => step.kind === "decision")
+      .flatMap((step) => decisionGaps(step).map((message) => ({ step: step.name, message }))),
+    ...view.steps
+      .filter((step) => !positiveInteger(step.fields.maxAttempts))
+      .map((step) => ({ step: step.name, message: "max attempts must be a whole number of at least 1" })),
+    ...view.steps
+      .filter((step) => step.kind === "concurrent" && !positiveInteger(step.fields.maxConcurrent ?? 1))
+      .map((step) => ({ step: step.name, message: "maximum concurrent members must be a whole number of at least 1" })),
+    ...view.steps
+      .filter((step) => step.kind === "concurrent")
+      .flatMap((step) => (step.fields.members ?? [])
+        .filter((member) => member === step.name || !view.steps.some((candidate) => candidate.name === member))
+        .map((member) => ({ step: step.name, message: `member \`${member}\` is not another existing step` }))),
   ];
 }
 
@@ -513,7 +883,7 @@ function serializableView(view) {
   };
 }
 
-function save(setSaveResult, onSaved, name, view, positions) {
+function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions }) {
   return fetch("./intent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -523,6 +893,8 @@ function save(setSaveResult, onSaved, name, view, positions) {
     .then((result) => {
       setSaveResult(result ?? { ok: false, findings: [] });
       if (result?.ok) {
+        setDraft(null);
+        setLayoutDirty(false);
         onSaved?.(result.state);
       }
       return result;

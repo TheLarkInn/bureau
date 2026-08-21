@@ -13,6 +13,9 @@ colors:
   outcome-failure-red: "#cf222e"
   finding-validation-bg: "#ffebe9"
   finding-advisory-bg: "#fff8c5"
+  surface-subtle: "#f6f8fa"
+  surface-hover: "#eaeef2"
+  surface-active: "#d0d7de"
 typography:
   headline:
     fontFamily: "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
@@ -111,6 +114,8 @@ are reserved for graph semantics and outcomes.
   no-work outcomes — the color of context rather than action.
 - **Hairline** (#d0d7de): borders and dividers.
 - **Sheet White** (#ffffff): default background.
+- **Control Surface** (#f6f8fa / #eaeef2 / #d0d7de): quiet control rest,
+  hover, and active fills drawn from the neutral Primer ramp.
 - **Washed Red** (#ffebe9) / **Washed Amber** (#fff8c5): finding
   backgrounds for validation errors and advisories.
 
@@ -157,6 +162,10 @@ on a 4px-rem scale: 0.25 / 0.5 / 0.75 / 1 / 1.5rem (`--space-1` …
 viewport; rails and panels hug its edges rather than floating over it.
 Graph node cards hold a fixed 15rem width (`--card-width`) so drawings stay
 uniform at any zoom.
+
+At **56rem and below**, dense toolbars and two-column control rows collapse
+to their compact layout. This is the one recorded responsive breakpoint for
+both the config surface and pipeline editor.
 
 ## Elevation & Depth
 

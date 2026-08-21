@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Background,
@@ -18,6 +18,9 @@ import { ModeSwitcher } from "./modes.js";
 import { useLiveOverlay } from "./live/live.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
+import { terminalCopy } from "./terminals.js";
+import { RelationGraph } from "./editor/relation.mjs";
+import { nextExpandedAssignment } from "./assignment-state.js";
 
 const h = React.createElement;
 const CARD_WIDTH = 240;
@@ -29,7 +32,6 @@ const flowItemTypes = {
   terminalPill: TerminalPill,
   concurrentFrame: ConcurrentFrame,
 };
-const configItemTypes = { configCard: ConfigCardNode };
 const flowEdgeTypes = { routed: RoutedEdge };
 const edgeColors = {
   success: "var(--outcome-success)",
@@ -74,7 +76,6 @@ function App() {
     { className: "app-shell" },
     h(Header, { state }),
     h(DraftBar, { plan: state.plan }),
-    state.selectedPipeline ? null : h(CreateBar, { dir: state.dir }),
     h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
     state.selectedPipeline
       ? h(PipelineView, { state, selectedStep, setSelectedStep })
@@ -106,7 +107,7 @@ function Header({ state }) {
       "div",
       { className: "status", "aria-live": "polite" },
       h("p", {}, state.status),
-      h("p", {}, state.validation?.dir ?? state.dir),
+      h("p", { className: "config-path", title: state.validation?.dir ?? state.dir }, state.validation?.dir ?? state.dir),
       h("p", {}, `${view.orphans.length} orphan${view.orphans.length === 1 ? "" : "s"}`),
     ),
   );
@@ -118,10 +119,24 @@ function Header({ state }) {
  * differently and be discardable.
  */
 function DraftBar({ plan }) {
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
   if (!plan) {
     return null;
   }
   const pending = plan.writes.length + plan.removals.length;
+  const act = (kind) => {
+    setBusy(true);
+    setError(null);
+    postIntent({ kind }).then((result) => {
+      setBusy(false);
+      if (result?.ok) {
+        publishLocalState(result);
+      } else {
+        setError(result?.error ?? `could not ${kind === "save-plan" ? "save" : "discard"} changes`);
+      }
+    });
+  };
   return h(
     "section",
     { className: "draft-bar", "data-testid": "draft-bar" },
@@ -133,9 +148,10 @@ function DraftBar({ plan }) {
     h(
       "div",
       { className: "draft-actions" },
-      h("button", { type: "button", onClick: () => postIntent({ kind: "save-plan" }).then(publishLocalState) }, "Save"),
-      h("button", { type: "button", onClick: () => postIntent({ kind: "discard-plan" }).then(publishLocalState) }, "Discard"),
+      h("button", { type: "button", className: "btn btn--small btn--primary", disabled: busy, onClick: () => act("save-plan") }, busy ? "Working…" : "Save"),
+      h("button", { type: "button", className: "btn btn--small", disabled: busy, onClick: () => act("discard-plan") }, "Discard"),
     ),
+    error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
 }
 
@@ -143,51 +159,157 @@ function shortPath(path) {
   return String(path).replaceAll("\\", "/").split("/").slice(-2).join("/");
 }
 
-/** Create controls, one per kind, scaffolded so a new entity is valid at once. */
+/** A quiet global create affordance; the form appears only when requested. */
 function CreateBar({ dir }) {
-  const [kind, setKind] = useState("role");
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState("pipeline");
   const [name, setName] = useState("");
+  const [error, setError] = useState(null);
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setOpen, trigger);
   const submit = (event) => {
     event.preventDefault();
     if (!name.trim()) {
       return;
     }
+    setError(null);
     postIntent({ kind: "create", input: { dir, kind, name: name.trim(), fields: {} } }).then((result) => {
+      if (!result?.ok) {
+        setError(result?.error ?? `could not create ${kind}`);
+        return;
+      }
       setName("");
+      close();
       publishLocalState(result);
     });
   };
+  if (!open) {
+    return h(
+      "div",
+      { className: "create-toolbar" },
+      h("button", {
+        type: "button",
+        ref: trigger,
+        className: "btn btn--primary",
+        onClick: () => setOpen(true),
+      }, "+ New pipeline or role"),
+    );
+  }
   return h(
     "form",
-    { className: "create-bar", onSubmit: submit, "data-testid": "create-bar" },
+    {
+      className: "create-bar",
+      onSubmit: submit,
+      onKeyDown: (event) => {
+        if (event.key === "Escape") {
+          setName("");
+          close();
+        }
+      },
+      "data-testid": "create-bar",
+    },
     h(
-      "select",
-      { value: kind, onChange: (event) => setKind(event.target.value), "aria-label": "New entity kind" },
-      ["repo", "role", "assignment", "pipeline"].map((option) => h("option", { key: option, value: option }, option)),
+      "div",
+      { className: "create-bar__header" },
+      h("span", { className: "detail-label" }, "New reusable config"),
+      h("button", {
+        type: "button",
+        className: "icon-btn",
+        "aria-label": "Close create form",
+        onClick: () => {
+          setName("");
+          close();
+        },
+      }, "×"),
     ),
-    h("input", { value: name, onChange: (event) => setName(event.target.value), placeholder: "name", "aria-label": "New entity name" }),
-    h("button", { type: "submit" }, "Create"),
+    h(
+      "div",
+      { className: "create-bar__fields" },
+      h("label", { className: "detail-label", htmlFor: "create-kind" }, "Kind"),
+      h(
+        "select",
+        {
+          id: "create-kind",
+          className: "form-control form-select",
+          value: kind,
+          onChange: (event) => setKind(event.target.value),
+        },
+        ["pipeline", "role"].map((option) =>
+          h("option", { key: option, value: option }, option)),
+      ),
+      error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
+      h("label", { className: "detail-label", htmlFor: "create-name" }, "Name"),
+      h("input", {
+        id: "create-name",
+        className: "form-control",
+        value: name,
+        onChange: (event) => setName(event.target.value),
+        placeholder: `${kind} name`,
+        autoFocus: true,
+      }),
+    ),
+    h(
+      "div",
+      { className: "actions" },
+      h("button", {
+        type: "submit",
+        className: "btn btn--primary",
+        disabled: !name.trim(),
+      }, `Create ${kind}`),
+      h("button", {
+        type: "button",
+        className: "btn",
+        onClick: () => {
+          setName("");
+          close();
+        },
+      }, "Cancel"),
+    ),
   );
 }
 
 /** Delete asks first and shows what breaks; the entry-step case reads louder. */
 function DeleteControl({ dir, kind, name }) {
   const [preflight, setPreflight] = useState(null);
-  const ask = () => postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => setPreflight(response?.result ?? null));
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ask = () => {
+    setBusy(true);
+    setError(null);
+    postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => {
+      setBusy(false);
+      if (response?.ok) {
+        setPreflight(response.result);
+      } else {
+        setError(response?.error ?? `could not inspect ${name}`);
+      }
+    });
+  };
   const confirm = () => postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
-    setPreflight(null);
-    publishLocalState(result);
+    if (result?.ok) {
+      setPreflight(null);
+      publishLocalState(result);
+    } else {
+      setError(result?.error ?? `could not delete ${name}`);
+    }
   });
   if (!preflight) {
-    return h("button", { type: "button", className: "card-action", onClick: ask }, "Delete");
+    return h(React.Fragment, null,
+      h("button", { type: "button", className: "btn btn--small btn--danger card-action", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
+      error ? h("p", { className: "note note--err", role: "alert" }, error) : null);
   }
   return h(
     "div",
     { className: `preflight${preflight.referrers?.length ? " preflight--blocking" : ""}`, "data-testid": "preflight" },
     h("p", {}, preflight.referrers?.length ? `${preflight.referrers.length} reference${preflight.referrers.length === 1 ? "" : "s"}` : "Nothing references this"),
     h("ul", {}, (preflight.referrers ?? []).map((item) => h("li", { key: item.name, className: `severity-${item.severity}` }, item.message))),
-    h("button", { type: "button", onClick: confirm }, "Confirm delete"),
-    h("button", { type: "button", onClick: () => setPreflight(null) }, "Cancel"),
+    preflight.blocking
+      ? h("p", { className: "note note--err" }, "Repoint these references before deleting this item.")
+      : null,
+    h("div", { className: "actions" },
+      h("button", { type: "button", className: "btn btn--small btn--danger", disabled: preflight.blocking, onClick: confirm }, "Confirm delete"),
+      h("button", { type: "button", className: "btn btn--small", onClick: () => setPreflight(null) }, "Cancel")),
+    error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
 }
 
@@ -196,7 +318,16 @@ function emptyConfigView() {
 }
 
 function summaryText(view) {
-  return `${view.assignments.length} assignment · ${view.roles.length} roles · ${view.repos.length} repos · ${view.pipelines.length} pipelines`;
+  return [
+    countLabel(view.assignments.length, "assignment"),
+    countLabel(view.roles.length, "role"),
+    countLabel(view.repos.length, "repo"),
+    countLabel(view.pipelines.length, "pipeline"),
+  ].join(" · ");
+}
+
+function countLabel(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 function ConfigView({ state }) {
@@ -204,17 +335,30 @@ function ConfigView({ state }) {
   return h(
     "section",
     { className: "view-shell view-shell--config" },
-    h("h2", { className: "config-heading" }, "Assignments"),
+    h(
+      "div",
+      { className: "config-heading-row" },
+      h("h2", { className: "config-heading" }, "Assignments"),
+      h(CreateBar, { dir: state.dir }),
+    ),
     h(AssignmentStack, { state, view }),
-    h(OrphanStrip, { view }),
+    h(OrphanStrip, { state, view }),
     h(RelationSection, { state }),
   );
 }
 
 /** The landing: assignments as a vertical stack, each expanding in place. */
 function AssignmentStack({ state, view }) {
-  const [expanded, setExpanded] = useState(null);
-  const toggle = (name) => setExpanded((current) => (current === name ? null : name));
+  const [expanded, setExpanded] = useState(() => sessionStorage.getItem("bureau.expanded-assignment"));
+  useEffect(() => {
+    if (expanded) {
+      sessionStorage.setItem("bureau.expanded-assignment", expanded);
+    } else {
+      sessionStorage.removeItem("bureau.expanded-assignment");
+    }
+  }, [expanded]);
+  const toggle = (name) => setExpanded((current) =>
+    nextExpandedAssignment(current, name, confirmClosingEditor));
   if (!view.assignments.length) {
     return h("p", { className: "muted" }, "No assignments yet.");
   }
@@ -250,6 +394,7 @@ function AssignmentCard({ state, assignment, expanded, onToggle }) {
       h("span", { className: "kind-label" }, "assignment"),
       h("span", { className: "assignment-name" }, assignment.name),
       h("span", { className: "assignment-glance" }, assignmentGlance(assignment)),
+      h("span", { className: "assignment-caret", "aria-hidden": "true" }, "›"),
     ),
     expanded ? h(AssignmentDetail, { state, assignment }) : null,
     findings.length ? h(Findings, { findings }) : null,
@@ -260,22 +405,21 @@ function AssignmentCard({ state, assignment, expanded, onToggle }) {
 function assignmentGlance(assignment) {
   const repos = (assignment.repos ?? []).length;
   const limits = Object.values(assignment.limits ?? {}).filter((value) => value != null).length;
-  return `${assignment.work?.source ?? "no source"} · ${repos} repo${repos === 1 ? "" : "s"} · ${limits} limit${limits === 1 ? "" : "s"}`;
+  return `${assignment.work?.source ?? "no source"} · ${assignment.pipeline ?? "no pipeline"} · ${repos} repo${repos === 1 ? "" : "s"} · ${limits} limit${limits === 1 ? "" : "s"}`;
 }
 
-/** The expanded body: work source, repos, role, pipeline, limits. */
+/** The expanded body: work source, repos, pipeline and limits. */
 function AssignmentDetail({ state, assignment }) {
   return h(
     "div",
     { className: "assignment-detail" },
     h(DetailRow, { label: "work source" }, h(WorkSourceField, { assignment })),
-    h(DetailRow, { label: "filter" }, h("code", {}, assignment.work?.filter ?? "—")),
-    assignment.work?.approvalLabel ? h(DetailRow, { label: "approval label" }, h("code", {}, assignment.work.approvalLabel)) : null,
+    h(DetailRow, { label: "work rules" }, h(AssignmentRuntimeField, { assignment })),
     h(DetailRow, { label: "repos" }, h(ReposField, { state, assignment })),
-    h(DetailRow, { label: "role" }, h(RoleField, { state, assignment })),
-    h(DetailRow, { label: "pipeline" }, h(PipelineLink, { name: assignment.pipeline })),
-    h(DetailRow, { label: "verify" }, h("code", {}, assignment.verify ?? "not set")),
+    h(DetailRow, { label: "pipeline" }, h(PipelineLink, { state, name: assignment.pipeline })),
     h(DetailRow, { label: "limits" }, h(LimitsField, { assignment })),
+    h("div", { className: "assignment-actions" },
+      h(DeleteControl, { dir: state.dir, kind: "assignment", name: assignment.name })),
   );
 }
 
@@ -287,14 +431,122 @@ function RefLink({ kind, name }) {
   return h("span", { className: `ref ref--${kind}` }, name ?? "—");
 }
 
-function PipelineLink({ name }) {
+function PipelineLink({ state, name }) {
   if (!name) {
     return h("span", { className: "muted" }, "—");
   }
+  const summary = state.pipelines?.[name]?.summary ?? {};
+  const counts = summary.kindCounts ?? {};
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const roles = summary.agentSteps?.map((step) => step.role).filter(Boolean) ?? [];
   return h(
     "button",
-    { type: "button", className: "ref ref--pipeline ref-link", onClick: () => selectPipeline(name) },
-    name,
+    {
+      type: "button",
+      className: "pipeline-ref",
+      "aria-label": `Open pipeline ${name}`,
+      onClick: () => confirmClosingEditor() && selectPipeline(name),
+    },
+    h("span", { className: "pipeline-ref__name" }, name),
+    h(
+      "span",
+      { className: "pipeline-ref__summary" },
+      `${total} step${total === 1 ? "" : "s"}`,
+      roles.length ? ` · ${[...new Set(roles)].join(" · ")}` : "",
+    ),
+  );
+}
+
+function confirmClosingEditor() {
+  const editor = document.querySelector(".ws-open, .repos-editor, .limits-editor, .assignment-runtime-editor");
+  return !editor || window.confirm("Discard the unsaved field changes?");
+}
+
+function AssignmentRuntimeField({ assignment }) {
+  const [editing, setEditing] = useState(false);
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setEditing, trigger);
+  return h(
+    "div",
+    { className: "field-disclosure" },
+    h(
+      "button",
+      {
+        ref: trigger,
+        type: "button",
+        className: "runtime-value",
+        "aria-expanded": editing,
+        title: "Change the work filter, approval label, or branch prefix",
+        onClick: () => setEditing((current) => !current),
+      },
+      h("span", { className: "chips" },
+        h("span", { className: "chip" }, assignment.work?.filter ?? "no filter"),
+        h("span", { className: "chip" }, assignment.work?.approvalLabel ? `approval: ${assignment.work.approvalLabel}` : "no approval label"),
+        h("span", { className: "chip" }, `branches: ${assignment.branchPrefix ?? "not set"}`)),
+    ),
+    editing ? h(AssignmentRuntimeEditor, { assignment, onDone: close }) : null,
+  );
+}
+
+function AssignmentRuntimeEditor({ assignment, onDone }) {
+  const initial = {
+    filter: assignment.work?.filter ?? "",
+    approval_label: assignment.work?.approvalLabel ?? "",
+    branch_prefix: assignment.branchPrefix ?? "",
+  };
+  const [fields, setFields] = useState(initial);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
+  const invalid = !fields.filter.trim() || !fields.branch_prefix.trim();
+  const set = (field, value) => setFields((current) => ({ ...current, [field]: value }));
+  const save = () => {
+    setBusy(true);
+    setError(null);
+    const input = {
+      assignment: assignment.name,
+      fields: {
+        filter: fields.filter.trim(),
+        approval_label: fields.approval_label.trim() || null,
+        branch_prefix: fields.branch_prefix.trim(),
+      },
+    };
+    postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      setBusy(false);
+      if (result?.ok) {
+        publishLocalState(result);
+        onDone();
+      } else {
+        setError(result?.error ?? "could not save those work rules");
+      }
+    });
+  };
+  return h(
+    "div",
+    {
+      className: "assignment-runtime-editor",
+      onKeyDown: (event) => event.key === "Escape" && onDone(),
+    },
+    h("label", {}, "Work-item filter", h("input", {
+      className: `form-control form-control--mono${fields.filter.trim() ? "" : " form-control--invalid"}`,
+      value: fields.filter,
+      onChange: (event) => set("filter", event.target.value),
+    })),
+    h("label", {}, "Approval label (optional)", h("input", {
+      className: "form-control form-control--mono",
+      value: fields.approval_label,
+      onChange: (event) => set("approval_label", event.target.value),
+    })),
+    h("label", {}, "Branch prefix", h("input", {
+      className: `form-control form-control--mono${fields.branch_prefix.trim() ? "" : " form-control--invalid"}`,
+      value: fields.branch_prefix,
+      onChange: (event) => set("branch_prefix", event.target.value),
+    })),
+    invalid ? h("p", { className: "note note--err" }, "Filter and branch prefix cannot be empty.") : null,
+    error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
+    h("div", { className: "actions" },
+      h("button", { type: "button", className: "btn btn--primary", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save work rules"),
+      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
   );
 }
 
@@ -336,22 +588,27 @@ function AccessTag({ access }) {
  */
 function ReposField({ state, assignment }) {
   const [editing, setEditing] = useState(false);
-  if (editing) {
-    return h(ReposEditor, { state, assignment, onDone: () => setEditing(false) });
-  }
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setEditing, trigger);
   const repos = assignment.repos ?? [];
   return h(
-    "button",
-    {
-      type: "button", className: "repos-value", "aria-expanded": false,
-      title: "Change the repos this assignment touches",
-      onClick: () => setEditing(true),
-    },
-    repos.length
-      ? h("span", { className: "chips" }, repos.map((name, index) =>
-          h("span", { key: name, className: `chip repo-chip${index === 0 ? " repo-chip--primary" : ""}` },
-            index === 0 ? `${name} · primary` : name)))
-      : h("span", { className: "muted" }, "no repos"),
+    "div",
+    { className: "field-disclosure" },
+    h(
+      "button",
+      {
+        ref: trigger,
+        type: "button", className: "repos-value", "aria-expanded": editing,
+        title: "Change the repos this assignment touches",
+        onClick: () => setEditing((current) => !current),
+      },
+      repos.length
+        ? h("span", { className: "chips" }, repos.map((name, index) =>
+            h("span", { key: name, className: `chip repo-chip${index === 0 ? " repo-chip--primary" : ""}` },
+              index === 0 ? `${name} · primary` : name)))
+        : h("span", { className: "muted" }, "no repos"),
+    ),
+    editing ? h(ReposEditor, { state, assignment, onDone: close }) : null,
   );
 }
 
@@ -392,7 +649,7 @@ function ReposEditor({ state, assignment, onDone }) {
   const problem = repos.length ? landingProblem(state, repos[0]) : null;
   return h(
     "div",
-    { className: "repos-editor" },
+    { className: "repos-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
     repos.length
       ? repos.map((name, index) => h(RepoRow, {
           key: name, state, name, index, total: repos.length,
@@ -404,12 +661,14 @@ function ReposEditor({ state, assignment, onDone }) {
       : h("p", { className: "note" }, "No repos yet — add the one the branch should land in."),
     problem
       ? h("p", { className: problem.kind === "unknown" ? "note note--warn" : "note note--err" }, problem.message)
-      : h("p", { className: "note" }, "Rows below the first supply read-only context to the run."),
+      : repos.length > 1
+        ? h("p", { className: "note" }, "Rows below the first supply read-only context to the run.")
+        : null,
     error ? h("p", { className: "note note--err" }, error) : null,
     h("div", { className: "actions" },
       h("button", {
         type: "button", className: "btn btn--primary",
-        disabled: busy || sameOrder(repos, assignment.repos ?? []),
+        disabled: busy || repos.length === 0 || Boolean(problem) || sameOrder(repos, assignment.repos ?? []),
         onClick: () => commit(repos),
       }, busy ? "Saving…" : "Save repos"),
       h("button", { type: "button", className: "btn", onClick: () => setAdding(true) }, "+ Add repo"),
@@ -486,7 +745,7 @@ function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) 
       : h("p", { className: "note" }, "Every registered repo is already listed."),
     h("p", { className: "note" }, "Not in the registry? Paste its URL and it is added to repos.yaml as well."),
     h("input", {
-      type: "text", className: "paste-input", value: url, autoFocus: true, "aria-label": "Repository URL",
+      type: "text", className: "form-control form-control--mono", value: url, autoFocus: true, "aria-label": "Repository URL",
       placeholder: "Paste a repository URL…", onChange: (event) => resolve(event.target.value),
     }),
     failure ? h("p", { className: "note note--err" }, failure) : null,
@@ -518,17 +777,17 @@ function ResolvedRepo(props) {
     { className: "repos-preview" },
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-name" }, "name"),
-      h("input", { id: "repo-name", type: "text", className: "role-input", value: name, onChange: (event) => setName(event.target.value) })),
+      h("input", { id: "repo-name", type: "text", className: "form-control form-control--mono", value: name, onChange: (event) => setName(event.target.value) })),
     h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "forge"), h("code", {}, resolved.forge)),
     h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "url"), h("code", {}, resolved.url)),
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-access" }, "access"),
-      h("select", { id: "repo-access", className: "role-select", value: access, onChange: (event) => setAccess(event.target.value) },
+      h("select", { id: "repo-access", className: "form-control form-select", value: access, onChange: (event) => setAccess(event.target.value) },
         ACCESS_LEVELS.map((value) => h("option", { key: value, value }, value)))),
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-credential" }, "credential"),
       credentials.length
-        ? h("select", { id: "repo-credential", className: "role-select", value: credential, onChange: (event) => setCredential(event.target.value) },
+        ? h("select", { id: "repo-credential", className: "form-control form-select", value: credential, onChange: (event) => setCredential(event.target.value) },
             credentials.map((value) => h("option", { key: value, value }, value)))
         : h("p", { className: "note note--err" }, "No credential is referenced by any registered repo yet. Add one to repos.yaml before registering — a repo without a credential cannot be cloned.")),
     taken ? h("p", { className: "note note--err" }, `\`${name}\` already names a different repository in the registry — rename this one.`) : null,
@@ -547,12 +806,12 @@ function ResolvedRepo(props) {
  * never reported as unlimited.
  */
 const LIMIT_FIELDS = [
-  { key: "max_concurrent", view: "maxConcurrent", unit: "runs at once", noun: "concurrent runs", short: "at once" },
-  { key: "max_runs_per_hour", view: "maxRunsPerHour", unit: "runs / hour", noun: "runs per hour", short: "/hour" },
-  { key: "max_runs_per_day", view: "maxRunsPerDay", unit: "runs / day", noun: "runs per day", short: "/day" },
-  { key: "max_open_prs", view: "maxOpenPrs", unit: "open PRs", noun: "open pull requests", short: "open PRs" },
-  { key: "max_cost_per_day_usd", view: "maxCostPerDayUsd", unit: "USD / day", noun: "spend per day", short: "USD/day" },
-  { key: "max_run_hours", view: "maxRunHours", unit: "hours / run", noun: "run length", short: "h/run", defaulted: 24 },
+  { key: "max_concurrent", view: "maxConcurrent", unit: "runs at once", noun: "Concurrent runs", short: "at once", integer: true, max: 4_294_967_295 },
+  { key: "max_runs_per_hour", view: "maxRunsPerHour", unit: "runs / hour", noun: "Runs per hour", short: "/hour", integer: true, max: 4_294_967_295 },
+  { key: "max_runs_per_day", view: "maxRunsPerDay", unit: "runs / day", noun: "Runs per day", short: "/day", integer: true, max: 4_294_967_295 },
+  { key: "max_open_prs", view: "maxOpenPrs", unit: "open PRs", noun: "Open pull requests", short: "open PRs", integer: true, max: 4_294_967_295 },
+  { key: "max_cost_per_day_usd", view: "maxCostPerDayUsd", unit: "USD / day", noun: "Daily model cost", short: "USD/day", integer: false },
+  { key: "max_run_hours", view: "maxRunHours", unit: "hours / run", noun: "Run deadline", short: "h/run", defaulted: 24, integer: true, max: Number.MAX_SAFE_INTEGER },
 ];
 
 const isSet = (limits, key) => limits[key] !== null && limits[key] !== undefined;
@@ -589,22 +848,28 @@ function LimitsSummary({ limits }) {
 function LimitsField({ assignment }) {
   const [editing, setEditing] = useState(false);
   const limits = limitsFromView(assignment.limits);
-  if (editing) {
-    return h(LimitsEditor, { assignment, saved: limits, onDone: () => setEditing(false) });
-  }
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setEditing, trigger);
   return h(
-    "button",
-    {
-      type: "button", className: "limits-value", "aria-expanded": false,
-      title: "Change the limits on this assignment",
-      onClick: () => setEditing(true),
-    },
-    h(LimitsSummary, { limits }),
+    "div",
+    { className: "field-disclosure" },
+    h(
+      "button",
+      {
+        ref: trigger,
+        type: "button", className: "limits-value", "aria-expanded": editing,
+        title: "Change the limits on this assignment",
+        onClick: () => setEditing((current) => !current),
+      },
+      h(LimitsSummary, { limits }),
+    ),
+    editing ? h(LimitsEditor, { assignment, saved: limits, onDone: close }) : null,
   );
 }
 
 function LimitsEditor({ assignment, saved, onDone }) {
   const [draft, setDraft] = useState(saved);
+  const [lastValues, setLastValues] = useState(saved);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -612,8 +877,22 @@ function LimitsEditor({ assignment, saved, onDone }) {
   // A cleared box is kept as its raw text rather than coerced: `Number("")`
   // is 0, and a zero limit computes headroom as permanently zero — a total
   // block produced by one backspace.
-  const invalid = LIMIT_FIELDS.some((field) => isSet(draft, field.key) && !validLimit(draft[field.key]));
+  const invalid = LIMIT_FIELDS.some((field) => isSet(draft, field.key) && !validLimit(field, draft[field.key]));
   const set = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+  const toggle = (field) => {
+    if (isSet(draft, field.key)) {
+      setLastValues((current) => ({ ...current, [field.key]: draft[field.key] }));
+      set(field.key, null);
+    } else {
+      set(field.key, lastValues[field.key] ?? defaultLimit(field));
+    }
+  };
+  const change = (field, value) => {
+    set(field.key, value);
+    if (validLimit(field, value)) {
+      setLastValues((current) => ({ ...current, [field.key]: value }));
+    }
+  };
 
   const save = () => {
     setBusy(true);
@@ -630,14 +909,14 @@ function LimitsEditor({ assignment, saved, onDone }) {
 
   return h(
     "div",
-    { className: "limits-editor" },
+    { className: "limits-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
     LIMIT_FIELDS.map((field) => h(LimitRow, {
       key: field.key, field, value: draft[field.key],
-      onToggle: () => set(field.key, isSet(draft, field.key) ? null : defaultLimit(field)),
-      onChange: (value) => set(field.key, value),
+      onToggle: () => toggle(field),
+      onChange: (value) => change(field, value),
     })),
     h("p", { className: "note" }, "Off means no ceiling at all — except run length, which falls back to the system default of 24 hours."),
-    invalid ? h("p", { className: "note note--err" }, "A limit that is on needs a whole number of at least 1. Switch it off for unlimited.") : null,
+    invalid ? h("p", { className: "note note--err" }, "Enabled count and deadline limits need whole numbers of at least 1. Daily model cost accepts a positive decimal. Switch a limit off for unlimited.") : null,
     error ? h("p", { className: "note note--err" }, error) : null,
     h("div", { className: "actions" },
       h("button", { type: "button", className: "btn btn--primary", disabled: busy || !changed || invalid, onClick: save },
@@ -647,14 +926,17 @@ function LimitsEditor({ assignment, saved, onDone }) {
   );
 }
 
-function validLimit(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 1;
+function validLimit(field, value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return false;
+  }
+  return !field.integer || (Number.isInteger(value) && value <= field.max);
 }
 
 function LimitRow({ field, value, onToggle, onChange }) {
   const on = value !== null && value !== undefined;
   const uncapped = !on && !field.defaulted;
-  const bad = on && !validLimit(value);
+  const bad = on && !validLimit(field, value);
   return h(
     "div",
     { className: `limit-row${uncapped ? " limit-row--off" : ""}` },
@@ -663,11 +945,15 @@ function LimitRow({ field, value, onToggle, onChange }) {
       "aria-label": `${field.noun} limit`,
       onClick: onToggle,
     }, on ? "on" : "off"),
-    h("span", { className: "limit-name" }, field.key),
+    h("span", { className: "limit-name" }, field.noun,
+      h("code", { className: "limit-key" }, field.key)),
     on
       ? h("input", {
-          type: "number", min: "1", step: "1",
-          className: `limit-input${bad ? " limit-input--invalid" : ""}`,
+          type: "number",
+          min: field.integer ? "1" : "0.01",
+          max: field.max ? String(field.max) : undefined,
+          step: field.integer ? "1" : "0.01",
+          className: `form-control form-control--mono${bad ? " form-control--invalid" : ""}`,
           value: String(value), "aria-label": field.noun,
           "aria-invalid": bad ? "true" : undefined,
           onChange: (event) => {
@@ -688,15 +974,31 @@ function LimitRow({ field, value, onToggle, onChange }) {
  */
 function WorkSourceField({ assignment }) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef(null);
+  const close = () => closeDisclosure(setOpen, trigger);
   const label = `${assignment.work?.forge ?? "?"} · ${assignment.work?.source ?? "?"}`;
-  if (!open) {
-    return h(
+  return h(
+    "div",
+    { className: "field-disclosure" },
+    h(
       "button",
-      { type: "button", className: "ws-value", title: "Link a board or issues page", onClick: () => setOpen(true) },
+      {
+        ref: trigger,
+        type: "button",
+        className: "ws-value",
+        "aria-expanded": open,
+        title: "Link a board or issues page",
+        onClick: () => setOpen((current) => !current),
+      },
       label,
-    );
-  }
-  return h(WorkSourceEditor, { assignment, onDone: () => setOpen(false) });
+    ),
+    open ? h(WorkSourceEditor, { assignment, onDone: close }) : null,
+  );
+}
+
+function closeDisclosure(setOpen, trigger) {
+  setOpen(false);
+  requestAnimationFrame(() => trigger.current?.focus());
 }
 
 function WorkSourceEditor({ assignment, onDone }) {
@@ -724,7 +1026,13 @@ function WorkSourceEditor({ assignment, onDone }) {
 
   const apply = () => {
     setBusy(true);
-    postIntent({ kind: "set-work-source", input: { assignment: assignment.name, url } }).then((result) => {
+    const work = {
+      forge: derived.forge,
+      source: derived.source,
+      filter: derived.filter,
+      approval_label: assignment.work?.approvalLabel ?? null,
+    };
+    postIntent({ kind: "set-work-source", input: { assignment: assignment.name, work } }).then((result) => {
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -737,13 +1045,14 @@ function WorkSourceEditor({ assignment, onDone }) {
 
   return h(
     "div",
-    { className: "ws-open" },
+    { className: "ws-open", onKeyDown: (event) => event.key === "Escape" && onDone() },
     h("span", { className: "detail-label" }, "link a work source"),
     h("input", {
       type: "text",
-      className: "paste-input",
+      className: "form-control form-control--mono",
       autoFocus: true,
       placeholder: "Paste a board, query, or issues URL…",
+      "aria-label": "Board, query, or issues URL",
       value: url,
       onChange: (event) => derive(event.target.value),
     }),
@@ -778,180 +1087,8 @@ function DerivedWorkSource({ derived }) {
   );
 }
 
-const PERMISSIONS = [
-  "repo:read", "repo:write", "repo:push", "issues:read", "issues:write",
-  "pr:read", "pr:write", "pr:review", "pr:merge", "runs:read", "model:invoke",
-];
-const TRUST_GRADES = ["untrusted", "derived", "maintainer", "trusted"];
-const ADAPTERS = ["copilot", "claude", "fake"];
-/** A new role reads and thinks, nothing more, until told otherwise. */
-const LEAST_PRIVILEGE = ["repo:read", "model:invoke"];
-
-/** How consequential a grant is, which drives its colour and the warning. */
-function permissionRisk(permission) {
-  if (permission === "repo:push" || permission === "pr:merge") {
-    return "push";
-  }
-  if (permission.endsWith(":write") || permission === "pr:review") {
-    return "write";
-  }
-  return permission === "model:invoke" ? "model" : "read";
-}
-
-function PermissionChips({ permissions }) {
-  if (!permissions?.length) {
-    return h("span", { className: "muted" }, "no grants");
-  }
-  return h("span", { className: "chips" }, permissions.map((permission) =>
-    h("span", { key: permission, className: `perm perm--${permissionRisk(permission)}` }, permission)));
-}
-
-/**
- * The role value, clickable: the capability summary opens in place into a
- * picker over existing roles, or a form for a new one. Renaming and deleting
- * are deliberately absent — a role is shared with every pipeline step that
- * names it, so those belong where all its referrers are visible.
- */
-function RoleField({ state, assignment }) {
-  const [editing, setEditing] = useState(false);
-  const roles = state.config?.view?.roles ?? [];
-  const role = roles.find((candidate) => candidate.name === assignment.role);
-  if (editing) {
-    return h(RoleEditor, { state, assignment, roles, onDone: () => setEditing(false) });
-  }
-  return h(
-    "button",
-    {
-      type: "button",
-      className: "rolebox",
-      "aria-expanded": false,
-      onClick: () => setEditing(true),
-    },
-    h("span", { className: "rolebox-top" },
-      h("span", { className: "rolename" }, assignment.role ?? "not set"),
-      role ? h("span", { className: "trust" }, role.minTrust) : null),
-    h(PermissionChips, { permissions: role?.permissions }),
-    role ? h("span", { className: "note" }, `${role.adapter} · ${role.agent}`) : null,
-  );
-}
-
-function RoleEditor({ state, assignment, roles, onDone }) {
-  const [creating, setCreating] = useState(false);
-  const [pending, setPending] = useState(assignment.role);
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
-
-  const commit = (input) => {
-    setBusy(true);
-    postIntent({ kind: "set-role", input: { assignment: assignment.name, ...input } }).then((result) => {
-      setBusy(false);
-      if (result?.ok) {
-        publishLocalState(result);
-        onDone();
-      } else {
-        setError(result?.error ?? "could not save that role");
-      }
-    });
-  };
-
-  if (creating) {
-    return h(RoleCreator, {
-      roles, busy, error,
-      onCancel: () => { setCreating(false); setError(null); },
-      onCreate: (name, create) => commit({ role: name, create }),
-    });
-  }
-  const preview = roles.find((candidate) => candidate.name === pending);
-  return h(
-    "div",
-    { className: "role-editor" },
-    h("div", { className: "detail-row" },
-      h("label", { className: "detail-label", htmlFor: "role-pick" }, "role"),
-      h("select", {
-        id: "role-pick", className: "role-select", value: pending ?? "",
-        onChange: (event) => setPending(event.target.value),
-      }, roles.map((candidate) => h("option", { key: candidate.name, value: candidate.name }, candidate.name)))),
-    preview ? h(RolePreview, { role: preview }) : null,
-    error ? h("p", { className: "note note--err" }, error) : null,
-    h("p", { className: "note" }, "Renaming or deleting a role happens on the role itself — it is shared with every pipeline step that names it."),
-    h("div", { className: "actions" },
-      h("button", {
-        type: "button", className: "btn btn--primary",
-        disabled: busy || !pending || pending === assignment.role,
-        onClick: () => commit({ role: pending }),
-      }, busy ? "Saving…" : "Use this role"),
-      h("button", { type: "button", className: "btn", onClick: () => setCreating(true) }, "+ New role"),
-      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
-  );
-}
-
-function RolePreview({ role }) {
-  return h(
-    "div",
-    { className: "role-preview" },
-    h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "adapter"), h("code", {}, role.adapter)),
-    h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "grants"), h(PermissionChips, { permissions: role.permissions })),
-    h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "min trust"), h("span", { className: "trust" }, role.minTrust)),
-    h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "agent"), h("code", {}, role.agent)),
-  );
-}
-
-function RoleCreator({ roles, busy, error, onCancel, onCreate }) {
-  const [name, setName] = useState("");
-  const [agent, setAgent] = useState("/bureau:implementer");
-  const [adapter, setAdapter] = useState("copilot");
-  const [minTrust, setMinTrust] = useState("derived");
-  const [permissions, setPermissions] = useState(LEAST_PRIVILEGE);
-
-  const taken = roles.some((candidate) => candidate.name === name);
-  const elevated = permissions.filter((permission) => ["push", "write"].includes(permissionRisk(permission)));
-  const toggle = (permission) => setPermissions((current) =>
-    current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission]);
-
-  return h(
-    "div",
-    { className: "role-editor" },
-    h("span", { className: "detail-label" }, "new role"),
-    h("div", { className: "detail-row" },
-      h("label", { className: "detail-label", htmlFor: "role-name" }, "name"),
-      h("input", { id: "role-name", type: "text", className: "role-input", value: name, placeholder: "patcher", autoFocus: true, onChange: (event) => setName(event.target.value) })),
-    h("div", { className: "detail-row" },
-      h("label", { className: "detail-label", htmlFor: "role-agent" }, "agent"),
-      h("input", { id: "role-agent", type: "text", className: "role-input", value: agent, placeholder: "/plugin:agent", onChange: (event) => setAgent(event.target.value) })),
-    h("div", { className: "detail-row" },
-      h("label", { className: "detail-label", htmlFor: "role-adapter" }, "adapter"),
-      h("select", { id: "role-adapter", className: "role-select", value: adapter, onChange: (event) => setAdapter(event.target.value) },
-        ADAPTERS.map((value) => h("option", { key: value, value }, value)))),
-    h("div", { className: "detail-row" },
-      h("span", { className: "detail-label", id: "role-grants" }, "grants"),
-      h("div", { className: "perm-grid", role: "group", "aria-labelledby": "role-grants" }, PERMISSIONS.map((permission) =>
-        h("button", {
-          key: permission, type: "button", className: "perm-toggle",
-          "data-risk": permissionRisk(permission),
-          "aria-pressed": permissions.includes(permission),
-          onClick: () => toggle(permission),
-        }, permission)))),
-    h("div", { className: "detail-row" },
-      h("label", { className: "detail-label", htmlFor: "role-trust" }, "min trust"),
-      h("select", { id: "role-trust", className: "role-select", value: minTrust, onChange: (event) => setMinTrust(event.target.value) },
-        TRUST_GRADES.map((value) => h("option", { key: value, value }, value)))),
-    taken ? h("p", { className: "note note--err" }, `\`${name}\` already exists — choose it from the list instead.`) : null,
-    elevated.length
-      ? h("p", { className: "note note--warn" }, `${elevated.join(", ")} hands the run a credential that can change things. Review of the config PR is the only gate on that.`)
-      : h("p", { className: "note" }, "Read-only grants. A step that never pushes should never hold a token that can."),
-    error ? h("p", { className: "note note--err" }, error) : null,
-    h("div", { className: "actions" },
-      h("button", {
-        type: "button", className: "btn btn--primary",
-        disabled: busy || !name || taken,
-        onClick: () => onCreate(name, { agent, adapter, permissions, min_trust: minTrust }),
-      }, busy ? "Creating…" : "Create and use it"),
-      h("button", { type: "button", className: "btn", onClick: onCancel }, "Back")),
-  );
-}
-
 /** Repos / roles / pipelines nothing references, surfaced without graph noise. */
-function OrphanStrip({ view }) {
+function OrphanStrip({ state, view }) {
   if (!view.orphans?.length) {
     return null;
   }
@@ -961,9 +1098,11 @@ function OrphanStrip({ view }) {
     h("h3", {}, "Unreferenced"),
     h(
       "div",
-      { className: "chips" },
+      { className: "orphan-list" },
       view.orphans.map((orphan) =>
-        h("span", { key: `${orphan.kind}:${orphan.name}`, className: `chip orphan-chip orphan-chip--${orphan.kind}` }, `${orphan.kind}: ${orphan.name}`),
+        h("span", { key: `${orphan.kind}:${orphan.name}`, className: "orphan-entry" },
+          h("span", { className: `chip orphan-chip orphan-chip--${orphan.kind}` }, `${orphan.kind}: ${orphan.name}`),
+          h(DeleteControl, { dir: state.dir, kind: orphan.kind, name: orphan.name })),
       ),
     ),
   );
@@ -971,7 +1110,6 @@ function OrphanStrip({ view }) {
 
 /** The full relation graph, collapsed by default as a secondary section. */
 function RelationSection({ state }) {
-  const flow = useMemo(() => toConfigFlow(state, null, () => {}), [state]);
   return h(
     "details",
     { className: "relation-section" },
@@ -979,137 +1117,9 @@ function RelationSection({ state }) {
     h(
       "div",
       { className: "config-flow", "aria-label": "Bureau config relation graph" },
-      h(ReactFlow, {
-        nodes: flow.nodes,
-        edges: flow.edges,
-        nodeTypes: configItemTypes,
-        fitView: true,
-        fitViewOptions: { padding: 0.18 },
-        minZoom: 0.2,
-        maxZoom: 1.5,
-        nodesDraggable: false,
-        nodesConnectable: false,
-        elementsSelectable: true,
-        proOptions: { hideAttribution: true },
-      }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
+      h(RelationGraph, { relation: state.config?.relation }),
     ),
   );
-}
-
-/** Same surface as the pipeline view: pan, zoom, fit, minimap. */
-function toConfigFlow(state, expanded, onToggle) {
-  const layout = state.config?.layout ?? { items: [], edges: [] };
-  return {
-    nodes: layout.items.map((item) => ({
-      id: item.id,
-      type: "configCard",
-      position: { x: item.x, y: item.y },
-      data: { state, item, expanded: expanded === item.id, onToggle },
-      draggable: false,
-      connectable: false,
-      // An expanded card grows past its reserved box, so it must sit above its
-      // neighbours rather than push them around.
-      zIndex: expanded === item.id ? 10 : 0,
-    })),
-    edges: layout.edges.map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      type: "smoothstep",
-      style: { stroke: "var(--border-color-default, #d0d7de)", strokeWidth: 1.4 },
-    })),
-  };
-}
-
-function ConfigCardNode({ data }) {
-  return h(ConfigCard, { state: data.state, item: data.item, expanded: data.expanded, onToggle: data.onToggle });
-}
-function ConfigCard({ state, item, expanded, onToggle }) {
-  const data = configData(state, item);
-  const className = `card card--${item.kind}${item.orphan ? " card--orphan" : ""}${expanded ? " card--expanded" : ""}`;
-  const deletable = ["repo", "role", "assignment", "pipeline"].includes(item.kind);
-  return h(
-    "article",
-    // React Flow positions the node wrapper; the height comes from layout so
-    // the rendered card can never exceed the box reserved for it. An expanded
-    // card is the deliberate exception and overlays instead.
-    { className, "data-ref": item.id, style: expanded ? {} : { height: item.height } },
-    item.kind === "pipeline"
-      ? h("button", { className: "card-button", type: "button", onClick: () => selectPipeline(item.name) }, configCardContent(state, item, data, expanded, onToggle))
-      : h("div", {}, configCardContent(state, item, data, expanded, onToggle)),
-    deletable ? h(DeleteControl, { dir: state.dir, kind: item.kind, name: item.name }) : null,
-  );
-}
-
-function configCardContent(state, item, data, expanded, onToggle) {
-  const detail = detailText(item, data);
-  return [
-    h("p", { className: "kind-label", key: "kind" }, item.kind.replace("-", " ")),
-    h("h2", { key: "title" }, item.name),
-    // The detail carries a whole shell command for an assignment, so it is the
-    // affordance rather than a hidden tooltip: click to read it in full.
-    h(
-      "button",
-      {
-        className: `detail detail-toggle${expanded ? " detail-toggle--open" : ""}`,
-        key: "detail",
-        type: "button",
-        title: detail,
-        "aria-expanded": Boolean(expanded),
-        onClick: (event) => {
-          event.stopPropagation();
-          onToggle?.(item.id);
-        },
-      },
-      detail,
-    ),
-    h(Chips, { key: "chips", chips: chipsFor(state, item, data) }),
-    item.kind === "pipeline" ? h(StepBadges, { key: "steps", state, name: item.name }) : null,
-    h(Findings, { key: "findings", findings: state.findingsByItem?.[item.id] ?? [] }),
-  ];
-}
-
-function configData(state, item) {
-  const view = state.config?.view ?? emptyConfigView();
-  const sources = { assignment: view.assignments, role: view.roles, repo: view.repos, pipeline: view.pipelines };
-  if (item.kind === "work-source") {
-    return view.assignments.find((assignment) => `work-source:${assignment.name}` === item.id) ?? {};
-  }
-  return (sources[item.kind] ?? []).find((value) => value.name === item.name) ?? {};
-}
-
-function detailText(item, data) {
-  if (item.kind === "work-source") {
-    return `${data.work?.forge ?? "unknown"} · ${data.work?.source ?? item.name}`;
-  }
-  if (item.kind === "assignment") {
-    return `verify: ${data.verify ?? "not set"}`;
-  }
-  if (item.kind === "role") {
-    return `${data.adapter ?? "adapter"} · min_trust: ${data.minTrust ?? "unknown"}`;
-  }
-  if (item.kind === "repo") {
-    return data.access ?? "access unknown";
-  }
-  return `${data.stepCount ?? 0} steps`;
-}
-
-function chipsFor(state, item, data) {
-  if (item.kind === "work-source") {
-    return [data.work?.filter, data.work?.approvalLabel ? `approval: ${data.work.approvalLabel}` : null].filter(Boolean).map((text) => ({ text }));
-  }
-  if (item.kind === "assignment") {
-    return Object.entries(data.limits ?? {}).filter(([, value]) => value != null).map(([name, value]) => ({ text: `${name}: ${value}` }));
-  }
-  if (item.kind === "role") {
-    return (data.permissions ?? []).map((permission) => ({ text: permission, refs: data.usedBy ?? [], className: "permission-chip" }));
-  }
-  if (item.kind === "repo") {
-    const primaries = (state.config?.view?.assignments ?? []).filter((assignment) => assignment.primaryRepo === data.name);
-    return [{ text: data.access }, ...primaries.map((assignment) => ({ text: `primary: ${assignment.name}` }))];
-  }
-  const counts = state.pipelines?.[data.name]?.summary?.kindCounts ?? {};
-  return Object.entries(counts).map(([kind, count]) => ({ text: `${kind}×${count}` }));
 }
 
 function Chips({ chips }) {
@@ -1130,13 +1140,6 @@ function Chip({ chip }) {
   }, chip.text);
 }
 
-function StepBadges({ state, name }) {
-  const steps = state.pipelines?.[name]?.summary?.agentSteps ?? [];
-  if (steps.length === 0) {
-    return null;
-  }
-  return h("div", { className: "step-list" }, steps.map((step) => h("span", { key: step.ref, className: "step-badge", "data-ref": step.ref }, `${step.name} · ${step.role} · trust: ${step.trust ?? "role"}`)));
-}
 
 function PipelineView({ state, selectedStep, setSelectedStep }) {
   const name = state.selectedPipeline.name;
@@ -1160,10 +1163,10 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       h(
         "div",
         { className: "pipeline-toolbar" },
-        h("button", { className: "back-button", type: "button", onClick: backToConfig }, "Back to config"),
+        h("button", { className: "btn btn--small", type: "button", onClick: backToConfig }, "← Assignments"),
         h("h2", {}, name),
         h(ModeSwitcher, { mode, onMode: setMode }),
-        h("a", { className: "editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit"),
+        h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
         active?.controls ?? null,
       ),
       h(
@@ -1408,7 +1411,15 @@ function MemberList({ members, group, onToggleGroup }) {
 }
 
 function TerminalPill({ data }) {
-  return h("article", { className: "flow-card terminal-pill" }, h(Handles, { handles: data.handles }), h("h2", {}, data.terminal.name));
+  const copy = terminalCopy(data.terminal.name);
+  return h(
+    "article",
+    { className: `flow-card terminal-pill terminal-pill--${data.terminal.name}` },
+    h(Handles, { handles: data.handles }),
+    h("h2", {}, copy.label),
+    h("p", { className: "terminal-detail" }, copy.detail),
+    h("code", { className: "terminal-key" }, data.terminal.name),
+  );
 }
 
 function ConcurrentFrame() {

@@ -45,7 +45,7 @@ canvas_browser_tests() {
 
 canvas_tests
 canvas_browser_tests
-./scripts/check-rust-policy.sh
+bash ./scripts/check-rust-policy.sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 

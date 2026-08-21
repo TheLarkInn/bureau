@@ -10,11 +10,10 @@ const CHIPS_PER_ROW = 2;
 const DELETABLE = ["repo", "role", "assignment", "pipeline"];
 const TERMINAL_GAP = 120;
 const CONFIG_COLUMNS = {
-  "work-source": 0,
-  assignment: 1,
+  assignment: 0,
+  pipeline: 1,
   role: 2,
-  repo: 2,
-  pipeline: 3,
+  repo: 3,
 };
 const TERMINAL_PREFIX = "terminal:";
 const RELATION_ORDER = { control: 0, data: 1, observes: 2 };
@@ -269,8 +268,13 @@ function placeSteps(steps, rows) {
 function placeTerminals(view, steps) {
   const railX = terminalX(steps);
   const rowByStep = new Map(steps.map((step) => [step.id, step.row]));
+  const occupied = new Set();
   return (view.terminals ?? []).map((terminal, index) => {
-    const row = terminalRow(terminal.id, view.edges ?? [], rowByStep, index);
+    let row = terminalRow(terminal.id, view.edges ?? [], rowByStep, index);
+    while (occupied.has(row)) {
+      row += 1;
+    }
+    occupied.add(row);
     return { ...terminal, row, column: "terminal", x: railX, y: row * Y_GAP };
   });
 }
@@ -327,11 +331,10 @@ function routeOf(edge, positions) {
 function configMainItems(view) {
   const orphans = orphanSet(view);
   return assignColumnRows([
-    ...workSourceItems(view.assignments ?? []),
     ...kindItems("assignment", view.assignments ?? [], orphans),
+    ...kindItems("pipeline", view.pipelines ?? [], orphans),
     ...kindItems("role", view.roles ?? [], orphans),
     ...kindItems("repo", view.repos ?? [], orphans),
-    ...kindItems("pipeline", view.pipelines ?? [], orphans),
   ]);
 }
 
@@ -347,14 +350,6 @@ function assignColumnRows(items) {
 
 function orphanSet(view) {
   return new Set((view.orphans ?? []).map((orphan) => `${orphan.kind}:${orphan.name}`));
-}
-
-function workSourceItems(assignments) {
-  return assignments.map((assignment) => ({
-    id: `work-source:${assignment.name}`,
-    kind: "work-source",
-    name: assignment.work.source,
-  }));
 }
 
 function kindItems(kind, values, orphans = new Set()) {
@@ -375,16 +370,23 @@ function configOrphanItems(view, mainCount) {
 }
 
 function configEdges(view, ids) {
-  return (view.assignments ?? []).flatMap((assignment) => assignmentEdges(assignment, ids));
+  return [
+    ...(view.assignments ?? []).flatMap((assignment) => assignmentEdges(assignment, ids)),
+    ...(view.pipelines ?? []).flatMap((pipeline) => pipelineEdges(pipeline, ids)),
+  ];
 }
 
 function assignmentEdges(assignment, ids) {
   return [
-    configEdge("work", `work-source:${assignment.name}`, `assignment:${assignment.name}`),
-    configEdge("role", `assignment:${assignment.name}`, `role:${assignment.role}`),
     configEdge("pipeline", `assignment:${assignment.name}`, `pipeline:${assignment.pipeline}`),
     ...assignment.repos.map((repo) => configEdge("repo", `assignment:${assignment.name}`, `repo:${repo}`)),
   ].filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+}
+
+function pipelineEdges(pipeline, ids) {
+  return (pipeline.roles ?? [])
+    .map((role) => configEdge("role", `pipeline:${pipeline.name}`, `role:${role}`))
+    .filter((edge) => ids.has(edge.source) && ids.has(edge.target));
 }
 
 function configEdge(relation, source, target) {
