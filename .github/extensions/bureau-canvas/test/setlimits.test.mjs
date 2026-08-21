@@ -127,11 +127,21 @@ test("an unchanged block rewrites nothing", async () => {
   assert.deepEqual(changedLines(text), []);
 });
 
-test("the schema refuses a zero, which would block every run", () => {
+test("the schema enforces positive counts, hours, and cost", () => {
   const schema = action("set_limits").inputSchema;
+  const properties = schema.properties.limits.properties;
 
   assert.deepEqual(
-    Object.values(schema.properties.limits.properties).map((entry) => entry.minimum),
-    [1, 1, 1, 1, 1, 1],
+    {
+      counts: ["max_concurrent", "max_runs_per_hour", "max_runs_per_day", "max_open_prs"]
+        .map((key) => [properties[key].type[0], properties[key].minimum, properties[key].maximum]),
+      cost: [properties.max_cost_per_day_usd.type[0], properties.max_cost_per_day_usd.exclusiveMinimum],
+      hours: [properties.max_run_hours.type[0], properties.max_run_hours.minimum],
+    },
+    {
+      counts: Array(4).fill(["integer", 1, 4_294_967_295]),
+      cost: ["number", 0],
+      hours: ["integer", 1],
+    },
   );
 });

@@ -223,11 +223,6 @@ export function withAssignmentRepos(text, path, repos) {
   return withAssignmentValue(text, path, "repos", [...repos]);
 }
 
-/** Points an assignment at a role by name. */
-export function withAssignmentRole(text, path, role) {
-  return withAssignmentValue(text, path, "role", role);
-}
-
 /**
  * Replaces an assignment's `limits` block.
  *
@@ -237,6 +232,27 @@ export function withAssignmentRole(text, path, role) {
  */
 export function withAssignmentLimits(text, path, limits) {
   return withAssignmentValue(text, path, "limits", { ...limits });
+}
+
+/** Replaces the forge-native work-source block on an assignment. */
+export function withAssignmentWork(text, path, work) {
+  return withAssignmentValue(text, path, "work", { ...work });
+}
+
+/** Replaces the runtime-facing work filter, approval gate, and branch prefix. */
+export function withAssignmentRuntime(text, path, fields) {
+  const parsed = parse(text, { path });
+  const view = structuredClone(parsed.view);
+  if (view.kind === "pipeline") {
+    throw new Error(`${path} is a pipeline, not an assignment`);
+  }
+  view.value.work = {
+    ...view.value.work,
+    filter: fields.filter,
+    approval_label: fields.approval_label,
+  };
+  view.value.branch_prefix = fields.branch_prefix;
+  return render(view, parsed.doc, parsed.style);
 }
 
 function withAssignmentValue(text, path, key, value) {

@@ -57,6 +57,24 @@
         "displayName": "Sheet White",
         "canonical": "#ffffff",
         "tonalRamp": ["#57606a", "#8c959f", "#b1bac4", "#d0d7de", "#eaeef2", "#f6f8fa", "#fbfcfd", "#ffffff"]
+      },
+      "surface-subtle": {
+        "role": "neutral",
+        "displayName": "Control Surface",
+        "canonical": "#f6f8fa",
+        "tonalRamp": ["#d0d7de", "#eaeef2", "#f6f8fa", "#ffffff"]
+      },
+      "surface-hover": {
+        "role": "neutral",
+        "displayName": "Control Hover",
+        "canonical": "#eaeef2",
+        "tonalRamp": ["#b1bac4", "#d0d7de", "#eaeef2", "#f6f8fa"]
+      },
+      "surface-active": {
+        "role": "neutral",
+        "displayName": "Control Active",
+        "canonical": "#d0d7de",
+        "tonalRamp": ["#8c959f", "#b1bac4", "#d0d7de", "#eaeef2"]
       }
     },
     "shadows": [
@@ -66,7 +84,9 @@
     "motion": [
       { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default easing for state transitions; never bounce or elastic." }
     ],
-    "breakpoints": []
+    "breakpoints": [
+      { "name": "compact", "maxWidth": "56rem", "purpose": "Collapse dense toolbars and two-column control rows." }
+    ]
   },
   "components": [
     {

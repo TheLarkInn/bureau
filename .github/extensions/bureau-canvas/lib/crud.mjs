@@ -8,13 +8,12 @@
 // reloading cannot undo. Legality is still `bureau validate`'s call; this
 // module reports consequences and produces file text.
 
-import { choicesFor, createText, renameReference, withAssignmentLimits, withAssignmentRepos, withAssignmentRole, withDeclaredName, withRepo, withoutRepo } from "./entities.mjs";
-import { deleteFile, listNames, pathFor } from "./files.mjs";
+import { createText, renameReference, repoNames, withAssignmentLimits, withAssignmentRepos, withAssignmentRuntime, withAssignmentWork, withDeclaredName, withRepo, withoutRepo } from "./entities.mjs";
+import { resolve } from "node:path";
+import { createFile, deleteFile, listNames, pathFor } from "./files.mjs";
 import { blocksDelete, referrers } from "./preflight.mjs";
 
 const KIND_ENUM = ["repo", "role", "assignment", "pipeline"];
-/** Sourced from the entity descriptors, which mirror the Rust enums. */
-const PERMISSION_ENUM = choicesFor("role", "permissions") ?? [];
 
 /**
  * The whole ordered list in one call, plus an optional registry entry to
@@ -38,6 +37,19 @@ const LIMIT_KEYS = [
   "max_concurrent", "max_runs_per_hour", "max_runs_per_day",
   "max_open_prs", "max_cost_per_day_usd", "max_run_hours",
 ];
+const U32_LIMITS = new Set([
+  "max_concurrent", "max_runs_per_hour", "max_runs_per_day", "max_open_prs",
+]);
+const LIMIT_SCHEMAS = Object.fromEntries(LIMIT_KEYS.map((key) => {
+  if (key === "max_cost_per_day_usd") {
+    return [key, { type: ["number", "null"], exclusiveMinimum: 0 }];
+  }
+  return [key, {
+    type: ["integer", "null"],
+    minimum: 1,
+    maximum: U32_LIMITS.has(key) ? 4_294_967_295 : Number.MAX_SAFE_INTEGER,
+  }];
+}));
 
 const SET_LIMITS_SCHEMA = {
   type: "object",
@@ -48,33 +60,51 @@ const SET_LIMITS_SCHEMA = {
     limits: {
       type: "object",
       additionalProperties: false,
-      properties: Object.fromEntries(LIMIT_KEYS.map((key) => [key, { type: ["number", "null"], minimum: 1 }])),
+      properties: LIMIT_SCHEMAS,
     },
   },
   required: ["assignment", "limits"],
 };
 
-const SET_ROLE_SCHEMA = {
+const SET_WORK_SOURCE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
     dir: { type: "string" },
     assignment: { type: "string" },
-    role: { type: "string", description: "The role the assignment names." },
-    create: {
+    work: {
       type: "object",
       additionalProperties: false,
-      description: "Fields for a new roles/<role>.yaml written in the same plan.",
       properties: {
-        agent: { type: "string", description: "A plugin invocation like /plugin:agent, or a path to an agent .md." },
-        adapter: { type: "string", enum: ["copilot", "claude", "fake"] },
-        permissions: { type: "array", items: { type: "string", enum: PERMISSION_ENUM } },
-        min_trust: { type: "string", enum: ["untrusted", "derived", "maintainer", "trusted"] },
+        forge: { type: "string", enum: ["github", "ado"] },
+        source: { type: "string" },
+        filter: { type: "string" },
+        approval_label: { type: ["string", "null"] },
       },
-      required: ["agent", "adapter", "permissions", "min_trust"],
+      required: ["forge", "source", "filter", "approval_label"],
     },
   },
-  required: ["assignment", "role"],
+  required: ["assignment", "work"],
+};
+
+const SET_ASSIGNMENT_RUNTIME_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    dir: { type: "string" },
+    assignment: { type: "string" },
+    fields: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        filter: { type: "string", minLength: 1 },
+        approval_label: { type: ["string", "null"] },
+        branch_prefix: { type: "string", minLength: 1 },
+      },
+      required: ["filter", "approval_label", "branch_prefix"],
+    },
+  },
+  required: ["assignment", "fields"],
 };
 
 const SET_REPOS_SCHEMA = {
@@ -164,16 +194,22 @@ export const crudActions = [
     handler: setRepos,
   },
   {
-    name: "set_role",
-    description: "Plan the role an assignment names, optionally creating that role in the same plan.",
-    inputSchema: SET_ROLE_SCHEMA,
-    handler: setRole,
-  },
-  {
     name: "set_limits",
     description: "Plan an assignment's limits block. A null disables one limit, which means unlimited.",
     inputSchema: SET_LIMITS_SCHEMA,
     handler: setLimits,
+  },
+  {
+    name: "plan_work_source",
+    description: "Plan an assignment's forge-native work-source block.",
+    inputSchema: SET_WORK_SOURCE_SCHEMA,
+    handler: setWorkSourcePlan,
+  },
+  {
+    name: "set_assignment_runtime",
+    description: "Plan an assignment's filter, approval label, and branch prefix.",
+    inputSchema: SET_ASSIGNMENT_RUNTIME_SCHEMA,
+    handler: setAssignmentRuntime,
   },
 ];
 
@@ -182,25 +218,47 @@ export function emptyPlan() {
 }
 
 export async function create(ctx, deps = {}) {
-  const { dir, plan } = await context(ctx, deps);
+  const { dir, plan, payload } = await context(ctx, deps);
   const { kind, name, fields = {} } = ctx.input;
+  const collection = kind === "repo" ? payload?.config?.repos : payload?.config?.[`${kind}s`];
+  if (Object.hasOwn(collection ?? {}, name)) {
+    throw new Error(`\`${name}\` already exists; choose another name`);
+  }
+  const target = pathFor(dir, kind, name);
+  const pending = plan.writes.findLast((write) => write.path === target);
+  if (kind === "repo" && pending && repoNames(pending.text).includes(name)) {
+    throw new Error(`\`${name}\` already has a pending create`);
+  }
+  if (kind !== "repo" && pending) {
+    throw new Error(`\`${name}\` already has a pending create`);
+  }
   const next = kind === "repo"
-    ? { ...plan, writes: [...plan.writes, await repoWrite(dir, plan, name, fields)] }
-    : { ...plan, writes: [...plan.writes, { path: pathFor(dir, kind, name), text: createText(kind, name, fields) }] };
+    ? withWrites(plan, [await repoWrite(dir, plan, name, fields)])
+    : { ...plan, writes: [...plan.writes, { path: target, text: createText(kind, name, fields), create: true }] };
   return record(ctx, deps, next, { action: "create", kind, name });
 }
 
 export async function remove(ctx, deps = {}) {
   const { dir, plan, payload } = await context(ctx, deps);
   const { kind, name, pipeline, confirm } = ctx.input;
-  const found = referrers(payload, kind, name, { pipeline });
+  const found = referrers(payload, kind, name, { pipeline })
+    .filter((item) => !coveredByRemoval(item, plan.removals));
   if (!confirm) {
     return { action: "delete", kind, name, confirmed: false, referrers: found, blocking: blocksDelete(found) };
   }
+  if (blocksDelete(found)) {
+    throw new Error(`cannot delete \`${name}\` while ${found.length} reference${found.length === 1 ? "" : "s"} still point at it`);
+  }
   const next = kind === "repo"
-    ? { ...plan, writes: [...plan.writes, await repoWrite(dir, plan, name, null)] }
+    ? withWrites(plan, [await repoWrite(dir, plan, name, null)])
     : { ...plan, removals: [...plan.removals, { path: pathFor(dir, kind, name), kind, name }] };
   return record(ctx, deps, next, { action: "delete", kind, name, confirmed: true, referrers: found });
+}
+
+function coveredByRemoval(referrer, removals) {
+  return removals.some((entry) =>
+    (entry.kind === referrer.kind && entry.name === referrer.name)
+    || (referrer.kind === "step" && entry.kind === "pipeline" && referrer.name.startsWith(`${entry.name}/`)));
 }
 
 export async function rename(ctx, deps = {}) {
@@ -228,37 +286,31 @@ export async function setLimits(ctx, deps = {}) {
   const { dir, plan } = await context(ctx, deps);
   const { assignment, limits } = ctx.input;
   const path = pathFor(dir, "assignment", assignment);
-  const text = withAssignmentLimits(await read(deps, path), path, fullLimits(limits));
-  const next = { ...plan, writes: [...plan.writes, { path, text }] };
+  const text = withAssignmentLimits(await plannedText(deps, plan, path), path, fullLimits(limits));
+  const next = withWrites(plan, [{ path, text }]);
   return record(ctx, deps, next, { action: "set_limits", assignment, limits: fullLimits(limits) });
+}
+
+export async function setWorkSourcePlan(ctx, deps = {}) {
+  const { dir, plan } = await context(ctx, deps);
+  const { assignment, work } = ctx.input;
+  const path = pathFor(dir, "assignment", assignment);
+  const text = withAssignmentWork(await plannedText(deps, plan, path), path, work);
+  const next = withWrites(plan, [{ path, text }]);
+  return record(ctx, deps, next, { action: "plan_work_source", assignment, work });
+}
+
+export async function setAssignmentRuntime(ctx, deps = {}) {
+  const { dir, plan } = await context(ctx, deps);
+  const { assignment, fields } = ctx.input;
+  const path = pathFor(dir, "assignment", assignment);
+  const text = withAssignmentRuntime(await plannedText(deps, plan, path), path, fields);
+  const next = withWrites(plan, [{ path, text }]);
+  return record(ctx, deps, next, { action: "set_assignment_runtime", assignment, fields });
 }
 
 function fullLimits(limits) {
   return Object.fromEntries(LIMIT_KEYS.map((key) => [key, limits[key] ?? null]));
-}
-
-/**
- * The role an assignment names, and the role file itself when one is being
- * created, in a single plan. Creating never overwrites an existing role: it
- * is shared, so silently changing its grants would change what every
- * pipeline step naming it may do.
- */
-export async function setRole(ctx, deps = {}) {
-  const { dir, plan, payload } = await context(ctx, deps);
-  const { assignment, role, create } = ctx.input;
-  const created = create ? [roleWrite(dir, payload, role, create)] : [];
-  const path = pathFor(dir, "assignment", assignment);
-  const text = withAssignmentRole(await read(deps, path), path, role);
-  const next = { ...plan, writes: [...plan.writes, ...created, { path, text }] };
-  return record(ctx, deps, next, { action: "set_role", assignment, role, created: Boolean(create) });
-}
-
-function roleWrite(dir, payload, role, fields) {
-  const known = payload?.config?.roles ?? {};
-  if (Object.hasOwn(known, role)) {
-    throw new Error(`\`${role}\` already exists; choose it instead of creating it`);
-  }
-  return { path: pathFor(dir, "role", role), text: createText("role", role, fields) };
 }
 
 /**
@@ -270,11 +322,36 @@ function roleWrite(dir, payload, role, fields) {
 export async function setRepos(ctx, deps = {}) {
   const { dir, plan, payload } = await context(ctx, deps);
   const { assignment, repos, register } = ctx.input;
+  assertRegisterAvailable(payload, register);
+  assertLandingRepo(payload, repos, register);
   const registered = register ? [await registerWrite(dir, plan, payload, register)] : [];
   const path = pathFor(dir, "assignment", assignment);
-  const text = withAssignmentRepos(await read(deps, path), path, repos);
-  const next = { ...plan, writes: [...plan.writes, ...registered, { path, text }] };
+  const text = withAssignmentRepos(await plannedText(deps, plan, path), path, repos);
+  const next = withWrites(plan, [...registered, { path, text }]);
   return record(ctx, deps, next, { action: "set_repos", assignment, repos, registered: Boolean(register) });
+}
+
+function assertRegisterAvailable(payload, register) {
+  if (register && Object.hasOwn(payload?.config?.repos ?? {}, register.name)) {
+    throw new Error(`\`${register.name}\` is already in the registry; rename this one or use the existing entry`);
+  }
+}
+
+function assertLandingRepo(payload, repos, register) {
+  if (repos.length === 0) {
+    throw new Error("an assignment needs at least one repo; the first is where the branch lands");
+  }
+  const known = { ...(payload?.config?.repos ?? {}) };
+  if (register) {
+    known[register.name] = register;
+  }
+  const primary = known[repos[0]];
+  if (!primary) {
+    throw new Error(`primary repo \`${repos[0]}\` is not in repos.yaml`);
+  }
+  if (!["pr", "push"].includes(primary.access)) {
+    throw new Error(`primary repo \`${repos[0]}\` has \`${primary.access}\` access; the branch needs pr or push access`);
+  }
 }
 
 async function registerWrite(dir, plan, payload, register) {
@@ -327,12 +404,40 @@ async function read(deps, path) {
   return readFile(path, "utf8");
 }
 
+async function plannedText(deps, plan, path) {
+  return plan.writes.findLast((write) => write.path === path)?.text ?? read(deps, path);
+}
+
+function withWrites(plan, writes) {
+  const replaced = new Set(writes.map((write) => write.path));
+  const next = writes.map((write) => {
+    const existing = plan.writes.findLast((candidate) => candidate.path === write.path);
+    return existing?.create ? { ...existing, ...write, create: true } : write;
+  });
+  return { ...plan, writes: [...plan.writes.filter((write) => !replaced.has(write.path)), ...next] };
+}
+
 /** Applies a plan to disk. Only a save calls this. */
 export async function applyPlan(dir, plan, deps = {}) {
-  const { writeFile } = await import("node:fs/promises");
-  const write = deps.writeText ?? writeFile;
   for (const entry of plan.writes) {
-    await write(entry.path, entry.text);
+    if (entry.create) {
+      await createFile(dir, entry.kind ?? kindForPath(dir, entry.path), entry.name ?? nameForPath(entry.path), entry.text);
+    } else {
+      const { writeFile } = await import("node:fs/promises");
+      const write = deps.writeText ?? writeFile;
+      await write(entry.path, entry.text);
+    }
+  }
+
+  function kindForPath(dir, path) {
+    const relative = path.slice(resolve(dir).length + 1).replaceAll("\\", "/");
+    return relative.startsWith("roles/") ? "role"
+      : relative.startsWith("assignments/") ? "assignment"
+        : relative.startsWith("pipelines/") ? "pipeline" : "repo";
+  }
+
+  function nameForPath(path) {
+    return path.replaceAll("\\", "/").split("/").at(-1).replace(/\.(ya?ml)$/u, "");
   }
   for (const entry of plan.removals) {
     await deleteFile(dir, entry.kind, entry.name);

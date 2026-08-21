@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { arrangementFor, readLayout, savePipeline, writeLayout } from "../lib/pipeline.mjs";
+import { parse } from "../lib/codec.mjs";
 import { editable, setEdge } from "../lib/edit.mjs";
 import { pipelineView } from "../lib/view.mjs";
 
@@ -78,6 +79,29 @@ test("save writes the rendered pipeline when validation is clean", async () => {
   assert.deepEqual(
     { saved: result.saved, findings: result.findings.length, rewritten: files.get(pipelinePath()).includes("on_failure: abort") },
     { saved: true, findings: 0, rewritten: true },
+  );
+});
+
+test("a no-op save preserves explicit null fields byte for byte", async () => {
+  const { files, deps } = await memoryFs({ validate: () => Promise.resolve(cleanValidation()) });
+  const before = files.get(pipelinePath());
+
+  const result = await savePipeline(inputFor(editable(await fixtureView())), deps);
+
+  assert.deepEqual({ saved: result.saved, unchanged: files.get(pipelinePath()) === before }, { saved: true, unchanged: true });
+});
+
+test("save persists an edit to an existing step's data inputs", async () => {
+  const { files, deps } = await memoryFs({ validate: () => Promise.resolve(cleanValidation()) });
+  const view = editable(await fixtureView());
+  view.steps.find((step) => step.name === "review").fields.inputsFrom = ["implement"];
+
+  const result = await savePipeline(inputFor(view), deps);
+  const saved = parse(files.get(pipelinePath()), { path: pipelinePath() }).view;
+
+  assert.deepEqual(
+    { saved: result.saved, inputs: saved.steps.find((step) => step.name === "review").fields.inputsFrom },
+    { saved: true, inputs: ["implement"] },
   );
 });
 

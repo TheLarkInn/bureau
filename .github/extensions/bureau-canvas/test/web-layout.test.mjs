@@ -20,13 +20,17 @@ test("layout is deterministic byte for byte", async () => {
   assert.equal(JSON.stringify(layoutPipeline(pipeline)), JSON.stringify(layoutPipeline(pipeline)));
 });
 
-test("a forward success edge places the target one layer below", async () => {
+test("a forward success edge places the target one layer to the right", async () => {
   const layout = layoutPipeline(await view(committedUrl, "agent-eligible-pipeline"));
   const byId = new Map(layout.nodes.map((node) => [node.id, node]));
 
   assert.deepEqual(
-    [byId.get("implement").y, byId.get("verify").y, byId.get("review").y],
-    [0, 190, 380],
+    [
+      [byId.get("implement").x, byId.get("implement").y],
+      [byId.get("verify").x, byId.get("verify").y],
+      [byId.get("review").x, byId.get("review").y],
+    ],
+    [[0, 0], [300, 0], [600, 0]],
   );
 });
 
@@ -38,8 +42,15 @@ test("terminals sit on a rail to the right of every step", async () => {
 
   assert.deepEqual(
     { terminals: terminals.length, allRight: terminals.every((node) => node.x > right) },
-    { terminals: 3, allRight: true },
+    { terminals: 2, allRight: true },
   );
+});
+
+test("terminal cards never share a position", async () => {
+  const layout = layoutPipeline(await view(referenceUrl, "fix-failing-test"));
+  const positions = layout.nodes.filter((node) => !node.step).map((terminal) => `${terminal.x}:${terminal.y}`);
+
+  assert.equal(new Set(positions).size, positions.length);
 });
 
 test("edges pass through unchanged for the editor to route", async () => {

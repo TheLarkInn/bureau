@@ -12,7 +12,7 @@ async function fixture() {
   return JSON.parse(await readFile(committedUrl, "utf8"));
 }
 
-test("relation graph links assignments to pipeline, role, and repos", async () => {
+test("relation graph links assignments to pipeline and repos, then pipeline to effective roles", async () => {
   const graph = relationView(await fixture());
 
   assert.deepEqual(
@@ -25,7 +25,6 @@ test("relation graph links assignments to pipeline, role, and repos", async () =
       edges: [
         "pipeline:assignment:agent-eligible->pipeline:agent-eligible-pipeline",
         "repo:assignment:agent-eligible->repo:bureau",
-        "role:assignment:agent-eligible->role:implementer",
         "role:pipeline:agent-eligible-pipeline->role:implementer",
         "role:pipeline:agent-eligible-pipeline->role:reviewer",
       ],

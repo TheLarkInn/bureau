@@ -236,7 +236,7 @@ async function runSuite(page) {
   console.log("bureau-canvas e2e: config view");
   await withInstance("config", {}, {}, async (instance) => {
     await navigate(page, instance.opened.url);
-    await renderAndScreenshot(page, ".card", "config cards", "config.png");
+    await renderAndScreenshot(page, ".assignment-card", "assignment cards", "config.png");
     await checkConfigView(page, instance.opened.url);
   });
   console.log("bureau-canvas e2e: committed pipeline by input");
@@ -278,8 +278,10 @@ async function runCrudSuite(page) {
     // accepted by `bureau validate`. The rest of the suite stays hermetic.
     await withInstance("crud", { dir }, { findingsOptions: {} }, async (instance) => {
       await navigate(page, instance.opened.url);
-      await record("crud create controls are present", async () => {
-        await waitForRender(page, "[data-testid='create-bar']", "create bar");
+      await record("crud create action is present without an always-open form", async () => {
+        await waitForRender(page, ".create-toolbar", "create action");
+        const form = await evaluate(page, "document.querySelectorAll(\"[data-testid='create-bar']\").length");
+        assert(form === 0, `expected collapsed create form, saw ${form}`);
       });
       await buildThroughUi(instance.opened.url);
       await navigate(page, instance.opened.url);
@@ -298,7 +300,7 @@ async function runCrudSuite(page) {
         assert(state.validation.errors.length === 0, `expected no errors, saw ${state.validation.errors.length}`);
       });
       await navigate(page, instance.opened.url);
-      await renderAndScreenshot(page, ".card", "built config", "crud-built.png");
+      await renderAndScreenshot(page, ".assignment-card", "built config", "crud-built.png");
       await record("crud delete asks before acting and names referrers", async () => {
         const asked = await postJson(instance.opened.url, { kind: "delete", input: { dir, kind: "role", name: "implementer" } });
         assert(asked.result.confirmed === false, "delete acted without confirmation");
@@ -408,7 +410,7 @@ async function checkConfigView(page, url) {
   });
   await record("opening the relation graph shows a card per config item", async () => {
     await evaluate(page, `document.querySelector(".relation-section summary").click()`);
-    await waitForRender(page, ".relation-section .card", "relation graph cards");
+    await waitForRender(page, ".relation-section .relation-card", "relation graph cards");
     const counts = await evaluate(page, relationCountsExpression());
     assert.deepEqual(counts, {
       assignments: state.config.view.assignments.length,
@@ -423,11 +425,9 @@ async function checkConfigView(page, url) {
   });
 }
 
-/** A long `verify` is the real case: it must be readable, not just ellipsised. */
+/** Assignment expansion exposes operational state, not scaffold-only fields. */
 async function checkDetailExpansion(page) {
   const payload = JSON.parse(await readFile(COMMITTED_FIXTURE, "utf8"));
-  payload.config.assignments["agent-eligible"].verify =
-    "cargo test --offline -- --skip timeout_kills_the_whole_process_group --nocapture";
   await withInstance("detail", {}, { payload }, async (instance) => {
     await navigate(page, instance.opened.url);
     await waitForRender(page, ".assignment-card", "assignment cards");
@@ -437,16 +437,22 @@ async function checkDetailExpansion(page) {
     });
     await evaluate(page, `document.querySelector("[data-ref='assignment:agent-eligible'] .assignment-head").click()`);
     const after = await evaluate(page, assignmentDetailExpression());
-    await record("clicking expands the assignment to show its full verify command", () => {
+    await record("clicking expands the assignment without scaffold-only role or verify rows", () => {
       assert.deepEqual(
-        { expanded: after.expanded, hasDetail: after.hasDetail, hasFullVerify: after.verifyText.includes("--nocapture") },
-        { expanded: true, hasDetail: true, hasFullVerify: true },
+        {
+          expanded: after.expanded,
+          hasDetail: after.hasDetail,
+          hasPipeline: after.labels.includes("pipeline"),
+          hasRole: after.labels.includes("role"),
+          hasVerify: after.labels.includes("verify"),
+        },
+        { expanded: true, hasDetail: true, hasPipeline: true, hasRole: false, hasVerify: false },
       );
     });
   });
 }
 
-/** The collapsed/expanded state of one assignment card and its verify text. */
+/** The collapsed/expanded state and visible field labels. */
 function assignmentDetailExpression() {
   return `(() => {
     const card = document.querySelector("[data-ref='assignment:agent-eligible']");
@@ -456,7 +462,8 @@ function assignmentDetailExpression() {
     return {
       expanded: head?.getAttribute("aria-expanded") === "true",
       hasDetail: Boolean(detail),
-      verifyText: detail?.textContent ?? "",
+      labels: [...(detail?.querySelectorAll(":scope > .detail-row > .detail-label") ?? [])]
+        .map((label) => label.textContent.trim()),
     };
   })()`;
 }
@@ -469,10 +476,10 @@ function assignmentCountsExpression() {
 
 function relationCountsExpression() {
   return `({
-    assignments: document.querySelectorAll('.relation-section .card--assignment').length,
-    roles: document.querySelectorAll('.relation-section .card--role').length,
-    repos: document.querySelectorAll('.relation-section .card--repo').length,
-    pipelines: document.querySelectorAll('.relation-section .card--pipeline').length,
+    assignments: document.querySelectorAll('.relation-section .relation-card--assignment').length,
+    roles: document.querySelectorAll('.relation-section .relation-card--role').length,
+    repos: document.querySelectorAll('.relation-section .relation-card--repo').length,
+    pipelines: document.querySelectorAll('.relation-section .relation-card--pipeline').length,
   })`;
 }
 
@@ -482,7 +489,7 @@ function clippedCardsExpression() {
     if (!surface) { return ["missing .config-flow"]; }
     const frame = surface.getBoundingClientRect();
     const slack = 1;
-    return [...document.querySelectorAll(".relation-section .card")]
+    return [...document.querySelectorAll(".relation-section .relation-card")]
       .filter((card) => {
         const box = card.getBoundingClientRect();
         return box.left < frame.left - slack || box.right > frame.right + slack

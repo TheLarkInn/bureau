@@ -66,8 +66,8 @@ test.describe("limits field", () => {
     await card.page.locator(".limits-value").click();
     await card.page.locator(".limit-row").first().locator("input").fill("");
 
-    await expect(card.page.locator(".limit-input--invalid")).toHaveCount(1);
-    await expect(card.page.locator(".note--err")).toContainText("needs a whole number of at least 1");
+    await expect(card.page.locator(".form-control--invalid")).toHaveCount(1);
+    await expect(card.page.locator(".note--err")).toContainText("need whole numbers of at least 1");
     await expect(card.page.getByRole("button", { name: "Save limits" })).toBeDisabled();
   });
 

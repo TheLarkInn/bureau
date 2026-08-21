@@ -1,9 +1,10 @@
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actions } from "./lib/actions.mjs";
+import { parseValue } from "./lib/codec.mjs";
 import { applyPlan, create, crudActions, emptyPlan, remove as removeEntity, rename } from "./lib/crud.mjs";
 import { findings } from "./lib/findings.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
@@ -53,14 +54,14 @@ const plans = new Map();
  * Actions receive a relative `dir` default, so resolve it the same way
  * `resolveInput` does — against the repository root, never the process cwd.
  */
-function actionDependencies() {
+function actionDependencies(options = {}) {
     return {
         getSubject: (instanceId) => subjects.get(instanceId),
         setSubject: (instanceId, subject) => subjects.set(instanceId, subject),
         getPlan: (instanceId) => plans.get(instanceId),
         setPlan: (instanceId, plan) => plans.set(instanceId, plan),
         clearPlan: (instanceId) => plans.delete(instanceId),
-        loadFindings: (dir) => loadConfigPayload(configDir(dir), {}),
+        loadFindings: (dir) => loadConfigPayload(configDir(dir), options),
         publish: (instanceId, event, payload) => publishEvent(instanceId, event, payload),
     };
 }
@@ -155,10 +156,11 @@ export function createBureauCanvasOptions(getWorkspacePath = () => process.cwd()
 
 export async function buildState(input, options = {}) {
     const result = await loadConfigPayload(input.dir, options);
-    const payload = payloadFromResult(result);
+    const config = configWithPlan(result.config, input.instanceId, input.dir);
+    const payload = payloadFromResult({ ...result, config });
     const view = configView(payload);
     const layouts = await loadLayoutSidecar(input.dir, options);
-    const pipelines = pipelineStates(payload, result.config, layouts);
+    const pipelines = pipelineStates(payload, config, layouts);
     const state = {
         ...input,
         status: statusFor(result),
@@ -172,6 +174,40 @@ export async function buildState(input, options = {}) {
         plan: planSummary(input.instanceId),
     };
     return { ...state, selectedPipeline: selectedPipeline(state, input.pipeline) };
+}
+
+function configWithPlan(config, instanceId, dir) {
+    const plan = plans.get(instanceId);
+    const next = structuredClone(config ?? { repos: {}, roles: {}, assignments: {}, pipelines: {} });
+    if (!plan) {
+        return next;
+    }
+    for (const write of plan.writes) {
+        overlayWrite(next, dir, write);
+    }
+    for (const removal of plan.removals) {
+        overlayRemoval(next, removal);
+    }
+    return next;
+}
+
+function overlayWrite(config, dir, write) {
+    const path = relative(resolve(dir), resolve(write.path)).replaceAll("\\", "/");
+    const value = parseValue(write.text);
+    if (path === "repos.yaml") {
+        config.repos = value.repos ?? {};
+        return;
+    }
+    const match = /^(roles|assignments|pipelines)\/[^/]+\.ya?ml$/u.exec(path);
+    if (match && typeof value.name === "string") {
+        config[match[1]] = config[match[1]] ?? {};
+        config[match[1]][value.name] = value;
+    }
+}
+
+function overlayRemoval(config, removal) {
+    const collection = removal.kind === "repo" ? "repos" : `${removal.kind}s`;
+    delete config[collection]?.[removal.name];
 }
 
 /** The editor's node positions; a missing or unreadable sidecar means none. */
@@ -496,16 +532,16 @@ async function handleIntent(entry, request, response) {
         return;
     }
     if (intent?.kind === "set-work-source") {
-        await runWorkSourceIntent(entry, intent, response);
+        await runPlanAction(entry, intent, response, "plan_work_source");
+        return;
+    }
+    if (intent?.kind === "set-assignment-runtime") {
+        await runPlanAction(entry, intent, response, "set_assignment_runtime");
         return;
     }
     if (intent?.kind === "resolve-repo") {
         // A preview only: resolving reads the URL and changes nothing.
         sendJson(response, { ok: true, resolved: resolveRepoUrl(intent.url) }, false);
-        return;
-    }
-    if (intent?.kind === "set-role") {
-        await runPlanAction(entry, intent, response, "set_role");
         return;
     }
     if (intent?.kind === "set-repos") {
@@ -574,32 +610,11 @@ function requestPath(request) {
 }
 
 /**
- * Sets one assignment's work source and writes it. `set_work_source`
- * validates the draft before storing it, so a bad derivation throws here
- * rather than reaching the file.
- */
-async function runWorkSourceIntent(entry, intent, response) {
-    const deps = actionDependencies();
-    const input = { dir: entry.state.dir, ...intent.input };
-    const ctx = { instanceId: entry.state.instanceId, input };
-    const setAction = actions.find((candidate) => candidate.name === "set_work_source");
-    const saveAction = actions.find((candidate) => candidate.name === "save");
-    try {
-        await setAction.handler(ctx, deps);
-        const result = await saveAction.handler({ instanceId: ctx.instanceId, input: { dir: input.dir, assignment: input.assignment } }, deps);
-        await refreshState(entry);
-        sendJson(response, { ok: true, result, state: entry.state }, false);
-    } catch (error) {
-        sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);
-    }
-}
-
-/**
  * Runs one plan-producing crud verb and republishes state, so the pending
  * writes appear in the draft bar before anything reaches disk.
  */
 async function runPlanAction(entry, intent, response, name) {
-    const deps = actionDependencies();
+    const deps = actionDependencies(entry.options ?? {});
     const ctx = { instanceId: entry.state.instanceId, input: { dir: entry.state.dir, ...intent.input } };
     const verb = crudActions.find((candidate) => candidate.name === name);
     try {
@@ -613,7 +628,7 @@ async function runPlanAction(entry, intent, response, name) {
 
 /** Runs one CRUD verb and republishes state so a pending plan is visible. */
 async function runCrudIntent(entry, intent, response) {
-    const deps = actionDependencies();
+    const deps = actionDependencies(entry.options ?? {});
     const ctx = { instanceId: entry.state.instanceId, input: { dir: entry.state.dir, ...intent.input } };
     try {
         const result = await CRUD_INTENTS[intent.kind](ctx, deps);

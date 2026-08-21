@@ -192,14 +192,14 @@ test("committed pipeline view keeps absent branches absent", async () => {
         steps: pipeline.layout.steps.length,
         reachedTerminals: pipeline.view.terminals.filter((terminal) => pipeline.layout.edges.some((edge) => edge.target === terminal.id)).length,
         verifyOutcomes: verifyEdges.map((edge) => edge.outcome).sort(),
-        markup: ["flow-edge--data", "flow-edge--observes", "back-button", "terminal-pill"].map((text) => page.includes(text)),
+        markup: ["flow-edge--data", "flow-edge--observes", "terminal-pill"].map((text) => page.includes(text)),
       },
       {
         selected: "agent-eligible-pipeline",
         steps: 3,
         reachedTerminals: 2,
         verifyOutcomes: ["failure", "success"],
-        markup: [true, true, true, true],
+        markup: [true, true, true],
       },
     );
   } finally {

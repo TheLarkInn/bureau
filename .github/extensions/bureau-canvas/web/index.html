@@ -6,6 +6,8 @@
     <title>Bureau</title>
     <!-- Module URLs are pinned here; keep the stylesheet version below in lockstep because CSS links cannot use import-map aliases. -->
     <link rel="stylesheet" href="./vendor/xyflow-react.css" />
+    <link rel="stylesheet" href="./controls.css" />
+    <link rel="stylesheet" href="./relation.css" />
     <script type="importmap">
       {
         "imports": {
@@ -18,6 +20,11 @@
       }
     </script>
     <style>
+      .limit-key {
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
+
       :root {
         color-scheme: light dark;
         --space-1: 0.25rem;
@@ -45,6 +52,11 @@
         --relation-observes: var(--true-color-purple, #8250df);
         --finding-validation: var(--true-color-red-muted, #ffebe9);
         --finding-advisory: var(--true-color-yellow-muted, #fff8c5);
+        /* Control surfaces. A neutral step off the sheet, for the resting
+           fill of a default button and the hover of a quiet one. */
+        --surface-subtle: #f6f8fa;
+        --surface-hover: #eaeef2;
+        --surface-active: #d0d7de;
       }
 
       body {
@@ -115,6 +127,13 @@
         text-align: right;
         color: var(--text-color-muted, #656d76);
       }
+      .config-path {
+        overflow: hidden;
+        font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+        font-size: var(--text-code-inline, 12px);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
 
       .findings, .chips, .step-list, .legend {
         display: flex;
@@ -129,7 +148,7 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .create-bar, .draft-bar {
+      .draft-bar {
         margin-left: var(--space-5);
         margin-right: var(--space-5);
       }
@@ -217,7 +236,7 @@
       }
       /* Same surface as the pipeline view: pan, zoom, fit, minimap. */
       .config-flow {
-        min-height: 44rem;
+        height: 44rem;
         border: 1px solid var(--border-color-default, #d0d7de);
         border-radius: var(--radius);
         background: var(--background-color-default, #ffffff);
@@ -242,56 +261,52 @@
         font-family: var(--font-mono, monospace);
         font-size: var(--text-code-inline, 12px);
       }
-      .draft-actions button,
-      .create-bar button,
-      .card-action,
-      .preflight button {
-        padding: 5px 12px;
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #fff);
-        color: var(--text-color-default, #1f2328);
-        font: inherit;
-        font-size: var(--text-code-inline, 12px);
-        line-height: 1.4;
-        cursor: pointer;
-      }
-      .draft-actions button:hover,
-      .create-bar button:hover,
-      .card-action:hover,
-      .preflight button:hover {
-        border-color: var(--text-color-muted, #656d76);
-      }
-      .draft-actions button + button,
-      .preflight button + button {
-        margin-left: 6px;
+      /* Layout only: appearance comes from `.btn` and `.form-control`. */
+      .draft-actions {
+        display: flex;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+        align-items: center;
       }
       .card-action {
         align-self: flex-end;
         flex: 0 0 auto;
-        margin: 6px 0 0;
-        color: var(--text-color-muted, #656d76);
+        margin: var(--space-2) 0 0;
       }
-      .create-bar {
+      .create-toolbar {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin: 0 0 12px;
+        justify-content: flex-end;
       }
-      .create-bar select,
-      .create-bar input {
-        height: 30px;
-        padding: 4px 8px;
+      .create-bar {
+        display: grid;
+        gap: var(--space-3);
+        max-width: 44rem;
+        margin-bottom: var(--space-3);
+        padding: var(--space-3);
         border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #fff);
-        color: var(--text-color-default, #1f2328);
-        font: inherit;
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
       }
-      .card-action {
-        display: block;
-        margin: 8px 0 0 auto;
-        font-size: var(--text-code-inline, 12px);
+      .create-bar__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+      }
+      .create-bar__fields {
+        display: grid;
+        grid-template-columns: 4rem 11rem 4rem minmax(12rem, 1fr);
+        gap: var(--space-2);
+        align-items: center;
+      }
+      @media (max-width: 56rem) {
+        .create-bar {
+          max-width: none;
+        }
+        .create-bar__fields {
+          grid-template-columns: 4rem minmax(0, 1fr);
+        }
       }
       .preflight {
         margin-top: 8px;
@@ -315,19 +330,12 @@
         font-weight: var(--font-weight-semibold, 600);
       }
 
-      .card-button, .step-button, .back-button {
+      .card-button, .step-button {
         border: 0;
         background: transparent;
         color: inherit;
         text-align: left;
         cursor: pointer;
-      }
-
-      .back-button {
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 999px;
-        padding: var(--space-1) var(--space-3);
-        background: var(--background-color-default, #ffffff);
       }
 
       .card-button, .step-button {
@@ -337,7 +345,7 @@
         padding: 0;
       }
 
-      .card-button:focus-visible, .step-button:focus-visible, .back-button:focus-visible, .permission-chip:focus-visible {
+      .card-button:focus-visible, .step-button:focus-visible, .permission-chip:focus-visible {
         outline: 2px solid var(--color-focus-outline, #0969da);
         outline-offset: 2px;
       }
@@ -350,11 +358,15 @@
       .card--orphan { outline: 1px dashed var(--border-color-default, #d0d7de); outline-offset: 4px; }
 
       .kind-label {
-        font-size: 0.7rem;
-        font-weight: 800;
+        justify-self: start;
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: var(--accent, var(--text-color-muted, #656d76));
+        color: var(--color-white, #ffffff);
+        font-size: var(--text-code-inline, 12px);
+        font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        color: var(--text-color-muted, #656d76);
       }
 
       .detail {
@@ -409,12 +421,22 @@
         font-size: 1rem;
         font-weight: 700;
       }
+      .config-heading-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
+      }
+      .config-heading-row .create-bar {
+        flex: 1 1 auto;
+      }
       .assignment-stack {
         display: flex;
         flex-direction: column;
         gap: var(--space-3);
       }
       .assignment-card {
+        --accent: var(--kind-assignment);
         border: 1px solid var(--border-color-default, #d0d7de);
         border-top: 4px solid var(--kind-assignment);
         border-radius: var(--radius);
@@ -423,7 +445,7 @@
       .assignment-head {
         display: grid;
         grid-template-columns: 1fr auto;
-        grid-template-areas: "kind name" "glance glance";
+        grid-template-areas: "kind caret" "name caret" "glance caret";
         column-gap: var(--space-3);
         row-gap: var(--space-1);
         width: 100%;
@@ -438,8 +460,7 @@
       .assignment-head .assignment-name {
         grid-area: name;
         font-weight: 700;
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
+        font-size: var(--text-body-medium, 14px);
         color: var(--text-color-default, #1f2328);
       }
       .assignment-head .assignment-glance {
@@ -447,6 +468,15 @@
         color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
       }
+      .assignment-caret {
+        grid-area: caret;
+        align-self: center;
+        color: var(--text-color-muted, #656d76);
+        font-size: 1.5rem;
+        line-height: 1;
+        transition: transform 0.15s ease;
+      }
+      .assignment-head[aria-expanded="true"] .assignment-caret { transform: rotate(90deg); }
       .assignment-head:focus-visible {
         outline: 2px solid var(--color-focus-outline, #0969da);
         outline-offset: 2px;
@@ -471,6 +501,7 @@
       }
       .detail-value { min-width: 0; }
       .detail-value code { word-break: break-word; }
+      .field-disclosure { display: grid; gap: var(--space-2); min-width: 0; }
       .ref {
         font-family: var(--font-mono, monospace);
         font-size: var(--text-code-inline, 12px);
@@ -484,6 +515,28 @@
         cursor: pointer;
         text-decoration: underline dotted;
       }
+      .pipeline-ref {
+        display: grid;
+        gap: var(--space-1);
+        width: 100%;
+        padding: var(--space-2) var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+        background: var(--background-color-default, #ffffff);
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .pipeline-ref:hover { border-color: var(--kind-pipeline); }
+      .pipeline-ref__name {
+        color: var(--kind-pipeline);
+        font-family: var(--font-mono, monospace);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .pipeline-ref__summary {
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
       .repo-chip { border-color: var(--kind-repo); }
       .orphan-strip {
         border: 1px dashed var(--border-color-default, #d0d7de);
@@ -491,6 +544,14 @@
         padding: var(--space-3);
       }
       .orphan-strip h3 { margin-bottom: var(--space-2); }
+      .orphan-list { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+      .orphan-entry { display: inline-flex; align-items: center; gap: var(--space-1); }
+      .assignment-actions {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: var(--space-2);
+        border-top: 1px solid var(--border-color-default, #d0d7de);
+      }
       .orphan-chip--repo { border-color: var(--kind-repo); }
       .orphan-chip--role { border-color: var(--kind-role); }
       .orphan-chip--pipeline { border-color: var(--kind-pipeline); }
@@ -515,20 +576,35 @@
         border: 1px solid var(--border-color-default, #d0d7de);
         border-radius: var(--radius);
       }
-      .paste-input {
+      .runtime-value {
         width: 100%;
-        padding: 6px 8px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .runtime-value:hover .chip { border-color: var(--kind-assignment); }
+      .runtime-value:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .assignment-runtime-editor {
+        display: grid;
+        gap: var(--space-3);
+        padding: var(--space-3);
         border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #ffffff);
-        color: var(--text-color-default, #1f2328);
-        font-family: var(--font-mono, monospace);
+        border-radius: var(--radius);
+      }
+      .assignment-runtime-editor label {
+        display: grid;
+        gap: var(--space-1);
+        color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
       }
-      .paste-input:focus {
-        outline: 0;
-        border-color: var(--kind-assignment);
-        box-shadow: 0 0 0 1px var(--kind-assignment);
+      .paste-input {
+        width: 100%;
       }
       .derived {
         display: grid;
@@ -556,151 +632,7 @@
       .note { font-size: var(--text-code-inline, 12px); color: var(--text-color-muted, #656d76); }
       .note--warn { color: var(--kind-pipeline); }
       .note--err { color: var(--outcome-failure); }
-      .btn {
-        padding: 5px 12px;
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #ffffff);
-        color: var(--text-color-default, #1f2328);
-        font-size: var(--text-code-inline, 12px);
-        cursor: pointer;
-      }
-      .btn:hover:not(:disabled) { border-color: var(--text-color-muted, #656d76); }
-      .btn:disabled { opacity: 0.45; cursor: default; }
-      .btn--primary {
-        background: var(--kind-assignment);
-        border-color: var(--kind-assignment);
-        color: var(--color-white, #ffffff);
-      }
       .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
-
-      /* Role: a capability summary that opens into a picker or a new role. */
-      .rolebox {
-        width: 100%;
-        display: grid;
-        gap: var(--space-2);
-        padding: var(--space-2) var(--space-3);
-        border: 1px solid var(--border-color-default, #d0d7de);
-        /* An inner control steps down from the card radius. */
-        border-radius: 6px;
-        background: none;
-        color: inherit;
-        text-align: left;
-        cursor: pointer;
-      }
-      .rolebox:hover { border-color: var(--kind-role); }
-      .rolebox:focus-visible {
-        outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: 2px;
-      }
-      .rolebox-top { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
-      .rolename {
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
-        color: var(--kind-role);
-      }
-      .role-editor {
-        display: grid;
-        gap: var(--space-2);
-        padding: var(--space-3);
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: var(--radius);
-      }
-      .role-preview {
-        display: grid;
-        gap: var(--space-2);
-        border-top: 1px solid var(--border-color-default, #d0d7de);
-        padding-top: var(--space-2);
-      }
-      /* These rows sit one level inside an assignment row, so their label
-         column steps down the way `.derived-row` does. */
-      .role-editor .detail-row,
-      .role-preview .detail-row {
-        grid-template-columns: 4rem 1fr;
-      }
-      .role-editor .detail-value,
-      .role-preview .detail-value { min-width: 0; }
-      .role-select, .role-input {
-        width: 100%;
-        padding: 5px 8px;
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #ffffff);
-        color: var(--text-color-default, #1f2328);
-        font-size: var(--text-code-inline, 12px);
-      }
-      .role-input { font-family: var(--font-mono, monospace); }
-      .role-select:focus, .role-input:focus {
-        outline: 0;
-        border-color: var(--kind-assignment);
-        box-shadow: 0 0 0 1px var(--kind-assignment);
-      }
-      /* A constant annotation, so Bench Gray rather than a tint of its own. */
-      .trust {
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 999px;
-        padding: 0 0.45rem;
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
-        color: var(--text-color-muted, #656d76);
-      }
-      .perm {
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 999px;
-        padding: 0.125rem 0.5rem;
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
-        color: var(--text-color-muted, #656d76);
-        white-space: nowrap;
-      }
-      .perm--write { border-color: var(--kind-pipeline); color: var(--kind-pipeline); }
-      /* Elevated past write. Same "judgment required" hue rather than the
-         failure red, which names a failed outcome; the fill carries the
-         escalation so no second meaning is borrowed. */
-      .perm--push {
-        border-color: var(--kind-pipeline);
-        background: var(--kind-pipeline);
-        color: var(--color-white, #ffffff);
-      }
-      .perm--model { border-color: var(--kind-role); color: var(--kind-role); }
-      .perm-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-      .perm-toggle {
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 999px;
-        padding: 0.125rem 0.5rem;
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
-        color: var(--text-color-muted, #656d76);
-        background: none;
-        white-space: nowrap;
-        cursor: pointer;
-      }
-      /* Selection adds a fill, so it never rests on hue alone, and each grade
-         keeps the colour its saved chip uses. */
-      .perm-toggle[aria-pressed="true"] {
-        color: var(--text-color-default, #1f2328);
-        background: color-mix(in srgb, var(--text-color-muted, #656d76) 12%, transparent);
-        border-color: var(--text-color-muted, #656d76);
-      }
-      .perm-toggle[aria-pressed="true"][data-risk="model"] {
-        border-color: var(--kind-role);
-        color: var(--kind-role);
-        background: color-mix(in srgb, var(--kind-role) 12%, transparent);
-      }
-      .perm-toggle[aria-pressed="true"][data-risk="write"] {
-        border-color: var(--kind-pipeline);
-        color: var(--kind-pipeline);
-        background: color-mix(in srgb, var(--kind-pipeline) 14%, transparent);
-      }
-      .perm-toggle[aria-pressed="true"][data-risk="push"] {
-        border-color: var(--kind-pipeline);
-        background: var(--kind-pipeline);
-        color: var(--color-white, #ffffff);
-      }
-      .perm-toggle:focus-visible {
-        outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: 2px;
-      }
 
       /* Repos: a ranked list, because the first entry is where the branch lands. */
       .repos-value {
@@ -733,7 +665,7 @@
       }
       /* One level inside an assignment row, so the label column steps down. */
       .repos-editor .detail-row,
-      .repos-preview .detail-row { grid-template-columns: 4rem 1fr; }
+      .repos-preview .detail-row { grid-template-columns: minmax(6rem, max-content) 1fr; }
       .repos-editor .detail-value,
       .repos-preview .detail-value { min-width: 0; }
       .repo-known { display: grid; gap: var(--space-1); }
@@ -794,23 +726,6 @@
       .access--push { border-color: var(--kind-repo); color: var(--kind-repo); }
       .access--pr { border-color: var(--kind-assignment); color: var(--kind-assignment); }
       .access--unknown { border-color: var(--kind-pipeline); color: var(--kind-pipeline); }
-      .icon-btn {
-        padding: 3px 6px;
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #ffffff);
-        color: var(--text-color-muted, #656d76);
-        font-size: var(--text-code-inline, 12px);
-        line-height: 1;
-        cursor: pointer;
-      }
-      .icon-btn:hover:not(:disabled) { border-color: var(--kind-assignment); color: var(--kind-assignment); }
-      /* Fade the glyph, not the border: a bounded control is still a control. */
-      .icon-btn:disabled { color: color-mix(in srgb, var(--text-color-muted, #656d76) 45%, transparent); cursor: default; }
-      .icon-btn:focus-visible {
-        outline: 2px solid var(--color-focus-outline, #0969da);
-        outline-offset: 2px;
-      }
 
       /* Limits: a kill switch, so an uncapped one is never silent. */
       .limits-value {
@@ -855,6 +770,8 @@
       }
       .limit-row--off { border-color: var(--kind-pipeline); background: var(--finding-advisory); }
       .limit-name {
+        display: grid;
+        gap: 1px;
         font-family: var(--font-mono, monospace);
         font-size: var(--text-code-inline, 12px);
         overflow: hidden;
@@ -865,27 +782,6 @@
         font-size: var(--text-code-inline, 12px);
         color: var(--text-color-muted, #656d76);
         white-space: nowrap;
-      }
-      .limit-input {
-        width: 100%;
-        padding: 4px 8px;
-        border: 1px solid var(--border-color-default, #d0d7de);
-        border-radius: 6px;
-        background: var(--background-color-default, #ffffff);
-        color: var(--text-color-default, #1f2328);
-        font-family: var(--font-mono, monospace);
-        font-size: var(--text-code-inline, 12px);
-      }
-      .limit-input:focus {
-        outline: 0;
-        border-color: var(--kind-assignment);
-        box-shadow: 0 0 0 1px var(--kind-assignment);
-      }
-      /* The documented input Error state, for a limit that is on but unusable. */
-      .limit-input--invalid {
-        border-color: var(--outcome-failure);
-        background: var(--finding-validation);
-        color: var(--outcome-failure);
       }
       .switch {
         padding: 0 0.5rem;
@@ -940,7 +836,6 @@
       /* pipeline-editor: affordance into the editor surface (editor.html). */
       .pipeline-toolbar .editor-link {
         margin-left: auto;
-        font-size: 0.85rem;
       }
 
       .pipeline-flow {
@@ -963,11 +858,22 @@
       .flow-card--unreachable { outline: 2px dashed var(--outcome-failure); outline-offset: 4px; }
 
       .terminal-pill {
-        width: 8.5rem;
+        width: 11rem;
         min-height: auto;
-        justify-items: center;
-        border-radius: 999px;
+        justify-items: start;
+        border-radius: var(--radius);
         --accent: var(--kind-terminal);
+      }
+      .terminal-pill--done { --accent: var(--outcome-success); }
+      .terminal-pill--abort { --accent: var(--outcome-failure); }
+      .terminal-pill--escalate { --accent: var(--outcome-blocked); }
+      .terminal-detail {
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .terminal-key {
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
       }
 
       .concurrent-frame {
@@ -1105,6 +1011,16 @@
 
       .fallback-state dd {
         margin: 0;
+      }
+
+      @media (max-width: 56rem) {
+        .view-shell { padding: var(--space-3); }
+        .view-shell--pipeline { grid-template-columns: minmax(0, 1fr); }
+        .pipeline-flow,
+        .config-flow { min-height: 32rem; height: 32rem; }
+        .surface { min-height: 30rem; }
+        .detail-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+        .react-flow__minimap { display: none; }
       }
 
     </style>

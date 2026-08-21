@@ -43,13 +43,13 @@ test.describe("repos field", () => {
     await expect(card.page.getByRole("button", { name: "Remove bureau" })).toBeEnabled();
   });
 
-  test("saving is refused until the list actually changes", async ({ card }) => {
+  test("saving stays refused when a change would leave no landing repo", async ({ card }) => {
     await card.page.locator(".repos-value").click();
     const save = card.page.getByRole("button", { name: "Save repos" });
 
     await expect(save).toBeDisabled();
     await card.page.getByRole("button", { name: "Remove bureau" }).click();
-    await expect(save).toBeEnabled();
+    await expect(save).toBeDisabled();
   });
 
   test("emptying the list says which repo is missing rather than nothing", async ({ card }) => {

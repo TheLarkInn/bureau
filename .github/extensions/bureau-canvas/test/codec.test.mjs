@@ -77,6 +77,31 @@ test("absent outcomes stay absent rather than becoming abort edges", async () =>
   );
 });
 
+test("existing data inputs are edited structurally and omitted when emptied", async () => {
+  const path = ".github/extensions/bureau-canvas/test/fixtures/codec-reference-pipeline.yaml";
+  const parsed = parse(await readFile(join(root, path), "utf8"), { path });
+  const view = structuredClone(parsed.view);
+  view.steps.find((step) => step.name === "propose").fields.inputsFrom = [];
+  const reparsed = parse(render(view, parsed.doc, parsed.style), { path });
+
+  assert.deepEqual(reparsed.view.steps.find((step) => step.name === "propose").fields.inputsFrom, []);
+});
+
+test("existing concurrent fields persist without replacing the step", () => {
+  const path = "pipelines/concurrent.yaml";
+  const text = "name: concurrent\nsteps:\n- name: a\n  type: deterministic\n  run: 'true'\n- name: b\n  type: deterministic\n  run: 'true'\n- name: group\n  type: concurrent\n  steps: [a, b]\n  completion: all\n";
+  const parsed = parse(text, { path });
+  const view = structuredClone(parsed.view);
+  const fields = view.steps.find((step) => step.name === "group").fields;
+  Object.assign(fields, { members: ["a"], completion: "stop_on_failure", maxConcurrent: 4 });
+  const group = parse(render(view, parsed.doc, parsed.style), { path }).view.steps.find((step) => step.name === "group");
+
+  assert.deepEqual(
+    { members: group.fields.members, completion: group.fields.completion, maxConcurrent: group.fields.maxConcurrent },
+    { members: ["a"], completion: "stop_on_failure", maxConcurrent: 4 },
+  );
+});
+
 test("path stem and declared name mismatch is reported", async () => {
   const text = await readFile(join(root, ".github/extensions/bureau-canvas/test/fixtures/codec-reference-pipeline.yaml"), "utf8");
 

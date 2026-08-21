@@ -6,9 +6,10 @@
 // past its source; back edges add nothing. Terminals sit on their own rail
 // to the right.
 
-const X_GAP = 320;
-const Y_GAP = 190;
-const TERMINAL_GAP = 140;
+const X_GAP = 300;
+const Y_GAP = 170;
+const TERMINAL_GAP = 40;
+const TERMINAL_ROW_GAP = 90;
 const OUTCOME_ORDER = ["success", "failure", "blocked", "no-work"];
 
 /** Layout for one pipeline view (`lib/view.mjs` `pipelineView` shape). */
@@ -79,27 +80,21 @@ function placeSteps(steps, layers) {
   const slots = new Map();
   return steps.map((step) => {
     const layer = layers.get(step.id) ?? 0;
-    const column = slots.get(layer) ?? 0;
-    slots.set(layer, column + 1);
-    return { id: step.id, kind: step.kind, step, x: column * X_GAP, y: layer * Y_GAP, layer, column };
+    const slot = slots.get(layer) ?? 0;
+    slots.set(layer, slot + 1);
+    // Control flow reads left-to-right. Multiple steps in the same layer
+    // stack vertically, which uses a wide editor viewport instead of leaving
+    // most of it empty above a single vertical spine.
+    return { id: step.id, kind: step.kind, step, x: layer * X_GAP, y: slot * Y_GAP, layer, column: slot };
   });
 }
 
 function placeTerminals(view, steps) {
-  const rail = Math.max(0, ...steps.map((step) => step.column)) + 1;
-  const rows = new Map(steps.map((step) => [step.id, step.layer]));
+  const rail = Math.max(0, ...steps.map((step) => step.layer)) + 1;
   return (view.terminals ?? []).map((terminal, index) => ({
     id: terminal.id,
     name: terminal.name,
     x: rail * X_GAP + TERMINAL_GAP,
-    y: terminalLayer(terminal.id, view.edges ?? [], rows, index) * Y_GAP,
+    y: index * TERMINAL_ROW_GAP,
   }));
-}
-
-function terminalLayer(id, edges, rows, fallback) {
-  const feeding = edges
-    .filter((edge) => edge.relation === "control" && edge.target === id)
-    .map((edge) => rows.get(edge.source))
-    .filter((row) => row != null);
-  return feeding.length === 0 ? fallback : Math.max(...feeding) + 1;
 }
