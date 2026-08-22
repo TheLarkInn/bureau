@@ -11,7 +11,9 @@
 //
 // Each rule declares the dimensions it reads. That lets the enumeration prune
 // a whole subtree the moment a rule's inputs are all assigned, instead of
-// materialising 653 million tuples to throw nearly all of them away.
+// materialising all 22.7 billion tuples to throw nearly all of them away.
+// That figure is the product of the dimension sizes and moves whenever a
+// dimension gains a value; `summary()` computes it rather than quoting it.
 //
 // Two kinds of rule live here, and the distinction matters:
 //
