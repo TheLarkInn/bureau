@@ -141,23 +141,22 @@ fn daemon_has(names: &[&str]) -> bool {
         .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
 }
 
-/// Grants that forward `GH_TOKEN`: a forge credential unlocks for any
-/// repo or PR grant (DESIGN.md section 10).
-const FORGE_GRANTS: [Permission; 7] = [
-    Permission::RepoRead,
-    Permission::RepoWrite,
+/// Grants that forward `GH_TOKEN` for remote forge effects.
+const FORGE_GRANTS: [Permission; 8] = [
     Permission::RepoPush,
+    Permission::IssuesRead,
+    Permission::IssuesWrite,
     Permission::PrRead,
     Permission::PrWrite,
     Permission::PrReview,
     Permission::PrMerge,
+    Permission::RunsRead,
 ];
 
 /// Grants that must not forward `GH_TOKEN`.
-const NON_FORGE_GRANTS: [Permission; 4] = [
-    Permission::IssuesRead,
-    Permission::IssuesWrite,
-    Permission::RunsRead,
+const NON_FORGE_GRANTS: [Permission; 3] = [
+    Permission::RepoRead,
+    Permission::RepoWrite,
     Permission::ModelInvoke,
 ];
 

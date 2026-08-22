@@ -26,8 +26,8 @@
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
-//! child env and added to the scrub list only when the role holds one
-//! of [`real::FORGE_GRANTS`]. To record a fixture for the `fake`
+//! child env and added to the scrub list only when the role holds a
+//! remote forge grant from [`real::FORGE_GRANTS`]. To record a fixture for the `fake`
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 

@@ -22,6 +22,30 @@ async fn published_artifact_is_durable_and_secret_scrubbed() {
     );
 }
 
+#[tokio::test]
+async fn deterministic_artifact_is_durable() {
+    let (outcome, content) = publish_deterministic_artifact().await;
+    assert_eq!(
+        (outcome, content.as_str()),
+        (StepOutcome::Success, "evidence")
+    );
+}
+
+async fn publish_deterministic_artifact() -> (StepOutcome, String) {
+    let rig = rig::Rig::new();
+    let command = concat!(
+        "printf evidence > deterministic.txt && printf '%s' '",
+        r#"{"schema":"v2","outcome":"success","outputs":{},"artifacts":["#,
+        r#"{"name":"deterministic.txt","path":"deterministic.txt"}],"#,
+        r#""trust":"derived","message":"published"}'"#
+    );
+    let plan = rig.plan(vec![rig::det_step("publish", command, Some("done"))]);
+    let run_id = plan.run_id.clone();
+    let outcome = rig.engine().run(&plan).await.outcome;
+    let content = fs::read_to_string(run_artifact(&rig, &run_id)).expect("read artifact");
+    (outcome, content)
+}
+
 async fn publish_artifact() -> (StepOutcome, String, bool) {
     let rig = rig::Rig::new();
     let result = result_with_artifact("report.txt");

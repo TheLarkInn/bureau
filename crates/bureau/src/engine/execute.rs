@@ -99,6 +99,9 @@ async fn publish_artifacts(
     request: &StepRequest,
     execution: &mut Execution,
 ) {
+    if execution.result.artifacts.is_empty() {
+        return;
+    }
     let destination = stream::lock(&ctx.log)
         .dir()
         .join("artifacts")
@@ -115,6 +118,16 @@ async fn publish_artifacts(
     }
 }
 
+async fn finish_artifacts(
+    ctx: &RunCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    mut execution: Execution,
+) -> Execution {
+    publish_artifacts(ctx, step, request, &mut execution).await;
+    execution
+}
+
 /// A deterministic step: `sh -c <run>` in the worktree under the
 /// layer-0 contract. It receives NO credentials in its environment —
 /// DESIGN.md section 10: a step that does not need to push never
@@ -129,14 +142,15 @@ async fn publish_artifacts(
 /// environment (`env_clear`), so without them `sh -c "cargo test"` fails
 /// with `cargo: not found` even when the daemon can see cargo. Only
 /// non-secret runtime variables are forwarded, never credentials.
-async fn deterministic(
+fn deterministic_request(
     ctx: &RunCtx,
     wt: &WtCtx,
     step: &StepDef,
     request: &StepRequest,
     timeout: Duration,
-) -> Execution {
-    let spawned = spawn(SpawnRequest {
+) -> SpawnRequest {
+    let log = shared_log(LogSink::new(&step.name, &ctx.log, ctx.plan.lease.clone()));
+    SpawnRequest {
         argv: vec![
             "sh".to_owned(),
             "-c".to_owned(),
@@ -147,18 +161,24 @@ async fn deterministic(
         stdin: request.to_json().unwrap_or_default(),
         timeout,
         secrets: ctx.secrets(),
-        log: Some(shared_log(LogSink::new(
-            &step.name,
-            &ctx.log,
-            ctx.plan.lease.clone(),
-        ))),
+        log: Some(log),
         cancel: adapters::cancel_path(request),
-    })
-    .await;
-    Execution::new(
+    }
+}
+
+async fn deterministic(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    step: &StepDef,
+    request: &StepRequest,
+    timeout: Duration,
+) -> Execution {
+    let spawned = spawn(deterministic_request(ctx, wt, step, request, timeout)).await;
+    let execution = Execution::new(
         derive_result(request.trust, &spawned),
         Usage::zero("deterministic"),
-    )
+    );
+    finish_artifacts(ctx, step, request, execution).await
 }
 
 async fn finish_agent(
@@ -174,8 +194,7 @@ async fn finish_agent(
         return execution.halt();
     }
     enforce_measured_cost(ctx, &mut execution);
-    publish_artifacts(ctx, step, request, &mut execution).await;
-    execution
+    finish_artifacts(ctx, step, request, execution).await
 }
 
 /// Runs the role adapter and grades its output `Derived`.

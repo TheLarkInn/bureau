@@ -15,12 +15,11 @@
 //! | `GH_TOKEN` (a forge credential)                | [`FORGE_GRANTS`] |
 //! | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` (model credentials) | [`MODEL_GRANTS`] |
 
+use crate::config::{Permission, StepDef};
+use crate::process::Secret;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-
-use crate::config::{Permission, StepDef};
-use crate::process::Secret;
 
 /// Default per-step timeout, in seconds, when the pipeline sets none.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
@@ -124,17 +123,17 @@ pub fn push_boundary(permissions: &[Permission]) -> (bool, bool) {
     (push || has(Permission::RepoWrite), push)
 }
 
-/// Grants that map to a forge credential (DESIGN.md section 10): a
-/// forge token authorizes repository and pull-request access, so any
-/// repo or PR grant unlocks it.
-pub const FORGE_GRANTS: [Permission; 7] = [
-    Permission::RepoRead,
-    Permission::RepoWrite,
+/// Remote grants that map to a forge credential (DESIGN.md section 10);
+/// local worktree reads and writes need no token.
+pub const FORGE_GRANTS: [Permission; 8] = [
     Permission::RepoPush,
+    Permission::IssuesRead,
+    Permission::IssuesWrite,
     Permission::PrRead,
     Permission::PrWrite,
     Permission::PrReview,
     Permission::PrMerge,
+    Permission::RunsRead,
 ];
 
 /// The grant that maps to a model credential (DESIGN.md section 10).
@@ -255,16 +254,16 @@ mod tests {
     /// The section-10 mapping as `(permission, forge, model)`: which
     /// grant set forwards a credential for each permission.
     const MAPPING: [(Permission, bool, bool); 11] = [
-        (Permission::RepoRead, true, false),
-        (Permission::RepoWrite, true, false),
+        (Permission::RepoRead, false, false),
+        (Permission::RepoWrite, false, false),
         (Permission::RepoPush, true, false),
         (Permission::PrRead, true, false),
         (Permission::PrWrite, true, false),
         (Permission::PrReview, true, false),
         (Permission::PrMerge, true, false),
-        (Permission::IssuesRead, false, false),
-        (Permission::IssuesWrite, false, false),
-        (Permission::RunsRead, false, false),
+        (Permission::IssuesRead, true, false),
+        (Permission::IssuesWrite, true, false),
+        (Permission::RunsRead, true, false),
         (Permission::ModelInvoke, false, true),
     ];
 
