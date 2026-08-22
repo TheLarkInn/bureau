@@ -14,9 +14,10 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
-import { DIMENSIONS } from "../web/statelab/dimensions.mjs";
+import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
 import { CONTRAST, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
+import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
@@ -68,18 +69,78 @@ async function servedState() {
 
 test("every excluded combination is attributed, and the books balance", () => {
   const counts = summary();
-  const attributed = EXCLUSIONS.reduce((total, entry) => total + entry.count, 0);
+  const attributed = EXCLUSIONS.reduce((total, entry) => total + entry.pruned, 0);
 
   assert.deepStrictEqual(
     {
       balances: attributed + counts.matrixStates === counts.combinations,
       everyRuleAccountedFor: EXCLUSIONS.length === CONSTRAINTS.length,
-      everyRemovalHasAnExample: EXCLUSIONS.every((entry) => entry.count === 0 || entry.example),
-      noRuleIsDeadWeight: EXCLUSIONS.every((entry) => entry.count > 0),
+      everyRemovalHasAnExample: EXCLUSIONS.every((entry) => entry.pruned === 0 || entry.example),
+      noRuleIsDeadWeight: EXCLUSIONS.every((entry) => entry.pruned > 0),
     },
     { balances: true, everyRuleAccountedFor: true, everyRemovalHasAnExample: true, noRuleIsDeadWeight: true },
   );
 });
+
+/**
+ * The balance above is an identity of the traversal — it cannot fail. The
+ * property it stands in for can: the walk prunes a rule the moment every
+ * dimension in its `reads` is assigned, so a rule whose `holds()` consults a
+ * dimension it did not declare fires while that dimension is still undefined
+ * and cuts a subtree it had no right to. Every other assertion here would
+ * still pass, because the wrongly-cut tuples are still counted and
+ * `violations()` only re-checks survivors.
+ *
+ * A read trap catches it directly: run each rule against tuples that report
+ * every key access, and require that nothing outside `reads` is touched.
+ */
+test("no rule reads a dimension it did not declare", () => {
+  const trespass = new Set();
+  const sampleValues = (dimension) => valuesOf(dimension).map((value) => value.id);
+  for (const rule of CONSTRAINTS) {
+    for (let index = 0; index < 200; index += 1) {
+      const tuple = Object.fromEntries(ORDER.map((dimension) => {
+        const values = sampleValues(dimension);
+        return [dimension, values[(index * 7 + dimension.length) % values.length]];
+      }));
+      const watched = new Proxy(tuple, {
+        get(target, key) {
+          if (typeof key === "string" && ORDER.includes(key) && !rule.reads.includes(key)) {
+            trespass.add(`${rule.id} reads ${key}`);
+          }
+          return target[key];
+        },
+      });
+      rule.holds(watched);
+    }
+  }
+  assert.deepStrictEqual([...trespass], []);
+});
+
+/**
+ * And the claim that follows from it: the surviving set is a property of the
+ * rules, not of `ORDER`. Re-enumerating under permuted orders must keep
+ * exactly the same tuples. (The per-rule `pruned` tallies legitimately move,
+ * which is why they are named for the walk rather than for the rule.)
+ */
+test("the kept set does not depend on the order dimensions are assigned in", () => {
+  const canonical = new Set(STATES
+    .filter((state) => state.kind === "matrix")
+    .map((state) => ORDER.map((key) => state.dimensions[key]).join("|")));
+  const mismatches = [];
+  for (let seed = 1; seed <= 4; seed += 1) {
+    const permuted = [...ORDER].sort((left, right) => hash(left + seed) - hash(right + seed));
+    const kept = new Set(enumerate(permuted, valuesOf).kept.map((combo) => ORDER.map((key) => combo[key]).join("|")));
+    if (kept.size !== canonical.size || [...kept].some((tuple) => !canonical.has(tuple))) {
+      mismatches.push(permuted.join(","));
+    }
+  }
+  assert.deepStrictEqual(mismatches, []);
+});
+
+function hash(value) {
+  return [...value].reduce((total, character) => (total * 31 + character.charCodeAt(0)) % 9973, 7);
+}
 
 test("every kept combination survives a fresh run of every rule", () => {
   const offenders = STATES.filter((state) => state.kind === "matrix" && violations(state.dimensions).length);
@@ -184,26 +245,73 @@ function hasCycle(edges) {
   return [...next.keys()].some((node) => walk(node, new Set()));
 }
 
-test("every scoping rule is held to account by a crossing probe, and every probe names a real rule", () => {
+test("every scoping rule is held to account by a crossing probe that really breaks it", () => {
   const probes = STATES.filter((state) => state.kind === "probe");
-  const probed = new Set(probes.map((state) => state.rule));
+  const crossings = probes.filter((state) => state.rule);
+  const probed = new Set(crossings.map((state) => state.rule));
   assert.deepStrictEqual(
     {
       unchecked: CONSTRAINTS.filter((rule) => rule.kind === "scoping" && !probed.has(rule.id)).map((rule) => rule.id),
-      dangling: probes.filter((state) => !CONSTRAINT_IDS.includes(state.rule)).map((state) => `${state.id} -> ${state.rule}`),
+      dangling: crossings.filter((state) => !CONSTRAINT_IDS.includes(state.rule)).map((state) => `${state.id} -> ${state.rule}`),
+      // The claim under test: a crossing's tuple must actually be rejected by
+      // the rule it names. Naming a rule it does not break is the defect this
+      // replaces — a label that reads as evidence and is not.
+      unbroken: crossings
+        .filter((state) => !violations(state.dimensions).includes(state.rule))
+        .map((state) => `${state.id} -> ${state.rule}`),
+      // A probe is one or the other, never both and never neither.
+      unlabelled: probes.filter((state) => Boolean(state.rule) === Boolean(state.covers)).map((state) => state.id),
     },
-    { unchecked: [], dangling: [] },
+    { unchecked: [], dangling: [], unbroken: [], unlabelled: [] },
   );
 });
 
-test("every transition carries the delta that walks it", () => {
+/**
+ * The old form compared `parent.ops + delta` against `child.ops` with waits
+ * stripped, which is how `buildTransitions` constructs the delta — an identity,
+ * not a test. What the DAG actually claims is that a page already sitting in
+ * the parent can reach the child by applying only the delta. That holds when
+ * everything the child's path does *before* the delta has already been done by
+ * the parent's path, waits included.
+ *
+ * Parent matching ignores waits, so a child that interleaves a wait its parent
+ * never performs would silently lose that wait from the delta and race. No
+ * edge does that today; this is what stops one being added quietly. Parents
+ * may wait for *more* than the child's prefix — a settled page is never the
+ * problem — so the check is subsequence containment, not equality.
+ */
+test("every edge's delta is preceded by work the parent has already done", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
   const broken = TRANSITIONS.filter((edge) => {
-    const parent = byId.get(edge.from).ops.filter((op) => op.op !== "wait");
-    const child = byId.get(edge.to).ops.filter((op) => op.op !== "wait");
-    const delta = edge.delta.filter((op) => op.op !== "wait");
-    // The parent's operations plus the edge's delta must be the child's.
-    return JSON.stringify([...parent, ...delta]) !== JSON.stringify(child);
+    const child = byId.get(edge.to).ops;
+    const prefix = child.slice(0, child.length - edge.delta.length);
+    return !isSubsequence(prefix, byId.get(edge.from).ops);
+  });
+  assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
+});
+
+/** Does every op of `needles` appear in `haystack`, in order? */
+function isSubsequence(needles, haystack) {
+  let cursor = 0;
+  for (const op of needles) {
+    const found = haystack.findIndex((item, index) => index >= cursor && JSON.stringify(item) === JSON.stringify(op));
+    if (found === -1) {
+      return false;
+    }
+    cursor = found + 1;
+  }
+  return true;
+}
+
+test("every edge's delta is exactly one action, and a strict suffix of the child's path", () => {
+  const byId = new Map(STATES.map((state) => [state.id, state]));
+  const broken = TRANSITIONS.filter((edge) => {
+    const child = byId.get(edge.to).ops;
+    const acting = edge.delta.filter((op) => op.op !== "wait");
+    const suffix = child.slice(child.length - edge.delta.length);
+    return acting.length !== 1
+      || edge.delta.length >= child.length
+      || JSON.stringify(suffix) !== JSON.stringify(edge.delta);
   });
   assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
 });

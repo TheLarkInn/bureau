@@ -81,7 +81,7 @@ test("gallery index", async () => {
     <article class="card" id="${escape(state.id)}">
       <h2>${escape(state.id)}</h2>
       <p class="muted">${escape(state.summary ?? "")}</p>
-      <p class="meta">${escape(state.kind)}${state.rule ? ` · probe of ${escape(state.rule)}` : ""} · fixture ${escape([].concat(state.fixture ?? []).join(" + ") || "none")}</p>
+      <p class="meta">${escape(state.kind)}${describeProbe(state)} · fixture ${escape([].concat(state.fixture ?? []).join(" + ") || "none")}</p>
       <div class="shots">
         ${VIEWPORT_LIST.map((viewport) => `<figure><img loading="lazy" src="./${shot(state, viewport)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${viewport.id}</figcaption></figure>`).join("")}
       </div>
@@ -117,4 +117,12 @@ function page(rows) {
 
 function escape(value) {
   return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+}
+
+/** A crossing names the rule it breaks; a content sample names what it covers. */
+function describeProbe(state) {
+  if (state.rule) {
+    return ` · crossing excluded by ${escape(state.rule)}`;
+  }
+  return state.covers ? ` · covers ${escape(state.covers)}` : "";
 }

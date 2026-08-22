@@ -38,6 +38,7 @@ export function domAdapter(frame) {
       // Wait for the payload the page fetches itself; publishing a fixture
       // before it arrives would be overwritten the moment it did.
       await waitFor(doc, page === "editor" ? ".editor-tabs" : ".app-header");
+      await sseDelivered(win);
     },
     publish(state) {
       win().dispatchEvent(new (win().CustomEvent)(PUBLISH_EVENT, { detail: state }));
@@ -76,6 +77,73 @@ function load(frame, url) {
   return new Promise((resolve) => {
     frame.addEventListener("load", () => resolve(), { once: true });
     frame.src = url;
+    armSse(frame);
+  });
+}
+
+/**
+ * Both pages take state from two channels: a `fetch("./state")` on mount and
+ * an `EventSource("./events")` that the host answers with the current state
+ * the instant it connects. The surface appears as soon as *either* lands, so
+ * waiting for the surface proves only that one of them arrived — and the other
+ * can then overwrite a fixture published in between, leaving the lab claiming
+ * to show one state while the host's own payload is on screen. It is a narrow
+ * window, tens of milliseconds wide, and it is why lab checks failed at random.
+ *
+ * The SSE channel never completes, so resource timing cannot see it; the only
+ * honest signal is the delivery itself. A same-origin frame's new document is
+ * reachable from here while it is still parsing, which is before its deferred
+ * module scripts run, so the observer is installed there. It only watches: it
+ * neither swallows the event nor changes the order anything arrives in.
+ */
+const SSE_STATE = "__bureauLabSseState";
+const CHANNEL_TIMEOUT = 3000;
+
+function armSse(frame) {
+  const deadline = Date.now() + CHANNEL_TIMEOUT;
+  const spin = () => {
+    const win = frame.contentWindow;
+    if (frame.contentDocument?.readyState === "loading" && win?.EventSource && win[SSE_STATE] === undefined) {
+      observe(win);
+      return;
+    }
+    if (Date.now() < deadline) {
+      setTimeout(spin, 0);
+    }
+  };
+  spin();
+}
+
+function observe(win) {
+  win[SSE_STATE] = false;
+  const Native = win.EventSource;
+  win.EventSource = class extends Native {
+    constructor(...args) {
+      super(...args);
+      super.addEventListener("state", () => {
+        win[SSE_STATE] = true;
+      });
+    }
+  };
+}
+
+/**
+ * Bounded on purpose: if a browser ever denies the frame early enough for the
+ * observer to land, the walk carries on and the verdict still reports whatever
+ * actually rendered. A review tool that stalls tells a reviewer less than one
+ * that shows the wrong thing and says what it checked.
+ */
+function sseDelivered(win) {
+  const deadline = Date.now() + CHANNEL_TIMEOUT;
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (win()?.[SSE_STATE] !== false || Date.now() > deadline) {
+        resolve();
+        return;
+      }
+      setTimeout(tick, POLL_MS);
+    };
+    tick();
   });
 }
 

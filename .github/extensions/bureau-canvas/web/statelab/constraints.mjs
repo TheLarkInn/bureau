@@ -3,13 +3,15 @@
 //
 // Every exclusion in the matrix is attributable to exactly one named rule
 // here. Nothing is dropped quietly: `registry.mjs` walks the whole Cartesian
-// product past this list and reports, per rule, exactly how many tuples that
-// rule removed and a worked example of one — so the lab can answer "why is
-// this not a state?" for any combination a reviewer asks about.
+// product past this list and reports, per rule, how many tuples that rule was
+// the first to reject and a worked prune point. First to reject is not the
+// same as "only rule that would have rejected" — see `enumerate.mjs` — so the
+// per-rule figure is read as "this much of the walk was cut here", while
+// `violations()` below answers the order-free question for a given tuple.
 //
 // Each rule declares the dimensions it reads. That lets the enumeration prune
 // a whole subtree the moment a rule's inputs are all assigned, instead of
-// materialising 183 million tuples to throw nearly all of them away.
+// materialising 653 million tuples to throw nearly all of them away.
 //
 // Two kinds of rule live here, and the distinction matters:
 //

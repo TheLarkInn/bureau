@@ -149,7 +149,7 @@ const walked = enumerate(ORDER, valuesOf);
 
 const matrixStates = walked.kept.map(toState);
 
-/** Per-rule exclusion accounting: how many tuples each rule removed, and one example. */
+/** Per-rule prune accounting: how many tuples each rule was first to reject. */
 export const EXCLUSIONS = walked.excluded.map((entry) => ({
   ...entry,
   ...pick(CONSTRAINTS.find((rule) => rule.id === entry.rule), ["kind", "title", "why"]),
@@ -220,7 +220,7 @@ export function summary() {
     dimensionValues: DIMENSIONS.reduce((total, item) => total + item.values.length, 0),
     combinations: walked.combinations,
     constraintRules: CONSTRAINTS.length,
-    excludedCombinations: EXCLUSIONS.reduce((total, entry) => total + entry.count, 0),
+    excludedCombinations: EXCLUSIONS.reduce((total, entry) => total + entry.pruned, 0),
     matrixStates: matrixStates.length,
     probes: PROBES.length,
     states: STATES.length,

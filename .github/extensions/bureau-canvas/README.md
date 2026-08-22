@@ -90,15 +90,23 @@ node .github/extensions/bureau-canvas/serve.mjs --dir .bureau
 The lab renders each state by loading **the production page** into a frame and
 walking that state's entry path with real clicks. There is no second copy of
 the UI: if the lab shows it, that is what ships. It also reports each state's
-dimensions, why an excluded combination is not a state, and expected controls
-against what actually rendered, at either recorded viewport.
+dimensions, expected controls against what actually rendered, at either
+recorded viewport — and a picker answers "is this a state?" for any
+combination a reviewer assembles, naming every rule that rejects it.
+
+Two numbers are easy to confuse, so the lab labels them apart. Each rule shows
+how many tuples it was the **first** to prune, which depends on the order
+dimensions are assigned in and is not "every tuple this rule forbids"; the
+picker is what answers the order-free question for one combination. The
+surviving set itself is order-independent, and an offline test re-enumerates
+under permuted orders to keep it that way.
 
 | | |
 |---|---|
 | `dimensions.mjs` | the axes the canvas varies along, and what each value promises on screen |
 | `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render) or `scoping` (renders, but adds nothing to cross) |
-| `enumerate.mjs` | walks the product with pruning, so exclusions are counted exactly without materialising 10^8 tuples |
-| `probes.mjs` | the crossings each `scoping` rule excluded, rendered anyway to hold the rule to account |
+| `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^8 tuples; per-rule figures count what each rule pruned *first*, in walk order |
+| `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
 | `paths.mjs` | how each state is reached, as data |
 | `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
 | `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |

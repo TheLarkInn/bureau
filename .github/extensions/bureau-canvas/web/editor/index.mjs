@@ -41,8 +41,10 @@ function EditorApp() {
       .then((response) => response.json())
       .then((next) => alive && setState(next));
     const events = new EventSource("./events");
-    // The same local-state channel index.html's `App` listens on, so a state
-    // published in-page reaches both surfaces the same way.
+    // The same local-state channel index.html's `App` listens on. Nothing in
+    // editor.html's own bundle dispatches it: this is the seam the state lab
+    // and the matrix suite publish fixtures through, so both surfaces receive
+    // a payload the same way without a test-only flag in production code.
     const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
     window.addEventListener("bureau-state", localState);

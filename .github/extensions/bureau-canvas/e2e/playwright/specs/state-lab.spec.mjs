@@ -90,9 +90,31 @@ test("the lab explains why an excluded combination is not a state", async ({ pag
   await openLab(page, host);
   const rules = page.locator("#constraints details");
 
-  await expect(rules.first()).toContainText("excluded");
+  await expect(rules.first()).toContainText("pruned here");
   await rules.first().locator("summary").click();
   await expect(rules.first().locator("pre.example")).toBeVisible();
+});
+
+/**
+ * The per-rule tallies are order-dependent by construction, so they cannot
+ * answer "why is *this* combination not a state?". The picker can, and this is
+ * the assertion that keeps it wired to `violations()` rather than to a list of
+ * states someone remembered to update.
+ */
+test("the picker judges any combination a reviewer assembles", async ({ page, host }) => {
+  const errors = await openLab(page, host);
+  const verdict = page.locator("#picker-verdict");
+
+  await expect(verdict).toHaveAttribute("data-verdict", "reachable");
+
+  await page.locator('#picker select[aria-label="card"]').selectOption("expanded");
+  await expect(verdict).toHaveAttribute("data-verdict", "excluded");
+  await expect(verdict).toContainText("boot-has-no-regions");
+  await expect(verdict.locator("details")).not.toHaveCount(0);
+
+  await page.locator('#picker select[aria-label="card"]').selectOption("n/a");
+  await expect(verdict).toHaveAttribute("data-verdict", "reachable");
+  expect(errors).toEqual([]);
 });
 
 test("the lab links the transition DAG in both directions", async ({ page, host }) => {

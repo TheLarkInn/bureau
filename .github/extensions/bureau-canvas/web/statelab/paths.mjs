@@ -12,8 +12,14 @@
 //   { op: "click",    selector }
 //   { op: "fill",     selector, value }
 //   { op: "select",   selector, value }
-//   { op: "wait",     selector }
-//   { op: "waitGone", selector }
+//   { op: "press",    selector, value }   send one key to a focused control
+//   { op: "drag",     selector, dx, dy }  move a node on a graph canvas
+//   { op: "wait",     selector }          wait until visible
+//   { op: "present",  selector }          wait until attached, visible or not
+//   { op: "waitGone", selector }          wait until hidden
+//
+// `driver.mjs` implements exactly this set, and an offline test fails if a
+// path uses a verb that is not on it.
 
 import { SELECTORS as S, editorCardFor } from "./selectors.mjs";
 
@@ -146,7 +152,9 @@ export function runOps(mode, runValue) {
  * dimension's preference, so the choice stays readable and testable.
  */
 export function fixtureFor(combo) {
-  if (combo.surface === "boot") {
+  // Both boot surfaces publish nothing: one is waiting for a payload, the
+  // other never mounted a renderer to receive one.
+  if (combo.surface === "boot" || combo.surface === "boot-editor") {
     return [];
   }
   return [statusLayer(combo), ...contentLayer(combo), planLayer(combo), selectionLayer(combo)].filter(Boolean);

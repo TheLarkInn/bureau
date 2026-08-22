@@ -82,6 +82,48 @@ export const test = base.extend({
 });
 
 /** The driver adapter for a Playwright page. */
+/**
+ * Both pages publish state on two channels: a `fetch("./state")` on mount and
+ * an `EventSource("./events")` whose `state` event the host emits the instant
+ * the channel connects. The surface renders as soon as *either* lands, so
+ * waiting on the surface alone proves only that one of them arrived — and the
+ * loser can then overwrite a fixture published in between with the host's own
+ * payload. Measured margin between the two is tens of milliseconds, which is
+ * not a budget worth spending under a fully-parallel suite.
+ *
+ * So wait for both: the surface, and the first SSE `state` delivery, recorded
+ * by a wrapper installed before any page script runs. The wrapper only
+ * observes; it neither swallows the event nor changes delivery order.
+ *
+ * Intercepted states skip this — stalling holds `/events` open on purpose, so
+ * a flag that never sets is the state under review, not a hang.
+ */
+const SSE_FLAG = "__bureauSseState";
+
+async function armSseBarrier(page) {
+  await page.addInitScript((flag) => {
+    window[flag] = false;
+    const Native = window.EventSource;
+    if (!Native) {
+      return;
+    }
+    class Observed extends Native {
+      constructor(...args) {
+        super(...args);
+        super.addEventListener("state", () => {
+          window[flag] = true;
+        });
+      }
+    }
+    window.EventSource = Observed;
+  }, SSE_FLAG);
+}
+
+async function settled(page, target) {
+  await page.locator(target === "editor" ? ".editor-tabs" : ".app-header").first().waitFor({ state: "visible" });
+  await page.waitForFunction((flag) => window[flag] === true, SSE_FLAG);
+}
+
 export function pageAdapter(page, host) {
   return assertAdapter({
     async goto(target, op) {
@@ -99,15 +141,13 @@ export function pageAdapter(page, host) {
             // storage disabled; nothing to clear
           }
         });
+        await armSseBarrier(page);
         page[FRESH] = true;
       }
       const path = target === "editor" ? "editor.html" : "index.html";
       await page.goto(new URL(path, host.url).href, { waitUntil: op?.intercept ? "commit" : "load" });
       if (!op?.intercept) {
-        // The page fetches `/state` on mount. Publishing a fixture before that
-        // lands would be overwritten by the server's own payload a moment
-        // later, so wait for the surface the initial state produces.
-        await page.locator(target === "editor" ? ".editor-tabs" : ".app-header").first().waitFor({ state: "visible" });
+        await settled(page, target);
       }
     },
     publish: (state) =>

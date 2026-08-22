@@ -9,6 +9,7 @@
 import { collect, CONTRAST, MEASURED, selectorsFor, verdict } from "./checks.mjs";
 import { CONSTRAINTS, EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
+import { violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
 import { runPath } from "./driver.mjs";
 import { FIXTURES, describeFixture } from "./fixtures.mjs";
@@ -39,6 +40,7 @@ async function boot() {
   renderList();
   renderDimensions();
   renderConstraints();
+  renderPicker();
   await show(stateFromHash() ?? STATES[0]);
   window.addEventListener("hashchange", () => {
     const next = stateFromHash();
@@ -105,8 +107,8 @@ function stateButton(state) {
 /**
  * Selecting a state walks its entry path against the frame. Two walks at once
  * would fight over one iframe — a viewport switch mid-walk used to reload the
- * page underneath the walk in flight — so they are queued, and a stale walk's
- * result is discarded rather than allowed to overwrite a newer view.
+ * page underneath the walk in flight — so they are serialised on a promise
+ * queue and each walk runs to completion before the next begins.
  */
 function show(state) {
   queue = queue.catch(() => {}).then(() => walk(state));
@@ -185,8 +187,11 @@ function dimensionTable(state) {
     }
     list.append(el("dt", null, key), el("dd", null, value));
   }
-  if (state.kind === "probe") {
-    list.append(el("dt", null, "probe of"), el("dd", null, state.rule));
+  if (state.rule) {
+    list.append(el("dt", null, "crossing excluded by"), el("dd", null, state.rule));
+  }
+  if (state.covers) {
+    list.append(el("dt", null, "covers"), el("dd", null, state.covers));
   }
   list.append(el("dt", null, "fixture"), el("dd", null, describeFixture(state.fixture)));
   box.append(list);
@@ -307,16 +312,75 @@ function renderConstraints() {
   const counts = Object.fromEntries(EXCLUSIONS.map((entry) => [entry.rule, entry]));
   box.replaceChildren(...CONSTRAINTS.map((rule) => {
     const item = el("details", "panel");
-    const removed = counts[rule.id]?.count ?? 0;
-    item.append(el("summary", null, `${rule.title} — ${removed.toLocaleString()} excluded`));
+    const pruned = counts[rule.id]?.pruned ?? 0;
+    item.append(el("summary", null, `${rule.title} — ${pruned.toLocaleString()} pruned here`));
     item.append(el("p", "muted", `${rule.kind} · reads ${rule.reads.join(", ")}`));
     item.append(el("p", null, rule.why));
+    item.append(el("p", "muted", "“Pruned here” counts the tuples this rule was the first to reject, in walk order — not every tuple it forbids. Ask the picker below about a specific combination to see every rule that rejects it."));
     const example = counts[rule.id]?.example;
     if (example) {
-      item.append(el("pre", "example", Object.entries(example).map(([key, value]) => `${key}=${value}`).join("\n")));
+      const assigned = Object.entries(example.assigned).map(([key, value]) => `${key}=${value}`).join("\n");
+      item.append(el("pre", "example", `${assigned}\n… and every value of the remaining ${example.of - example.depth} dimension(s)`));
     }
     return item;
   }));
+}
+
+/**
+ * The picker answers the order-free question the per-rule counts cannot: for
+ * one combination a reviewer chooses, is it a state, and if not, which rules
+ * reject it — all of them, not just the one that happened to prune first.
+ *
+ * It is built from `ORDER` and `DIMENSION_BY_ID`, so a dimension or value
+ * added to the registry appears here without anyone editing this function.
+ */
+function renderPicker() {
+  const box = document.querySelector("#picker");
+  const selects = new Map();
+  for (const key of ORDER) {
+    const row = el("label", "picker-row");
+    row.append(el("span", "picker-key", key));
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", key);
+    for (const value of DIMENSION_BY_ID[key].values) {
+      const option = document.createElement("option");
+      option.value = value.id;
+      option.textContent = value.id;
+      select.append(option);
+    }
+    select.addEventListener("change", judge);
+    selects.set(key, select);
+    row.append(select);
+    box.append(row);
+  }
+  document.querySelector("#picker-verdict").dataset.ready = "true";
+
+  function judge() {
+    const combo = Object.fromEntries([...selects].map(([key, select]) => [key, select.value]));
+    const broken = violations(combo);
+    const match = STATES.find((state) => ORDER.every((key) => state.dimensions?.[key] === combo[key]));
+    render(combo, broken, match);
+  }
+
+  function render(combo, broken, match) {
+    const panel = document.querySelector("#picker-verdict");
+    panel.dataset.verdict = broken.length ? "excluded" : "reachable";
+    const parts = [el("p", "picker-headline", broken.length
+      ? `Not a state — ${broken.length} rule${broken.length === 1 ? "" : "s"} reject this combination.`
+      : match ? `Reachable, and enumerated as ${match.id}.` : "Reachable: no rule rejects it.")];
+    for (const id of broken) {
+      const rule = CONSTRAINTS.find((item) => item.id === id);
+      const entry = el("details");
+      entry.append(el("summary", null, `${rule.id} · ${rule.kind}`), el("p", null, rule.why));
+      parts.push(entry);
+    }
+    if (!broken.length && !match) {
+      parts.push(el("p", "muted", "No rule rejects it and no enumerated state carries it — that is a registry gap worth reporting."));
+    }
+    panel.replaceChildren(...parts);
+  }
+
+  judge();
 }
 
 function applyViewport() {
