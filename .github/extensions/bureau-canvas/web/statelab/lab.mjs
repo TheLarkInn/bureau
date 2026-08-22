@@ -260,10 +260,10 @@ function expectationList(state, result) {
   if (result?.channel?.observed === false) {
     box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
   }
-  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast"].includes(item.kind));
+  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length
     ? layout.map((item) => `${item.kind}: ${item.detail}`).join("; ")
-    : "no overlap, clipping, low contrast or horizontal overflow"));
+    : "no overlap, clipping, low contrast, placeholder copy or horizontal overflow"));
   return box;
 }
 

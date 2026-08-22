@@ -110,7 +110,7 @@ under permuted orders to keep it that way.
 | `paths.mjs` | how each state is reached, as data |
 | `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
 | `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
-| `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping |
+| `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping, and copy that reserves a region instead of drawing it |
 
 Two rules keep it honest. A state is reachable only if the driver can get
 there by clicking, so nothing sets component state directly. And every walk

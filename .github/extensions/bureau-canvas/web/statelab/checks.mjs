@@ -148,10 +148,34 @@ export function verdict(state, snapshot, options = {}) {
     ...missing(state, snapshot),
     ...forbidden(state, snapshot),
     ...absentCopy(state, snapshot),
+    ...promisedCopy(snapshot),
     ...lowContrast(snapshot, options),
     ...overlaps(snapshot),
     ...clipping(snapshot, options),
   ];
+}
+
+/**
+ * Copy that reserves room for something the surface does not draw.
+ *
+ * The pipeline side panel carried a "Trust flow — Reserved for trust analysis."
+ * section whose body was a constant. Trust results arrive as advisories and are
+ * already drawn in the findings directly above it, so the section told a reader
+ * that the one thing it names is missing while the panel was showing it. A
+ * region that never varies has no state to assert, so nothing else here could
+ * fail for it — only the gallery reads it as a defect rather than a stub.
+ *
+ * These are phrases rather than selectors because the defect is the sentence:
+ * whatever markup carries it, a surface that promises instead of drawing is
+ * one a reviewer has to be told about.
+ */
+const PLACEHOLDER_PROMISES = [/reserved for\b/iu, /coming soon\b/iu, /not implemented\b/iu, /to be (?:added|built|done)\b/iu];
+
+function promisedCopy(snapshot) {
+  const text = normalise(snapshot.text);
+  return PLACEHOLDER_PROMISES
+    .filter((pattern) => pattern.test(text))
+    .map((pattern) => ({ kind: "placeholder-copy", detail: `the render says "${text.match(pattern)[0]}" instead of drawing it` }));
 }
 
 function lowContrast(snapshot, options) {

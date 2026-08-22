@@ -1645,7 +1645,6 @@ function SidePanel({ state, pipeline, name }) {
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
     h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
-    h("section", { className: "panel-section" }, h("h3", {}, "Trust flow"), h("p", { className: "muted" }, "Reserved for trust analysis.")),
   );
 }
 

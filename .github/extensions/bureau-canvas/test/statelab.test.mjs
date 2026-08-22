@@ -580,6 +580,25 @@ test("a render that matches the registry produces no findings", () => {
   assert.deepStrictEqual(verdict(state, snapshot), []);
 });
 
+test("the verdict refuses copy that reserves a region instead of drawing it", () => {
+  // The pipeline side panel used to end on a constant "Trust flow — Reserved
+  // for trust analysis." while the trust advisories it names were drawn in the
+  // findings above it. A region that never varies has no state to assert, so
+  // this is the one check that can fail for it.
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const snapshot = {
+    counts: {},
+    text: "Legend\nTrust flow\nReserved for trust analysis.",
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    boxes: [],
+  };
+  assert.deepStrictEqual(verdict(state, snapshot), [
+    { kind: "placeholder-copy", detail: 'the render says "reserved for" instead of drawing it' },
+  ]);
+});
+
 test("every contrast selector names small text coloured from a kind hue", () => {
   // A hue that reads as decoration rather than text is a defect the
   // screenshots would not show, so the ratio is asserted rather than eyeballed.
