@@ -30,6 +30,26 @@ export const EVENTS = {
   runFinished: "run_finished",
 };
 
+/**
+ * Which run controls a status can still act on.
+ *
+ * A run that has reached a terminal cannot be paused, resumed or cancelled —
+ * there is nothing left to act on — so the buttons go and the status stays.
+ * `RunPicker` lists only live runs, so this is not a screen the picker can
+ * open: it is the one a reader is left with after watching a run they picked
+ * while it was running reach its end. Branching on `paused` alone offered
+ * Pause on a finished run, which is a control that could only fail.
+ *
+ * Here rather than in `live.js` because it is a pure fact about a status, and
+ * this is the module the offline suite can hold without a browser.
+ */
+export function runActions(status) {
+  if (status === "finished") {
+    return { transport: null, cancel: false };
+  }
+  return { transport: status === "paused" ? "resume" : "pause", cancel: true };
+}
+
 export function emptyOverlay() {
   return {
     runId: null,

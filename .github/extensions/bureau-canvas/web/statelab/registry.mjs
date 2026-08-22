@@ -13,7 +13,7 @@ import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, selectStep } from "./p
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
-const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
+const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
 /** A stable, readable id: only the axes that carry information appear. */
 function identify(combo) {
@@ -32,7 +32,7 @@ function pageFor(combo) {
  * surface simply does not draw.
  */
 function expectations(combo) {
-  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set() };
+  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set() };
   const absorb = (source) => {
     for (const [key, set] of Object.entries(bag)) {
       for (const item of source?.[key] ?? []) {
@@ -58,6 +58,7 @@ function expectations(combo) {
     hides: [...bag.hides],
     copy: [...bag.copy],
     allowErrors: [...bag.allowErrors],
+    allowPlaceholder: [...bag.allowPlaceholder],
   };
 }
 
@@ -90,7 +91,11 @@ function configOps(combo) {
 }
 
 function pipelineOps(combo) {
-  return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runOps(combo.mode, combo.run)];
+  return [
+    ...(valueOf("mode", combo.mode)?.enter ?? []),
+    ...runOps(combo.mode, combo.run),
+    ...(valueOf("transport", combo.transport)?.enter ?? []),
+  ];
 }
 
 function editorOps(combo) {

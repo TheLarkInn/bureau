@@ -102,12 +102,13 @@ function Timeline({ range, position, playing, speed, onScrub, onPlay, onSpeed, o
     "div",
     { className: "replay-timeline" },
     h("button", { type: "button", className: "run-control", onClick: () => onStep(-1), "aria-label": "Step back" }, "◂"),
-    h("button", { type: "button", className: "run-control", onClick: onPlay }, playing ? "Pause" : "Play"),
+    h("button", { type: "button", className: "run-control", "data-testid": "replay-play", "aria-label": playing ? "Pause replay" : "Play replay", onClick: onPlay }, playing ? "Pause" : "Play"),
     h("button", { type: "button", className: "run-control", onClick: () => onStep(1), "aria-label": "Step forward" }, "▸"),
     SPEEDS.map((option) =>
       h("button", {
         key: option,
         type: "button",
+        "data-testid": `replay-speed-${option}`,
         className: `run-control${speed === option ? " run-control--active" : ""}`,
         onClick: () => onSpeed(option),
       }, `${option}x`),

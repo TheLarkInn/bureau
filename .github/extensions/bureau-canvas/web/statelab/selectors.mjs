@@ -32,11 +32,18 @@ export const SELECTORS = {
   createName: "#create-name",
   createSubmit: '[data-testid="create-submit"]',
   createCancel: '[data-testid="create-cancel"]',
+  // A refused create, as its own treatment rather than only its words: a
+  // refusal drawn in the ordinary note class reads as advice.
+  createRefused: ".create-bar .note--err",
 
   draftBar: '[data-testid="draft-bar"]',
   draftSave: '[data-testid="draft-save"]',
   draftDiscard: '[data-testid="draft-discard"]',
   draftList: ".draft-list",
+  // A refused `save-plan` or `discard-plan`, as its own treatment. Separate
+  // from the words for the same reason as `workSourceRefused`: a refusal
+  // rendered as ordinary copy still reads as progress.
+  draftRefused: ".draft-bar .note--err",
 
   workSourceValue: ".ws-value",
   workSourceEditor: ".ws-open",
@@ -80,6 +87,11 @@ export const SELECTORS = {
   relationSection: ".relation-section",
   relationSummary: ".relation-section > summary",
   relationFlow: ".relation-flow",
+  // Collapsed is read from the disclosure's own `open`, not from the graph's
+  // presence: a closed `<details>` keeps its subtree mounted and still reports
+  // client rects for it, so counting `.relation-flow` cannot tell the two
+  // apart. This can, and it fails the moment the section ships `open`.
+  relationOpen: ".relation-section[open]",
 
   pipelineView: ".view-shell--pipeline",
   pipelineToolbar: ".pipeline-toolbar",
@@ -94,12 +106,23 @@ export const SELECTORS = {
   runPickerLive: '[aria-label="Live run"]',
   runPickerReplay: '[aria-label="Replay run"]',
   runControls: ".run-controls",
-  runStatus: ".run-status",
+  runStatus: ".run-controls .run-status",
   runPause: '[data-testid="run-pause"]',
   runResume: '[data-testid="run-resume"]',
+  // Cancel is offered beside pause and resume for as long as the run can still
+  // be acted on, and it is the one run control that cannot be undone — so a
+  // state that draws it has to say so.
+  runCancel: '[data-testid="run-cancel"]',
+  runControlError: ".run-control-error",
   replayControls: ".replay-controls",
   replayTimeline: ".replay-timeline",
   replayScrubber: ".replay-scrubber",
+  replayStepBack: '[aria-label="Step back"]',
+  replayStepForward: '[aria-label="Step forward"]',
+  replayPlay: '[data-testid="replay-play"]',
+  // The same button once it is running. The label is the whole difference, and
+  // it is what a state asserting "playing" would have to read.
+  replayPause: '[data-testid="replay-play"][aria-label="Pause replay"]',
   // The timeline renders the moment a run is picked, with an empty range; the
   // log arrives afterwards. `max` is the only signal that the events landed,
   // so it is what a replay path waits on rather than the timeline itself.
@@ -159,6 +182,25 @@ export function relationCardFor(id) {
  */
 export function replaySpanFor(endMs) {
   return `.replay-scrubber[max="${endMs}"]`;
+}
+
+/** One speed button, and the one the timeline is actually running at. */
+export function replaySpeed(rate) {
+  return `[data-testid="replay-speed-${rate}"]`;
+}
+
+export function replaySpeedActive(rate) {
+  return `${replaySpeed(rate)}.run-control--active`;
+}
+
+/**
+ * The scrubber, addressed by the position it is parked at. The transport moves
+ * `value`, so this is what separates "stepped forward" and "still at the
+ * start" — a step that did nothing leaves the readout and the scrubber where
+ * they were.
+ */
+export function replayPositionAt(ms) {
+  return `.replay-scrubber[value="${ms}"]`;
 }
 
 /** A save button that is offered, and one that is withheld. */

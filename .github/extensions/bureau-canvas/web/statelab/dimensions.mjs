@@ -11,8 +11,8 @@
 // surface takes `n/a`, and a constraint rule says why — so an absent axis is
 // recorded rather than silently dropped.
 
-import { SELECTORS as S, offered, relationCardFor, replaySpanFor, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
+import { FIELD_SAVE, RUN_END, RUN_STEP, SAMPLE_STEPS } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -150,6 +150,24 @@ const draft = {
       shows: [S.draftBar],
       copy: ["1 unsaved change"],
     },
+    /*
+     * What the two buttons do about a plan, which the matrix may not perform —
+     * `a-plan-save-would-write-the-config` says why. Named here so the two
+     * screens are excluded rather than missing: both are real renders of
+     * `DraftBar` (`app.mjs`), and the refusal is the only one of the three
+     * draft screens nothing else in the suite draws.
+     */
+    {
+      id: "saving",
+      summary: "save-plan in flight, so neither button takes a second click",
+      shows: [S.draftBar, withheld(S.draftSave), withheld(S.draftDiscard)],
+      copy: ["Working…"],
+    },
+    {
+      id: "save-error",
+      summary: "the plan came back refused and is still there to retry",
+      shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
+    },
   ],
 };
 
@@ -241,23 +259,42 @@ const disclosure = {
     {
       id: "none",
       summary: "every secondary region closed",
-      // The create form is absent from the DOM until it is opened. The relation
-      // graph is not: it lives inside a closed `<details>`, which keeps its
-      // subtree mounted, so "closed" is not something a selector count can say.
-      hides: [S.createBar],
+      // Collapsed is a state the disclosure itself records. The create form is
+      // absent from the DOM until it is opened; the relation graph is not — a
+      // closed `<details>` keeps its subtree mounted and still reports client
+      // rects for it, so `.relation-flow` cannot tell open from closed. Its
+      // own `open` can, and saying nothing at all here let a section that
+      // shipped `open` pass in every one of these states.
+      hides: [S.createBar, S.relationOpen],
     },
     {
       id: "create",
       summary: "the create form open",
       enter: [{ op: "click", selector: S.createOpen }],
-      shows: [S.createBar, S.createKind, S.createName, S.createSubmit, S.createCancel],
+      // The form opens with nothing typed, so its save is withheld — the same
+      // draft safety every field editor keeps, on the one control that makes a
+      // new item. Without it the form could ship a submit that was always live.
+      shows: [S.createBar, S.createKind, S.createName, withheld(S.createSubmit), S.createCancel],
+      hides: [S.relationOpen],
+      copy: ["New reusable config"],
+    },
+    {
+      // Typing the name is what arms the submit, and it is the only difference
+      // between the two create screens — so it is a value rather than a step
+      // folded into `create`, which would have made the withheld assertion and
+      // the offered one contradict each other on one state.
+      id: "create-named",
+      summary: "the create form with a name typed, so the save is offered",
+      enter: [{ op: "click", selector: S.createOpen }, { op: "fill", selector: S.createName, value: "second-reviewer" }],
+      shows: [S.createBar, S.createKind, offered(S.createSubmit), S.createCancel],
+      hides: [S.relationOpen],
       copy: ["New reusable config"],
     },
     {
       id: "relation-open",
       summary: "the shared relation graph expanded",
       enter: [{ op: "click", selector: S.relationSummary }],
-      shows: [S.relationSection, S.relationFlow],
+      shows: [S.relationSection, S.relationOpen, S.relationFlow],
     },
     // The create bar and the relation `<details>` are siblings with separate
     // local state, so opening one does not close the other. Without this value
@@ -270,8 +307,21 @@ const disclosure = {
         { op: "click", selector: S.createOpen },
         { op: "click", selector: S.relationSummary },
       ],
-      shows: [S.createBar, S.createSubmit, S.relationSection, S.relationFlow],
+      shows: [S.createBar, S.createSubmit, S.relationSection, S.relationOpen, S.relationFlow],
       copy: ["New reusable config"],
+    },
+    /*
+     * What submitting does, which the matrix may not perform —
+     * `a-create-would-write-the-config` says why. Kept as a value for the same
+     * reason `fieldState: save-error` and `run: refused` are: the refusal is a
+     * real screen, and a create surface with no refusal state recorded is the
+     * one write path in this registry that would have had neither a value nor
+     * a rule.
+     */
+    {
+      id: "create-error",
+      summary: "the create came back refused, with the form still there to retry",
+      shows: [S.createBar, S.createRefused, offered(S.createSubmit)],
     },
   ],
 };
@@ -348,7 +398,11 @@ const field = {
       id: "delete",
       summary: "delete asks first and shows what breaks",
       enter: [{ op: "click", selector: S.deleteStart }, { op: "wait", selector: S.preflight }],
-      shows: [S.preflight],
+      // The point of a preflight is the answer it gives, and the answer is the
+      // state of the confirm button. Asserting only that a preflight appeared
+      // left the one control it exists to gate unasserted.
+      shows: [S.preflight, offered(S.deleteConfirm)],
+      copy: ["Nothing references this"],
       /*
        * The preflight is a real intent, and `runCrudIntent` answers even a
        * read-only one by refreshing and republishing the host's own state —
@@ -360,6 +414,21 @@ const field = {
        * host's one-card screen pass under the name `two-cards`, which is a
        * harness artifact recorded as a state.
        */
+      suppress: ["data"],
+    },
+    /*
+     * The refusal, kept as a value so it is excluded by a named rule rather
+     * than missing — `delete-is-offered-only-where-nothing-refers` says why.
+     * It is a real screen of `DeleteControl`, and one no config the canvas can
+     * reach draws: the two places the control mounts are an assignment card
+     * and the orphan strip, and an orphan is by definition the config nothing
+     * references. `test/preflight.test.mjs` owns the blocking answer itself.
+     */
+    {
+      id: "delete-blocked",
+      summary: "a preflight that found referrers, so the confirm is withheld",
+      shows: [S.preflight, withheld(S.deleteConfirm)],
+      copy: ["Repoint these references before deleting this item."],
       suppress: ["data"],
     },
   ],
@@ -443,13 +512,36 @@ const fieldPair = {
 /** Fields that are editors, so a second one can be open beside them. */
 export const PAIRABLE_FIELDS = ["work-source", "work-rules", "forge-signals", "repos", "repos-add", "limits"];
 
-/** D9 — the pipeline viewer's three graph modes. */
+/**
+ * The edge classes the two graphs draw, which are the whole of what an edge
+ * means on screen. Both graphs key a control edge by its outcome and a
+ * relation edge by its relation (`lib/view.mjs` emits `data` and `observes`),
+ * so these are what the sample pipeline wires before anything is added to it.
+ * `observes` is not here: it needs a step with an `over`, which the sample has
+ * none of — `pick: decision` creates one and asserts it there.
+ */
+const VIEWER_EDGES = [".flow-edge--success", ".flow-edge--failure", ".flow-edge--blocked", ".flow-edge--no-work", ".flow-edge--data"];
+const EDITOR_EDGES = [".editor-edge--success", ".editor-edge--failure", ".editor-edge--blocked", ".editor-edge--no-work", ".editor-edge--data"];
+
+/**
+ * D9 — the pipeline viewer's three graph modes.
+ *
+ * Design asserts the drawing's own semantics, not just that a graph appeared:
+ * a control edge per outcome, the two relation edges the sample pipeline wires,
+ * and a terminal pill for the terminal it ends on. Naming only `.pipeline-flow`
+ * let a graph that drew every edge in one class — or dropped its terminals —
+ * pass as the static config graph.
+ */
 const mode = {
   id: "mode",
   title: "Graph mode",
   why: "design is the config graph; live and replay restyle it from the run log, never from config edges",
   values: [
-    { id: "design", summary: "the static config graph", shows: [S.modeSwitcher, S.legend] },
+    {
+      id: "design",
+      summary: "the static config graph",
+      shows: [S.modeSwitcher, S.legend, S.terminalPill, ...VIEWER_EDGES],
+    },
     {
       id: "live",
       summary: "one live run, streamed",
@@ -496,6 +588,15 @@ const run = {
     { id: "running", summary: "a run still appending events", derive: (combo) => overlay(combo, "running") },
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
     { id: "finished", summary: "a run that reached a terminal", derive: (combo) => overlay(combo, "finished") },
+    /*
+     * A run control the host refused, kept as a value so the omission is a
+     * named exclusion rather than a gap — `a-run-intent-would-act-on-the-host`
+     * says why. Pause, resume and cancel are the three intents that reach a
+     * real run, and the matrix shares one host across every state, so it may
+     * not send one. The screen is real: `.run-control-error` under the picker,
+     * with the transport still offered so the reader can try again.
+     */
+    { id: "refused", summary: "a pause, resume or cancel the host refused", shows: [S.runControlError, S.runCancel] },
   ],
 };
 
@@ -504,15 +605,70 @@ const run = {
  * on its timeline. Replay rests at the start of the run, so every replayed run
  * decorates identically — the span is what distinguishes them, and it comes
  * straight from the last event in the chosen log.
+ *
+ * Live also asserts the transport itself. Cancel is offered for as long as the
+ * run can be acted on and withdrawn once it cannot, and `.run-status` is the
+ * element that reports which of those it is — both were drawn by every live
+ * state and asserted by none, so deleting Cancel changed no verdict.
  */
 function overlay(combo, runValue) {
   if (combo.mode === "replay") {
     return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
   }
   return runValue === "paused"
-    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume], hides: [S.runPause], copy: ["paused"] }
-    : { shows: [S.overlayRunning, S.runPause], hides: [S.runResume], copy: ["running"] };
+    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: ["paused"] }
+    : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: ["running"] };
 }
+
+/**
+ * D10b — where the replay transport has moved the run.
+ *
+ * The timeline is not decoration: step, play and the speed buttons are the
+ * whole of what replay does, and every one of them was unasserted — a replay
+ * that never advanced passed every state. `rest` is the position a freshly
+ * picked run parks at, so the two acting values are what tell a working
+ * transport from a drawn one.
+ *
+ * Play is deliberately a declared-and-excluded value rather than a silence:
+ * it advances on a 100ms interval, so a state holding it would assert a
+ * position that depends on when the screenshot was taken.
+ */
+const transport = {
+  id: "transport",
+  title: "Replay transport",
+  why: "replay's controls have to move the run; a timeline that only draws is the defect they hide — and Play is excluded rather than omitted, because a timer decides its position",
+  values: [
+    {
+      id: "rest",
+      summary: "parked at the first event, running at 1x",
+      derive: (combo) => ({ shows: [replayPositionAt(RUN_STEP[combo.run]?.start), replaySpeedActive(1), S.replayPlay, S.replayStepForward, S.replayStepBack], copy: ["+0.0s"] }),
+    },
+    {
+      id: "stepped",
+      summary: "stepped forward to the next event in the log",
+      enter: [{ op: "click", selector: S.replayStepForward }],
+      derive: (combo) => ({ shows: [replayPositionAt(RUN_STEP[combo.run]?.next)], copy: [RUN_STEP[combo.run]?.readout] }),
+    },
+    {
+      id: "speed-16x",
+      summary: "the 16x speed taken, with 1x given up",
+      enter: [{ op: "click", selector: replaySpeed(16) }],
+      shows: [replaySpeedActive(16)],
+      hides: [replaySpeedActive(1)],
+    },
+    /*
+     * The one transport control the matrix may not take — `playing-advances-
+     * on-a-timer` says why. Kept as a value rather than left to a comment,
+     * because a comment is not something the lab shows a reviewer: the axis
+     * would otherwise present three controls where the timeline ships four.
+     */
+    {
+      id: "playing",
+      summary: "playing, so the position is whatever the clock has reached",
+      shows: [S.replayPause],
+    },
+  ],
+};
 
 /** D11 — the editor's two tabs. */
 const tab = {
@@ -523,7 +679,11 @@ const tab = {
     {
       id: "pipeline",
       summary: "the step graph editor",
-      shows: [S.editorToolbar, S.editorPanel],
+      // The drawing's own semantics, not merely that a drawing appeared: an
+      // edge class per outcome and per relation, and the terminals the steps
+      // route into. Both were named by the design system and asserted nowhere,
+      // so an editor that drew every edge alike passed all 21 of these states.
+      shows: [S.editorToolbar, S.editorPanel, S.editorTerminal, ...EDITOR_EDGES],
       /*
        * `EditorApp` keeps both panes mounted and separates them with `hidden`
        * alone. The leak was pinned in one direction only — the two Relations
@@ -551,7 +711,10 @@ const pick = {
     { id: "none", summary: "nothing selected", shows: [S.editorEmpty], copy: ["Edit a step"] },
     { id: "deterministic", summary: "a shell step", copy: ["run"] },
     { id: "agent", summary: "a delegated step", shows: [S.stepRole, S.stepTrust] },
-    { id: "decision", summary: "a four-way branch", copy: ["on (all four outcomes required)"] },
+    // A decision step is the one the sample has to grow: it carries an `over`,
+    // which is the only thing that draws an `observes` edge. Asserting it here
+    // is what holds the relation edge the viewer's own graph never wires.
+    { id: "decision", summary: "a four-way branch", shows: [".editor-edge--observes"], copy: ["on (all four outcomes required)"] },
     { id: "concurrent", summary: "a member group", copy: ["completion", "maximum concurrent members"] },
   ],
 };
@@ -595,7 +758,9 @@ const edit = {
       derive: (combo) => (SAMPLE_STEPS[combo.pick]
         ? { shows: [withheld(S.editorSave)], hides: [S.editorDiscard] }
         : { shows: [S.editorDiscard, offered(S.editorSave)] }),
-      shows: [S.editorDangerZone],
+      // The confirm button itself, not only the zone that holds it: a danger
+      // zone that asked and offered no way to answer would have passed.
+      shows: [S.editorDangerZone, S.editorDeleteConfirm],
     },
     {
       id: "layout-moved",
@@ -625,12 +790,12 @@ const edit = {
   ],
 };
 
-export const DIMENSIONS = [surface, data, draft, section, orphans, disclosure, card, field, fieldState, fieldPair, mode, run, tab, pick, edit];
+export const DIMENSIONS = [surface, data, draft, section, orphans, disclosure, card, field, fieldState, fieldPair, mode, run, transport, tab, pick, edit];
 
 export const DIMENSION_BY_ID = Object.fromEntries(DIMENSIONS.map((item) => [item.id, item]));
 
 /** Every dimension except `surface` can be absent; `n/a` says so. */
-export const OPTIONAL = ["data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
+export const OPTIONAL = ["data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
 for (const id of OPTIONAL) {
   DIMENSION_BY_ID[id].values = [NA, ...DIMENSION_BY_ID[id].values];

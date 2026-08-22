@@ -73,9 +73,10 @@ export const test = base.extend({
       }
     });
     page.on("requestfailed", (request) => {
-      if (!request.url().includes("statelab-intercept")) {
-        errors.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
-      }
+      // Not filtered here: a state that causes a failed request declares it in
+      // `allowErrors`, so the registry stays the only place that says which
+      // failures are the state and which are the bug.
+      errors.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
     });
     await use({ page, errors });
   },
@@ -214,7 +215,35 @@ export async function applyOps(ops, state, page, host) {
   return judge(state, page);
 }
 
+const SETTLE_MS = 5000;
+const SETTLE_POLL_MS = 100;
+
+/**
+ * Judges the render once it has settled.
+ *
+ * The verdict is a single `page.evaluate`, not a locator, so nothing about it
+ * retries — it judges whichever frame it lands on. Most paths are settled by
+ * the time it runs, but some add nodes to a React Flow graph after the surface
+ * is up: a fixture's orphan cards arrive with the payload, and React Flow lays
+ * a new node out at `visibility: hidden` until its measurement lands. Sampling
+ * between those two moments reports a control missing that is one frame away.
+ *
+ * So it re-samples to a deadline, the way `web/statelab/lab.mjs` already does
+ * and the way Playwright's own `expect` does. It reports whatever the last
+ * look found, so a state that is genuinely wrong still fails — it just takes
+ * the full budget to say so.
+ */
 async function judge(state, page) {
+  const deadline = Date.now() + SETTLE_MS;
+  let result = await sample(state, page);
+  while (result.failures.length > 0 && Date.now() < deadline) {
+    await page.waitForTimeout(SETTLE_POLL_MS);
+    result = await sample(state, page);
+  }
+  return result;
+}
+
+async function sample(state, page) {
   const snapshot = await page.evaluate(
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
     { source: collect.toString(), request: { selectors: selectorsFor(state), measure: MEASURED, contrast: CONTRAST } },

@@ -117,7 +117,7 @@ export const FIELD_LIFECYCLE = {
   "repos-add": { "n/a": { fixture: "multi-repo" } },
   limits: {
     rest: {},
-    dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], copy: ["unsaved changes"] },
+    dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], shows: [S.limitsDirty], copy: ["unsaved changes"] },
     invalid: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "0" }], copy: ["need whole numbers of at least 1"] },
   },
   delete: { "n/a": {} },
@@ -191,6 +191,20 @@ export const RUN_END = {
   running: 1740000002000,
   paused: 1740000105000,
   finished: 1740000210000,
+};
+
+/**
+ * Where the transport parks, per run: the first event's stamp, the next one a
+ * forward step lands on, and the readout that position produces. Stepping is
+ * the deterministic half of replay — play advances on a timer, this does not —
+ * so these are what tell a transport that moves from one that only draws.
+ * `test/statelab.test.mjs` derives all three from the same logs the way
+ * `stepBy` does, and fails if either drifts.
+ */
+export const RUN_STEP = {
+  running: { start: 1740000000000, next: 1740000001000, readout: "+1.0s" },
+  paused: { start: 1740000100000, next: 1740000101000, readout: "+1.0s" },
+  finished: { start: 1740000200000, next: 1740000201000, readout: "+1.0s" },
 };
 
 /**

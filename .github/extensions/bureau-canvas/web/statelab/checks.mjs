@@ -11,7 +11,13 @@
  * a single moment rather than across a dozen round trips.
  */
 export function collect(doc, request) {
-  const visible = (node) => node.getClientRects().length > 0;
+  const view = doc.defaultView;
+  // A box is not the same as a painted pixel: `visibility: hidden` still
+  // reports rects, and that is precisely how a React Flow node looks before it
+  // has been measured — the blank graph `graph-measure.mjs` exists to repair.
+  // Counting one would let an unpainted graph satisfy a `shows`.
+  const visible = (node) =>
+    node.getClientRects().length > 0 && view.getComputedStyle(node).visibility !== "hidden";
   const counts = {};
   for (const selector of request.selectors) {
     counts[selector] = [...doc.querySelectorAll(selector)].filter(visible).length;
@@ -26,7 +32,6 @@ export function collect(doc, request) {
       }
     }
   }
-  const view = doc.defaultView;
   const channels = (value) => (String(value).match(/[\d.]+/gu) ?? []).map(Number);
   const opaque = (value) => {
     const parts = channels(value);
@@ -143,10 +148,40 @@ export function verdict(state, snapshot, options = {}) {
     ...missing(state, snapshot),
     ...forbidden(state, snapshot),
     ...absentCopy(state, snapshot),
+    ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...overlaps(snapshot),
     ...clipping(snapshot, options),
   ];
+}
+
+/**
+ * Copy that reserves room for something the surface does not draw.
+ *
+ * The pipeline side panel carried a "Trust flow — Reserved for trust analysis."
+ * section whose body was a constant. Trust results arrive as advisories and are
+ * already drawn in the findings directly above it, so the section told a reader
+ * that the one thing it names is missing while the panel was showing it. A
+ * region that never varies has no state to assert, so nothing else here could
+ * fail for it — only the gallery reads it as a defect rather than a stub.
+ *
+ * These are phrases rather than selectors because the defect is the sentence:
+ * whatever markup carries it, a surface that promises instead of drawing is
+ * one a reviewer has to be told about. The text searched is the whole body,
+ * which includes config the canvas is quoting rather than authoring — a `run:`
+ * command may legitimately say any of these — so a state can declare the
+ * phrase its own, the way `allowErrors` declares a failed request its own.
+ */
+const PLACEHOLDER_PROMISES = [/reserved for\b/iu, /coming soon\b/iu, /not implemented\b/iu, /to be (?:added|built|done)\b/iu];
+
+function promisedCopy(state, snapshot) {
+  if (state.expect?.allowPlaceholder?.length) {
+    return [];
+  }
+  const text = normalise(snapshot.text);
+  return PLACEHOLDER_PROMISES
+    .filter((pattern) => pattern.test(text))
+    .map((pattern) => ({ kind: "placeholder-copy", detail: `the render says "${text.match(pattern)[0]}" instead of drawing it` }));
 }
 
 function lowContrast(snapshot, options) {

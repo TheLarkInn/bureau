@@ -146,9 +146,10 @@ const SETTLE_POLL_MS = 50;
  *
  * React commits asynchronously, so a verdict taken the instant the last click
  * returns can catch the DOM mid-update — on a loaded machine that reads as a
- * state failing its own registry. The browser suite does not see this because
- * Playwright locators retry; the lab has to retry for itself, and it still
- * reports whatever the last look found, so a genuinely wrong state still fails.
+ * state failing its own registry. The browser suite takes its verdict through
+ * a single `page.evaluate` rather than a locator, so nothing there retries
+ * either; `matrix-fixtures.mjs` runs the same loop for the same reason. Both
+ * report whatever the last look found, so a genuinely wrong state still fails.
  */
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
@@ -259,10 +260,10 @@ function expectationList(state, result) {
   if (result?.channel?.observed === false) {
     box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
   }
-  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast"].includes(item.kind));
+  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length
     ? layout.map((item) => `${item.kind}: ${item.detail}`).join("; ")
-    : "no overlap, clipping, low contrast or horizontal overflow"));
+    : "no overlap, clipping, low contrast, placeholder copy or horizontal overflow"));
   return box;
 }
 

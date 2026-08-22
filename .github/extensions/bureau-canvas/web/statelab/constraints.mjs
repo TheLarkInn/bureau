@@ -11,7 +11,9 @@
 //
 // Each rule declares the dimensions it reads. That lets the enumeration prune
 // a whole subtree the moment a rule's inputs are all assigned, instead of
-// materialising 653 million tuples to throw nearly all of them away.
+// materialising every one of them to throw nearly all of them away.
+// That figure is the product of the dimension sizes and moves whenever a
+// dimension gains a value; `summary()` computes it rather than quoting it.
 //
 // Two kinds of rule live here, and the distinction matters:
 //
@@ -32,7 +34,7 @@ const INDEX_SURFACES = ["config", "pipeline"];
 const ASSIGNMENT_SCOPED_DATA = ["advisory", "invalid-advisory"];
 
 /** Dimensions that must read `n/a` when the surface has no such region. */
-const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
+const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
 /** The body values that count as "at rest" for the scoping rules. */
 const BODY_BASELINE = {
@@ -45,6 +47,7 @@ const BODY_BASELINE = {
   fieldPair: ["n/a"],
   mode: ["n/a", "design"],
   run: ["n/a", "none"],
+  transport: ["n/a", "rest"],
   tab: ["n/a", "pipeline"],
   pick: ["n/a", "none"],
   edit: ["n/a", "rest"],
@@ -65,41 +68,65 @@ const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "lay
 
 /**
  * The two lifecycle values that only a performed save can reach. Shared by the
- * field axis and the editor axis because it is one fact about the harness, not
- * two: both saves write, and the matrix host is read-only.
+ * draft, field and editor axes because it is one fact about the harness, not
+ * three: each save mutates the host — the plan bar writes the config directory,
+ * the pipeline editor writes the pipeline file, a field records a plan on the
+ * shared instance — and the matrix host is read-only and worker-scoped.
  */
 const SAVE_STATES = ["saving", "save-error"];
 
 export const CONSTRAINTS = [
   {
     /*
-     * A save is the one act that leaves the harness. Every field editor's save
-     * posts a `set-*` intent that writes the config directory the host was
-     * started against, and the matrix runs 131 states against *one* host per
-     * worker, fully parallel. A state that wrote would change the payload every
-     * other state in flight is being judged against, and the directory in
-     * question is the repository's own `.bureau/`.
+     * A field save is the one act on a card that leaves the state alone but
+     * not the host. `set-work-source` and its siblings do not write the config
+     * directory — `lib/crud.mjs` `record()` only calls `setPlan` and returns a
+     * `pending` summary, which `specs/assignment-runtime.spec.mjs` pins by
+     * reading the file back unchanged. What they do is record a plan on the
+     * host, and `serve.mjs` boots one instance per host process while
+     * `extension.mjs` keys plans on it. The matrix runs every state against one
+     * such host per worker, fully parallel, so a plan recorded by one state
+     * outlives it and raises the draft bar over every later state on that
+     * worker — including the ones whose `draft: none` requires it absent.
      *
      * So the values exist and the rule excludes them, rather than the axis
      * quietly stopping at `invalid`: `saving` and `save-error` are real screens
-     * — `.note--err` from a refused `set-work-source`, the "Saving…" label — and
-     * an axis that omitted them would be the unrepresentable-versus-excluded
-     * mistake this registry keeps making rules for. The successful round trip
-     * is owned by `specs/editor.spec.mjs`, which boots its own scratch config.
+     * — the "Saving…" label, `.note--err` from a refused `set-work-source` —
+     * and an axis that omitted them would be the unrepresentable-versus-
+     * excluded mistake this registry keeps making rules for. The successful
+     * round trip is owned per field by `specs/worksource.spec.mjs`,
+     * `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and
+     * `specs/assignment-runtime.spec.mjs`, each against its own scratch config.
      */
     id: "a-field-save-would-write-the-config",
     kind: "structural",
     reads: ["fieldState"],
     title: "The matrix cannot review a field save it is not allowed to perform",
-    why: "Saving posts a `set-*` intent that writes the host's config directory, and the matrix shares one read-only host across every state. `saving` and `save-error` are real screens the harness may not produce; `specs/editor.spec.mjs` owns the write path against its own scratch config.",
+    why: "A `set-*` intent records a pending plan on the shared host (`lib/crud.mjs` `record` → `setPlan`), and the matrix shares one worker-scoped host across every state — so the plan would leak the draft bar into every later state on that worker. `saving` and `save-error` are real screens the harness may not produce; `specs/worksource.spec.mjs`, `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and `specs/assignment-runtime.spec.mjs` own the round trip against their own scratch configs.",
     holds: (combo) => !SAVE_STATES.includes(combo.fieldState),
+  },
+  {
+    /*
+     * The draft bar's own two buttons, and the only one of the three rules in
+     * this family whose act really does reach the disk: `save-plan` runs
+     * `applyPlan` against the host's config directory (`extension.mjs`), and
+     * the matrix host is pointed at the repository's own `.bureau/`. Discard
+     * is no safer to perform, because it clears the plan the fixture published
+     * and the states sharing that worker are still being judged against it.
+     */
+    id: "a-plan-save-would-write-the-config",
+    kind: "structural",
+    reads: ["draft"],
+    title: "The matrix cannot review a plan save it is not allowed to perform",
+    why: "`save-plan` calls `applyPlan` on the host's config directory and `discard-plan` clears the shared plan, and the matrix runs every state against one read-only host per worker pointed at the repository's own `.bureau/`. The in-flight and refused bars are real renders of `DraftBar` and are excluded here for that reason, not absent; `specs/controls.spec.mjs` and `specs/worksource.spec.mjs` walk the successful save and discard against their own scratch configs.",
+    holds: (combo) => !SAVE_STATES.includes(combo.draft),
   },
   {
     id: "an-editor-save-would-write-the-config",
     kind: "structural",
     reads: ["edit"],
     title: "The matrix cannot review a pipeline save it is not allowed to perform",
-    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config.",
+    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config and `test/pipeline-roundtrip.test.mjs` owns the revert-on-findings half offline.",
     holds: (combo) => !SAVE_STATES.includes(combo.edit),
   },
   {
@@ -239,12 +266,90 @@ export const CONSTRAINTS = [
     holds: (combo) => (combo.run !== "n/a") === ["live", "replay"].includes(combo.mode),
   },
   {
+    /*
+     * The one rule in this family whose subject is *selection* rather than
+     * render. A live run that reaches its terminal while being watched is an
+     * ordinary screen — `useLiveOverlay` holds the id in local state and the
+     * reducer sets `finished` on the appended event — and the harness cannot
+     * produce it, because a run is live exactly while its log has no
+     * `run_finished` event (`lib/runs.mjs`). A static log is one or the other,
+     * so the picker can never offer it. What that screen shows is settled by
+     * `runActions`, which withdraws the transport once nothing can act on the
+     * run, and `test/overlay.test.mjs` holds it.
+     */
     id: "live-cannot-show-a-finished-run",
     kind: "structural",
     reads: ["mode", "run"],
     title: "The live picker lists only live runs",
-    why: "`RunPicker` filters on `run.live` in live mode, so a finished run is not selectable there — replay is where finished runs are read.",
+    why: "A run is live exactly while its `events.jsonl` holds no `run_finished` event (`lib/runs.mjs`), and `RunPicker` lists only live runs — so no committed log can be both selectable in live mode and finished. The screen a reader reaches by watching a picked run end arrives on an appended event, which the matrix's static logs cannot deliver; `runActions` says what it shows and `test/overlay.test.mjs` asserts it.",
     holds: (combo) => combo.mode !== "live" || combo.run !== "finished",
+  },
+  {
+    /*
+     * Pause, resume and cancel are the three intents that reach a real run.
+     * The matrix shares one worker-scoped host across every state, so pressing
+     * one would change what every later state on that worker is judged
+     * against — and cancelling is not undoable. Kept as a value so the
+     * omission is a named exclusion rather than a gap.
+     */
+    id: "a-run-intent-would-act-on-the-host",
+    kind: "structural",
+    reads: ["run"],
+    title: "The matrix cannot review a run control it may not press",
+    why: "`send` in `web/live/live.js` POSTs `pause-run`, `resume-run` or `cancel-run` against the host's real run, and the matrix shares one host across every state — so a refusal cannot be provoked without acting on a run the later states are still being judged against. The screen is real: `.run-control-error` under the picker, with the transport still offered so it can be tried again.",
+    holds: (combo) => combo.run !== "refused",
+  },
+  {
+    /*
+     * A create writes a file. `runCrudIntent` builds the item in the host's
+     * own config directory, and the matrix points every worker at the
+     * repository's `.bureau/` — so a create performed by one state would be
+     * config every later state on that worker is judged against.
+     */
+    id: "a-create-would-write-the-config",
+    kind: "structural",
+    reads: ["disclosure"],
+    title: "The matrix cannot review a create it is not allowed to perform",
+    why: "Submitting the create form runs a `create-*` intent, which writes a role or pipeline file into the host's config directory — and the matrix shares one read-only host across every state. So the refusal is a value the axis keeps and this rule excludes; `specs/controls.spec.mjs` and the Edge harness own the successful create, each against its own scratch config.",
+    holds: (combo) => combo.disclosure !== "create-error",
+  },
+  {
+    /*
+     * Play is the one transport control whose result is a function of when the
+     * screenshot was taken rather than of what was clicked.
+     */
+    id: "playing-advances-on-a-timer",
+    kind: "structural",
+    reads: ["transport"],
+    title: "A playing timeline has no position to assert",
+    why: "`useReplayOverlay` advances the position on a 100ms interval, so a state that pressed Play would assert whatever the clock had reached when the render was measured — a screenshot that differs run to run, which is the one thing a matrix state may not be. Stepping is the same movement made deterministic, and `transport: stepped` is where the transport is held to account.",
+    holds: (combo) => combo.transport !== "playing",
+  },
+  {
+    /*
+     * The blocking preflight is a real answer of `lib/preflight.mjs` that this
+     * surface has no way to ask for: both places `DeleteControl` mounts are
+     * places nothing refers to.
+     */
+    id: "delete-is-offered-only-where-nothing-refers",
+    kind: "structural",
+    reads: ["field"],
+    title: "A blocked preflight has no mount point on the landing",
+    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
+    holds: (combo) => combo.field !== "delete-blocked",
+  },
+  {
+    /*
+     * The transport is drawn by `Timeline`, which `useReplayOverlay` renders
+     * only for a selected run — and only replay draws it at all: live has run
+     * controls and no scrubber, design consults no log.
+     */
+    id: "the-transport-belongs-to-a-replayed-run",
+    kind: "structural",
+    reads: ["mode", "run", "transport"],
+    title: "The replay transport needs a run on the timeline",
+    why: "`useReplayOverlay` renders `Timeline` only once a run is selected, and only replay renders it at all — live streams its run and offers no scrubber, and design never consults a log.",
+    holds: (combo) => (combo.transport !== "n/a") === (combo.mode === "replay" && !["n/a", "none"].includes(combo.run)),
   },
   {
     id: "tabs-are-editor-only",
