@@ -1,6 +1,10 @@
 name: Canvas state matrix
 
 on:
+  pull_request:
+  push:
+    branches:
+      - main
   schedule:
     - cron: "23 8 * * *"
   workflow_dispatch:
@@ -26,6 +30,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Render every modeled state
         run: npm run test:matrix
+      - name: Report differences
+        if: failure()
+        run: |
+          echo "### ❌ Modeled Canvas states did not render as the registry expects" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download **canvas-state-gallery** for the render of every state and the failing report." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload state gallery
         if: always()
         uses: actions/upload-artifact@v4.4.3

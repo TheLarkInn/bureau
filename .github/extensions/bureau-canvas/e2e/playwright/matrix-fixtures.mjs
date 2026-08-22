@@ -201,8 +201,19 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * `resolve-repo` looks a repository up, and neither writes anything. Routing
  * the whole endpoint stalled the preview the save state is supposed to be
  * saving — the editor sat with no derivation, so there was nothing to submit.
- * Only the writing kinds are held or refused; every read goes to the host.
+ *
+ * So the two reads are named and everything else is held. Naming the *writes*
+ * instead is how this was first written, and it was wrong in the dangerous
+ * direction: `save-pipeline`, `save-plan`, `discard-plan` and the create and
+ * delete intents all failed a `set-` prefix test and would have gone straight
+ * to the host — which is the contributor's own `.bureau/`, shared by every
+ * state on that worker. Four constraints exist to keep those intents out of
+ * the matrix, so nothing would have failed; the config would just have been
+ * quietly rewritten underneath the run. An intent added later is now held by
+ * default, and a body that cannot be parsed is held too.
  */
+const READ_INTENTS = new Set(["derive-work-source", "resolve-repo"]);
+
 async function intercept(page, kind) {
   const routes = {
     "block-renderer": () => page.route(/app\.mjs$/u, (route) => route.abort("failed")),
@@ -216,12 +227,12 @@ async function intercept(page, kind) {
   await routes[kind]();
 }
 
-/** Whether this intent is one that would change the host. */
+/** Whether this intent is anything other than one of the two known reads. */
 function writes(route) {
   try {
-    return Boolean(JSON.parse(route.request().postData() ?? "{}").kind?.startsWith("set-"));
+    return !READ_INTENTS.has(JSON.parse(route.request().postData() ?? "{}").kind);
   } catch {
-    return false;
+    return true;
   }
 }
 

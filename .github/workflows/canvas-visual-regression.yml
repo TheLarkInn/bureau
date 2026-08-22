@@ -13,8 +13,9 @@ permissions:
 jobs:
   visual:
     name: 10 approved screens
-    # Screenshot baselines are platform-specific. Pin the runner so a future
-    # ubuntu-latest image migration is an explicit baseline review.
+    # Pinned rather than `ubuntu-latest` so a runner image migration is an
+    # explicit review rather than a surprise red run. Rendering itself is
+    # pinned by the Chromium `@playwright/test` bundles, not by the distro.
     runs-on: ubuntu-24.04
     defaults:
       run:

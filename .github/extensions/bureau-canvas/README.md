@@ -115,18 +115,33 @@ npm run test:visual
 ```
 
 When a visual change is intentional, review it locally and replace the
-approved images explicitly from Ubuntu 24.04, which is the pinned CI renderer:
+approved images:
 
 ```sh
 npm run test:visual:update
 ```
 
-Another Linux distribution can use different font rasterization and is not a
-source of approved pixels. On CI failure, the `canvas-visual-differences`
-artifact contains the Ubuntu expected, actual and highlighted diff images.
+The one thing on these screens that is not the UI is the config directory the
+header prints — `/home/runner/work/...` on CI, someone's checkout anywhere
+else. It used to be baked into the baselines, so the suite passed on the CI
+image and failed everywhere else, and the failure was read as font
+rasterization and pinned away by distribution. It was not: the three editor
+screens, which never draw a path, come out byte-identical between the CI
+runner and a different Ubuntu release. So the path is masked instead, and the
+approved images are portable. Rendering is pinned by the Chromium that
+`@playwright/test` bundles, which `npm ci` installs from the lockfile.
 
-The state matrix is discovery coverage rather than normal PR feedback. It
-runs nightly and on demand through the `Canvas state matrix` workflow:
+On CI failure, the `canvas-visual-differences` artifact contains the expected,
+actual and highlighted diff images.
+
+The state matrix runs on every pull request, on `main`, and nightly, through
+the `Canvas state matrix` workflow. It was scheduled-only at first, on the
+reasoning that exhaustive rendering is discovery work rather than PR feedback.
+That reasoning does not survive the arithmetic: `schedule` fires only on the
+default branch, so until the workflow merged it had never run at all, and
+`scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
+would have merged green and gone unattributed. All 436 assertions take about
+as long as a fraction of the Rust job, so they gate like anything else:
 
 ```sh
 npm run test:matrix
