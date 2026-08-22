@@ -65,41 +65,65 @@ const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "lay
 
 /**
  * The two lifecycle values that only a performed save can reach. Shared by the
- * field axis and the editor axis because it is one fact about the harness, not
- * two: both saves write, and the matrix host is read-only.
+ * draft, field and editor axes because it is one fact about the harness, not
+ * three: each save mutates the host — the plan bar writes the config directory,
+ * the pipeline editor writes the pipeline file, a field records a plan on the
+ * shared instance — and the matrix host is read-only and worker-scoped.
  */
 const SAVE_STATES = ["saving", "save-error"];
 
 export const CONSTRAINTS = [
   {
     /*
-     * A save is the one act that leaves the harness. Every field editor's save
-     * posts a `set-*` intent that writes the config directory the host was
-     * started against, and the matrix runs 131 states against *one* host per
-     * worker, fully parallel. A state that wrote would change the payload every
-     * other state in flight is being judged against, and the directory in
-     * question is the repository's own `.bureau/`.
+     * A field save is the one act on a card that leaves the state alone but
+     * not the host. `set-work-source` and its siblings do not write the config
+     * directory — `lib/crud.mjs` `record()` only calls `setPlan` and returns a
+     * `pending` summary, which `specs/assignment-runtime.spec.mjs` pins by
+     * reading the file back unchanged. What they do is record a plan on the
+     * host, and `serve.mjs` boots one instance per host process while
+     * `extension.mjs` keys plans on it. The matrix runs 131 states against one
+     * such host per worker, fully parallel, so a plan recorded by one state
+     * outlives it and raises the draft bar over every later state on that
+     * worker — including the ones whose `draft: none` requires it absent.
      *
      * So the values exist and the rule excludes them, rather than the axis
      * quietly stopping at `invalid`: `saving` and `save-error` are real screens
-     * — `.note--err` from a refused `set-work-source`, the "Saving…" label — and
-     * an axis that omitted them would be the unrepresentable-versus-excluded
-     * mistake this registry keeps making rules for. The successful round trip
-     * is owned by `specs/editor.spec.mjs`, which boots its own scratch config.
+     * — the "Saving…" label, `.note--err` from a refused `set-work-source` —
+     * and an axis that omitted them would be the unrepresentable-versus-
+     * excluded mistake this registry keeps making rules for. The successful
+     * round trip is owned per field by `specs/worksource.spec.mjs`,
+     * `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and
+     * `specs/assignment-runtime.spec.mjs`, each against its own scratch config.
      */
     id: "a-field-save-would-write-the-config",
     kind: "structural",
     reads: ["fieldState"],
     title: "The matrix cannot review a field save it is not allowed to perform",
-    why: "Saving posts a `set-*` intent that writes the host's config directory, and the matrix shares one read-only host across every state. `saving` and `save-error` are real screens the harness may not produce; `specs/editor.spec.mjs` owns the write path against its own scratch config.",
+    why: "A `set-*` intent records a pending plan on the shared host (`lib/crud.mjs` `record` → `setPlan`), and the matrix shares one worker-scoped host across every state — so the plan would leak the draft bar into every later state on that worker. `saving` and `save-error` are real screens the harness may not produce; `specs/worksource.spec.mjs`, `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and `specs/assignment-runtime.spec.mjs` own the round trip against their own scratch configs.",
     holds: (combo) => !SAVE_STATES.includes(combo.fieldState),
+  },
+  {
+    /*
+     * The draft bar's own two buttons, and the only one of the three rules in
+     * this family whose act really does reach the disk: `save-plan` runs
+     * `applyPlan` against the host's config directory (`extension.mjs`), and
+     * the matrix host is pointed at the repository's own `.bureau/`. Discard
+     * is no safer to perform, because it clears the plan the fixture published
+     * and the states sharing that worker are still being judged against it.
+     */
+    id: "a-plan-save-would-write-the-config",
+    kind: "structural",
+    reads: ["draft"],
+    title: "The matrix cannot review a plan save it is not allowed to perform",
+    why: "`save-plan` calls `applyPlan` on the host's config directory and `discard-plan` clears the shared plan, and the matrix runs every state against one read-only host per worker pointed at the repository's own `.bureau/`. The in-flight and refused bars are real renders of `DraftBar` and are excluded here for that reason, not absent; `specs/controls.spec.mjs` and `specs/worksource.spec.mjs` walk the successful save and discard against their own scratch configs.",
+    holds: (combo) => !SAVE_STATES.includes(combo.draft),
   },
   {
     id: "an-editor-save-would-write-the-config",
     kind: "structural",
     reads: ["edit"],
     title: "The matrix cannot review a pipeline save it is not allowed to perform",
-    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config.",
+    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config and `test/pipeline-roundtrip.test.mjs` owns the revert-on-findings half offline.",
     holds: (combo) => !SAVE_STATES.includes(combo.edit),
   },
   {

@@ -37,6 +37,10 @@ export const SELECTORS = {
   draftSave: '[data-testid="draft-save"]',
   draftDiscard: '[data-testid="draft-discard"]',
   draftList: ".draft-list",
+  // A refused `save-plan` or `discard-plan`, as its own treatment. Separate
+  // from the words for the same reason as `workSourceRefused`: a refusal
+  // rendered as ordinary copy still reads as progress.
+  draftRefused: ".draft-bar .note--err",
 
   workSourceValue: ".ws-value",
   workSourceEditor: ".ws-open",

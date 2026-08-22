@@ -490,6 +490,38 @@ test("every rule reads dimensions that exist", () => {
   assert.deepStrictEqual(unknown, []);
 });
 
+/**
+ * A declared value that no state renders is only honest if a named rule turns
+ * it away. Without this, the "excluded rather than missing" convention is
+ * convention alone: a value could be added, never rendered and never rejected,
+ * and every other assertion here would still pass because the balance is an
+ * identity of the walk over whatever values happen to be declared.
+ *
+ * It does not catch a screen that was never declared at all — nothing pure can
+ * — but it does hold every declared one to one of two fates, which is what the
+ * three `save`/`save-error` axes depend on being true.
+ */
+test("every dimension value is either rendered by a state or refused by a named rule", () => {
+  const rendered = new Set(STATES.flatMap((state) => ORDER.map((key) => `${key}:${state.dimensions?.[key]}`)));
+  const stranded = DIMENSIONS.flatMap((dimension) => dimension.values
+    .filter((value) => !rendered.has(`${dimension.id}:${value.id}`))
+    .filter((value) => !refusedByRule(dimension.id, value.id))
+    .map((value) => `${dimension.id}:${value.id}`));
+  assert.deepStrictEqual(stranded, []);
+});
+
+/** Whether some rule reading this dimension rejects the value on every tuple. */
+function refusedByRule(dimension, valueId) {
+  const rules = CONSTRAINTS.filter((rule) => rule.reads.includes(dimension));
+  const sample = (rotation) => Object.fromEntries(ORDER.map((key, index) => {
+    const values = valuesOf(key).map((value) => value.id);
+    return [key, key === dimension ? valueId : values[(rotation + index) % values.length]];
+  }));
+  const rotations = Math.max(...ORDER.map((key) => valuesOf(key).length));
+  const draws = Array.from({ length: rotations }, (_, rotation) => sample(rotation));
+  return rules.some((rule) => draws.every((combo) => !rule.holds(combo)));
+}
+
 test("the verdict reports missing controls, missing copy, low contrast, overlap and clipping", () => {
   const state = { expect: { shows: [".present", ".absent"], hides: [".leaked"], copy: ["expected copy"] } };
   const snapshot = {

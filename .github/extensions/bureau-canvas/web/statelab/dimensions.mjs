@@ -150,6 +150,24 @@ const draft = {
       shows: [S.draftBar],
       copy: ["1 unsaved change"],
     },
+    /*
+     * What the two buttons do about a plan, which the matrix may not perform —
+     * `a-plan-save-would-write-the-config` says why. Named here so the two
+     * screens are excluded rather than missing: both are real renders of
+     * `DraftBar` (`app.mjs`), and the refusal is the only one of the three
+     * draft screens nothing else in the suite draws.
+     */
+    {
+      id: "saving",
+      summary: "save-plan in flight, so neither button takes a second click",
+      shows: [S.draftBar, withheld(S.draftSave), withheld(S.draftDiscard)],
+      copy: ["Working…"],
+    },
+    {
+      id: "save-error",
+      summary: "the plan came back refused and is still there to retry",
+      shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
+    },
   ],
 };
 
