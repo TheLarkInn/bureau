@@ -73,9 +73,10 @@ export const test = base.extend({
       }
     });
     page.on("requestfailed", (request) => {
-      if (!request.url().includes("statelab-intercept")) {
-        errors.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
-      }
+      // Not filtered here: a state that causes a failed request declares it in
+      // `allowErrors`, so the registry stays the only place that says which
+      // failures are the state and which are the bug.
+      errors.push(`requestfailed: ${request.url()} ${request.failure()?.errorText ?? ""}`);
     });
     await use({ page, errors });
   },

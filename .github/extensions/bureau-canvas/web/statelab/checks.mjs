@@ -11,7 +11,13 @@
  * a single moment rather than across a dozen round trips.
  */
 export function collect(doc, request) {
-  const visible = (node) => node.getClientRects().length > 0;
+  const view = doc.defaultView;
+  // A box is not the same as a painted pixel: `visibility: hidden` still
+  // reports rects, and that is precisely how a React Flow node looks before it
+  // has been measured — the blank graph `graph-measure.mjs` exists to repair.
+  // Counting one would let an unpainted graph satisfy a `shows`.
+  const visible = (node) =>
+    node.getClientRects().length > 0 && view.getComputedStyle(node).visibility !== "hidden";
   const counts = {};
   for (const selector of request.selectors) {
     counts[selector] = [...doc.querySelectorAll(selector)].filter(visible).length;
@@ -26,7 +32,6 @@ export function collect(doc, request) {
       }
     }
   }
-  const view = doc.defaultView;
   const channels = (value) => (String(value).match(/[\d.]+/gu) ?? []).map(Number);
   const opaque = (value) => {
     const parts = channels(value);

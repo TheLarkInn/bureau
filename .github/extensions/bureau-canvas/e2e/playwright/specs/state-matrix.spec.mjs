@@ -6,7 +6,7 @@
 // the list comes from `web/statelab/registry.mjs`, so a state added to the
 // registry is rendered and asserted the moment it exists.
 
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
@@ -61,21 +61,29 @@ function unexpected(errors, state) {
 test.describe("transitions", () => {
   for (const edge of TRANSITIONS) {
     test(`${edge.from} → ${edge.to}`, async ({ watched, host }) => {
-      const delta = TRANSITIONS.find((item) => item.from === edge.from && item.to === edge.to).delta;
       const from = STATES.find((state) => state.id === edge.from);
       const to = STATES.find((state) => state.id === edge.to);
 
       const parent = await enterState(from, watched.page, host);
       expect(describe(parent.failures), `parent ${edge.from}`).toEqual([]);
 
-      const child = await applyOps(delta, to, watched.page, host);
+      const child = await applyOps(edge.delta, to, watched.page, host);
       expect(describe(child.failures), `${edge.from} → ${edge.to} via ${edge.via}`).toEqual([]);
       expect(unexpected(watched.errors, to)).toEqual([]);
     });
   }
 });
 
-/** Writes the gallery index last, from the same registry the shots came from. */
+/**
+ * Writes the gallery index last, from the same registry the shots came from.
+ *
+ * The assertion reads the file back rather than checking the value it just
+ * built: a gallery is only browsable if every state's shots are actually
+ * reachable from the index, and a truncated write, a template that dropped a
+ * row, or an escape that broke a `src` all produce an index that renders and
+ * silently omits states. Missing image *files* are not asserted here — the
+ * shots are written by other workers and this test may run before them.
+ */
 test("gallery index", async () => {
   const rows = STATES.map((state) => `
     <article class="card" id="${escape(state.id)}">
@@ -88,7 +96,13 @@ test("gallery index", async () => {
     </article>`).join("");
 
   await writeFile(join(GALLERY, "index.html"), page(rows), "utf8");
-  expect(STATES.length).toBeGreaterThan(0);
+
+  const written = await readFile(join(GALLERY, "index.html"), "utf8");
+  const missing = STATES.flatMap((state) =>
+    VIEWPORT_LIST
+      .filter((viewport) => !written.includes(`src="./${shot(state, viewport)}"`))
+      .map((viewport) => `${state.id} @ ${viewport.id}`));
+  expect(missing, "states the gallery index does not link").toEqual([]);
 });
 
 function page(rows) {

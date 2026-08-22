@@ -203,7 +203,7 @@ requires the relation graph gone behind Pipeline.
 The one thing the matrix will not do is **save**. Every field editor's save
 posts a `set-*` intent and `save-pipeline` writes, re-validates and reverts —
 all against the config directory the host was started with, which the suite
-shares read-only across 131 states running in parallel. So `saving` and
+shares read-only across every state running in parallel. So `saving` and
 `save-error` are enumerated values on both lifecycle axes and excluded by
 `a-field-save-would-write-the-config` and
 `an-editor-save-would-write-the-config`. They are real screens; recording them

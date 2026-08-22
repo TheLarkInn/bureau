@@ -173,7 +173,7 @@ function freshSession() {
   }
 }
 
-/** One animation frame plus a macrotask: enough for React to commit. */
+/** A macrotask: the queue React's commit is already scheduled on. */
 function settle() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -182,6 +182,12 @@ function settle() {
  * Polls for a selector. `mustSee` adds the visibility requirement `wait`
  * carries, so the lab holds a path to the same standard the browser suite
  * does rather than passing on a control that is attached but not drawn.
+ *
+ * "Drawn" is a box *and* a computed `visibility` that is not `hidden`, which
+ * is Playwright's own standard — and the distinction is load-bearing rather
+ * than pedantic, because an unmeasured React Flow node is laid out at
+ * `visibility: hidden`. Counting boxes alone would let the blank graph
+ * `graph-measure.mjs` exists to repair satisfy a wait.
  *
  * `gone` means *not visible*, not *detached* — Playwright's `hidden` state and
  * the verdict's own visibility test both mean that, and the editor's tabs hide
@@ -192,8 +198,11 @@ function settle() {
  */
 function waitFor(doc, selector, gone = false, mustSee = false) {
   const deadline = Date.now() + MOUNT_TIMEOUT;
-  const drawn = (node) => node && (!mustSee || node.getClientRects().length > 0);
-  const hidden = (node) => !node || node.getClientRects().length === 0;
+  const painted = (node) =>
+    node.getClientRects().length > 0 &&
+    node.ownerDocument.defaultView.getComputedStyle(node).visibility !== "hidden";
+  const drawn = (node) => node && (!mustSee || painted(node));
+  const hidden = (node) => !node || !painted(node);
   return new Promise((resolve) => {
     const tick = () => {
       const node = doc()?.querySelector(selector);

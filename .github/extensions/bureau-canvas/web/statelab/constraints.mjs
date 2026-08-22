@@ -81,7 +81,7 @@ export const CONSTRAINTS = [
      * `pending` summary, which `specs/assignment-runtime.spec.mjs` pins by
      * reading the file back unchanged. What they do is record a plan on the
      * host, and `serve.mjs` boots one instance per host process while
-     * `extension.mjs` keys plans on it. The matrix runs 131 states against one
+     * `extension.mjs` keys plans on it. The matrix runs every state against one
      * such host per worker, fully parallel, so a plan recorded by one state
      * outlives it and raises the draft bar over every later state on that
      * worker — including the ones whose `draft: none` requires it absent.
