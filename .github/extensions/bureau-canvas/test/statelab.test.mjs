@@ -16,12 +16,12 @@ import { test } from "node:test";
 import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { CONTRAST, verdict } from "../web/statelab/checks.mjs";
+import { CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 
@@ -281,14 +281,16 @@ test("every fixture is a pure projection of the served payload", async () => {
 
 test("every fixture ships the relation projection its own config implies", async () => {
   const base = await servedState();
-  assert.deepStrictEqual(FIXTURE_IDS.flatMap((id) => disagreements(id, applyFixture(id, base))), []);
+  const drawn = base.config.relation;
+  assert.deepStrictEqual(FIXTURE_IDS.flatMap((id) => disagreements(id, applyFixture(id, base), drawn)), []);
 });
 
 /**
  * `relationView` derives the graph from the config's own lists: one node per
- * assignment, pipeline, role and repo, and one edge per pipeline or repo an
- * assignment names — keeping only edges whose endpoints are both nodes, which
- * is why an assignment pointing at an unregistered repo owes none.
+ * assignment, pipeline, role and repo, one edge per pipeline or repo an
+ * assignment names, and one per role a pipeline's agent steps use — keeping
+ * only edges whose endpoints are both nodes, which is why an assignment
+ * pointing at an unregistered repo owes none.
  *
  * A fixture that adds to one list and not the other therefore builds a payload
  * `buildState` could never serve: a header counting two repos above a graph
@@ -296,19 +298,46 @@ test("every fixture ships the relation projection its own config implies", async
  * reviewing a screen no user can reach. This has been the same defect three
  * times — `orphans`, `two-assignments`, `multi-repo` — so it is a gate now
  * rather than a comment on each fixture.
+ *
+ * The comparison is a set equality in both directions, not a containment. An
+ * earlier form asked only "is every owed edge drawn?", which let a fixture add
+ * an edge between two existing nodes, or drop a pipeline's role edge, and stay
+ * green — the graph would then assert a relation the config does not state,
+ * which is the same class of lie as a missing one.
+ *
+ * Role edges are the one class the view cannot yield, because `view.pipelines`
+ * carries names and `usedBy` and never steps. They are taken from the base
+ * projection instead, which is sound only while no fixture invents a pipeline;
+ * that premise is checked here rather than assumed.
  */
-function disagreements(id, state) {
+function disagreements(id, state, base) {
   const view = state.config?.view ?? {};
   const relation = state.config?.relation ?? { nodes: [], edges: [] };
   const drawn = new Set(relation.nodes.map((node) => node.id));
-  const wired = new Set(relation.edges.map((edge) => `${edge.source}->${edge.target}`));
   const listed = itemIds(view);
-  const owed = (view.assignments ?? []).flatMap(assignmentEdges).filter((edge) => edge.split("->").every((end) => drawn.has(end)));
+  const roleEdges = base.edges.filter((edge) => edge.relation === "role");
+  const owed = [...(view.assignments ?? []).flatMap(assignmentEdges), ...roleEdges]
+    .filter((edge) => drawn.has(edge.source) && drawn.has(edge.target));
+  const owedKeys = new Set(owed.map(edgeKey));
+  const wired = new Set(relation.edges.map(edgeKey));
   return [
     ...listed.filter((item) => !drawn.has(item)).map((item) => `${id}: config lists ${item}, the graph has no node for it`),
     ...[...drawn].filter((node) => !listed.includes(node)).map((node) => `${id}: the graph draws ${node}, the config does not list it`),
-    ...owed.filter((edge) => !wired.has(edge)).map((edge) => `${id}: both ends are drawn but the edge ${edge} is missing`),
+    ...[...owedKeys].filter((edge) => !wired.has(edge)).map((edge) => `${id}: both ends are drawn but the edge ${edge} is missing`),
+    ...[...wired].filter((edge) => !owedKeys.has(edge)).map((edge) => `${id}: the graph draws the edge ${edge}, the config does not imply it`),
+    ...relation.edges.filter((edge) => edge.id !== edgeKey(edge)).map((edge) => `${id}: the edge id ${edge.id} disagrees with its own ends`),
+    ...newPipelines(relation.nodes, base.nodes).map((node) => `${id}: introduces ${node}, whose role edges this gate cannot derive`),
   ];
+}
+
+/** Pipeline nodes a fixture drew that the base projection did not. */
+function newPipelines(nodes, baseNodes) {
+  const known = new Set(baseNodes.filter((node) => node.kind === "pipeline").map((node) => node.id));
+  return nodes.filter((node) => node.kind === "pipeline" && !known.has(node.id)).map((node) => node.id);
+}
+
+function edgeKey(edge) {
+  return `${edge.relation}:${edge.source}->${edge.target}`;
 }
 
 function itemIds(view) {
@@ -317,7 +346,10 @@ function itemIds(view) {
 
 function assignmentEdges(item) {
   const source = `assignment:${item.name}`;
-  return [`${source}->pipeline:${item.pipeline}`, ...(item.repos ?? []).map((repo) => `${source}->repo:${repo}`)];
+  return [
+    { relation: "pipeline", source, target: `pipeline:${item.pipeline}` },
+    ...(item.repos ?? []).map((repo) => ({ relation: "repo", source, target: `repo:${repo}` })),
+  ];
 }
 
 test("the sample pipeline still has the step count the registry addresses", async () => {
@@ -328,7 +360,14 @@ test("the sample pipeline still has the step count the registry addresses", asyn
 test("the transition DAG only names states the registry holds", () => {
   const ids = new Set(STATES.map((state) => state.id));
   const dangling = TRANSITIONS.filter((edge) => !ids.has(edge.from) || !ids.has(edge.to));
-  assert.deepStrictEqual({ dangling: dangling.length, acyclic: !hasCycle(TRANSITIONS) }, { dangling: 0, acyclic: true });
+  // Acyclicity is a property of the *entry* relation only. A return edge is a
+  // cycle by definition — that is what "the way back" means — so asserting it
+  // over every edge would forbid the half of the graph a user spends most of
+  // their time in. The prefix subset is what has to stay a DAG.
+  assert.deepStrictEqual(
+    { dangling: dangling.length, acyclic: !hasCycle(ENTRY_TRANSITIONS) },
+    { dangling: 0, acyclic: true },
+  );
 });
 
 function hasCycle(edges) {
@@ -364,12 +403,33 @@ test("every scoping rule is held to account by a crossing probe that really brea
       unbroken: crossings
         .filter((state) => !violations(state.dimensions).includes(state.rule))
         .map((state) => `${state.id} -> ${state.rule}`),
+      // `violations` applies every rule, assigned inputs or not, so a tuple
+      // missing a dimension picks up unrelated rules it never meant to break:
+      // an absent `transport` is not `"n/a"`, so it reads as a transport on a
+      // run that is not being replayed. The crossing then breaks its own rule
+      // *and* a structural one, and `unbroken` still passes because it only
+      // asks whether the named rule is in the list. A crossing has to be a
+      // point in the product to stand for one, so it owes every axis a value
+      // the axis actually declares.
+      incomplete: crossings.flatMap((state) => malformed(state)),
       // A probe is one or the other, never both and never neither.
       unlabelled: probes.filter((state) => Boolean(state.rule) === Boolean(state.covers)).map((state) => state.id),
     },
-    { unchecked: [], dangling: [], unbroken: [], unlabelled: [] },
+    { unchecked: [], dangling: [], unbroken: [], incomplete: [], unlabelled: [] },
   );
 });
+
+/** Axes a crossing left unset, or set to a value its axis does not declare. */
+function malformed(state) {
+  return ORDER.flatMap((key) => {
+    const value = state.dimensions[key];
+    if (value === undefined) {
+      return [`${state.id}: no value for ${key}`];
+    }
+    const declared = valuesOf(key).map((item) => item.id);
+    return declared.includes(value) ? [] : [`${state.id}: ${key}=${value} is not a value of ${key}`];
+  });
+}
 
 /**
  * The old form compared `parent.ops + delta` against `child.ops` with waits
@@ -387,7 +447,7 @@ test("every scoping rule is held to account by a crossing probe that really brea
  */
 test("every edge's delta is preceded by work the parent has already done", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
-  const broken = TRANSITIONS.filter((edge) => {
+  const broken = ENTRY_TRANSITIONS.filter((edge) => {
     const child = byId.get(edge.to).ops;
     const prefix = child.slice(0, child.length - edge.delta.length);
     return !isSubsequence(prefix, byId.get(edge.from).ops);
@@ -424,12 +484,40 @@ function isSubsequence(needles, haystack) {
  */
 test("every edge's delta is the child's path minus the parent's, and says so", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
-  const broken = TRANSITIONS.filter((edge) => {
+  const broken = ENTRY_TRANSITIONS.filter((edge) => {
     const parentActing = byId.get(edge.from).ops.filter((op) => op.op !== "wait").length;
     const rebuilt = tailAfter(byId.get(edge.to).ops, parentActing);
     return JSON.stringify(rebuilt) !== JSON.stringify(edge.delta) || label(rebuilt) !== edge.via;
   });
   assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
+});
+
+/**
+ * A return edge makes a different claim from an entry edge, so it gets its own
+ * gate. It says: the page is sitting in `from`, one click on a real control
+ * puts it back in `to`, and `to` is the state it originally came from.
+ *
+ * The last part is what stops a plausible-looking undo from being wired to the
+ * wrong screen. A return edge is only meaningful as the mirror of an entry
+ * edge, so every one of them has to have a partner pointing the other way, and
+ * its delta has to be a single click plus the wait that proves the region it
+ * closed is really gone. The browser suite then executes it and holds the
+ * render to `to`'s own expectations, which is where "opens but never closes"
+ * actually fails.
+ */
+test("every return edge mirrors an entry edge and undoes exactly one control", () => {
+  const entries = new Set(ENTRY_TRANSITIONS.map((edge) => `${edge.from} -> ${edge.to}`));
+  const returns = TRANSITIONS.filter((edge) => edge.kind === "return");
+  const shapeOf = (edge) => edge.delta.map((op) => op.op).join("+");
+  assert.deepStrictEqual(
+    {
+      unmirrored: returns.filter((edge) => !entries.has(`${edge.to} -> ${edge.from}`)).map((edge) => `${edge.from} -> ${edge.to}`),
+      misshapen: returns.filter((edge) => shapeOf(edge) !== "click+waitGone").map((edge) => `${edge.from} -> ${edge.to}: ${shapeOf(edge)}`),
+      unlabelled: returns.filter((edge) => edge.via !== `click ${edge.delta[0].selector}`).map((edge) => `${edge.from} -> ${edge.to}`),
+      none: returns.length === 0,
+    },
+    { unmirrored: [], misshapen: [], unlabelled: [], none: false },
+  );
 });
 
 /** The child's ops from its (skip + 1)-th acting operation onwards. */
@@ -585,6 +673,70 @@ test("a render that matches the registry produces no findings", () => {
     boxes: [{ selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 }],
   };
   assert.deepStrictEqual(verdict(state, snapshot), []);
+});
+
+/**
+ * The three ways a control can have a box and still not be on screen.
+ *
+ * Each was invisible to the old verdict, which measured a fixed list of
+ * regions and only ever asked whether one hung off the *right* edge. A save
+ * button pushed off the left, or cut away entirely by its own editor, reported
+ * a rect like any other and satisfied `shows`.
+ */
+test("the verdict catches a control off either edge or cut away by an ancestor", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const boxes = [
+    { selector: ".off-left", x: -40, y: 10, width: 100, height: 20 },
+    { selector: ".off-right", x: 1200, y: 10, width: 300, height: 20 },
+    { selector: ".cut-away", x: 10, y: 10, width: 100, height: 20, clipped: true },
+  ];
+  const snapshot = { counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes };
+
+  assert.deepStrictEqual(verdict(state, snapshot).map((item) => item.detail).sort(), [
+    ".cut-away is cut away entirely by a clipping ancestor",
+    ".off-left starts 40px left of the viewport",
+    ".off-right extends 220px past the viewport",
+  ]);
+});
+
+/**
+ * The sibling rule, and the two things it must not mistake for a defect.
+ *
+ * `SIBLINGS` in `checks.mjs` is a hand-kept list of landing pairs; this is the
+ * general form — anything in normal flow that prints over a box sharing its
+ * parent. It has to ignore one element measured under two selectors (a `shows`
+ * of `[data-testid=x]` and `[data-testid=x]:not([disabled])` is one button),
+ * and it has to ignore absolutely positioned boxes, whose whole job is to sit
+ * on top of something.
+ */
+test("the sibling overlap rule spares one element under two selectors, and anything positioned", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const at = (selector, extra) => ({ selector, x: 0, y: 0, width: 100, height: 40, parent: "parent-0", flow: true, ...extra });
+  const snapshot = (boxes) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes });
+
+  assert.deepStrictEqual(
+    {
+      sameElement: verdict(state, snapshot([at(".save", { id: "node-0" }), at(".save:not([disabled])", { id: "node-0" })])),
+      positioned: verdict(state, snapshot([at(".card", { id: "node-0" }), at(".badge", { id: "node-1", flow: false })])),
+      genuine: verdict(state, snapshot([at(".one", { id: "node-0" }), at(".two", { id: "node-1" })])).map((item) => item.detail),
+    },
+    { sameElement: [], positioned: [], genuine: [".one overlaps .two"] },
+  );
+});
+
+/**
+ * The measured set has to include what the state is actually about. Measuring
+ * only the standing regions is how a clipped Save button passed: nothing ever
+ * asked where its box was.
+ */
+test("a state is measured against its own expected controls, not just the standing regions", () => {
+  const state = { expect: { shows: ['[data-testid="limits-save"]'], hides: [], copy: [] } };
+  const measured = measureFor(state);
+
+  assert.deepStrictEqual(
+    { includesShown: measured.includes('[data-testid="limits-save"]'), keepsStanding: measured.includes(".assignment-card") },
+    { includesShown: true, keepsStanding: true },
+  );
 });
 
 test("the verdict refuses copy that reserves a region instead of drawing it", () => {

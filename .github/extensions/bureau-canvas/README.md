@@ -94,6 +94,13 @@ dimensions, expected controls against what actually rendered, at either
 recorded viewport — and a picker answers "is this a state?" for any
 combination a reviewer assembles, naming every rule that rejects it.
 
+The states that need request interception are the exception, and the lab says
+so out loud: it cannot install a route from inside its own frame, so it blanks
+the stage and names the intercept and the gallery file the browser suite wrote.
+It used to return early and leave the *previous* state's render on screen
+beside the new state's description, which is the one thing a review surface may
+not do — present a screen it never produced as though it had.
+
 Two numbers are easy to confuse, so the lab labels them apart. Each rule shows
 how many tuples it was the **first** to prune, which depends on the order
 dimensions are assigned in and is not "every tuple this rule forbids"; the
@@ -107,7 +114,7 @@ under permuted orders to keep it that way.
 | `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render) or `scoping` (renders, but adds nothing to cross) |
 | `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^9 tuples; per-rule figures count what each rule pruned *first*, in walk order |
 | `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
-| `paths.mjs` | how each state is reached, as data |
+| `paths.mjs` | how each state is reached, as data — and which of them need a route intercepted rather than a click |
 | `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
 | `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
 | `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping, and copy that reserves a region instead of drawing it |
@@ -161,10 +168,14 @@ projection moves together, or the state under review is one no user can reach.
 
 That was the same mistake three times, so it is a gate rather than a comment
 now: `test/statelab.test.mjs` builds the base payload through the real
-`relationView` and requires every fixture's graph to be the one its own config
-implies — a node for every listed item, no node for anything unlisted, and an
-edge for every pipeline or repo an assignment names whose endpoints are both
-drawn. Deleting `multi-repo`'s relation patch fails it by name.
+`relationView` and requires every fixture's graph to be **exactly** the one its
+own config implies. Both directions, and both halves: a node for every listed
+item and no node for anything unlisted, an edge for every pipeline or repo an
+assignment names and for every role a pipeline's agent steps use, and *no edge
+the config does not imply*. Deleting `multi-repo`'s relation patch fails it by
+name; so now does adding an edge between two nodes that are already there, or
+dropping a pipeline's role edges — both of which the containment-only form let
+through, and both of which make the graph state a relation the config does not.
 
 That rule also decides what a fixture may not attempt. `orphans` leaves a role
 and a *repo* unreferenced rather than a pipeline, because a pipeline is also
@@ -200,20 +211,45 @@ still be there on the way back. The isolation is asserted both ways: the
 probes require the editor panel gone behind Relations, and `tab: pipeline`
 requires the relation graph gone behind Pipeline.
 
-The one thing the matrix will not do is **act on the host**. Every field
-editor's save posts a `set-*` intent, `save-pipeline` writes, re-validates and
-reverts, and a run control POSTs a pause, resume or cancel against a real run —
-all against the one directory and instance the suite shares read-only across
-every state running in parallel. So `saving` and `save-error` are enumerated
-values on both lifecycle axes and a refused run control is one on the run axis,
-excluded by `a-field-save-would-write-the-config`,
-`an-editor-save-would-write-the-config` and `a-run-intent-would-act-on-the-host`.
-They are real screens; recording them as named exclusions is the difference
-between a boundary a reviewer can see and a gap they cannot. The write path
-itself belongs to `specs/editor.spec.mjs`, which boots its own scratch config,
-and what a finished run's controls should show is pinned by `runActions` in
-`test/overlay.test.mjs` — the live picker lists only live runs, so no committed
-log can render that screen.
+The one thing the matrix will not do is **act on the host**. `save-pipeline`
+writes, re-validates and reverts, and a run control POSTs a pause, resume or
+cancel against a real run — both against the one directory and instance the
+suite shares read-only across every state running in parallel. So the editor's
+`saving` and `save-error`, a create refusal and a refused run control are
+enumerated values excluded by `an-editor-save-would-write-the-config`,
+`a-plan-save-would-write-the-config`, `a-create-would-write-the-config` and
+`a-run-intent-would-act-on-the-host`. They are real screens; recording them as
+named exclusions is the difference between a boundary a reviewer can see and a
+gap they cannot. The write path itself belongs to `specs/editor.spec.mjs`,
+which boots its own scratch config, and what a finished run's controls should
+show is pinned by `runActions` in `test/overlay.test.mjs`.
+
+A **field** save is no longer among them, and the distinction is worth keeping
+straight, because "the harness may not press this button" was being used to
+mean "this screen cannot be rendered". They are not the same claim. A field
+save posts `set-*` to `./intent`, and a route installed in the browser answers
+it before it ever leaves the page — so `saving` and `save-error` are ordinary
+states now, at every field that has a save. Both are exact rather than
+timing-dependent: stalling pins `busy` on, which is the "Saving…" label with
+the button refusing a second click, and a refusal returns no `ok`, which is
+precisely the branch that renders each editor's own fallback sentence. The
+route matches on the intent's `kind`, not the URL, because `./intent` is also
+how the page *reads* — `derive-work-source` builds the paste preview — and
+holding the whole endpoint stalled the derivation the save state existed to
+save. `.bureau/` is untouched by the run, which is the property that made the
+exclusion necessary in the first place.
+
+The transition graph has two kinds of edge, for the same reason. An `enter`
+edge is a prefix relation — the child's path is the parent's plus one
+operation — and that is all a path-derived graph can ever produce, because
+every entry path points away from the landing. Half of what a user does is the
+other direction: collapse the card, cancel the create, go back to the Pipeline
+tab, leave replay for design. None of it was under test, and a disclosure that
+opens and will not close is exactly the defect a matrix exists to catch. So
+each reversible control declares its undo in `REVERSIBLE`, the suite enters the
+child, applies only that undo, and then holds the render to the **parent's**
+expectations. Acyclicity is asserted over the entry subset alone: a return edge
+is a cycle by definition, which is what "the way back" means.
 
 
 ## Rules worth knowing before changing it
@@ -233,6 +269,13 @@ log can render that screen.
   positions a user dragged to (`{pipelines: {<name>: {steps: {<step>: {x, y}}}}}`),
   keyed by name so it means nothing to the loader. Steps without a saved
   position fall back to the derived layout.
+- **A control with a box may still be invisible.** The verdict measures every
+  control a state promises, not a standing list of regions, and reports a box
+  that hangs off either edge of the viewport or is cut away entirely by an
+  `overflow: hidden` ancestor. Scroll containers are not clipping — content
+  below the fold of the editor's side panel is one gesture away — so the two
+  are told apart per axis. Overlap is a rule rather than a list of pairs:
+  anything in normal flow that prints over a box sharing its parent.
 - **A graph may not come up blank.** React Flow measures a node once, from a
   ResizeObserver delivery, and drops the measurement if the viewport element is
   not queryable at that moment; the node's box never changes, so the observer

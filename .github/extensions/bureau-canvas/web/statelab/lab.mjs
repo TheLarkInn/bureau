@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, MEASURED, selectorsFor, verdict } from "./checks.mjs";
+import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "./checks.mjs";
 import { CONSTRAINTS, EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
@@ -123,6 +123,12 @@ async function walk(state) {
   }
   applyViewport();
   if (state.intercept) {
+    // Clearing the frame is the point. Returning early used to leave the
+    // *previous* state's render on screen beside this state's description, so
+    // the lab presented a screen it had not produced as though it had — the
+    // one failure mode a review surface may not have. There is nothing
+    // truthful to draw here, so it draws nothing and says why.
+    blankFrame();
     renderDetail(state, { intercepted: true });
     return;
   }
@@ -162,8 +168,22 @@ async function settledInspect(state) {
 }
 
 function inspect(state) {
-  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: MEASURED, contrast: CONTRAST });
+  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST });
   return { snapshot, failures: verdict(state, snapshot, { slack: 2 }) };
+}
+
+/**
+ * Empties the stage, so nothing a previous walk drew can be read as this
+ * state's render. `about:blank` rather than hiding the frame: a hidden frame
+ * keeps its document, and the next walk would inherit it.
+ */
+function blankFrame() {
+  frame.src = "about:blank";
+}
+
+/** The file the browser suite writes this state's render to, at each viewport. */
+function galleryShot(state) {
+  return `${viewport}--${state.id.replace(/[^a-z0-9]+/giu, "_")}.png`;
 }
 
 function renderDetail(state, result) {
@@ -235,7 +255,8 @@ function expectationList(state, result) {
     return box;
   }
   if (result?.intercepted) {
-    box.append(el("p", "note note--warn", `Needs request interception (${state.intercept}); the browser suite renders and screenshots this state.`));
+    box.append(el("p", "note note--warn", `Needs request interception (${state.intercept}), which cannot be installed from inside this frame. The stage is left blank on purpose rather than showing the previous state's render.`));
+    box.append(el("p", "note", `specs/state-matrix.spec.mjs renders this state and writes it to the gallery as ${galleryShot(state)}.`));
     return box;
   }
   if (result?.failed) {

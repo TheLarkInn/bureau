@@ -78,35 +78,6 @@ const SAVE_STATES = ["saving", "save-error"];
 export const CONSTRAINTS = [
   {
     /*
-     * A field save is the one act on a card that leaves the state alone but
-     * not the host. `set-work-source` and its siblings do not write the config
-     * directory — `lib/crud.mjs` `record()` only calls `setPlan` and returns a
-     * `pending` summary, which `specs/assignment-runtime.spec.mjs` pins by
-     * reading the file back unchanged. What they do is record a plan on the
-     * host, and `serve.mjs` boots one instance per host process while
-     * `extension.mjs` keys plans on it. The matrix runs every state against one
-     * such host per worker, fully parallel, so a plan recorded by one state
-     * outlives it and raises the draft bar over every later state on that
-     * worker — including the ones whose `draft: none` requires it absent.
-     *
-     * So the values exist and the rule excludes them, rather than the axis
-     * quietly stopping at `invalid`: `saving` and `save-error` are real screens
-     * — the "Saving…" label, `.note--err` from a refused `set-work-source` —
-     * and an axis that omitted them would be the unrepresentable-versus-
-     * excluded mistake this registry keeps making rules for. The successful
-     * round trip is owned per field by `specs/worksource.spec.mjs`,
-     * `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and
-     * `specs/assignment-runtime.spec.mjs`, each against its own scratch config.
-     */
-    id: "a-field-save-would-write-the-config",
-    kind: "structural",
-    reads: ["fieldState"],
-    title: "The matrix cannot review a field save it is not allowed to perform",
-    why: "A `set-*` intent records a pending plan on the shared host (`lib/crud.mjs` `record` → `setPlan`), and the matrix shares one worker-scoped host across every state — so the plan would leak the draft bar into every later state on that worker. `saving` and `save-error` are real screens the harness may not produce; `specs/worksource.spec.mjs`, `specs/limits.spec.mjs`, `specs/repos.spec.mjs` and `specs/assignment-runtime.spec.mjs` own the round trip against their own scratch configs.",
-    holds: (combo) => !SAVE_STATES.includes(combo.fieldState),
-  },
-  {
-    /*
      * The draft bar's own two buttons, and the only one of the three rules in
      * this family whose act really does reach the disk: `save-plan` runs
      * `applyPlan` against the host's config directory (`extension.mjs`), and

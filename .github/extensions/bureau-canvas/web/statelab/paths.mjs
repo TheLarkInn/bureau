@@ -21,7 +21,7 @@
 // `driver.mjs` implements exactly this set, and an offline test fails if a
 // path uses a verb that is not on it.
 
-import { SELECTORS as S, editorCardFor } from "./selectors.mjs";
+import { SELECTORS as S, editorCardFor, withheld } from "./selectors.mjs";
 const FILTER = '[data-testid="wr-filter"]';
 const BRANCH = '[data-testid="wr-branch"]';
 const ABORT = '[data-testid="sig-abort"]';
@@ -64,7 +64,7 @@ export const ADDED_STEP = `step-${SAMPLE_STEP_COUNT + 1}`;
  * several fields the refusal is a *treatment* and not only a sentence: an
  * error rendered in the ordinary note class reads as advice.
  */
-export const FIELD_LIFECYCLE = {
+const FIELD_DRAFTS = {
   "work-source": {
     rest: {},
     dirty: {
@@ -137,6 +137,89 @@ export const FIELD_SAVE = {
   repos: S.reposSave,
   limits: S.limitsSave,
 };
+
+/** The editor each field opens, so a refusal can be scoped to the field it names. */
+const FIELD_EDITOR = {
+  "work-source": S.workSourceEditor,
+  "work-rules": S.workRulesEditor,
+  "forge-signals": S.signalsEditor,
+  repos: S.reposEditor,
+  limits: S.limitsEditor,
+};
+
+/**
+ * What each editor says when the host refuses without a message of its own.
+ *
+ * `postIntent` returns `null` for any non-`ok` response, so a refused save
+ * falls back to the editor's own sentence — which makes the copy deterministic
+ * under interception, and is why `save-error` can assert words at all.
+ */
+const FIELD_ERROR = {
+  "work-source": "could not save that work source",
+  "work-rules": "could not save those work rules",
+  "forge-signals": "could not save those forge signals",
+  repos: "could not save those repos",
+  limits: "could not save those limits",
+};
+
+/**
+ * The intercept each save lifecycle value needs, and the one thing that makes
+ * these two states reviewable at all.
+ *
+ * A field save posts `set-*` to `./intent`, and the matrix shares one
+ * read-only host across every state on the worker — so performing the save
+ * would record a plan the following states would then inherit. That is a real
+ * constraint, and it used to be discharged by excluding the states outright.
+ * But "the harness may not press this button" is not the same claim as "this
+ * screen cannot exist": a save in flight and a save refused are two of the
+ * most ordinary things this UI does, and neither was ever rendered.
+ *
+ * Routing `./intent` in the browser settles both. The request is answered — or
+ * deliberately never answered — before it leaves the page, so the host is
+ * untouched and the states are exact rather than timing-dependent: stalling
+ * pins `busy` on, and a refusal returns no `ok`, which is precisely the branch
+ * that renders the editor's fallback sentence.
+ */
+export const SAVE_INTERCEPTS = { saving: "stall-intent", "save-error": "fail-intent" };
+
+/**
+ * The two ends of a save, derived from each field's own `dirty` path.
+ *
+ * They are derived rather than written out because they are the *same* draft:
+ * a save that is only reachable from a different edit than the one `dirty`
+ * makes would be asserting a screen no user reaches by the route the matrix
+ * claims. So each takes `dirty`'s fixture and its keystrokes, and adds the one
+ * click that is the whole difference.
+ */
+function saveStates(field, dirty) {
+  const save = FIELD_SAVE[field];
+  const refusal = `${FIELD_EDITOR[field]} .note--err`;
+  const draft = [...(dirty.ops ?? []), { op: "click", selector: save }];
+  return {
+    saving: {
+      fixture: dirty.fixture,
+      ops: [...draft, { op: "wait", selector: withheld(save) }],
+      copy: ["Saving…"],
+    },
+    // The refusal is asserted as a *treatment*, not only as words: an editor
+    // that reported a failed save in the ordinary note class would read as
+    // advice, and the draft would look saved.
+    "save-error": {
+      fixture: dirty.fixture,
+      ops: [...draft, { op: "wait", selector: refusal }],
+      shows: [refusal],
+      copy: [FIELD_ERROR[field]],
+    },
+  };
+}
+
+/** Every field's drafts, plus the two save states for the fields that save. */
+export const FIELD_LIFECYCLE = Object.fromEntries(
+  Object.entries(FIELD_DRAFTS).map(([field, states]) => [
+    field,
+    FIELD_SAVE[field] ? { ...states, ...saveStates(field, states.dirty) } : states,
+  ]),
+);
 
 /** How the editor is driven into each mutation state, per selected step kind. */
 export const EDIT_PATHS = {

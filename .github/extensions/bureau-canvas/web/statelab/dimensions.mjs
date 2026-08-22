@@ -451,13 +451,27 @@ const fieldState = {
     { id: "dirty", summary: "changed and valid — save is offered", derive: (combo) => save(combo, offered) },
     { id: "invalid", summary: "changed into something the field refuses", derive: (combo) => save(combo, withheld) },
     /*
-     * The two the matrix may not perform, kept as values so the omission is a
-     * named exclusion rather than a gap — `a-field-save-would-write-the-config`
-     * says why. They still declare what they would assert, so the day a
-     * writable host exists they are states rather than a fresh design problem.
+     * The two ends of a save, reached by routing `./intent` in the browser
+     * rather than by letting the click reach the shared host — see
+     * `SAVE_INTERCEPTS` in `paths.mjs`. They were excluded values until that
+     * existed, on the grounds that the harness could not press the button; but
+     * "cannot be performed here" was never the same claim as "cannot be
+     * rendered", and a save in flight and a save refused are two of the most
+     * ordinary screens this UI has.
+     *
+     * `save-error` allows the 500 the browser itself logs. That is the state,
+     * not a defect in it: the refusal is the thing under review, and the
+     * console line is how a refusal sounds. Declaring it here keeps the
+     * registry the only place that says which failures are a state and which
+     * are a bug.
      */
     { id: "saving", summary: "the save is in flight; the button says so and refuses a second click", derive: (combo) => save(combo, withheld), copy: ["Saving…"] },
-    { id: "save-error", summary: "the save came back refused and the draft is still there to retry", derive: (combo) => save(combo, offered) },
+    {
+      id: "save-error",
+      summary: "the save came back refused and the draft is still there to retry",
+      derive: (combo) => save(combo, offered),
+      allowErrors: ["status of 500"],
+    },
   ],
 };
 

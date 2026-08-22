@@ -9,7 +9,7 @@
 import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, selectStep } from "./paths.mjs";
+import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, SAVE_INTERCEPTS, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
@@ -66,8 +66,9 @@ function expectations(combo) {
  * The pre-surface states are the only ones a click cannot reach: one needs the
  * renderer module blocked, the other needs `/state` held open. Both are request
  * interception, which the browser suite does with `page.route` and the lab
- * cannot do from inside an iframe — so these states carry `intercept` and the
- * lab shows the suite's captured render with that reason attached.
+ * cannot do from inside an iframe — so these states carry `intercept`, and the
+ * lab blanks its stage and names the reason rather than leaving the previous
+ * state's render on screen. The suite is where they are rendered and captured.
  *
  * Each page boots itself, so each has both: index.html swaps in its dedicated
  * fallback shell, editor.html replaces its root with a plain status line.
@@ -109,12 +110,30 @@ function editorOps(combo) {
   return [...ops, ...EDIT_PATHS[combo.edit](combo.pick)];
 }
 
+/**
+ * The request interception a state needs in place before its page loads.
+ *
+ * A save state is not something a user navigates *into* from the state next to
+ * it — it is the same screen under a host that is slow or refusing, which is a
+ * condition of the environment rather than a click. So it rides on the `page`
+ * op the way the two pre-surface states do, and for the same reason: what is
+ * being varied is the network, not the path.
+ *
+ * That is also why these states have no incoming edge. A page already loaded
+ * without the route in place cannot acquire it, so claiming an edge into them
+ * would be claiming a transition the suite could not walk.
+ */
+function interceptFor(combo) {
+  const kind = SAVE_INTERCEPTS[combo.fieldState];
+  return kind ? { intercept: kind } : {};
+}
+
 /** The full entry path: load a page, publish a fixture, then act like a user. */
 function entryPath(combo) {
   if (combo.surface === "boot" || combo.surface === "boot-editor") {
     return bootOps(combo);
   }
-  const ops = [{ op: "page", value: pageFor(combo) }, { op: "fixture", value: fixtureFor(combo) }];
+  const ops = [{ op: "page", value: pageFor(combo), ...interceptFor(combo) }, { op: "fixture", value: fixtureFor(combo) }];
   const bySurface = {
     config: () => [{ op: "wait", selector: S.configView }, ...configOps(combo)],
     pipeline: () => [{ op: "wait", selector: S.pipelineView }, ...pipelineOps(combo)],
@@ -161,6 +180,41 @@ function pick(source, keys) {
 export const STATES = [...matrixStates, ...PROBES];
 
 /**
+ * The controls that really are toggles, and what undoes each one.
+ *
+ * A prefix DAG can only say how a state is *entered*: every edge points away
+ * from the landing, one operation at a time. But half of what a user does is
+ * the other direction — collapse the card, cancel the create, go back to the
+ * Pipeline tab, leave replay for design — and none of it was under test,
+ * because no state's entry path contains it. A disclosure that opens and will
+ * not close is exactly the defect a state matrix exists to catch, and it could
+ * not have failed anything here.
+ *
+ * So a reversible step declares its undo. The suite enters the child, applies
+ * only that undo, and then holds the render to the *parent's* expectations,
+ * which is precisely the claim being made: this control puts the page back.
+ * A control that opens but does not close fails by name, and so does one that
+ * closes onto a screen that is not the one it left.
+ *
+ * `undo` is usually the same control — these are toggles — but not always: the
+ * way out of the Relations tab is the Pipeline tab, and the way out of a create
+ * bar is Cancel. Both are the real control a user would reach for.
+ */
+const REVERSIBLE = [
+  { via: S.assignmentHead, undo: S.assignmentHead, gone: S.assignmentDetail },
+  { via: S.createOpen, undo: S.createCancel, gone: S.createBar },
+  { via: S.relationSummary, undo: S.relationSummary, gone: S.relationOpen },
+  { via: S.workSourceValue, undo: S.workSourceValue, gone: S.workSourceEditor },
+  { via: S.workRulesValue, undo: S.workRulesValue, gone: S.workRulesEditor },
+  { via: S.signalsValue, undo: S.signalsValue, gone: S.signalsEditor },
+  { via: S.reposValue, undo: S.reposValue, gone: S.reposEditor },
+  { via: S.limitsValue, undo: S.limitsValue, gone: S.limitsEditor },
+  { via: S.editorTabRelations, undo: S.editorTabPipeline, gone: S.relationFlow },
+  { via: S.modeLive, undo: S.modeDesign, gone: S.runControls },
+  { via: S.modeReplay, undo: S.modeDesign, gone: S.replayControls },
+];
+
+/**
  * The transition DAG. An edge exists when one operation on a state's path
  * turns it into another reachable state — which is exactly what the browser
  * suite executes, so every drawn edge is one the suite has walked.
@@ -168,8 +222,15 @@ export const STATES = [...matrixStates, ...PROBES];
  * Each edge carries the `delta`: the operations to apply to a page already
  * sitting in `from` to arrive at `to`. The suite walks that, rather than
  * re-entering the child from scratch, so the edge is the thing under test.
+ *
+ * Two kinds. An `enter` edge is a prefix relation: the child's path is the
+ * parent's plus one operation. A `return` edge is the way back out, and it is
+ * not derivable from any path, because no state's *entry* contains it.
  */
 export const TRANSITIONS = buildTransitions();
+
+/** The prefix subset: the part that is a DAG and is asserted to stay one. */
+export const ENTRY_TRANSITIONS = TRANSITIONS.filter((edge) => edge.kind === "enter");
 
 function buildTransitions() {
   const byPath = new Map(STATES.map((state) => [signature(state.ops), state.id]));
@@ -181,10 +242,26 @@ function buildTransitions() {
     }
     const parent = byPath.get(JSON.stringify(acting.slice(0, -1)));
     if (parent && parent !== state.id) {
-      edges.push({ from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaFrom(state.ops, acting.length - 1) });
+      edges.push({ kind: "enter", from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaFrom(state.ops, acting.length - 1) });
     }
   }
-  return edges;
+  return [...edges, ...edges.map(returnEdge).filter(Boolean)];
+}
+
+/** The way back out of `edge`, when the control it used declares an undo. */
+function returnEdge(edge) {
+  const last = edge.delta.filter((op) => op.op !== "wait").at(-1);
+  const toggle = last?.op === "click" && REVERSIBLE.find((item) => item.via === last.selector);
+  if (!toggle) {
+    return null;
+  }
+  return {
+    kind: "return",
+    from: edge.to,
+    to: edge.from,
+    via: `click ${toggle.undo}`,
+    delta: [{ op: "click", selector: toggle.undo }, { op: "waitGone", selector: toggle.gone }],
+  };
 }
 
 /** The tail of `ops` beginning at the (skip + 1)-th acting operation. */
@@ -223,6 +300,8 @@ export function summary() {
     probes: PROBES.length,
     states: STATES.length,
     transitions: TRANSITIONS.length,
+    entryTransitions: ENTRY_TRANSITIONS.length,
+    returnTransitions: TRANSITIONS.length - ENTRY_TRANSITIONS.length,
   };
 }
 

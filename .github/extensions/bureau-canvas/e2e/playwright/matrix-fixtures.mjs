@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, MEASURED, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -131,6 +131,11 @@ export function pageAdapter(page, host) {
       if (op?.intercept) {
         await intercept(page, op.intercept);
       }
+      // Only a pre-surface intercept changes how the page is waited for. An
+      // intent route leaves the boot untouched, so the state still has to
+      // settle like every other one — skipping the barrier there would judge a
+      // half-rendered page and call the race a state.
+      const preSurface = PRE_SURFACE.has(op?.intercept);
       // The assignment stack remembers its expanded card in `sessionStorage`.
       // Every walk starts from a fresh session so a path means the same thing
       // however many times it has been walked in this page before.
@@ -146,8 +151,8 @@ export function pageAdapter(page, host) {
         page[FRESH] = true;
       }
       const path = target === "editor" ? "editor.html" : "index.html";
-      await page.goto(new URL(path, host.url).href, { waitUntil: op?.intercept ? "commit" : "load" });
-      if (!op?.intercept) {
+      await page.goto(new URL(path, host.url).href, { waitUntil: preSurface ? "commit" : "load" });
+      if (!preSurface) {
         await settled(page, target);
       }
     },
@@ -168,25 +173,56 @@ export function pageAdapter(page, host) {
 }
 
 /**
- * The two pre-surface states. Blocking the renderer module is how a CDN or a
- * proxy breaks this page in the field; stalling the payload is what a slow CLI
- * looks like. Both are request-level, so they are produced here rather than by
- * a production flag that only tests would ever set.
+ * The intercepts that must be in place before the page has a surface at all.
+ * Everything else routes a request the page makes later, so the load and the
+ * settle barrier proceed normally.
+ */
+const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-state"]);
+
+/**
+ * Request-level conditions a state can be under.
  *
- * Stalling has to cover `/events` as well as `/state`: the SSE channel writes
- * the current state the moment it connects, so blocking the fetch alone still
- * renders a full surface.
+ * The first three are pre-surface: blocking the renderer module is how a CDN
+ * or a proxy breaks this page in the field, and stalling the payload is what a
+ * slow CLI looks like. Stalling has to cover `/events` as well as `/state`,
+ * because the SSE channel writes the current state the moment it connects, so
+ * blocking the fetch alone still renders a full surface.
+ *
+ * The last two are the two ends of a save. They route `./intent`, which is
+ * what every `set-*` posts to, so the save is answered inside the browser and
+ * the shared host is never written to. Stalling holds `busy` on, which is the
+ * "Saving…" screen; refusing returns a non-`ok` response, and `postIntent`
+ * maps that to `null`, which is the branch that renders each editor's own
+ * fallback sentence. Both are exact rather than timing-dependent, which is why
+ * they can be enumerated states instead of a note about what cannot be shown.
+ *
+ * They match on the intent's `kind`, not on the URL, because `./intent` is
+ * also how the page *reads*: `derive-work-source` builds the paste preview and
+ * `resolve-repo` looks a repository up, and neither writes anything. Routing
+ * the whole endpoint stalled the preview the save state is supposed to be
+ * saving — the editor sat with no derivation, so there was nothing to submit.
+ * Only the writing kinds are held or refused; every read goes to the host.
  */
 async function intercept(page, kind) {
-  if (kind === "block-renderer") {
-    await page.route(/app\.mjs$/u, (route) => route.abort("failed"));
-    return;
+  const routes = {
+    "block-renderer": () => page.route(/app\.mjs$/u, (route) => route.abort("failed")),
+    "block-editor-renderer": () => page.route(/editor\/index\.mjs$/u, (route) => route.abort("failed")),
+    "stall-state": () => page.route(/\/(state|events)$/u, () => {}),
+    "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
+    "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false }) })
+      : route.continue()),
+  };
+  await routes[kind]();
+}
+
+/** Whether this intent is one that would change the host. */
+function writes(route) {
+  try {
+    return Boolean(JSON.parse(route.request().postData() ?? "{}").kind?.startsWith("set-"));
+  } catch {
+    return false;
   }
-  if (kind === "block-editor-renderer") {
-    await page.route(/editor\/index\.mjs$/u, (route) => route.abort("failed"));
-    return;
-  }
-  await page.route(/\/(state|events)$/u, () => {});
 }
 
 async function dragBy(page, selector, dx, dy) {
@@ -246,7 +282,7 @@ async function judge(state, page) {
 async function sample(state, page) {
   const snapshot = await page.evaluate(
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
-    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: MEASURED, contrast: CONTRAST } },
+    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST } },
   );
   return { snapshot, failures: verdict(state, snapshot, { slack: 2 }) };
 }

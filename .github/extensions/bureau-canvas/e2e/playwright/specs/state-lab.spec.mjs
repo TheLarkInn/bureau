@@ -78,12 +78,22 @@ test("the compact control resizes the stage and re-runs the entry path", async (
   expect(errors).toEqual([]);
 });
 
-test("a state that needs request interception says so rather than failing quietly", async ({ page, host }) => {
+test("a state that needs request interception blanks the stage rather than showing the last render", async ({ page, host }) => {
   await openLab(page, host);
+  const drivable = DRIVABLE.find((state) => state.id.endsWith("card:expanded"));
   const intercepted = STATES.find((state) => state.intercept);
+
+  // Drive a state the lab can produce first, so there is a real render on the
+  // stage for the next selection to inherit. Returning early used to leave it
+  // there beside the intercepted state's description — the lab presenting a
+  // screen it never produced as that state's render, which is the one thing a
+  // review surface may not do.
+  await page.locator(".state-item", { hasText: drivable.id }).first().click();
+  await expect(page.frameLocator("#stage-frame").locator(".assignment-detail")).toBeVisible();
 
   await page.locator(".state-item", { hasText: intercepted.id }).first().click();
   await expect(page.locator("#detail .note--warn")).toContainText(intercepted.intercept);
+  await expect(page.locator("#stage-frame")).toHaveAttribute("src", "about:blank");
 });
 
 test("the lab explains why an excluded combination is not a state", async ({ page, host }) => {

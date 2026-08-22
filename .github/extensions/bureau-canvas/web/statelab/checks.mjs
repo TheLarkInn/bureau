@@ -24,11 +24,74 @@ export function collect(doc, request) {
   }
   const root = doc.documentElement;
   const boxes = [];
+  // Parent identity, assigned inside the page: two boxes are siblings when
+  // they answer to the same key. This is what lets the overlap check be a rule
+  // ("nothing in normal flow may print over its own sibling") rather than a
+  // hand-kept list of pairs someone has to remember to extend.
+  const parents = new Map();
+  const keyFor = (node) => {
+    if (!parents.has(node)) {
+      parents.set(node, `parent-${parents.size}`);
+    }
+    return parents.get(node);
+  };
+  // Element identity, for the same reason but one level down. `measure` now
+  // carries the state's own `shows`, and those overlap the standing list and
+  // each other — `[data-testid="limits-save"]` and the same selector with
+  // `:not([disabled])` are two selectors naming one button. Without identity
+  // that button is two boxes at identical coordinates, and the sibling rule
+  // reports it as printing over itself.
+  const nodes = new Map();
+  const idFor = (node) => {
+    if (!nodes.has(node)) {
+      nodes.set(node, `node-${nodes.size}`);
+    }
+    return nodes.get(node);
+  };
+  // The nearest ancestor that clips, per axis. A control can report a
+  // perfectly good box and still be invisible, because an `overflow: hidden`
+  // parent cuts it away; `getClientRects` knows nothing about that, so a
+  // `shows` would pass on a control the user cannot see.
+  //
+  // `auto` and `scroll` are deliberately *not* clipping. Content below the
+  // fold of a scroll container is one gesture away, not lost — the editor's
+  // side panel is `overflow-y: auto`, and treating that as clipping reported
+  // its issue list as cut away on every editor state that had one. The axes
+  // are tracked apart for the same reason: `overflow-x: hidden` with a
+  // scrolling y is an ordinary vertical scroller, not a lid.
+  const clipper = (node) => {
+    for (let item = node.parentElement; item; item = item.parentElement) {
+      const style = view.getComputedStyle(item);
+      const clipsX = /hidden|clip/u.test(style.overflowX);
+      const clipsY = /hidden|clip/u.test(style.overflowY);
+      if (clipsX || clipsY) {
+        return { rect: item.getBoundingClientRect(), clipsX, clipsY };
+      }
+    }
+    return null;
+  };
   for (const selector of request.measure) {
     for (const node of doc.querySelectorAll(selector)) {
       const rect = node.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
-        boxes.push({ selector, x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+        const position = view.getComputedStyle(node).position;
+        const clip = clipper(node);
+        const outsideX = clip?.clipsX && (rect.x >= clip.rect.right || rect.x + rect.width <= clip.rect.left);
+        const outsideY = clip?.clipsY && (rect.y >= clip.rect.bottom || rect.y + rect.height <= clip.rect.top);
+        boxes.push({
+          selector,
+          id: idFor(node),
+          x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+          parent: node.parentElement ? keyFor(node.parentElement) : null,
+          // Absolute and fixed boxes overlap on purpose — a badge over a card,
+          // a minimap over a graph — so only normal-flow boxes are held to the
+          // sibling rule.
+          flow: position === "static" || position === "relative",
+          // Entirely outside its clipper, rather than merely trimmed: a graph
+          // node panned half out of frame is ordinary, a control cut away
+          // completely is not.
+          clipped: Boolean(outsideX || outsideY),
+        });
       }
     }
   }
@@ -234,7 +297,41 @@ function normalise(value) {
  * defect a crossing probe is rendered to find.
  */
 function overlaps(snapshot) {
-  return [...sameKind(snapshot), ...siblingKinds(snapshot)];
+  return dedupe([...sameKind(snapshot), ...siblingKinds(snapshot), ...siblingBoxes(snapshot)]);
+}
+
+/**
+ * Anything in normal flow that prints over its own DOM sibling.
+ *
+ * `SIBLINGS` above is a list someone has to remember to extend, and it only
+ * ever covered the landing column. This is the same claim as a rule: boxes
+ * that share a parent and are both in normal flow are laid out *beside* or
+ * *below* one another by definition, so an intersection between them is the
+ * layout failing, whatever the two regions happen to be. Nesting cannot reach
+ * here — a child does not share its parent's parent — and absolutely
+ * positioned boxes are excluded, because overlapping is what they are for.
+ */
+function siblingBoxes(snapshot) {
+  const found = [];
+  const boxes = snapshot.boxes.filter((box) => box.flow && box.parent);
+  for (let left = 0; left < boxes.length; left += 1) {
+    for (let right = left + 1; right < boxes.length; right += 1) {
+      const pair = [boxes[left], boxes[right]];
+      const sameElement = pair[0].id !== undefined && pair[0].id === pair[1].id;
+      if (!sameElement && pair[0].parent === pair[1].parent && intersects(...pair)) {
+        found.push({ kind: "overlap", detail: `${pair[0].selector} overlaps ${pair[1].selector}` });
+      }
+    }
+  }
+  return found;
+}
+
+function dedupe(problems) {
+  const seen = new Set();
+  return problems.filter((problem) => {
+    const key = `${problem.kind}:${problem.detail}`;
+    return seen.has(key) ? false : Boolean(seen.add(key));
+  });
 }
 
 function sameKind(snapshot) {
@@ -274,7 +371,13 @@ function intersects(left, right) {
 
 /**
  * Nothing may need a horizontal scrollbar, and no measured region may hang off
- * the right edge. Both are how a compact viewport breaks in practice.
+ * an edge or be cut away by a clipping ancestor.
+ *
+ * The right edge alone used to be the whole check, which is how a compact
+ * viewport breaks most often but not the only way. A box pushed off the *left*
+ * is just as unreachable, and a control cut away entirely by an
+ * `overflow: hidden` parent is worse than either, because it still reports a
+ * box — so `shows` passes while the user sees nothing.
  */
 function clipping(snapshot, options) {
   const slack = options.slack ?? 2;
@@ -286,11 +389,32 @@ function clipping(snapshot, options) {
     if (box.x + box.width > snapshot.viewport.width + slack) {
       problems.push({ kind: "clipped", detail: `${box.selector} extends ${Math.round(box.x + box.width - snapshot.viewport.width)}px past the viewport` });
     }
+    if (box.x < -slack) {
+      problems.push({ kind: "clipped", detail: `${box.selector} starts ${Math.round(-box.x)}px left of the viewport` });
+    }
+    if (box.clipped) {
+      problems.push({ kind: "clipped", detail: `${box.selector} is cut away entirely by a clipping ancestor` });
+    }
   }
-  return problems;
+  return dedupe(problems);
 }
 
-/** Every selector a state mentions, so one collect pass covers the verdict. */
+/**
+ * Every selector a state mentions, so one collect pass covers the verdict.
+ */
 export function selectorsFor(state) {
   return [...new Set([...(state.expect.shows ?? []), ...(state.expect.hides ?? [])])];
+}
+
+/**
+ * What to measure for a state: the standing regions, plus the controls this
+ * state promises are on screen.
+ *
+ * Measuring only the standing list meant the geometry checks never looked at
+ * the thing the state is actually about. A Save button could be shoved off the
+ * viewport or cut away by its own editor and every check still passed, because
+ * `shows` asks whether it has a box and nothing asked where that box was.
+ */
+export function measureFor(state) {
+  return [...new Set([...MEASURED, ...(state.expect?.shows ?? [])])];
 }
