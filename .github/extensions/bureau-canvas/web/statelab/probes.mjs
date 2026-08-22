@@ -21,8 +21,8 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, editorCardFor } from "./selectors.mjs";
-import { SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, editorCardFor, offered } from "./selectors.mjs";
+import { INFERRED_FILTER_URL, SAMPLE_STEPS } from "./paths.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -136,7 +136,15 @@ export const PROBES = [
       { op: "click", selector: S.reposValue },
       { op: "wait", selector: S.reposEditor },
     ],
-    expect: { shows: [S.reposEditor, S.reposSave], hides: [], copy: [] },
+    /*
+     * The strip is the half of this crossing the rule is actually about. Every
+     * matrix tuple that would put a findings strip over an open field editor is
+     * pruned by `chrome-is-orthogonal-to-body`, so this is the one state in the
+     * registry that can see the pair — and asserting only the editor left the
+     * chrome unobserved at the single point that exists to observe it. Gating
+     * `GeneralFindings` on "no disclosure open" would have passed.
+     */
+    expect: { shows: [S.reposEditor, S.reposSave, ".general-findings"], hides: [], copy: ["Validation findings"] },
   }),
   crossing({
     id: "probe--create-bar-over-expanded-card",
@@ -295,6 +303,30 @@ export const PROBES = [
       { op: "wait", selector: S.reposEditor },
     ],
     expect: { shows: [S.reposEditor], hides: [], copy: ["is not in repos.yaml"] },
+  }),
+  sample({
+    id: "probe--work-source-inferred-filter",
+    covers: "the third answer a paste can get: a derivation Bureau had to infer, which is offered but must say so",
+    summary: "a URL with no search query — the filter is inferred, the save is still offered, and the note says which",
+    fixture: "validated",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.workSourceValue },
+      { op: "fill", selector: S.workSourceUrl, value: INFERRED_FILTER_URL },
+      { op: "wait", selector: S.workSourceInferred },
+    ],
+    /*
+     * `exact: false` is neither of the lifecycle's two answers: the save is
+     * offered like `dirty` and the copy warns like `invalid`. Asserting the
+     * exact-derivation note *absent* is the half that matters — an inferred
+     * filter presented as an exact one is a filter that silently means
+     * something else, which is the hazard the deriver exists to prevent.
+     */
+    expect: {
+      shows: [S.workSourceDerived, S.workSourceInferred, offered(S.workSourceSave)],
+      hides: [S.workSourceExact],
+      copy: ["built from the label in the URL"],
+    },
   }),
   sample({
     id: "probe--all-limits-capped",

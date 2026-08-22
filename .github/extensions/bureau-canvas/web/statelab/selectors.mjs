@@ -43,6 +43,13 @@ export const SELECTORS = {
   workSourceUrl: '[aria-label="Board, query, or issues URL"]',
   workSourceDerived: ".derived",
   workSourceSave: '[data-testid="work-source-save"]',
+  // The three answers a paste can get, as three treatments. They are separate
+  // selectors because the class is the message: an inferred filter shown in the
+  // exact-derivation note, or a refusal shown as ordinary advice, is the defect
+  // `lib/worksource.mjs` exists to prevent, and the words alone cannot catch it.
+  workSourceRefused: ".ws-open .note--err",
+  workSourceInferred: ".derived .note--warn",
+  workSourceExact: ".derived > .note:not(.note--warn)",
 
   workRulesValue: ".runtime-value",
   workRulesEditor: ".assignment-runtime-editor",

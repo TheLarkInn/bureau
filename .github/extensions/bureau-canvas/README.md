@@ -159,6 +159,13 @@ pipeline while the strip called another unreferenced, and the graph drew the
 node, or a repo without its `usedBy`, had the same shape. Every coupled
 projection moves together, or the state under review is one no user can reach.
 
+That was the same mistake three times, so it is a gate rather than a comment
+now: `test/statelab.test.mjs` builds the base payload through the real
+`relationView` and requires every fixture's graph to be the one its own config
+implies — a node for every listed item, no node for anything unlisted, and an
+edge for every pipeline or repo an assignment names whose endpoints are both
+drawn. Deleting `multi-repo`'s relation patch fails it by name.
+
 That rule also decides what a fixture may not attempt. `orphans` leaves a role
 and a *repo* unreferenced rather than a pipeline, because a pipeline is also
 keyed into `state.pipelines`, and that entry is a `pipelineState` — view,
@@ -174,12 +181,35 @@ as dirty. The lifecycle axis asserts the save button's own state, and the run
 axis asserts what only the selected run's log can produce: the step decoration
 live folds out of it, and the span replay's timeline takes from it.
 
+A lifecycle value asserts the *treatment* as well as the words, because for
+several fields that is the whole message. `deriveWorkSource` gives a paste three
+different answers and the editor draws three: an exact derivation offers the
+save, a host it does not recognise refuses outright — no preview, no save — and
+a URL with no search query derives a filter it had to *infer* and offers the
+save with a warning. The third is neither lifecycle value, so it is a content
+sample; the second is `invalid`. Asserting only the sentence would let a
+refusal render as ordinary advice, and an inferred filter render as an exact
+one — which is the hazard `lib/worksource.mjs` exists to prevent.
+
 The Relations tab is why two of the rules are `scoping` rather than
 `structural`: `EditorApp` keeps `PipelineEditor` mounted and merely `hidden`,
 so a selection and an unsaved rename both survive the switch — draft safety
 depends on it. Nothing of the draft is on screen there, so the crossings are
 probes, and a content sample walks the round trip and requires the rename to
-still be there on the way back.
+still be there on the way back. The isolation is asserted both ways: the
+probes require the editor panel gone behind Relations, and `tab: pipeline`
+requires the relation graph gone behind Pipeline.
+
+The one thing the matrix will not do is **save**. Every field editor's save
+posts a `set-*` intent and `save-pipeline` writes, re-validates and reverts —
+all against the config directory the host was started with, which the suite
+shares read-only across 131 states running in parallel. So `saving` and
+`save-error` are enumerated values on both lifecycle axes and excluded by
+`a-field-save-would-write-the-config` and
+`an-editor-save-would-write-the-config`. They are real screens; recording them
+as named exclusions is the difference between a boundary a reviewer can see and
+a gap they cannot. The write path itself belongs to `specs/editor.spec.mjs`,
+which boots its own scratch config.
 
 
 ## Rules worth knowing before changing it

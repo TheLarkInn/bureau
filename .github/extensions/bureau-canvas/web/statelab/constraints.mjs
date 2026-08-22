@@ -63,7 +63,45 @@ function na(combo, dimensions) {
 /** Selection-bearing mutations: these controls exist only for a selected step. */
 const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "layout-moved"];
 
+/**
+ * The two lifecycle values that only a performed save can reach. Shared by the
+ * field axis and the editor axis because it is one fact about the harness, not
+ * two: both saves write, and the matrix host is read-only.
+ */
+const SAVE_STATES = ["saving", "save-error"];
+
 export const CONSTRAINTS = [
+  {
+    /*
+     * A save is the one act that leaves the harness. Every field editor's save
+     * posts a `set-*` intent that writes the config directory the host was
+     * started against, and the matrix runs 131 states against *one* host per
+     * worker, fully parallel. A state that wrote would change the payload every
+     * other state in flight is being judged against, and the directory in
+     * question is the repository's own `.bureau/`.
+     *
+     * So the values exist and the rule excludes them, rather than the axis
+     * quietly stopping at `invalid`: `saving` and `save-error` are real screens
+     * — `.note--err` from a refused `set-work-source`, the "Saving…" label — and
+     * an axis that omitted them would be the unrepresentable-versus-excluded
+     * mistake this registry keeps making rules for. The successful round trip
+     * is owned by `specs/editor.spec.mjs`, which boots its own scratch config.
+     */
+    id: "a-field-save-would-write-the-config",
+    kind: "structural",
+    reads: ["fieldState"],
+    title: "The matrix cannot review a field save it is not allowed to perform",
+    why: "Saving posts a `set-*` intent that writes the host's config directory, and the matrix shares one read-only host across every state. `saving` and `save-error` are real screens the harness may not produce; `specs/editor.spec.mjs` owns the write path against its own scratch config.",
+    holds: (combo) => !SAVE_STATES.includes(combo.fieldState),
+  },
+  {
+    id: "an-editor-save-would-write-the-config",
+    kind: "structural",
+    reads: ["edit"],
+    title: "The matrix cannot review a pipeline save it is not allowed to perform",
+    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config.",
+    holds: (combo) => !SAVE_STATES.includes(combo.edit),
+  },
   {
     id: "boot-is-pre-surface",
     kind: "structural",
@@ -149,7 +187,7 @@ export const CONSTRAINTS = [
     kind: "structural",
     reads: ["field", "fieldState"],
     title: "A field only has the lifecycle states it can actually reach",
-    why: "`dirty` and `invalid` describe an open editor's draft. Delete is a confirmation and carries none; the work source derives from a pasted URL, so it has no invalid-but-accepted draft; the repo adder's save state belongs to the repo list it returns to.",
+    why: "`dirty` and `invalid` describe an open editor's draft. Delete is a confirmation and carries none; the repo adder's save state belongs to the repo list it returns to. The work source has both: a pasted URL the deriver refuses leaves the draft open, the preview gone and the save withheld.",
     holds: (combo) => lifecycleAllows(combo.field, combo.fieldState),
   },
   {

@@ -32,39 +32,32 @@ function pageFor(combo) {
  * surface simply does not draw.
  */
 function expectations(combo) {
-  const shows = new Set();
-  const hides = new Set();
-  const copy = new Set();
-  const allowErrors = new Set();
+  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set() };
+  const absorb = (source) => {
+    for (const [key, set] of Object.entries(bag)) {
+      for (const item of source?.[key] ?? []) {
+        set.add(item);
+      }
+    }
+  };
   const suppressed = new Set(ORDER.flatMap((key) => valueOf(key, combo[key])?.suppress ?? []));
   for (const key of ORDER) {
     const value = valueOf(key, combo[key]);
     if (suppressed.has(key) || (value?.only && !value.only.includes(combo.surface))) {
       continue;
     }
-    for (const source of [value, value?.derive?.(combo)]) {
-      for (const item of source?.shows ?? []) {
-        shows.add(item);
-      }
-      for (const item of source?.hides ?? []) {
-        hides.add(item);
-      }
-      for (const item of source?.copy ?? []) {
-        copy.add(item);
-      }
-      for (const item of source?.allowErrors ?? []) {
-        allowErrors.add(item);
-      }
-    }
+    absorb(value);
+    absorb(value?.derive?.(combo));
   }
-  for (const item of FIELD_LIFECYCLE[combo.field]?.[combo.fieldState]?.copy ?? []) {
-    copy.add(item);
-  }
+  // The lifecycle entry is a contributor like any dimension value: it says what
+  // this field's own draft looks like, in the treatment class as well as the
+  // words, so a refusal rendered as ordinary advice fails here.
+  absorb(FIELD_LIFECYCLE[combo.field]?.[combo.fieldState]);
   return {
-    shows: [...shows].filter((item) => !hides.has(item)),
-    hides: [...hides],
-    copy: [...copy],
-    allowErrors: [...allowErrors],
+    shows: [...bag.shows].filter((item) => !bag.hides.has(item)),
+    hides: [...bag.hides],
+    copy: [...bag.copy],
+    allowErrors: [...bag.allowErrors],
   };
 }
 

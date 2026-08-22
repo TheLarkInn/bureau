@@ -234,7 +234,19 @@ function multiRepo(state) {
     // not a payload the CLI can produce.
     { name: "bureau-docs", url: "https://github.com/TheLarkInn/bureau-docs.git", forge: "github", access: "pr", credential: "github-main", usedBy: ["assignment:agent-eligible"] },
   ];
-  assignment(next).repos = ["bureau", "bureau-docs"];
+  const owner = assignment(next);
+  owner.repos = ["bureau", "bureau-docs"];
+  // The relation projection moves with it, the same way `orphans` and
+  // `two-assignments` do. `relationView` emits a node per registered repo and
+  // an edge per name in `assignment.repos`, so registering one and stopping
+  // there builds a payload `buildState` cannot: a repo editor listing two
+  // above a graph drawing one. The landing keeps the graph in the DOM behind
+  // its `<details>`, so a reviewer is one click from that contradiction.
+  const relation = next.config.relation ?? { nodes: [], edges: [] };
+  next.config.relation = {
+    nodes: [...relation.nodes, { id: "repo:bureau-docs", kind: "repo", name: "bureau-docs" }],
+    edges: [...relation.edges, relationEdge("repo", `assignment:${owner.name}`, "repo:bureau-docs")],
+  };
   return next;
 }
 
@@ -355,7 +367,7 @@ export const FIXTURES = Object.fromEntries([
   entry("advisory", "status", "an advisory that must never block a save", advisory),
   entry("invalid-advisory", "status", "validation errors and an advisory reported together", invalidAdvisory),
   entry("empty", "content", "no assignments, roles, repos or pipelines yet", empty),
-  entry("orphans", "content", "a role and a pipeline nothing references", orphans),
+  entry("orphans", "content", "a role and a repo nothing references", orphans),
   entry("two-assignments", "content", "two assignment cards in the stack", twoAssignments),
   entry("multi-repo", "content", "two repos, so rank and reorder are meaningful", multiRepo),
   entry("read-only-primary", "content", "the primary repo is registered read-only", readOnlyPrimary),

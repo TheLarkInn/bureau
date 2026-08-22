@@ -29,6 +29,15 @@ const ESCALATE = '[data-testid="sig-escalate"]';
 const CONCURRENT_LIMIT = '[aria-label="Concurrent runs"]';
 const BOARD_URL = "https://github.com/TheLarkInn/bureau/issues?q=is%3Aopen+label%3Aready";
 const REPO_URL = "https://github.com/TheLarkInn/bureau-docs";
+/**
+ * The other two answers `deriveWorkSource` can give, which the paste has to
+ * report differently. A host it does not know is a refusal — no derivation, no
+ * save. A label page is a derivation Bureau had to *infer*, which is offered
+ * but must say so, because a filter that silently means something else is the
+ * hazard `lib/worksource.mjs` exists to prevent.
+ */
+export const UNKNOWN_HOST_URL = "https://example.com/board";
+export const INFERRED_FILTER_URL = "https://github.com/TheLarkInn/bureau/labels/bug";
 
 /** The steps the bundled sample's pipeline actually contains, by kind. */
 export const SAMPLE_STEPS = { deterministic: "verify", agent: "implement" };
@@ -50,6 +59,10 @@ export const ADDED_STEP = `step-${SAMPLE_STEP_COUNT + 1}`;
  * because `contentLayer` reads this one entry. A `dirty` that leaned on
  * `rest`'s fixture would type the values the payload already held, leave the
  * form unchanged, and render a *clean* editor under the name `dirty`.
+ *
+ * An entry contributes `shows` and `hides` as well as `copy`, because for
+ * several fields the refusal is a *treatment* and not only a sentence: an
+ * error rendered in the ordinary note class reads as advice.
  */
 export const FIELD_LIFECYCLE = {
   "work-source": {
@@ -57,6 +70,15 @@ export const FIELD_LIFECYCLE = {
     dirty: {
       ops: [{ op: "fill", selector: S.workSourceUrl, value: BOARD_URL }, { op: "wait", selector: S.workSourceDerived }],
       copy: ["derived exactly from the URL"],
+    },
+    // A URL the deriver refuses. The preview must be *gone*, not stale: the
+    // editor may not keep showing what the last good paste would have written
+    // while telling the user this one failed.
+    invalid: {
+      ops: [{ op: "fill", selector: S.workSourceUrl, value: UNKNOWN_HOST_URL }, { op: "wait", selector: S.workSourceRefused }],
+      shows: [S.workSourceRefused],
+      hides: [S.workSourceDerived],
+      copy: ["unrecognized host"],
     },
   },
   "work-rules": {

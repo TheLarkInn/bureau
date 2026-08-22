@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
+import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
 import { CONTRAST, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
@@ -62,7 +63,10 @@ async function servedState() {
         pipelines: Object.keys(config.pipelines).map((name) => ({ name })),
         orphans: [],
       },
-      relation: { nodes: [], edges: [] },
+      // The real projector, so the base the fixtures compose over is the graph
+      // `buildState` would actually serve rather than a stub. A hand-written
+      // one would make the consistency check below an identity of this file.
+      relation: relationView(payload),
     },
   };
 }
@@ -274,6 +278,47 @@ test("every fixture is a pure projection of the served payload", async () => {
   });
   assert.deepStrictEqual(results.filter((row) => !row.stable || !row.object), []);
 });
+
+test("every fixture ships the relation projection its own config implies", async () => {
+  const base = await servedState();
+  assert.deepStrictEqual(FIXTURE_IDS.flatMap((id) => disagreements(id, applyFixture(id, base))), []);
+});
+
+/**
+ * `relationView` derives the graph from the config's own lists: one node per
+ * assignment, pipeline, role and repo, and one edge per pipeline or repo an
+ * assignment names — keeping only edges whose endpoints are both nodes, which
+ * is why an assignment pointing at an unregistered repo owes none.
+ *
+ * A fixture that adds to one list and not the other therefore builds a payload
+ * `buildState` could never serve: a header counting two repos above a graph
+ * drawing one, or a card the graph has no node for. The state reviewing that is
+ * reviewing a screen no user can reach. This has been the same defect three
+ * times — `orphans`, `two-assignments`, `multi-repo` — so it is a gate now
+ * rather than a comment on each fixture.
+ */
+function disagreements(id, state) {
+  const view = state.config?.view ?? {};
+  const relation = state.config?.relation ?? { nodes: [], edges: [] };
+  const drawn = new Set(relation.nodes.map((node) => node.id));
+  const wired = new Set(relation.edges.map((edge) => `${edge.source}->${edge.target}`));
+  const listed = itemIds(view);
+  const owed = (view.assignments ?? []).flatMap(assignmentEdges).filter((edge) => edge.split("->").every((end) => drawn.has(end)));
+  return [
+    ...listed.filter((item) => !drawn.has(item)).map((item) => `${id}: config lists ${item}, the graph has no node for it`),
+    ...[...drawn].filter((node) => !listed.includes(node)).map((node) => `${id}: the graph draws ${node}, the config does not list it`),
+    ...owed.filter((edge) => !wired.has(edge)).map((edge) => `${id}: both ends are drawn but the edge ${edge} is missing`),
+  ];
+}
+
+function itemIds(view) {
+  return ["assignment", "pipeline", "role", "repo"].flatMap((kind) => (view[`${kind}s`] ?? []).map((item) => `${kind}:${item.name}`));
+}
+
+function assignmentEdges(item) {
+  const source = `assignment:${item.name}`;
+  return [`${source}->pipeline:${item.pipeline}`, ...(item.repos ?? []).map((repo) => `${source}->repo:${repo}`)];
+}
 
 test("the sample pipeline still has the step count the registry addresses", async () => {
   const payload = JSON.parse(await readFile(PAYLOAD, "utf8"));

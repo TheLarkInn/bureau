@@ -65,7 +65,15 @@ const surface = {
       summary: "editor.html — the pipeline editor and the relation graph",
       page: "editor",
       shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations],
-      hides: [S.configView],
+      /*
+       * The wrong render this page can actually produce. `.view-shell--config`
+       * used to sit here, but that class is emitted only by `app.mjs`, which
+       * `test/bundle.test.mjs` pins out of editor.html's module graph — so it
+       * was a negative no state could ever fail. The reachable failure is
+       * editor.html's own inline fallback, which replaces the root with a bare
+       * `.status` line when the renderer throws.
+       */
+      hides: [S.loading],
     },
   ],
 };
@@ -373,6 +381,14 @@ const fieldState = {
     { id: "rest", summary: "opened, nothing typed", derive: (combo) => save(combo, withheld) },
     { id: "dirty", summary: "changed and valid — save is offered", derive: (combo) => save(combo, offered) },
     { id: "invalid", summary: "changed into something the field refuses", derive: (combo) => save(combo, withheld) },
+    /*
+     * The two the matrix may not perform, kept as values so the omission is a
+     * named exclusion rather than a gap — `a-field-save-would-write-the-config`
+     * says why. They still declare what they would assert, so the day a
+     * writable host exists they are states rather than a fresh design problem.
+     */
+    { id: "saving", summary: "the save is in flight; the button says so and refuses a second click", derive: (combo) => save(combo, withheld), copy: ["Saving…"] },
+    { id: "save-error", summary: "the save came back refused and the draft is still there to retry", derive: (combo) => save(combo, offered) },
   ],
 };
 
@@ -504,7 +520,19 @@ const tab = {
   title: "Editor tab",
   why: "one shared relation renderer, one tab away from the pipeline it explains",
   values: [
-    { id: "pipeline", summary: "the step graph editor", shows: [S.editorToolbar, S.editorPanel] },
+    {
+      id: "pipeline",
+      summary: "the step graph editor",
+      shows: [S.editorToolbar, S.editorPanel],
+      /*
+       * `EditorApp` keeps both panes mounted and separates them with `hidden`
+       * alone. The leak was pinned in one direction only — the two Relations
+       * probes assert the editor panel is gone — so dropping `hidden` from the
+       * relation pane drew the graph under the editor in all 21 pipeline-tab
+       * states with nothing failing. This is the other direction.
+       */
+      hides: [S.relationFlow],
+    },
     {
       id: "relations",
       summary: "the shared read-only relation graph",
@@ -585,6 +613,15 @@ const edit = {
     // The one edit Save itself refuses: an attempt count the editor cannot
     // render. That refusal is the whole difference from `created`.
     { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
+    /*
+     * What `save-pipeline` does about it, which the matrix may not perform —
+     * `an-editor-save-would-write-the-config` says why. Named here so the two
+     * screens are excluded rather than missing: the write is real, and the
+     * revert-with-findings path is the one that proves the editor never leaves
+     * an unloadable config.
+     */
+    { id: "saving", summary: "save-pipeline in flight, so the button refuses a second click", shows: [withheld(S.editorSave)] },
+    { id: "save-error", summary: "the write was reverted and validate's findings name the steps", shows: [S.editorIssues, S.editorDiscard, offered(S.editorSave)] },
   ],
 };
 
