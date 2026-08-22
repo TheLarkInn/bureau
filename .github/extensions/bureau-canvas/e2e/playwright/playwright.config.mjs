@@ -23,6 +23,10 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     viewport: { width: 1280, height: 900 },
+    colorScheme: "light",
+    locale: "en-US",
+    reducedMotion: "reduce",
+    timezoneId: "UTC",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

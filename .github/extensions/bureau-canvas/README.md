@@ -101,6 +101,37 @@ It used to return early and leave the *previous* state's render on screen
 beside the new state's description, which is the one thing a review surface may
 not do — present a screen it never produced as though it had.
 
+### Visual regression checks
+
+Normal pull requests compare ten approved product screens: empty config,
+assignment overview, validation plus advisory, pipeline design, live run,
+finished-run replay, clean editor, unsaved edit, and the two compact layouts
+most likely to regress. A green `Canvas visual regression / 10 approved
+screens` check means none changed.
+
+```sh
+cd .github/extensions/bureau-canvas/e2e/playwright
+npm run test:visual
+```
+
+When a visual change is intentional, review it locally and replace the
+approved images explicitly from Ubuntu 24.04, which is the pinned CI renderer:
+
+```sh
+npm run test:visual:update
+```
+
+Another Linux distribution can use different font rasterization and is not a
+source of approved pixels. On CI failure, the `canvas-visual-differences`
+artifact contains the Ubuntu expected, actual and highlighted diff images.
+
+The state matrix is discovery coverage rather than normal PR feedback. It
+runs nightly and on demand through the `Canvas state matrix` workflow:
+
+```sh
+npm run test:matrix
+```
+
 Two numbers are easy to confuse, so the lab labels them apart. Each rule shows
 how many tuples it was the **first** to prune, which depends on the order
 dimensions are assigned in and is not "every tuple this rule forbids"; the

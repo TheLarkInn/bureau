@@ -20,7 +20,7 @@ function shot(state, viewport) {
 }
 
 for (const viewport of VIEWPORT_LIST) {
-  test.describe(`${viewport.id} (${viewport.width}×${viewport.height})`, () => {
+  test.describe(`@matrix ${viewport.id} (${viewport.width}×${viewport.height})`, () => {
     for (const state of STATES) {
       test(`renders ${state.id}`, async ({ watched, host }, testInfo) => {
         await watched.page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -58,7 +58,7 @@ function unexpected(errors, state) {
  * the child from scratch would prove nothing the render tests do not already
  * prove, and would leave the graph the lab draws for a human unverified.
  */
-test.describe("transitions", () => {
+test.describe("@matrix transitions", () => {
   for (const edge of TRANSITIONS) {
     test(`${edge.from} → ${edge.to}`, async ({ watched, host }) => {
       const from = STATES.find((state) => state.id === edge.from);
@@ -84,7 +84,7 @@ test.describe("transitions", () => {
  * silently omits states. Missing image *files* are not asserted here — the
  * shots are written by other workers and this test may run before them.
  */
-test("gallery index", async () => {
+test("@matrix gallery index", async () => {
   const rows = STATES.map((state) => `
     <article class="card" id="${escape(state.id)}">
       <h2>${escape(state.id)}</h2>
