@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { RunPicker } from "../modes.js";
-import { applyEvent, emptyOverlay } from "./overlay.js";
+import { applyEvent, emptyOverlay, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
@@ -87,15 +87,24 @@ export function useLiveOverlay() {
   return { runId, setRunId, decoration, controls };
 }
 
+/**
+ * Which run controls a status can still act on lives in `overlay.js`, beside
+ * the reducer that produces the status — pure, and testable without a browser.
+ */
 function RunButtons({ overlay, onAction }) {
-  const paused = overlay.status === "paused";
+  const { transport, cancel } = runActions(overlay.status);
   return h(
     React.Fragment,
     null,
-    paused
+    transport === "resume"
       ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", onClick: () => onAction("resume-run") }, "Resume")
-      : h("button", { type: "button", className: "run-control", "data-testid": "run-pause", onClick: () => onAction("pause-run") }, "Pause"),
-    h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel"),
+      : null,
+    transport === "pause"
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", onClick: () => onAction("pause-run") }, "Pause")
+      : null,
+    cancel
+      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel")
+      : null,
     h("span", { className: "run-status" }, overlay.status),
   );
 }

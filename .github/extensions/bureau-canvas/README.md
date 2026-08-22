@@ -200,16 +200,20 @@ still be there on the way back. The isolation is asserted both ways: the
 probes require the editor panel gone behind Relations, and `tab: pipeline`
 requires the relation graph gone behind Pipeline.
 
-The one thing the matrix will not do is **save**. Every field editor's save
-posts a `set-*` intent and `save-pipeline` writes, re-validates and reverts —
-all against the config directory the host was started with, which the suite
-shares read-only across every state running in parallel. So `saving` and
-`save-error` are enumerated values on both lifecycle axes and excluded by
-`a-field-save-would-write-the-config` and
-`an-editor-save-would-write-the-config`. They are real screens; recording them
-as named exclusions is the difference between a boundary a reviewer can see and
-a gap they cannot. The write path itself belongs to `specs/editor.spec.mjs`,
-which boots its own scratch config.
+The one thing the matrix will not do is **act on the host**. Every field
+editor's save posts a `set-*` intent, `save-pipeline` writes, re-validates and
+reverts, and a run control POSTs a pause, resume or cancel against a real run —
+all against the one directory and instance the suite shares read-only across
+every state running in parallel. So `saving` and `save-error` are enumerated
+values on both lifecycle axes and a refused run control is one on the run axis,
+excluded by `a-field-save-would-write-the-config`,
+`an-editor-save-would-write-the-config` and `a-run-intent-would-act-on-the-host`.
+They are real screens; recording them as named exclusions is the difference
+between a boundary a reviewer can see and a gap they cannot. The write path
+itself belongs to `specs/editor.spec.mjs`, which boots its own scratch config,
+and what a finished run's controls should show is pinned by `runActions` in
+`test/overlay.test.mjs` — the live picker lists only live runs, so no committed
+log can render that screen.
 
 
 ## Rules worth knowing before changing it

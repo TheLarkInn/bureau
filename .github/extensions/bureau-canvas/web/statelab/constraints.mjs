@@ -34,7 +34,7 @@ const INDEX_SURFACES = ["config", "pipeline"];
 const ASSIGNMENT_SCOPED_DATA = ["advisory", "invalid-advisory"];
 
 /** Dimensions that must read `n/a` when the surface has no such region. */
-const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
+const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
 /** The body values that count as "at rest" for the scoping rules. */
 const BODY_BASELINE = {
@@ -47,6 +47,7 @@ const BODY_BASELINE = {
   fieldPair: ["n/a"],
   mode: ["n/a", "design"],
   run: ["n/a", "none"],
+  transport: ["n/a", "rest"],
   tab: ["n/a", "pipeline"],
   pick: ["n/a", "none"],
   edit: ["n/a", "rest"],
@@ -265,12 +266,64 @@ export const CONSTRAINTS = [
     holds: (combo) => (combo.run !== "n/a") === ["live", "replay"].includes(combo.mode),
   },
   {
+    /*
+     * The one rule in this family whose subject is *selection* rather than
+     * render. A live run that reaches its terminal while being watched is an
+     * ordinary screen — `useLiveOverlay` holds the id in local state and the
+     * reducer sets `finished` on the appended event — and the harness cannot
+     * produce it, because a run is live exactly while its log has no
+     * `run_finished` event (`lib/runs.mjs`). A static log is one or the other,
+     * so the picker can never offer it. What that screen shows is settled by
+     * `runActions`, which withdraws the transport once nothing can act on the
+     * run, and `test/overlay.test.mjs` holds it.
+     */
     id: "live-cannot-show-a-finished-run",
     kind: "structural",
     reads: ["mode", "run"],
     title: "The live picker lists only live runs",
-    why: "`RunPicker` filters on `run.live` in live mode, so a finished run is not selectable there — replay is where finished runs are read.",
+    why: "A run is live exactly while its `events.jsonl` holds no `run_finished` event (`lib/runs.mjs`), and `RunPicker` lists only live runs — so no committed log can be both selectable in live mode and finished. The screen a reader reaches by watching a picked run end arrives on an appended event, which the matrix's static logs cannot deliver; `runActions` says what it shows and `test/overlay.test.mjs` asserts it.",
     holds: (combo) => combo.mode !== "live" || combo.run !== "finished",
+  },
+  {
+    /*
+     * Pause, resume and cancel are the three intents that reach a real run.
+     * The matrix shares one worker-scoped host across every state, so pressing
+     * one would change what every later state on that worker is judged
+     * against — and cancelling is not undoable. Kept as a value so the
+     * omission is a named exclusion rather than a gap.
+     */
+    id: "a-run-intent-would-act-on-the-host",
+    kind: "structural",
+    reads: ["run"],
+    title: "The matrix cannot review a run control it may not press",
+    why: "`send` in `web/live/live.js` POSTs `pause-run`, `resume-run` or `cancel-run` against the host's real run, and the matrix shares one host across every state — so a refusal cannot be provoked without acting on a run the later states are still being judged against. The screen is real: `.run-control-error` under the picker, with the transport still offered so it can be tried again.",
+    holds: (combo) => combo.run !== "refused",
+  },
+  {
+    /*
+     * The blocking preflight is a real answer of `lib/preflight.mjs` that this
+     * surface has no way to ask for: both places `DeleteControl` mounts are
+     * places nothing refers to.
+     */
+    id: "delete-is-offered-only-where-nothing-refers",
+    kind: "structural",
+    reads: ["field"],
+    title: "A blocked preflight has no mount point on the landing",
+    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is by definition the config nothing references. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
+    holds: (combo) => combo.field !== "delete-blocked",
+  },
+  {
+    /*
+     * The transport is drawn by `Timeline`, which `useReplayOverlay` renders
+     * only for a selected run — and only replay draws it at all: live has run
+     * controls and no scrubber, design consults no log.
+     */
+    id: "the-transport-belongs-to-a-replayed-run",
+    kind: "structural",
+    reads: ["mode", "run", "transport"],
+    title: "The replay transport needs a run on the timeline",
+    why: "`useReplayOverlay` renders `Timeline` only once a run is selected, and only replay renders it at all — live streams its run and offers no scrubber, and design never consults a log.",
+    holds: (combo) => (combo.transport !== "n/a") === (combo.mode === "replay" && !["n/a", "none"].includes(combo.run)),
   },
   {
     id: "tabs-are-editor-only",

@@ -10,6 +10,7 @@ import {
   applyEvents,
   emptyOverlay,
   resolveOverlay,
+  runActions,
   stateUpTo,
 } from "../web/live/overlay.js";
 
@@ -253,5 +254,21 @@ test("applyEvent is pure: unknown kinds and group events for other runs leave st
   assert.deepEqual(
     { unknownSame: unknown === base, unknownSeq: unknown.lastSeq, straySame: strayMember.groups === base.groups },
     { unknownSame: true, unknownSeq: base.lastSeq, straySame: true },
+  );
+});
+
+test("a run control is offered only while the run can still be acted on", () => {
+  // Branching on `paused` alone offered Pause on a run that had already
+  // reached its terminal — a control whose only possible outcome is a refusal.
+  // The live picker lists live runs only, so no committed log can render this
+  // screen; the assertion is here rather than in the matrix for that reason.
+  assert.deepEqual(
+    ["idle", "running", "paused", "finished"].map((status) => runActions(status)),
+    [
+      { transport: "pause", cancel: true },
+      { transport: "pause", cancel: true },
+      { transport: "resume", cancel: true },
+      { transport: null, cancel: false },
+    ],
   );
 });
