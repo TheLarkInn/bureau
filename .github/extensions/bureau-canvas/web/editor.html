@@ -182,13 +182,23 @@
         justify-self: start;
         padding: 2px 10px;
         border-radius: 999px;
-        background: var(--accent);
+        /*
+         * `--accent` is set by the node card a kind badge usually sits in.
+         * The side panel is not a node card, so the badge there rendered
+         * white-on-white until it carried its own kind modifier; the fallback
+         * keeps any future placement legible rather than invisible.
+         */
+        background: var(--accent, var(--text-color-muted, #656d76));
         color: var(--color-white, #ffffff);
         font-size: var(--text-code-inline, 12px);
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
+      .kind-label--deterministic { --accent: var(--kind-deterministic); }
+      .kind-label--agent { --accent: var(--kind-agent); }
+      .kind-label--decision { --accent: var(--kind-decision); }
+      .kind-label--concurrent { --accent: var(--kind-concurrent); }
       .editor-card--deterministic { --accent: var(--kind-deterministic); }
       .editor-card--agent { --accent: var(--kind-agent); }
       .editor-card--decision { --accent: var(--kind-decision); border-style: dashed; border-width: 2px; }
@@ -283,8 +293,21 @@
       }
       .is-highlighted { outline: 2px solid var(--kind-deterministic); outline-offset: 2px; }
       @media (max-width: 56rem) {
-        .editor-main { grid-template-columns: minmax(0, 1fr) 17rem; }
-        .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; }
+        /*
+         * Below the breakpoint the side panel stops being a column and
+         * becomes a row under the graph. Keeping two columns here left the
+         * drawing about 30rem wide — a strip too narrow to read a pipeline
+         * in, which is the one thing this surface exists for. The panel row
+         * takes the remaining height with `minmax(0, 1fr)` so its own
+         * `overflow-y: auto` still applies inside the 100vh shell.
+         */
+        .editor-main {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: 26rem minmax(0, 1fr);
+        }
+        .editor-panel { border-left: 0; border-top: 1px solid var(--border-color-default, #d0d7de); }
+        .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; justify-items: start; }
+        .editor-toolbar .btn { justify-self: end; }
       }
     </style>
   </head>

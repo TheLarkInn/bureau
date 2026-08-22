@@ -71,6 +71,44 @@ testable without a browser:
 | `lib/edit.mjs` | step-graph edits on a pipeline view, plus the editor's inline hints |
 | `lib/pipeline.mjs` | the `save-pipeline` round-trip (write → validate → revert) and the `layout.json` sidecar |
 | `web/` | draws what it is given; `web/editor/` is the pipeline editor and the read-only relation graph |
+| `web/statelab/` | the UI state registry and the state lab that renders it |
+
+## The state lab
+
+The canvas has more UI states than anyone can hold in their head, so they are
+written down. `web/statelab/` is a pure registry — dimensions, the rules that
+say which combinations are real, an entry path per state, and the controls and
+copy each state promises — and `web/statelab.html` is the review surface over
+it:
+
+```sh
+node .github/extensions/bureau-canvas/serve.mjs --dir .bureau
+# then open /statelab.html on the address it prints
+```
+
+The lab renders each state by loading **the production page** into a frame and
+walking that state's entry path with real clicks. There is no second copy of
+the UI: if the lab shows it, that is what ships. It also reports each state's
+dimensions, why an excluded combination is not a state, and expected controls
+against what actually rendered, at either recorded viewport.
+
+| | |
+|---|---|
+| `dimensions.mjs` | the axes the canvas varies along, and what each value promises on screen |
+| `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render) or `scoping` (renders, but adds nothing to cross) |
+| `enumerate.mjs` | walks the product with pruning, so exclusions are counted exactly without materialising 10^8 tuples |
+| `probes.mjs` | the crossings each `scoping` rule excluded, rendered anyway to hold the rule to account |
+| `paths.mjs` | how each state is reached, as data |
+| `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
+| `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
+| `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping |
+
+Two rules keep it honest. A state is reachable only if the driver can get
+there by clicking, so nothing sets component state directly. And every walk
+starts from a fresh session, because the assignment stack remembers its
+expanded card in `sessionStorage` and a replayed path would otherwise toggle
+it shut.
+
 
 ## Rules worth knowing before changing it
 
@@ -132,3 +170,11 @@ The browser suite exists because the offline tests assert on served state and
 cannot see the page. It checks for console errors, overlapping cards,
 overprinted edge labels, one rendered path per edge, and a legend whose colours
 match the edges — every one of which has been a real defect here.
+
+`specs/state-matrix.spec.mjs` is generated from the state registry rather than
+written by hand: it renders every reachable state at both recorded viewports,
+walks every edge of the transition DAG, and writes a browsable gallery to
+`e2e/gallery/index.html`. Nothing in it names a state, so a state added to
+`web/statelab/` is rendered and asserted the moment it exists.
+`specs/state-lab.spec.mjs` holds the lab itself to the registry, because a lab
+that has drifted is worse than none.

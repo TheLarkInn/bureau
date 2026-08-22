@@ -101,6 +101,20 @@ test("web modules import only shared siblings and the pinned vendor aliases", as
     "web/editor/index.mjs",
     "web/editor/editor.mjs",
     "web/editor/relation.mjs",
+    // The state lab is served from the same tree by the same host, so it is
+    // held to the same rule: siblings and the pinned aliases, nothing else.
+    "web/statelab/registry.mjs",
+    "web/statelab/dimensions.mjs",
+    "web/statelab/constraints.mjs",
+    "web/statelab/enumerate.mjs",
+    "web/statelab/paths.mjs",
+    "web/statelab/probes.mjs",
+    "web/statelab/fixtures.mjs",
+    "web/statelab/selectors.mjs",
+    "web/statelab/driver.mjs",
+    "web/statelab/checks.mjs",
+    "web/statelab/dom-adapter.mjs",
+    "web/statelab/lab.mjs",
   ];
   const offenders = [];
   for (const file of files) {
@@ -113,6 +127,24 @@ test("web modules import only shared siblings and the pinned vendor aliases", as
   }
 
   assert.deepStrictEqual(offenders, []);
+});
+
+test("the state lab reads the production page rather than forking it", async () => {
+  const lab = await source("web/statelab.html");
+  const labModule = await source("web/statelab/lab.mjs");
+  const adapter = await source("web/statelab/dom-adapter.mjs");
+  // The lab renders states by loading index.html/editor.html into a frame. If
+  // it ever grew its own copy of a canvas component, the matrix would be
+  // reviewing something the user never sees.
+  assert.deepStrictEqual(
+    {
+      framesTheRealPage: /<iframe[^>]*id="stage-frame"/u.test(lab),
+      loadsProductionPages: ["./editor.html", "./index.html"].every((page) => adapter.includes(page)),
+      importsNoCanvasComponent: !specifiers(labModule).some((item) => /app\.mjs|editor\/editor\.mjs|editor\/relation\.mjs/u.test(item)),
+      drivenByTheRegistry: specifiers(labModule).includes("./registry.mjs"),
+    },
+    { framesTheRealPage: true, loadsProductionPages: true, importsNoCanvasComponent: true, drivenByTheRegistry: true },
+  );
 });
 
 test("the fallback state loader uses the same endpoints the app does", async () => {

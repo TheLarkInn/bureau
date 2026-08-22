@@ -41,10 +41,15 @@ function EditorApp() {
       .then((response) => response.json())
       .then((next) => alive && setState(next));
     const events = new EventSource("./events");
+    // The same local-state channel index.html's `App` listens on, so a state
+    // published in-page reaches both surfaces the same way.
+    const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
+    window.addEventListener("bureau-state", localState);
     return () => {
       alive = false;
       events.close();
+      window.removeEventListener("bureau-state", localState);
     };
   }, []);
 
@@ -62,7 +67,7 @@ function EditorApp() {
       h(
         "div",
         { className: "editor-heading" },
-        h("button", { type: "button", className: "btn btn--small", onClick: () => navigate(backToAssignments) }, "← Assignments"),
+        h("button", { type: "button", className: "btn btn--small", "data-testid": "editor-back", onClick: () => navigate(backToAssignments) }, "← Assignments"),
         h("div", {}, h("h1", {}, "Pipeline editor"), h("p", { className: "summary" }, name ?? state.dir)),
       ),
       h(
@@ -72,12 +77,14 @@ function EditorApp() {
           type: "button",
           className: `editor-tab${tab === "pipeline" ? " is-active" : ""}`,
           "aria-pressed": tab === "pipeline",
+          "data-testid": "editor-tab-pipeline",
           onClick: () => setTab("pipeline"),
         }, "Pipeline"),
         h("button", {
           type: "button",
           className: `editor-tab${tab === "relations" ? " is-active" : ""}`,
           "aria-pressed": tab === "relations",
+          "data-testid": "editor-tab-relations",
           onClick: () => setTab("relations"),
         }, "Relations"),
       ),

@@ -1,0 +1,367 @@
+// The authoritative UI state registry: dimensions and their values.
+//
+// This module is pure. It names every axis the Bureau Canvas can vary along,
+// every equivalence-class value on that axis, and — for each value — the
+// fixture it needs, the operations that reach it, and the controls and copy a
+// reviewer should see once it is on screen. `registry.mjs` takes the Cartesian
+// product of these values and applies the rules in `constraints.mjs`; nothing
+// downstream invents a state that is not derivable from here.
+//
+// `n/a` is a real value, not a gap. A dimension that does not apply to a
+// surface takes `n/a`, and a constraint rule says why — so an absent axis is
+// recorded rather than silently dropped.
+
+import { SELECTORS as S } from "./selectors.mjs";
+import { SAMPLE_STEPS } from "./paths.mjs";
+
+const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
+
+/**
+ * D1 — which top-level render surface is mounted. Boot covers the two states
+ * that exist before any surface does: the loading placeholder and the
+ * no-renderer fallback index.html installs.
+ */
+const surface = {
+  id: "surface",
+  title: "Surface",
+  why: "the top-level render target; every other axis is scoped by it",
+  values: [
+    {
+      id: "boot",
+      summary: "index.html before a surface exists",
+      page: "index",
+    },
+    {
+      id: "config",
+      summary: "the assignment-first landing",
+      page: "index",
+      shows: [S.shell, S.header, S.configView, S.configHeading, S.relationSection],
+      copy: ["Assignments"],
+    },
+    {
+      id: "pipeline",
+      summary: "the read-only pipeline viewer",
+      page: "index",
+      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher],
+      hides: [S.configView],
+    },
+    {
+      id: "editor",
+      summary: "editor.html — the pipeline editor and the relation graph",
+      page: "editor",
+      shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations],
+      hides: [S.configView],
+    },
+  ],
+};
+
+/**
+ * D2 — where the config payload came from and whether the CLI accepted it.
+ *
+ * `only` scopes these expectations to the surfaces that draw a status line and
+ * a findings strip. editor.html has its own header and reports findings
+ * through the save result, so asserting the config status there would be
+ * asserting something the surface never claimed.
+ */
+const data = {
+  id: "data",
+  title: "Data status",
+  why: "the canvas never authors an error; it reports what validate said or says it has not checked",
+  values: [
+    { id: "loading", summary: "no state has arrived yet", shows: [S.loading], copy: ["Loading…"] },
+    {
+      id: "render-error",
+      summary: "the renderer never mounted; the fallback reports the payload anyway",
+      shows: [S.fallback, S.fallbackState],
+      copy: ["Bureau renderer could not start"],
+      // Blocking the module is the state; the failed request it causes is the
+      // symptom being reviewed, not an unrelated defect.
+      allowErrors: ["app.mjs", "Failed to load resource"],
+    },
+    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"], only: ["config", "pipeline"] },
+    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], only: ["config", "pipeline"] },
+    { id: "invalid", summary: "bureau validate rejected it; findings sit on what they name", copy: ["Validation findings"], only: ["config", "pipeline"] },
+    {
+      id: "advisory",
+      summary: "an advisory, which never blocks a save",
+      // The class, not just the presence: an advisory painted in the
+      // validation-error red would be a defect, and only this selector says so.
+      shows: [".finding--advisory"],
+      hides: [".finding--validation"],
+      only: ["config"],
+    },
+  ],
+};
+
+/** D3 — the unsaved-work bar. Pending work has to look pending. */
+const draft = {
+  id: "draft",
+  title: "Draft plan",
+  why: "editing is proposing; unsaved work must read as unsaved and stay discardable",
+  values: [
+    { id: "none", summary: "nothing pending", hides: [S.draftBar] },
+    {
+      id: "pending",
+      summary: "three unsaved changes",
+      fixture: "draft-pending",
+      shows: [S.draftBar, S.draftSave, S.draftDiscard, S.draftList],
+      copy: ["3 unsaved changes"],
+    },
+    {
+      id: "pending-one",
+      summary: "one unsaved change, for the singular copy",
+      fixture: "draft-single",
+      shows: [S.draftBar],
+      copy: ["1 unsaved change"],
+    },
+  ],
+};
+
+/** D4 — which region of the config landing is on screen. */
+const section = {
+  id: "section",
+  title: "Config section",
+  why: "the landing is a stack plus three secondary regions, each of which can be alone on screen",
+  values: [
+    { id: "stack", summary: "the assignment stack at rest", shows: [S.assignmentStack, S.assignmentCard] },
+    {
+      id: "empty",
+      summary: "no assignments configured yet",
+      fixture: "empty",
+      shows: [S.assignmentEmpty],
+      hides: [S.assignmentCard],
+      copy: ["No assignments yet."],
+    },
+    {
+      id: "two-cards",
+      summary: "more than one assignment, so the stack is a stack",
+      fixture: "two-assignments",
+      shows: [S.assignmentStack],
+    },
+    {
+      id: "create",
+      summary: "the create form open",
+      enter: [{ op: "click", selector: S.createOpen }],
+      shows: [S.createBar, S.createKind, S.createName, S.createSubmit, S.createCancel],
+      copy: ["New reusable config"],
+    },
+    {
+      id: "orphans",
+      summary: "unreferenced config surfaced without graph noise",
+      fixture: "orphans",
+      shows: [S.orphanStrip],
+      copy: ["Unreferenced"],
+    },
+    {
+      id: "relation-open",
+      summary: "the shared relation graph expanded",
+      enter: [{ op: "click", selector: S.relationSummary }],
+      shows: [S.relationSection, S.relationFlow],
+    },
+  ],
+};
+
+/** D5 — whether the assignment card is open. */
+const card = {
+  id: "card",
+  title: "Assignment card",
+  why: "the assignment-first mental model: everything else is reached through a card",
+  values: [
+    { id: "collapsed", summary: "glance line only", shows: [S.assignmentCard], hides: [S.assignmentDetail] },
+    {
+      id: "expanded",
+      summary: "work source, work rules, signals, repos, pipeline and limits",
+      enter: [{ op: "click", selector: S.assignmentHead }],
+      shows: [S.assignmentDetail, S.workSourceValue, S.workRulesValue, S.signalsValue, S.reposValue, S.limitsValue],
+      copy: ["work source", "work rules", "forge signals", "repos", "pipeline", "limits"],
+    },
+  ],
+};
+
+/**
+ * D6 — which field disclosure is open inside an expanded card. The shared
+ * control is the point: every field rests as a button and opens in place.
+ */
+const field = {
+  id: "field",
+  title: "Field editor",
+  why: "one shared disclosure control per field; opening one must not disturb the others",
+  values: [
+    { id: "none", summary: "every field at rest", hides: [S.workSourceEditor, S.reposEditor, S.limitsEditor, S.workRulesEditor, S.signalsEditor] },
+    {
+      id: "work-source",
+      summary: "paste a board or issues URL",
+      enter: [{ op: "click", selector: S.workSourceValue }],
+      shows: [S.workSourceEditor, S.workSourceUrl],
+      copy: ["link a work source"],
+    },
+    {
+      id: "work-rules",
+      summary: "filter, approval label and branch prefix",
+      enter: [{ op: "click", selector: S.workRulesValue }],
+      shows: [S.workRulesEditor, S.workRulesSave],
+      copy: ["Work-item filter", "Branch prefix"],
+    },
+    {
+      id: "forge-signals",
+      summary: "the labels Bureau applies at terminal states",
+      enter: [{ op: "click", selector: S.signalsValue }],
+      shows: [S.signalsEditor, S.signalsSave],
+      copy: ["Failed run label", "Needs-human label", "Bureau preserves unrelated work-item labels."],
+    },
+    {
+      id: "repos",
+      summary: "the ranked repo list",
+      enter: [{ op: "click", selector: S.reposValue }],
+      shows: [S.reposEditor, S.reposSave, S.reposAdd],
+    },
+    {
+      id: "repos-add",
+      summary: "registering a repo from its URL",
+      enter: [{ op: "click", selector: S.reposValue }, { op: "click", selector: S.reposAdd }],
+      shows: [S.reposEditor, S.reposUrl],
+      copy: ["add a repo"],
+    },
+    {
+      id: "limits",
+      summary: "every limit, on or off",
+      enter: [{ op: "click", selector: S.limitsValue }],
+      shows: [S.limitsEditor, S.limitsSave, S.limitRow],
+      copy: ["Off means no ceiling at all"],
+    },
+    {
+      id: "delete",
+      summary: "delete asks first and shows what breaks",
+      enter: [{ op: "click", selector: S.deleteStart }, { op: "wait", selector: S.preflight }],
+      shows: [S.preflight],
+      // The preflight is a real intent, so the host republishes its own state
+      // over SSE and the injected status line is replaced by the host's.
+      // Asserting the fixture's status here would assert a payload the page
+      // no longer holds.
+      suppress: ["data"],
+    },
+  ],
+};
+
+/** D7 — the lifecycle of whichever field editor is open. */
+const fieldState = {
+  id: "fieldState",
+  title: "Field lifecycle",
+  why: "draft safety: save stays disabled until the value both changed and is valid",
+  values: [
+    { id: "rest", summary: "opened, nothing typed" },
+    { id: "dirty", summary: "changed and valid — save is offered" },
+    { id: "invalid", summary: "changed into something the field refuses" },
+  ],
+};
+
+/** D8 — the pipeline viewer's three graph modes. */
+const mode = {
+  id: "mode",
+  title: "Graph mode",
+  why: "design is the config graph; live and replay restyle it from the run log, never from config edges",
+  values: [
+    { id: "design", summary: "the static config graph", shows: [S.modeSwitcher, S.legend] },
+    {
+      id: "live",
+      summary: "one live run, streamed",
+      enter: [{ op: "click", selector: S.modeLive }],
+      shows: [S.runControls, S.runPickerLive],
+    },
+    {
+      id: "replay",
+      summary: "any run, scrubbed on a timeline",
+      enter: [{ op: "click", selector: S.modeReplay }],
+      shows: [S.replayControls, S.runPickerReplay],
+    },
+  ],
+};
+
+/** D9 — which run the overlay is showing, and how far through it is. */
+const run = {
+  id: "run",
+  title: "Run selection",
+  why: "the dry run reports; it never predicts — every overlay state comes from the log",
+  values: [
+    { id: "none", summary: "no run picked" },
+    { id: "running", summary: "a run still appending events", fixtureRun: "run-live" },
+    { id: "paused", summary: "a run paused at a step", fixtureRun: "run-paused" },
+    { id: "finished", summary: "a run that reached a terminal", fixtureRun: "run-finished" },
+  ],
+};
+
+/** D10 — the editor's two tabs. */
+const tab = {
+  id: "tab",
+  title: "Editor tab",
+  why: "one shared relation renderer, one tab away from the pipeline it explains",
+  values: [
+    { id: "pipeline", summary: "the step graph editor", shows: [S.editorToolbar, S.editorPanel] },
+    {
+      id: "relations",
+      summary: "the shared read-only relation graph",
+      enter: [{ op: "click", selector: S.editorTabRelations }],
+      shows: [S.relationFlow],
+    },
+  ],
+};
+
+/** D11 — which step kind the editor has selected. */
+const pick = {
+  id: "pick",
+  title: "Step selection",
+  why: "each step kind owns a different field set; no selection has to say what to do",
+  values: [
+    { id: "none", summary: "nothing selected", shows: [S.editorEmpty], copy: ["Edit a step"] },
+    { id: "deterministic", summary: "a shell step", stepKind: "deterministic", copy: ["run"] },
+    { id: "agent", summary: "a delegated step", stepKind: "agent", shows: [S.stepRole, S.stepTrust] },
+    { id: "decision", summary: "a four-way branch", stepKind: "decision", copy: ["on (all four outcomes required)"] },
+    { id: "concurrent", summary: "a member group", stepKind: "concurrent", copy: ["completion", "maximum concurrent members"] },
+  ],
+};
+
+/** D12 — what the editor has done to the draft, and what save did about it. */
+const edit = {
+  id: "edit",
+  title: "Editor mutation",
+  why: "the editor never leaves an unloadable config: dirty, invalid and reverted are distinct and truthful",
+  values: [
+    { id: "rest", summary: "no edits", copy: ["saved"], hides: [S.editorDiscard] },
+    // A new step is unreachable until it is wired, so the toolbar truthfully
+    // reports an issue rather than a bare "unsaved edits". Dirtiness is
+    // asserted through the Discard button, which only exists while dirty.
+    { id: "created", summary: "a step added but not saved", shows: [S.editorDiscard, S.editorIssues] },
+    { id: "renamed", summary: "a step renamed, cascading to its referrers", shows: [S.editorDiscard] },
+    { id: "delete-confirm", summary: "the delete confirmation open", shows: [S.editorDangerZone] },
+    {
+      id: "layout-moved",
+      summary: "only a node position changed",
+      shows: [S.editorDiscard],
+      // Moving a step the fixture already draws leaves the graph valid, so the
+      // status reads "unsaved edits". Reaching a decision or concurrent
+      // selection means adding one first, and an unwired step is an issue — so
+      // the honest status there is the issue count, not the clean dirty copy.
+      derive: (combo) => (SAMPLE_STEPS[combo.pick] ? { copy: ["unsaved edits"] } : { shows: [S.editorIssues] }),
+    },
+    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard] },
+  ],
+};
+
+export const DIMENSIONS = [surface, data, draft, section, card, field, fieldState, mode, run, tab, pick, edit];
+
+export const DIMENSION_BY_ID = Object.fromEntries(DIMENSIONS.map((item) => [item.id, item]));
+
+/** Every dimension except `surface` and `data` can be absent; `n/a` says so. */
+export const OPTIONAL = ["draft", "section", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+
+for (const id of OPTIONAL) {
+  DIMENSION_BY_ID[id].values = [NA, ...DIMENSION_BY_ID[id].values];
+}
+
+export function valuesOf(dimensionId) {
+  return DIMENSION_BY_ID[dimensionId].values;
+}
+
+export function valueOf(dimensionId, valueId) {
+  return valuesOf(dimensionId).find((value) => value.id === valueId);
+}
