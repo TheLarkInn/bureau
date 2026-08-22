@@ -204,6 +204,20 @@ const disclosure = {
       enter: [{ op: "click", selector: S.relationSummary }],
       shows: [S.relationSection, S.relationFlow],
     },
+    // The create bar and the relation `<details>` are siblings with separate
+    // local state, so opening one does not close the other. Without this value
+    // the pair would be excluded by the shape of the axis rather than by a
+    // named rule — the one thing the registry may not do.
+    {
+      id: "both",
+      summary: "the create form and the relation graph open at once",
+      enter: [
+        { op: "click", selector: S.createOpen },
+        { op: "click", selector: S.relationSummary },
+      ],
+      shows: [S.createBar, S.createSubmit, S.relationSection, S.relationFlow],
+      copy: ["New reusable config"],
+    },
   ],
 };
 

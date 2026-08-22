@@ -91,6 +91,26 @@ test("the standalone page has no fork of the canvas host's module graph", async 
   assert.deepStrictEqual(entries, { indexEntry: true, editorEntry: true, appImportsShared: true, editorImportsShared: true });
 });
 
+/**
+ * Every module the state lab is built from. Two tests read it: one holds them
+ * to the shared import rule, the other pins that none of them imports a
+ * renderer — which is the property a forked mock UI could not satisfy.
+ */
+const STATELAB_MODULES = [
+  "web/statelab/registry.mjs",
+  "web/statelab/dimensions.mjs",
+  "web/statelab/constraints.mjs",
+  "web/statelab/enumerate.mjs",
+  "web/statelab/paths.mjs",
+  "web/statelab/probes.mjs",
+  "web/statelab/fixtures.mjs",
+  "web/statelab/selectors.mjs",
+  "web/statelab/driver.mjs",
+  "web/statelab/checks.mjs",
+  "web/statelab/dom-adapter.mjs",
+  "web/statelab/lab.mjs",
+];
+
 test("web modules import only shared siblings and the pinned vendor aliases", async () => {
   const files = [
     "web/app.mjs",
@@ -103,18 +123,7 @@ test("web modules import only shared siblings and the pinned vendor aliases", as
     "web/editor/relation.mjs",
     // The state lab is served from the same tree by the same host, so it is
     // held to the same rule: siblings and the pinned aliases, nothing else.
-    "web/statelab/registry.mjs",
-    "web/statelab/dimensions.mjs",
-    "web/statelab/constraints.mjs",
-    "web/statelab/enumerate.mjs",
-    "web/statelab/paths.mjs",
-    "web/statelab/probes.mjs",
-    "web/statelab/fixtures.mjs",
-    "web/statelab/selectors.mjs",
-    "web/statelab/driver.mjs",
-    "web/statelab/checks.mjs",
-    "web/statelab/dom-adapter.mjs",
-    "web/statelab/lab.mjs",
+    ...STATELAB_MODULES,
   ];
   const offenders = [];
   for (const file of files) {
@@ -133,17 +142,35 @@ test("the state lab reads the production page rather than forking it", async () 
   const lab = await source("web/statelab.html");
   const labModule = await source("web/statelab/lab.mjs");
   const adapter = await source("web/statelab/dom-adapter.mjs");
-  // The lab renders states by loading index.html/editor.html into a frame. If
-  // it ever grew its own copy of a canvas component, the matrix would be
-  // reviewing something the user never sees.
+  // The lab renders states by loading index.html/editor.html into a frame. A
+  // filename check alone would not catch a fork: a new `mock-app.mjs` passes
+  // it. Drawing canvas UI needs a renderer, though, so the pin that a fork
+  // cannot satisfy is that no state lab module imports one at all.
+  const labFiles = ["web/statelab.html", ...STATELAB_MODULES];
+  const renderers = [];
+  for (const file of labFiles) {
+    for (const specifier of specifiers(await source(file))) {
+      if (/^react|^@xyflow\//u.test(specifier)) {
+        renderers.push(`${file} -> ${specifier}`);
+      }
+    }
+  }
+
   assert.deepStrictEqual(
     {
       framesTheRealPage: /<iframe[^>]*id="stage-frame"/u.test(lab),
       loadsProductionPages: ["./editor.html", "./index.html"].every((page) => adapter.includes(page)),
       importsNoCanvasComponent: !specifiers(labModule).some((item) => /app\.mjs|editor\/editor\.mjs|editor\/relation\.mjs/u.test(item)),
+      importsNoRenderer: renderers,
       drivenByTheRegistry: specifiers(labModule).includes("./registry.mjs"),
     },
-    { framesTheRealPage: true, loadsProductionPages: true, importsNoCanvasComponent: true, drivenByTheRegistry: true },
+    {
+      framesTheRealPage: true,
+      loadsProductionPages: true,
+      importsNoCanvasComponent: true,
+      importsNoRenderer: [],
+      drivenByTheRegistry: true,
+    },
   );
 });
 

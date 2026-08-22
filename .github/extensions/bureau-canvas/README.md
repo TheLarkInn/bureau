@@ -118,6 +118,18 @@ starts from a fresh session, because the assignment stack remembers its
 expanded card in `sessionStorage` and a replayed path would otherwise toggle
 it shut.
 
+A third keeps it from flattering itself. The lab settles a walk by watching
+for the host's own SSE state event, and that observer has a window it can
+miss; when it does, the lab says the render was not proved settled rather than
+presenting a possibly-raced screen as verified.
+
+The Relations tab is why two of the rules are `scoping` rather than
+`structural`: `EditorApp` keeps `PipelineEditor` mounted and merely `hidden`,
+so a selection and an unsaved rename both survive the switch — draft safety
+depends on it. Nothing of the draft is on screen there, so the crossings are
+probes, and a content sample walks the round trip and requires the rename to
+still be there on the way back.
+
 
 ## Rules worth knowing before changing it
 

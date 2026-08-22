@@ -15,6 +15,9 @@ import { assertAdapter, PUBLISH_EVENT } from "./driver.mjs";
 export function domAdapter(frame) {
   const win = () => frame.contentWindow;
   const doc = () => frame.contentDocument;
+  // What the SSE barrier actually saw, so the lab can say "this render was not
+  // proved settled" rather than presenting a possibly-raced screen as verified.
+  const channel = { observed: null, reason: null };
 
   const find = async (selector, mustSee = false) => {
     const node = await waitFor(doc, selector, false, mustSee);
@@ -25,6 +28,7 @@ export function domAdapter(frame) {
   };
 
   return assertAdapter({
+    channel,
     async goto(page, op) {
       if (op?.intercept) {
         throw new Error(`this state needs request interception (${op.intercept}); the browser suite renders it`);
@@ -38,7 +42,7 @@ export function domAdapter(frame) {
       // Wait for the payload the page fetches itself; publishing a fixture
       // before it arrives would be overwritten the moment it did.
       await waitFor(doc, page === "editor" ? ".editor-tabs" : ".app-header");
-      await sseDelivered(win);
+      Object.assign(channel, await sseDelivered(win));
     },
     publish(state) {
       win().dispatchEvent(new (win().CustomEvent)(PUBLISH_EVENT, { detail: state }));
@@ -129,16 +133,27 @@ function observe(win) {
 
 /**
  * Bounded on purpose: if a browser ever denies the frame early enough for the
- * observer to land, the walk carries on and the verdict still reports whatever
- * actually rendered. A review tool that stalls tells a reviewer less than one
- * that shows the wrong thing and says what it checked.
+ * observer to miss its window, the walk carries on and the verdict still
+ * reports whatever actually rendered. A review tool that stalls tells a
+ * reviewer less than one that shows the wrong thing and says what it checked.
+ *
+ * But it must not call that success. `undefined` means the observer never
+ * armed, which is exactly the case where the race is still live — so it is
+ * reported as unobserved rather than counted as settled, and the lab prints it
+ * next to the state instead of letting a reviewer read a possibly-raced render
+ * as a verified one.
  */
 function sseDelivered(win) {
   const deadline = Date.now() + CHANNEL_TIMEOUT;
   return new Promise((resolve) => {
     const tick = () => {
-      if (win()?.[SSE_STATE] !== false || Date.now() > deadline) {
-        resolve();
+      const flag = win()?.[SSE_STATE];
+      if (flag === true) {
+        resolve({ observed: true });
+        return;
+      }
+      if (Date.now() > deadline) {
+        resolve({ observed: false, reason: flag === undefined ? "the SSE observer never armed" : "no state event arrived" });
         return;
       }
       setTimeout(tick, POLL_MS);

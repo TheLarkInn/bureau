@@ -92,30 +92,47 @@ test("every excluded combination is attributed, and the books balance", () => {
  * `violations()` only re-checks survivors.
  *
  * A read trap catches it directly: run each rule against tuples that report
- * every key access, and require that nothing outside `reads` is touched.
+ * every key access, and require that nothing outside `reads` is touched. The
+ * tuples must cover every value of every dimension, because a rule can consult
+ * an undeclared dimension on only one branch — an earlier sampler here stepped
+ * by a fixed stride and so pinned every seven-valued dimension to a single
+ * value for all 200 draws, leaving exactly that mutation invisible.
  */
 test("no rule reads a dimension it did not declare", () => {
   const trespass = new Set();
   const sampleValues = (dimension) => valuesOf(dimension).map((value) => value.id);
+  const rotations = Math.max(...ORDER.map((dimension) => sampleValues(dimension).length));
   for (const rule of CONSTRAINTS) {
-    for (let index = 0; index < 200; index += 1) {
-      const tuple = Object.fromEntries(ORDER.map((dimension) => {
-        const values = sampleValues(dimension);
-        return [dimension, values[(index * 7 + dimension.length) % values.length]];
-      }));
-      const watched = new Proxy(tuple, {
-        get(target, key) {
-          if (typeof key === "string" && ORDER.includes(key) && !rule.reads.includes(key)) {
-            trespass.add(`${rule.id} reads ${key}`);
-          }
-          return target[key];
-        },
-      });
-      rule.holds(watched);
+    for (const pivot of ORDER) {
+      for (const pivotValue of sampleValues(pivot)) {
+        for (let rotation = 0; rotation < rotations; rotation += 1) {
+          rule.holds(watch(rule, trespass, tupleAround(pivot, pivotValue, rotation, sampleValues)));
+        }
+      }
     }
   }
   assert.deepStrictEqual([...trespass], []);
 });
+
+/** Every dimension varies with `rotation`; `pivot` is pinned to one value. */
+function tupleAround(pivot, pivotValue, rotation, sampleValues) {
+  return Object.fromEntries(ORDER.map((dimension, index) => {
+    const values = sampleValues(dimension);
+    const value = dimension === pivot ? pivotValue : values[(rotation + index) % values.length];
+    return [dimension, value];
+  }));
+}
+
+function watch(rule, trespass, tuple) {
+  return new Proxy(tuple, {
+    get(target, key) {
+      if (typeof key === "string" && ORDER.includes(key) && !rule.reads.includes(key)) {
+        trespass.add(`${rule.id} reads ${key}`);
+      }
+      return target[key];
+    },
+  });
+}
 
 /**
  * And the claim that follows from it: the surviving set is a property of the
@@ -156,21 +173,64 @@ test("states are distinguishable: no two share an id or an entry path", () => {
   );
 });
 
+/**
+ * Unique entry paths are necessary but not sufficient: two paths that name
+ * different fixtures still render the same screen if those fixtures project to
+ * the same payload. A fixture that quietly stopped changing anything — an
+ * edited `twoAssignments()` that returns its input, say — would leave every
+ * path unique and every check passing while two "different" states were one.
+ * So the layers are compared as data: each must move the payload, and no two
+ * may land on the same one.
+ */
+test("every fixture changes the payload, and no two fixtures agree", async () => {
+  const base = await servedState();
+  const projected = new Map();
+  for (const id of FIXTURE_IDS) {
+    projected.set(id, JSON.stringify(applyFixture([id], base)));
+  }
+  // `sample` is the one deliberate identity: it publishes the host's own
+  // payload, which is what lets every non-boot path publish something and so
+  // makes the ordering assertion above meaningful. Every other layer must move.
+  const inert = FIXTURE_IDS.filter((id) => id !== "sample" && projected.get(id) === JSON.stringify(base));
+  const collisions = FIXTURE_IDS
+    .filter((id, index) => FIXTURE_IDS.some((other, position) => position < index && projected.get(other) === projected.get(id)));
+
+  assert.deepStrictEqual(
+    { inert, collisions, sampleIsIdentity: projected.get("sample") === JSON.stringify(base) },
+    { inert: [], collisions: [], sampleIsIdentity: true },
+  );
+});
+
 test("every entry path uses only verbs the driver implements", () => {
   const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
   const unknown = STATES.flatMap((state) => state.ops.filter((op) => !verbs.has(op.op)).map((op) => `${state.id}: ${op.op}`));
   assert.deepStrictEqual(unknown, []);
 });
 
-test("every entry path loads a page first and publishes before it acts", () => {
+/**
+ * "Publishes before it acts" has to require a publish. Comparing indices alone
+ * did not: a path with no `fixture` op scored -1, which is less than every
+ * action index, so a state that never published its own payload — and so
+ * rendered whatever the host happened to serve — passed as ordered. Boot is
+ * the one honest exception: it is the surface shown *before* a payload exists.
+ */
+test("every entry path loads a page first and publishes exactly once before it acts", () => {
   const broken = STATES.filter((state) => {
-    const acting = state.ops.filter((op) => !["wait", "waitGone"].includes(op.op));
-    const publishAt = acting.findIndex((op) => op.op === "fixture");
+    const acting = state.ops.filter((op) => !["wait", "waitGone", "present"].includes(op.op));
+    const publishes = acting.filter((op) => op.op === "fixture").length;
     const firstAction = acting.findIndex((op) => !["page", "fixture"].includes(op.op));
-    return acting[0]?.op !== "page" || (firstAction !== -1 && publishAt > firstAction);
+    if (acting[0]?.op !== "page") {
+      return true;
+    }
+    if (BOOT_SURFACES.includes(state.dimensions?.surface)) {
+      return publishes !== 0;
+    }
+    return publishes !== 1 || acting[1]?.op !== "fixture" || (firstAction !== -1 && firstAction < 2);
   });
   assert.deepStrictEqual(broken.map((state) => state.id), []);
 });
+
+const BOOT_SURFACES = ["boot", "boot-editor"];
 
 test("every state names fixtures that exist, and every fixture is used", () => {
   const named = new Set(STATES.flatMap((state) => [].concat(state.fixture ?? [])));

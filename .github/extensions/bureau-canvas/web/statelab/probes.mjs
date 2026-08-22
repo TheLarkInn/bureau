@@ -21,7 +21,8 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S } from "./selectors.mjs";
+import { SELECTORS as S, editorCardFor } from "./selectors.mjs";
+import { SAMPLE_STEPS } from "./paths.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -40,6 +41,23 @@ const CONFIG_BASE = {
   edit: "n/a",
 };
 
+/** A resting, reachable pipeline editor — the baseline the tab crossings perturb. */
+const EDITOR_BASE = {
+  surface: "editor",
+  data: "validated",
+  draft: "n/a",
+  section: "n/a",
+  disclosure: "n/a",
+  card: "n/a",
+  field: "n/a",
+  fieldState: "n/a",
+  mode: "n/a",
+  run: "n/a",
+  tab: "pipeline",
+  pick: "none",
+  edit: "rest",
+};
+
 function state({ id, summary, page = "index", surface, fixture, ops, expect, ...rest }) {
   return {
     id,
@@ -55,8 +73,8 @@ function state({ id, summary, page = "index", surface, fixture, ops, expect, ...
 }
 
 /** A combination a scoping rule kept out of the product, rendered anyway. */
-function crossing({ rule, dimensions, ...spec }) {
-  return state({ ...spec, rule, dimensions: { ...CONFIG_BASE, ...dimensions } });
+function crossing({ rule, dimensions, base = CONFIG_BASE, ...spec }) {
+  return state({ ...spec, rule, dimensions: { ...base, ...dimensions } });
 }
 
 /** A payload shape the dimensions do not model; it excludes nothing. */
@@ -153,6 +171,60 @@ export const PROBES = [
       { op: "wait", selector: S.assignmentDetail },
     ],
     expect: { shows: [S.orphanStrip, S.assignmentDetail], hides: [], copy: ["Unreferenced"] },
+  }),
+  // The Relations tab keeps `PipelineEditor` mounted and merely `hidden`, so
+  // both tab rules are `scoping`, not structural — and each owes a crossing.
+  crossing({
+    id: "probe--selection-behind-relations-tab",
+    rule: "selection-needs-the-pipeline-tab",
+    base: EDITOR_BASE,
+    dimensions: { tab: "relations", pick: "deterministic", edit: "n/a" },
+    summary: "a step selected, then Relations shown — the selection is held, and none of it may leak onto the relation graph",
+    page: "editor",
+    fixture: "pipeline",
+    ops: [
+      { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
+      { op: "wait", selector: S.editorStepName },
+      { op: "click", selector: S.editorTabRelations },
+      { op: "wait", selector: S.relationFlow },
+    ],
+    expect: { shows: [S.relationFlow, S.editorTabs], hides: [S.editorStepName, S.editorPanel], copy: [] },
+  }),
+  crossing({
+    id: "probe--dirty-editor-behind-relations-tab",
+    rule: "mutation-needs-the-pipeline-tab",
+    base: EDITOR_BASE,
+    dimensions: { tab: "relations", pick: "deterministic", edit: "renamed" },
+    summary: "an unsaved rename held behind the Relations tab — draft safety says it is kept, and the graph must not show it",
+    page: "editor",
+    fixture: "pipeline",
+    ops: [
+      { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
+      { op: "fill", selector: S.editorStepName, value: "deterministic-renamed" },
+      { op: "press", selector: S.editorStepName, value: "Enter" },
+      { op: "wait", selector: S.editorDiscard },
+      { op: "click", selector: S.editorTabRelations },
+      { op: "wait", selector: S.relationFlow },
+    ],
+    expect: { shows: [S.relationFlow, S.editorTabs], hides: [S.editorStepName, S.editorPanel], copy: [] },
+  }),
+  sample({
+    id: "probe--draft-survives-a-tab-round-trip",
+    covers: "draft safety across a tab switch, which no single tuple can express: leaving and returning must not discard an unsaved rename",
+    summary: "an unsaved rename survives a trip to Relations and back — the editor may never discard a draft the user did not discard",
+    page: "editor",
+    fixture: "pipeline",
+    ops: [
+      { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
+      { op: "fill", selector: S.editorStepName, value: "deterministic-renamed" },
+      { op: "press", selector: S.editorStepName, value: "Enter" },
+      { op: "wait", selector: S.editorDiscard },
+      { op: "click", selector: S.editorTabRelations },
+      { op: "waitGone", selector: S.editorDiscard },
+      { op: "click", selector: S.editorTabPipeline },
+      { op: "wait", selector: S.editorDiscard },
+    ],
+    expect: { shows: [S.editorDiscard, S.editorSave], hides: [], copy: ["deterministic-renamed"] },
   }),
   sample({
     id: "probe--two-disclosures-open",

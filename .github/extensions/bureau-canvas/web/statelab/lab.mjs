@@ -130,8 +130,9 @@ async function walk(state) {
   // of red crosses that only means "the walk has not finished yet".
   renderDetail(state, { pending: true });
   try {
-    await runPath(state.ops, domAdapter(frame), base);
-    renderDetail(state, await settledInspect(state));
+    const adapter = domAdapter(frame);
+    await runPath(state.ops, adapter, base);
+    renderDetail(state, { ...(await settledInspect(state)), channel: adapter.channel });
   } catch (error) {
     renderDetail(state, { failed: String(error?.message ?? error) });
   }
@@ -252,6 +253,12 @@ function expectationList(state, result) {
     list.append(row(`“${phrase}”`, "copy", ok));
   }
   box.append(list);
+  // The SSE barrier is best-effort by design; when it does not arm, the host's
+  // own payload may still have landed after the fixture. Saying so is the
+  // difference between a review tool and a reassuring one.
+  if (result?.channel?.observed === false) {
+    box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
+  }
   const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast"].includes(item.kind));
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length
     ? layout.map((item) => `${item.kind}: ${item.detail}`).join("; ")
