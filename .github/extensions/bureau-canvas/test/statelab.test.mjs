@@ -20,7 +20,7 @@ import { CONTRAST, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
-import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS } from "../web/statelab/paths.mjs";
+import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
@@ -467,12 +467,19 @@ function describeOp(op) {
  */
 test("every run span the registry addresses is the end of that run's log", async () => {
   const ends = {};
+  const steps = {};
   for (const [value, runId] of Object.entries(RUN_IDS)) {
     const log = await readFile(new URL(`./fixtures/runs/${runId}/events.jsonl`, import.meta.url), "utf8");
     const events = log.trim().split("\n").map((line) => JSON.parse(line));
-    ends[value] = events.at(-1).at_ms;
+    const stamps = events.map((event) => event.at_ms);
+    ends[value] = stamps.at(-1);
+    // The transport's two claims, derived the way `stepBy` derives them: park
+    // at the first event, and one forward step lands on the next distinct
+    // stamp. Without this the axis addressed a position no log had to produce.
+    const next = Math.min(...stamps.filter((at) => at > stamps[0]));
+    steps[value] = { start: stamps[0], next, readout: `+${((next - stamps[0]) / 1000).toFixed(1)}s` };
   }
-  assert.deepStrictEqual(ends, RUN_END);
+  assert.deepStrictEqual({ ends, steps }, { ends: RUN_END, steps: RUN_STEP });
 });
 
 test("every dimension and rule carries the prose the lab shows", () => {

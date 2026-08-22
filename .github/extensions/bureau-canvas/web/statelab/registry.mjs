@@ -32,7 +32,7 @@ function pageFor(combo) {
  * surface simply does not draw.
  */
 function expectations(combo) {
-  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set() };
+  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set() };
   const absorb = (source) => {
     for (const [key, set] of Object.entries(bag)) {
       for (const item of source?.[key] ?? []) {
@@ -58,6 +58,7 @@ function expectations(combo) {
     hides: [...bag.hides],
     copy: [...bag.copy],
     allowErrors: [...bag.allowErrors],
+    allowPlaceholder: [...bag.allowPlaceholder],
   };
 }
 

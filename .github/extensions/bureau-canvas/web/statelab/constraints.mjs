@@ -11,7 +11,7 @@
 //
 // Each rule declares the dimensions it reads. That lets the enumeration prune
 // a whole subtree the moment a rule's inputs are all assigned, instead of
-// materialising all 22.7 billion tuples to throw nearly all of them away.
+// materialising every one of them to throw nearly all of them away.
 // That figure is the product of the dimension sizes and moves whenever a
 // dimension gains a value; `summary()` computes it rather than quoting it.
 //
@@ -301,6 +301,32 @@ export const CONSTRAINTS = [
   },
   {
     /*
+     * A create writes a file. `runCrudIntent` builds the item in the host's
+     * own config directory, and the matrix points every worker at the
+     * repository's `.bureau/` — so a create performed by one state would be
+     * config every later state on that worker is judged against.
+     */
+    id: "a-create-would-write-the-config",
+    kind: "structural",
+    reads: ["disclosure"],
+    title: "The matrix cannot review a create it is not allowed to perform",
+    why: "Submitting the create form runs a `create-*` intent, which writes a role or pipeline file into the host's config directory — and the matrix shares one read-only host across every state. So the refusal is a value the axis keeps and this rule excludes; `specs/controls.spec.mjs` and the Edge harness own the successful create, each against its own scratch config.",
+    holds: (combo) => combo.disclosure !== "create-error",
+  },
+  {
+    /*
+     * Play is the one transport control whose result is a function of when the
+     * screenshot was taken rather than of what was clicked.
+     */
+    id: "playing-advances-on-a-timer",
+    kind: "structural",
+    reads: ["transport"],
+    title: "A playing timeline has no position to assert",
+    why: "`useReplayOverlay` advances the position on a 100ms interval, so a state that pressed Play would assert whatever the clock had reached when the render was measured — a screenshot that differs run to run, which is the one thing a matrix state may not be. Stepping is the same movement made deterministic, and `transport: stepped` is where the transport is held to account.",
+    holds: (combo) => combo.transport !== "playing",
+  },
+  {
+    /*
      * The blocking preflight is a real answer of `lib/preflight.mjs` that this
      * surface has no way to ask for: both places `DeleteControl` mounts are
      * places nothing refers to.
@@ -309,7 +335,7 @@ export const CONSTRAINTS = [
     kind: "structural",
     reads: ["field"],
     title: "A blocked preflight has no mount point on the landing",
-    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is by definition the config nothing references. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
+    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
     holds: (combo) => combo.field !== "delete-blocked",
   },
   {

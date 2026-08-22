@@ -32,6 +32,9 @@ export const SELECTORS = {
   createName: "#create-name",
   createSubmit: '[data-testid="create-submit"]',
   createCancel: '[data-testid="create-cancel"]',
+  // A refused create, as its own treatment rather than only its words: a
+  // refusal drawn in the ordinary note class reads as advice.
+  createRefused: ".create-bar .note--err",
 
   draftBar: '[data-testid="draft-bar"]',
   draftSave: '[data-testid="draft-save"]',
@@ -117,6 +120,9 @@ export const SELECTORS = {
   replayStepBack: '[aria-label="Step back"]',
   replayStepForward: '[aria-label="Step forward"]',
   replayPlay: '[data-testid="replay-play"]',
+  // The same button once it is running. The label is the whole difference, and
+  // it is what a state asserting "playing" would have to read.
+  replayPause: '[data-testid="replay-play"][aria-label="Pause replay"]',
   // The timeline renders the moment a run is picked, with an empty range; the
   // log arrives afterwards. `max` is the only signal that the events landed,
   // so it is what a replay path waits on rather than the timeline itself.

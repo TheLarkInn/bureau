@@ -148,7 +148,7 @@ export function verdict(state, snapshot, options = {}) {
     ...missing(state, snapshot),
     ...forbidden(state, snapshot),
     ...absentCopy(state, snapshot),
-    ...promisedCopy(snapshot),
+    ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...overlaps(snapshot),
     ...clipping(snapshot, options),
@@ -167,11 +167,17 @@ export function verdict(state, snapshot, options = {}) {
  *
  * These are phrases rather than selectors because the defect is the sentence:
  * whatever markup carries it, a surface that promises instead of drawing is
- * one a reviewer has to be told about.
+ * one a reviewer has to be told about. The text searched is the whole body,
+ * which includes config the canvas is quoting rather than authoring — a `run:`
+ * command may legitimately say any of these — so a state can declare the
+ * phrase its own, the way `allowErrors` declares a failed request its own.
  */
 const PLACEHOLDER_PROMISES = [/reserved for\b/iu, /coming soon\b/iu, /not implemented\b/iu, /to be (?:added|built|done)\b/iu];
 
-function promisedCopy(snapshot) {
+function promisedCopy(state, snapshot) {
+  if (state.expect?.allowPlaceholder?.length) {
+    return [];
+  }
   const text = normalise(snapshot.text);
   return PLACEHOLDER_PROMISES
     .filter((pattern) => pattern.test(text))

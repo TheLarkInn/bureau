@@ -310,6 +310,19 @@ const disclosure = {
       shows: [S.createBar, S.createSubmit, S.relationSection, S.relationOpen, S.relationFlow],
       copy: ["New reusable config"],
     },
+    /*
+     * What submitting does, which the matrix may not perform —
+     * `a-create-would-write-the-config` says why. Kept as a value for the same
+     * reason `fieldState: save-error` and `run: refused` are: the refusal is a
+     * real screen, and a create surface with no refusal state recorded is the
+     * one write path in this registry that would have had neither a value nor
+     * a rule.
+     */
+    {
+      id: "create-error",
+      summary: "the create came back refused, with the form still there to retry",
+      shows: [S.createBar, S.createRefused, offered(S.createSubmit)],
+    },
   ],
 };
 
@@ -616,14 +629,14 @@ function overlay(combo, runValue) {
  * picked run parks at, so the two acting values are what tell a working
  * transport from a drawn one.
  *
- * Play is deliberately absent: it advances on a 100ms interval, so a state
- * holding it would assert a position that depends on when the screenshot was
- * taken. Stepping is the same movement made deterministic.
+ * Play is deliberately a declared-and-excluded value rather than a silence:
+ * it advances on a 100ms interval, so a state holding it would assert a
+ * position that depends on when the screenshot was taken.
  */
 const transport = {
   id: "transport",
   title: "Replay transport",
-  why: "replay's controls have to move the run; a timeline that only draws is the defect they hide",
+  why: "replay's controls have to move the run; a timeline that only draws is the defect they hide — and Play is excluded rather than omitted, because a timer decides its position",
   values: [
     {
       id: "rest",
@@ -642,6 +655,17 @@ const transport = {
       enter: [{ op: "click", selector: replaySpeed(16) }],
       shows: [replaySpeedActive(16)],
       hides: [replaySpeedActive(1)],
+    },
+    /*
+     * The one transport control the matrix may not take — `playing-advances-
+     * on-a-timer` says why. Kept as a value rather than left to a comment,
+     * because a comment is not something the lab shows a reviewer: the axis
+     * would otherwise present three controls where the timeline ships four.
+     */
+    {
+      id: "playing",
+      summary: "playing, so the position is whatever the clock has reached",
+      shows: [S.replayPause],
     },
   ],
 };

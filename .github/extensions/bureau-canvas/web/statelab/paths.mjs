@@ -198,7 +198,8 @@ export const RUN_END = {
  * forward step lands on, and the readout that position produces. Stepping is
  * the deterministic half of replay — play advances on a timer, this does not —
  * so these are what tell a transport that moves from one that only draws.
- * `test/statelab.test.mjs` reads the same logs and fails if they drift.
+ * `test/statelab.test.mjs` derives all three from the same logs the way
+ * `stepBy` does, and fails if either drifts.
  */
 export const RUN_STEP = {
   running: { start: 1740000000000, next: 1740000001000, readout: "+1.0s" },

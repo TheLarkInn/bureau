@@ -153,11 +153,20 @@ function addAssignmentUses(used, name, assignment) {
   addUse(used.pipelines, assignment.pipeline, ref);
 }
 
+/**
+ * A role a step names is a role in use, whatever kind of step names it.
+ *
+ * This filtered on `type === "agent"` and `lib/preflight.mjs` did not, so the
+ * two disagreed about the same config: a `role` on a deterministic step — which
+ * `bureau validate` rejects, and which the canvas still has to draw, because
+ * showing an invalid config is what the findings are for — left the role listed
+ * as Unreferenced while deleting it was blocked by the very step the strip said
+ * did not exist. Whether the reference is legal is `validate`'s judgement to
+ * make; whether one exists is not.
+ */
 function addPipelineUses(roles, name, pipeline) {
   for (const step of pipeline.steps ?? []) {
-    if (step.type === "agent") {
-      addUse(roles, step.role, `pipeline:${name}/${step.name}`);
-    }
+    addUse(roles, step.role, `pipeline:${name}/${step.name}`);
   }
 }
 
