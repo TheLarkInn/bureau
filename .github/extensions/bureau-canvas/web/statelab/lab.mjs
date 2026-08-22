@@ -361,6 +361,22 @@ function renderPicker() {
     box.append(row);
   }
   document.querySelector("#picker-verdict").dataset.ready = "true";
+  seed();
+
+  /**
+   * Open on a state rather than on whatever value happens to sit first on each
+   * axis. Every optional dimension leads with `n/a`, so the unseeded default
+   * was a combination no rule allows — a picker that opens on "not a state"
+   * teaches a reviewer nothing about the axes it is offering.
+   */
+  function seed() {
+    const start = STATES.find((state) => state.kind === "matrix")?.dimensions ?? {};
+    for (const [key, select] of selects) {
+      if (start[key] !== undefined) {
+        select.value = start[key];
+      }
+    }
+  }
 
   function judge() {
     const combo = Object.fromEntries([...selects].map(([key, select]) => [key, select.value]));

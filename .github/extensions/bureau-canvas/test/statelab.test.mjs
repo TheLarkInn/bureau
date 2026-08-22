@@ -19,7 +19,7 @@ import { CONTRAST, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
-import { SAMPLE_STEP_COUNT } from "../web/statelab/paths.mjs";
+import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
@@ -363,17 +363,71 @@ function isSubsequence(needles, haystack) {
   return true;
 }
 
-test("every edge's delta is exactly one action, and a strict suffix of the child's path", () => {
+/**
+ * The old form asserted three identities of `deltaFrom`: that the delta holds
+ * one acting op, that it is shorter than the child's path, and that it equals
+ * the tail of the child's path it was sliced from. All three are true by
+ * construction, so no registry edit could turn it red.
+ *
+ * What the DAG actually claims is that the *edge label* names the work the
+ * delta does, and that applying it to the parent lands on the child. So the
+ * delta is rebuilt here from the two states' own paths — parent's acting ops
+ * removed from the child's — without consulting `edge.delta`, and the labels
+ * are derived independently too. A `buildTransitions` that mislabelled an
+ * edge, or that shipped a delta which skipped or repeated an operation, now
+ * fails.
+ */
+test("every edge's delta is the child's path minus the parent's, and says so", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
   const broken = TRANSITIONS.filter((edge) => {
-    const child = byId.get(edge.to).ops;
-    const acting = edge.delta.filter((op) => op.op !== "wait");
-    const suffix = child.slice(child.length - edge.delta.length);
-    return acting.length !== 1
-      || edge.delta.length >= child.length
-      || JSON.stringify(suffix) !== JSON.stringify(edge.delta);
+    const parentActing = byId.get(edge.from).ops.filter((op) => op.op !== "wait").length;
+    const rebuilt = tailAfter(byId.get(edge.to).ops, parentActing);
+    return JSON.stringify(rebuilt) !== JSON.stringify(edge.delta) || label(rebuilt) !== edge.via;
   });
   assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
+});
+
+/** The child's ops from its (skip + 1)-th acting operation onwards. */
+function tailAfter(ops, skip) {
+  let seen = 0;
+  const start = ops.findIndex((op) => op.op !== "wait" && seen++ === skip);
+  return start === -1 ? [] : ops.slice(start);
+}
+
+/** The edge label, rebuilt from the delta rather than read off the edge. */
+function label(delta) {
+  const acting = delta.filter((op) => op.op !== "wait");
+  return acting.map((op) => describeOp(op)).join(" → ");
+}
+
+function describeOp(op) {
+  if (op.op === "click") {
+    return `click ${op.selector}`;
+  }
+  if (op.op === "fill" || op.op === "select") {
+    return `${op.op} ${op.selector} = ${JSON.stringify(op.value)}`;
+  }
+  if (op.op === "fixture") {
+    return `publish ${[].concat(op.value).join(" + ")}`;
+  }
+  return op.op;
+}
+
+/**
+ * The registry addresses the replay timeline by the span of the run it is
+ * showing, which is the one thing that tells three replayed runs apart. That
+ * span is the last `at_ms` in a committed log, so it is read back from the log
+ * here: a fixture edited without the registry would otherwise leave the matrix
+ * asserting a `max` that no run produces.
+ */
+test("every run span the registry addresses is the end of that run's log", async () => {
+  const ends = {};
+  for (const [value, runId] of Object.entries(RUN_IDS)) {
+    const log = await readFile(new URL(`./fixtures/runs/${runId}/events.jsonl`, import.meta.url), "utf8");
+    const events = log.trim().split("\n").map((line) => JSON.parse(line));
+    ends[value] = events.at(-1).at_ms;
+  }
+  assert.deepStrictEqual(ends, RUN_END);
 });
 
 test("every dimension and rule carries the prose the lab shows", () => {

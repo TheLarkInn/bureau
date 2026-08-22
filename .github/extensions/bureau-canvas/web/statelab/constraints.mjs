@@ -27,13 +27,16 @@ import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
 const BOOT_DATA = ["loading", "render-error"];
 const BOOT_SURFACES = ["boot", "boot-editor"];
 const INDEX_SURFACES = ["config", "pipeline"];
+/** Findings that hang off an assignment, so only the stack can draw them. */
+const ASSIGNMENT_SCOPED_DATA = ["advisory", "invalid-advisory"];
 
 /** Dimensions that must read `n/a` when the surface has no such region. */
-const REGIONS = ["draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 /** The body values that count as "at rest" for the scoping rules. */
 const BODY_BASELINE = {
   section: ["n/a", "stack"],
+  orphans: ["n/a", "none"],
   disclosure: ["n/a", "none"],
   card: ["n/a", "collapsed"],
   field: ["n/a"],
@@ -68,6 +71,22 @@ export const CONSTRAINTS = [
     holds: (combo) => BOOT_SURFACES.includes(combo.surface) === BOOT_DATA.includes(combo.data),
   },
   {
+    id: "a-config-status-needs-a-surface-that-reports-it",
+    kind: "structural",
+    reads: ["surface", "data"],
+    title: "Only the surfaces that draw a status line have a data status",
+    why: "`Header` and `Findings` are `App` chrome, which editor.html does not mount: it draws its own header and reports findings through the save result. A config status has nowhere to appear there, so the axis is absent rather than merely uninteresting — and `n/a` records that instead of an unasserted render.",
+    holds: (combo) => (combo.data === "n/a") === (combo.surface === "editor"),
+  },
+  {
+    id: "an-advisory-sits-on-the-item-it-names",
+    kind: "structural",
+    reads: ["surface", "data"],
+    title: "An advisory is only visible where the item it names is drawn",
+    why: "`lib/advisories.mjs` targets an assignment, and a finding is attached to the item it names. The pipeline viewer draws no assignment cards, so an advisory there has nothing to sit on and the render is indistinguishable from a clean one.",
+    holds: (combo) => !ASSIGNMENT_SCOPED_DATA.includes(combo.data) || combo.surface === "config",
+  },
+  {
     id: "boot-has-no-regions",
     kind: "structural",
     reads: ["surface", ...REGIONS],
@@ -98,6 +117,14 @@ export const CONSTRAINTS = [
     title: "Landing disclosures exist only on the config surface",
     why: "`CreateBar` and `RelationSection` are siblings of the stack inside `ConfigView`; no other surface mounts them.",
     holds: (combo) => (combo.disclosure !== "n/a") === (combo.surface === "config"),
+  },
+  {
+    id: "the-orphan-strip-is-a-landing-region",
+    kind: "structural",
+    reads: ["surface", "orphans"],
+    title: "Unreferenced config is surfaced only on the config landing",
+    why: "`OrphanStrip` is a child of `ConfigView`, drawn beneath the stack. The pipeline viewer and the editor never render it, so there is nothing there for it to say.",
+    holds: (combo) => (combo.orphans !== "n/a") === (combo.surface === "config"),
   },
   {
     id: "an-empty-landing-has-no-card",
@@ -188,12 +215,20 @@ export const CONSTRAINTS = [
     holds: (combo) => combo.edit !== "rest" || ["n/a", "none", ...Object.keys(SAMPLE_STEPS)].includes(combo.pick),
   },
   {
+    id: "a-move-needs-a-step-the-fixture-already-draws",
+    kind: "structural",
+    reads: ["edit", "pick"],
+    title: "Only an existing step can be moved and nothing else",
+    why: "`layout-moved` is the one edit that changes nothing but a position, which is why its status may read a clean `unsaved edits`. A decision or concurrent step has to be *added* before it can be dragged, so the state there would be `created` and then moved — a different thing, already enumerated, and one whose new step is unwired and reports an issue.",
+    holds: (combo) => combo.edit !== "layout-moved" || Boolean(SAMPLE_STEPS[combo.pick]),
+  },
+  {
     id: "chrome-is-orthogonal-to-body",
     kind: "scoping",
     reads: ["data", ...BODY],
     title: "Data status is enumerated against a resting body",
-    why: "`Header`, `Findings` and the index.html fallback render into subtrees that share no state with the card body, the graph or the editor. Crossing them multiplies renders without adding information; the crossings that could still interact through layout are rendered by `probes.mjs`.",
-    holds: (combo) => combo.data === "validated" || bodyAtRest(combo),
+    why: "`Header`, `Findings` and the index.html fallback render into subtrees that share no state with the card body, the graph or the editor. Crossing them multiplies renders without adding information; the crossings that could still interact through layout are rendered by `probes.mjs`. `n/a` is exempt because there is no status region to cross — the editor draws none.",
+    holds: (combo) => ["n/a", "validated"].includes(combo.data) || bodyAtRest(combo),
   },
   {
     id: "draft-is-orthogonal-to-body",
@@ -206,10 +241,10 @@ export const CONSTRAINTS = [
   {
     id: "one-body-variation-at-a-time",
     kind: "scoping",
-    reads: ["section", "card"],
-    title: "The orphan strip is reviewed against a resting stack",
+    reads: ["orphans", "card"],
+    title: "The orphan strip is reviewed against a resting card",
     why: "`OrphanStrip` is a sibling of the stack with its own local state, so crossing unreferenced config with an open card multiplies screenshots without adding information. Its layout interaction with a tall card is a crossing probe instead.",
-    holds: (combo) => ["n/a", "stack", "empty", "two-cards"].includes(combo.section) || combo.card === "collapsed",
+    holds: (combo) => combo.orphans !== "present" || ["n/a", "collapsed"].includes(combo.card),
   },
   {
     id: "a-disclosure-is-reviewed-against-a-resting-card",

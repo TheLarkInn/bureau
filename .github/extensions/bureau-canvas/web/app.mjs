@@ -53,9 +53,13 @@ function App() {
 
   useEffect(() => {
     let alive = true;
+    // The SSE channel answers with the current state the instant it connects,
+    // so it can beat this fetch. The fetch carries the older snapshot in that
+    // ordering, and it must not win: it fills the surface only if nothing has
+    // arrived yet.
     fetch("./state", { cache: "no-store" })
       .then((response) => response.json())
-      .then((next) => alive && setState(next));
+      .then((next) => alive && setState((current) => current ?? next));
     const events = new EventSource("./events");
     const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
@@ -1175,6 +1179,7 @@ function WorkSourceEditor({ assignment, onDone }) {
       h("button", {
         type: "button",
         className: "btn btn--primary",
+        "data-testid": "work-source-save",
         disabled: !derived || busy,
         onClick: apply,
       }, busy ? "Saving…" : "Use this"),

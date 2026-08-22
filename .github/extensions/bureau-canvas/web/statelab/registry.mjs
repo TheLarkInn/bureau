@@ -13,7 +13,7 @@ import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, selectStep } from "./p
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
-const ORDER = ["surface", "data", "draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 /** A stable, readable id: only the axes that carry information appear. */
 function identify(combo) {
@@ -89,7 +89,7 @@ function bootOps(combo) {
 
 function configOps(combo) {
   const ops = [];
-  for (const key of ["section", "disclosure", "card", "field"]) {
+  for (const key of ["section", "orphans", "disclosure", "card", "field"]) {
     ops.push(...(valueOf(key, combo[key])?.enter ?? []));
   }
   ops.push(...(FIELD_LIFECYCLE[combo.field]?.[combo.fieldState]?.ops ?? []));

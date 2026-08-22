@@ -108,8 +108,7 @@ under permuted orders to keep it that way.
 | `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^8 tuples; per-rule figures count what each rule pruned *first*, in walk order |
 | `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
 | `paths.mjs` | how each state is reached, as data |
-| `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
-| `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
+| `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection || `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
 | `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping |
 
 Two rules keep it honest. A state is reachable only if the driver can get
@@ -122,6 +121,30 @@ A third keeps it from flattering itself. The lab settles a walk by watching
 for the host's own SSE state event, and that observer has a window it can
 miss; when it does, the lab says the render was not proved settled rather than
 presenting a possibly-raced screen as verified.
+
+A fourth governs the shape of the axes themselves, and it is the one most
+easily broken by accident: **regions that render as siblings get their own
+axis.** Whatever `ConfigView` draws unconditionally — the create bar, the
+stack, the orphan strip, the relation disclosure — can be in any combination
+with the others, so folding two of them onto one axis makes their crossings
+*unrepresentable rather than excluded*, and an unrepresentable combination has
+no rule to point at and no probe to answer for it. Only genuine alternatives
+share an axis. That is why "nothing configured yet, and therefore everything
+unreferenced" — the ordinary first-run landing, where the orphan strip is at
+its fullest — is a state rather than a gap.
+
+The same rule applies to axis *values*: every value must be one a payload can
+actually take. A config can hold validation errors and advisories at once,
+because `mergeAdvisories` concatenates them, so `invalid-advisory` is a value
+rather than a pair the axis cannot express.
+
+Each value also has to promise something a render can fail. An axis that
+contributes no expectation is an axis three states can share one set of
+assertions across, which is how a `dirty` field editor that was quietly clean —
+it typed the values the payload already held, so Save stayed disabled — passed
+as dirty. The lifecycle axis asserts the save button's own state, and the run
+axis asserts what only the selected run's log can produce: the step decoration
+live folds out of it, and the span replay's timeline takes from it.
 
 The Relations tab is why two of the rules are `scoping` rather than
 `structural`: `EditorApp` keeps `PipelineEditor` mounted and merely `hidden`,

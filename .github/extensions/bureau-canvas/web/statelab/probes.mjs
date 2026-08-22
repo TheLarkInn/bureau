@@ -30,6 +30,7 @@ const CONFIG_BASE = {
   data: "validated",
   draft: "none",
   section: "stack",
+  orphans: "none",
   disclosure: "none",
   card: "collapsed",
   field: "n/a",
@@ -44,9 +45,10 @@ const CONFIG_BASE = {
 /** A resting, reachable pipeline editor — the baseline the tab crossings perturb. */
 const EDITOR_BASE = {
   surface: "editor",
-  data: "validated",
+  data: "n/a",
   draft: "n/a",
   section: "n/a",
+  orphans: "n/a",
   disclosure: "n/a",
   card: "n/a",
   field: "n/a",
@@ -163,7 +165,7 @@ export const PROBES = [
   crossing({
     id: "probe--orphans-under-expanded-card",
     rule: "one-body-variation-at-a-time",
-    dimensions: { section: "orphans", card: "expanded", field: "none" },
+    dimensions: { orphans: "present", card: "expanded", field: "none" },
     summary: "the orphan strip below an expanded card — the leftovers keep their own heading under a tall card",
     fixture: "orphans",
     ops: [

@@ -37,9 +37,12 @@ function EditorApp() {
 
   useEffect(() => {
     let alive = true;
+    // The SSE channel can deliver before this fetch resolves, and its payload
+    // is the newer one. The fetch fills the surface only if nothing has
+    // arrived yet, so a slow response cannot revert the editor.
     fetch("./state", { cache: "no-store" })
       .then((response) => response.json())
-      .then((next) => alive && setState(next));
+      .then((next) => alive && setState((current) => current ?? next));
     const events = new EventSource("./events");
     // The same local-state channel index.html's `App` listens on. Nothing in
     // editor.html's own bundle dispatches it: this is the seam the state lab

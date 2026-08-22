@@ -11,8 +11,8 @@
 // surface takes `n/a`, and a constraint rule says why — so an absent axis is
 // recorded rather than silently dropped.
 
-import { SELECTORS as S } from "./selectors.mjs";
-import { SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, offered, replaySpanFor, withheld } from "./selectors.mjs";
+import { FIELD_SAVE, RUN_END } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -95,9 +95,9 @@ const data = {
       // editor.html installs a different fallback, which `boot-editor` derives.
       only: ["boot"],
     },
-    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"], only: ["config", "pipeline"] },
-    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], only: ["config", "pipeline"] },
-    { id: "invalid", summary: "bureau validate rejected it; findings sit on what they name", copy: ["Validation findings"], only: ["config", "pipeline"] },
+    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"] },
+    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"] },
+    { id: "invalid", summary: "bureau validate rejected it; findings sit on what they name", copy: ["Validation findings"], shows: [".finding--validation"] },
     {
       id: "advisory",
       summary: "an advisory, which never blocks a save",
@@ -105,7 +105,18 @@ const data = {
       // validation-error red would be a defect, and only this selector says so.
       shows: [".finding--advisory"],
       hides: [".finding--validation"],
-      only: ["config"],
+    },
+    {
+      /*
+       * `mergeAdvisories` concatenates advisories onto whatever validate
+       * returned, so both classes really do arrive together — and adjacency is
+       * exactly when the two treatments have to stay apart. Making these
+       * alternatives would have hidden the pair rather than excluded it.
+       */
+      id: "invalid-advisory",
+      summary: "validation errors and an advisory at once, which the CLI returns together",
+      shows: [".finding--validation", ".finding--advisory"],
+      copy: ["Validation findings"],
     },
   ],
 };
@@ -141,7 +152,7 @@ const draft = {
 const section = {
   id: "section",
   title: "Config content",
-  why: "the landing's shape follows the config it was given, from nothing configured to unreferenced leftovers",
+  why: "the landing's shape follows the config it was given, from nothing configured to a full stack",
   values: [
     { id: "stack", summary: "the assignment stack at rest", shows: [S.assignmentStack, S.assignmentCard] },
     {
@@ -158,9 +169,28 @@ const section = {
       fixture: "two-assignments",
       shows: [S.assignmentStack],
     },
+  ],
+};
+
+/**
+ * D5 — whether anything in the config is unreferenced.
+ *
+ * `OrphanStrip` is a *sibling* of the assignment stack inside `ConfigView`,
+ * not an alternative to it, so it has to be its own axis. Folded into the
+ * content axis it made "nothing configured yet, and therefore everything
+ * unreferenced" — the ordinary first-run landing, where the strip is at its
+ * fullest — unrepresentable rather than excluded, which is the one thing the
+ * registry may not do. The same reasoning already split the disclosures out.
+ */
+const orphans = {
+  id: "orphans",
+  title: "Unreferenced config",
+  why: "the orphan strip is a sibling of the stack, so leftovers can accompany any amount of config",
+  values: [
+    { id: "none", summary: "everything is referenced", hides: [S.orphanStrip] },
     {
-      id: "orphans",
-      summary: "unreferenced config surfaced without graph noise",
+      id: "present",
+      summary: "a role and a pipeline nothing references",
       fixture: "orphans",
       shows: [S.orphanStrip],
       copy: ["Unreferenced"],
@@ -303,17 +333,30 @@ const field = {
   ],
 };
 
-/** D8 — the lifecycle of whichever field editor is open. */
+/**
+ * D8 — the lifecycle of whichever field editor is open.
+ *
+ * Each value asserts the save button's own state, which is what draft safety
+ * means at the field level and the only thing that tells the three apart.
+ * Without it a `dirty` that rendered a clean, save-disabled form — because it
+ * typed the values the payload already held — passed as dirty.
+ */
 const fieldState = {
   id: "fieldState",
   title: "Field lifecycle",
   why: "draft safety: save stays disabled until the value both changed and is valid",
   values: [
-    { id: "rest", summary: "opened, nothing typed" },
-    { id: "dirty", summary: "changed and valid — save is offered" },
-    { id: "invalid", summary: "changed into something the field refuses" },
+    { id: "rest", summary: "opened, nothing typed", derive: (combo) => save(combo, withheld) },
+    { id: "dirty", summary: "changed and valid — save is offered", derive: (combo) => save(combo, offered) },
+    { id: "invalid", summary: "changed into something the field refuses", derive: (combo) => save(combo, withheld) },
   ],
 };
+
+/** The open field's save button, in the state this lifecycle value claims. */
+function save(combo, shape) {
+  const button = FIELD_SAVE[combo.field];
+  return button ? { shows: [shape(button)] } : {};
+}
 
 /** D9 — the pipeline viewer's three graph modes. */
 const mode = {
@@ -337,18 +380,41 @@ const mode = {
   ],
 };
 
-/** D10 — which run the overlay is showing, and how far through it is. */
+/**
+ * D10 — which run the overlay is showing, and how far through it is.
+ *
+ * Each value asserts something only the *selected* run's log can produce: the
+ * step decoration live folds out of it, and the span replay's timeline takes
+ * from it. Naming the run alone asserted nothing — three runs rendered under
+ * three ids with one set of expectations between them, so an overlay that
+ * ignored the selection entirely would have passed.
+ */
 const run = {
   id: "run",
   title: "Run selection",
   why: "the dry run reports; it never predicts — every overlay state comes from the log",
   values: [
-    { id: "none", summary: "no run picked" },
-    { id: "running", summary: "a run still appending events", fixtureRun: "run-live" },
-    { id: "paused", summary: "a run paused at a step", fixtureRun: "run-paused" },
-    { id: "finished", summary: "a run that reached a terminal", fixtureRun: "run-finished" },
+    { id: "none", summary: "no run picked", hides: [S.overlayRunning, S.overlayPaused] },
+    { id: "running", summary: "a run still appending events", derive: (combo) => overlay(combo, "running") },
+    { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
+    { id: "finished", summary: "a run that reached a terminal", derive: (combo) => overlay(combo, "finished") },
   ],
 };
+
+/**
+ * Live decorates the graph from the log it just folded; replay spans the log
+ * on its timeline. Replay rests at the start of the run, so every replayed run
+ * decorates identically — the span is what distinguishes them, and it comes
+ * straight from the last event in the chosen log.
+ */
+function overlay(combo, runValue) {
+  if (combo.mode === "replay") {
+    return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
+  }
+  return runValue === "paused"
+    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume], hides: [S.runPause], copy: ["paused"] }
+    : { shows: [S.overlayRunning, S.runPause], hides: [S.runResume], copy: ["running"] };
+}
 
 /** D11 — the editor's two tabs. */
 const tab = {
@@ -373,10 +439,10 @@ const pick = {
   why: "each step kind owns a different field set; no selection has to say what to do",
   values: [
     { id: "none", summary: "nothing selected", shows: [S.editorEmpty], copy: ["Edit a step"] },
-    { id: "deterministic", summary: "a shell step", stepKind: "deterministic", copy: ["run"] },
-    { id: "agent", summary: "a delegated step", stepKind: "agent", shows: [S.stepRole, S.stepTrust] },
-    { id: "decision", summary: "a four-way branch", stepKind: "decision", copy: ["on (all four outcomes required)"] },
-    { id: "concurrent", summary: "a member group", stepKind: "concurrent", copy: ["completion", "maximum concurrent members"] },
+    { id: "deterministic", summary: "a shell step", copy: ["run"] },
+    { id: "agent", summary: "a delegated step", shows: [S.stepRole, S.stepTrust] },
+    { id: "decision", summary: "a four-way branch", copy: ["on (all four outcomes required)"] },
+    { id: "concurrent", summary: "a member group", copy: ["completion", "maximum concurrent members"] },
   ],
 };
 
@@ -397,22 +463,25 @@ const edit = {
       id: "layout-moved",
       summary: "only a node position changed",
       shows: [S.editorDiscard],
-      // Moving a step the fixture already draws leaves the graph valid, so the
-      // status reads "unsaved edits". Reaching a decision or concurrent
-      // selection means adding one first, and an unwired step is an issue — so
-      // the honest status there is the issue count, not the clean dirty copy.
-      derive: (combo) => (SAMPLE_STEPS[combo.pick] ? { copy: ["unsaved edits"] } : { shows: [S.editorIssues] }),
+      // A move acts on a step the fixture already draws, so the graph stays
+      // valid and the status reads "unsaved edits" — which is what tells this
+      // apart from `created`, whose new step is unwired and reports an issue.
+      // Reaching a decision or concurrent selection means adding one first, so
+      // "moved" there would really be "created and then moved"; a rule keeps
+      // those kinds out rather than letting one state stand for two.
+      copy: ["unsaved edits"],
+      hides: [S.editorIssues],
     },
     { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard] },
   ],
 };
 
-export const DIMENSIONS = [surface, data, draft, section, disclosure, card, field, fieldState, mode, run, tab, pick, edit];
+export const DIMENSIONS = [surface, data, draft, section, orphans, disclosure, card, field, fieldState, mode, run, tab, pick, edit];
 
 export const DIMENSION_BY_ID = Object.fromEntries(DIMENSIONS.map((item) => [item.id, item]));
 
-/** Every dimension except `surface` and `data` can be absent; `n/a` says so. */
-export const OPTIONAL = ["draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+/** Every dimension except `surface` can be absent; `n/a` says so. */
+export const OPTIONAL = ["data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 for (const id of OPTIONAL) {
   DIMENSION_BY_ID[id].values = [NA, ...DIMENSION_BY_ID[id].values];

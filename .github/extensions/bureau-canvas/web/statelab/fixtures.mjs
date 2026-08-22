@@ -79,17 +79,38 @@ function invalid(state) {
  * validation-error red and the one state whose whole point is the distinction
  * would prove the opposite. This is `lib/advisories.mjs`'s own shape.
  */
-function advisory(state) {
-  const next = validated(state);
-  const note = {
+function advisoryNote() {
+  return {
     source: "advisory",
     marker: "unchecked-write",
     path: ".bureau/pipelines/agent-eligible-pipeline.yaml",
     message: "agent step `implement` can write to the repo and nothing downstream checks it",
     target: { kind: "assignment", assignment: "agent-eligible" },
   };
+}
+
+function advisory(state) {
+  const next = validated(state);
+  const note = advisoryNote();
   next.findings = [note];
   next.findingsByItem = { "assignment:agent-eligible": [note] };
+  return next;
+}
+
+/**
+ * Both classes at once. `mergeAdvisories` in `lib/actions.mjs` concatenates
+ * advisories onto whatever `validate` returned, so a config really can hold
+ * errors and advisories together — and adjacency is precisely when the two
+ * treatments have to stay distinguishable. Leaving `data` a single-valued
+ * choice between them would have made this pair unrepresentable rather than
+ * excluded, which is the one thing the registry may not do.
+ */
+function invalidAdvisory(state) {
+  const next = invalid(state);
+  const note = advisoryNote();
+  const onAssignment = next.findingsByItem["assignment:agent-eligible"] ?? [];
+  next.findings = [...next.findings, note];
+  next.findingsByItem = { ...next.findingsByItem, "assignment:agent-eligible": [...onAssignment, note] };
   return next;
 }
 
@@ -127,12 +148,17 @@ function twoAssignments(state) {
   return next;
 }
 
-/** A second repo, so ranking, reordering and the context note are meaningful. */
+/**
+ * A second repo that can itself take a branch, so *reordering* is a valid edit
+ * rather than one the editor has to refuse. A read-only second repo would make
+ * every reorder illegal, and `repos: dirty` would render the refusal instead of
+ * the offered save it claims.
+ */
 function multiRepo(state) {
   const next = clone(state);
   next.config.view.repos = [
     ...next.config.view.repos,
-    { name: "bureau-docs", url: "https://github.com/TheLarkInn/bureau-docs.git", forge: "github", access: "read", credential: "github-main" },
+    { name: "bureau-docs", url: "https://github.com/TheLarkInn/bureau-docs.git", forge: "github", access: "pr", credential: "github-main" },
   ];
   assignment(next).repos = ["bureau", "bureau-docs"];
   return next;
@@ -141,6 +167,10 @@ function multiRepo(state) {
 /** The primary repo is registered read-only, so no branch can land there. */
 function readOnlyPrimary(state) {
   const next = multiRepo(state);
+  // Stated here rather than inherited: `multi-repo` grants `pr` on purpose, so
+  // the read-only grant is this fixture's own claim and survives a change there.
+  const docs = next.config.view.repos.find((repo) => repo.name === "bureau-docs");
+  docs.access = "read";
   assignment(next).repos = ["bureau-docs", "bureau"];
   return next;
 }
@@ -243,6 +273,7 @@ export const FIXTURES = Object.fromEntries([
   entry("validated", "status", "bureau validate ran and accepted the config", validated),
   entry("invalid", "status", "bureau validate rejected it; findings sit on what they name", invalid),
   entry("advisory", "status", "an advisory that must never block a save", advisory),
+  entry("invalid-advisory", "status", "validation errors and an advisory reported together", invalidAdvisory),
   entry("empty", "content", "no assignments, roles, repos or pipelines yet", empty),
   entry("orphans", "content", "a role and a pipeline nothing references", orphans),
   entry("two-assignments", "content", "two assignment cards in the stack", twoAssignments),

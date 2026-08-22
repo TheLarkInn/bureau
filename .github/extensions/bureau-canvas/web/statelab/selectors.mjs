@@ -38,6 +38,7 @@ export const SELECTORS = {
   workSourceEditor: ".ws-open",
   workSourceUrl: '[aria-label="Board, query, or issues URL"]',
   workSourceDerived: ".derived",
+  workSourceSave: '[data-testid="work-source-save"]',
 
   workRulesValue: ".runtime-value",
   workRulesEditor: ".assignment-runtime-editor",
@@ -82,8 +83,19 @@ export const SELECTORS = {
   runPickerLive: '[aria-label="Live run"]',
   runPickerReplay: '[aria-label="Replay run"]',
   runControls: ".run-controls",
+  runStatus: ".run-status",
+  runPause: '[data-testid="run-pause"]',
+  runResume: '[data-testid="run-resume"]',
   replayControls: ".replay-controls",
   replayTimeline: ".replay-timeline",
+  replayScrubber: ".replay-scrubber",
+  // The timeline renders the moment a run is picked, with an empty range; the
+  // log arrives afterwards. `max` is the only signal that the events landed,
+  // so it is what a replay path waits on rather than the timeline itself.
+  replayLoaded: '.replay-scrubber:not([max="0"])',
+  overlayRunning: ".flow-card.overlay-running",
+  overlayPaused: ".flow-card.overlay-paused",
+  pausedBadge: ".paused-badge",
   legend: ".legend",
   stepCard: ".flow-card",
   terminalPill: ".terminal-pill",
@@ -118,6 +130,24 @@ export const SELECTORS = {
 /** One step card in the editor, addressed by the step it draws. */
 export function editorCardFor(step) {
   return `.editor-card[data-ref="${step}"]`;
+}
+
+/**
+ * The replay timeline, addressed by the run it is spanning. `max` comes
+ * straight from the last event in the selected run's log, so this is the one
+ * selector that ties a replay render to the run it claims to be showing.
+ */
+export function replaySpanFor(endMs) {
+  return `.replay-scrubber[max="${endMs}"]`;
+}
+
+/** A save button that is offered, and one that is withheld. */
+export function offered(save) {
+  return `${save}:not([disabled])`;
+}
+
+export function withheld(save) {
+  return `${save}[disabled]`;
 }
 
 /** The viewport sizes the design system records as its one breakpoint. */

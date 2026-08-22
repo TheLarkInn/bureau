@@ -72,7 +72,9 @@ export function domAdapter(frame) {
     wait: (selector) => find(selector, true),
     present: (selector) => find(selector),
     async waitGone(selector) {
-      await waitFor(doc, selector, true);
+      if (!await waitFor(doc, selector, true)) {
+        throw new Error(`${selector} was still visible after ${MOUNT_TIMEOUT}ms`);
+      }
     },
   });
 }
@@ -180,19 +182,27 @@ function settle() {
  * Polls for a selector. `mustSee` adds the visibility requirement `wait`
  * carries, so the lab holds a path to the same standard the browser suite
  * does rather than passing on a control that is attached but not drawn.
+ *
+ * `gone` means *not visible*, not *detached* — Playwright's `hidden` state and
+ * the verdict's own visibility test both mean that, and the editor's tabs hide
+ * a subtree with the `hidden` attribute rather than unmounting it. A `gone`
+ * that meant detached would wait out the full timeout on the one path that
+ * uses it and then pass anyway, so it resolves false on timeout and the caller
+ * throws.
  */
 function waitFor(doc, selector, gone = false, mustSee = false) {
   const deadline = Date.now() + MOUNT_TIMEOUT;
   const drawn = (node) => node && (!mustSee || node.getClientRects().length > 0);
+  const hidden = (node) => !node || node.getClientRects().length === 0;
   return new Promise((resolve) => {
     const tick = () => {
       const node = doc()?.querySelector(selector);
-      if (gone ? !node : drawn(node)) {
-        resolve(node ?? null);
+      if (gone ? hidden(node) : drawn(node)) {
+        resolve(gone ? true : node);
         return;
       }
       if (Date.now() > deadline) {
-        resolve(null);
+        resolve(gone ? false : null);
         return;
       }
       setTimeout(tick, POLL_MS);
