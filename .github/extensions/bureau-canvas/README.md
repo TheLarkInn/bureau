@@ -108,11 +108,15 @@ npm run test:visual
 ```
 
 When a visual change is intentional, review it locally and replace the
-approved images explicitly:
+approved images explicitly from Ubuntu 24.04, which is the pinned CI renderer:
 
 ```sh
 npm run test:visual:update
 ```
+
+Another Linux distribution can use different font rasterization and is not a
+source of approved pixels. On CI failure, the `canvas-visual-differences`
+artifact contains the Ubuntu expected, actual and highlighted diff images.
 
 The 134-state matrix is discovery coverage rather than normal PR feedback. It
 runs nightly and on demand through the `Canvas state matrix` workflow:

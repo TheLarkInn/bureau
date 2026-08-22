@@ -13,7 +13,9 @@ permissions:
 jobs:
   visual:
     name: 10 approved screens
-    runs-on: ubuntu-latest
+    # Screenshot baselines are platform-specific. Pin the runner so a future
+    # ubuntu-latest image migration is an explicit baseline review.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: .github/extensions/bureau-canvas/e2e/playwright
