@@ -125,27 +125,78 @@ function empty(state) {
   return next;
 }
 
-/** Config nothing references, which the strip surfaces without graph noise. */
+/**
+ * Config nothing references.
+ *
+ * "Unreferenced" is not a free-standing label a payload can pin on anything.
+ * `orphanItems` in `lib/view.mjs` derives the list from the config's own
+ * roles, repos and pipelines, keeping only those whose `usedBy` came back
+ * empty — so an item can be called unreferenced exactly when it *is* in the
+ * config and nothing points at it. `relationView` emits a node for it either
+ * way, which is what unreferenced looks like on the graph: a card with no
+ * edges, not an absent card.
+ *
+ * Naming two items the config did not contain therefore made a payload no
+ * `buildState` can produce, and the render said so three ways at once — the
+ * header counted a pipeline the strip called unreferenced, the strip called
+ * `reviewer` unreferenced while the graph drew it wired to the pipeline that
+ * uses it, and `retired-pipeline` had no card at all.
+ */
 function orphans(state) {
   const next = clone(state);
+  const role = { name: "retired-reviewer", agent: "copilot", adapter: "copilot", permissions: [], minTrust: "untrusted", usedBy: [] };
+  const pipeline = { name: "retired-pipeline", stepCount: 2, kinds: ["deterministic"], roles: [], terminals: ["done"], usedBy: [] };
   next.config.view = {
     ...next.config.view,
-    orphans: [
-      { kind: "role", name: "reviewer" },
-      { kind: "pipeline", name: "retired-pipeline" },
+    roles: [...next.config.view.roles, role],
+    pipelines: [...next.config.view.pipelines, pipeline],
+    orphans: [{ kind: "role", name: role.name }, { kind: "pipeline", name: pipeline.name }],
+  };
+  const relation = next.config.relation ?? { nodes: [], edges: [] };
+  next.config.relation = {
+    ...relation,
+    nodes: [
+      ...relation.nodes,
+      { id: `role:${role.name}`, kind: "role", name: role.name },
+      { id: `pipeline:${pipeline.name}`, kind: "pipeline", name: pipeline.name },
     ],
   };
   return next;
 }
 
-/** A second assignment, so the stack is a stack and not a single card. */
+/**
+ * A second assignment, so the stack is a stack and not a single card.
+ *
+ * The relation projection is updated with it. `relationView` emits a node per
+ * assignment and an edge to the pipeline and to each repo it names, so adding
+ * a card and stopping there produced a payload the CLI cannot: a header
+ * counting two assignments above a graph drawing one.
+ */
 function twoAssignments(state) {
   const next = clone(state);
   const extra = clone(assignment(next));
   extra.name = "docs-triage";
   extra.work = { ...extra.work, source: "TheLarkInn/bureau-docs", filter: "is:open label:docs" };
   next.config.view.assignments = [...next.config.view.assignments, extra];
+  const relation = next.config.relation ?? { nodes: [], edges: [] };
+  next.config.relation = {
+    nodes: [...relation.nodes, { id: `assignment:${extra.name}`, kind: "assignment", name: extra.name }],
+    edges: [...relation.edges, ...assignmentEdges(extra)],
+  };
   return next;
+}
+
+/** The edges `relationView` draws from an assignment: its pipeline, its repos. */
+function assignmentEdges(item) {
+  const source = `assignment:${item.name}`;
+  return [
+    relationEdge("pipeline", source, `pipeline:${item.pipeline}`),
+    ...(item.repos ?? []).map((repo) => relationEdge("repo", source, `repo:${repo}`)),
+  ];
+}
+
+function relationEdge(relation, source, target) {
+  return { id: `${relation}:${source}->${target}`, source, target, relation };
 }
 
 /**

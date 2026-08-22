@@ -18,6 +18,10 @@ export const SELECTORS = {
   configHeading: ".config-heading",
   assignmentStack: ".assignment-stack",
   assignmentCard: ".assignment-card",
+  // The second card, which only exists once the stack really holds two. A
+  // plain `.assignment-card` is satisfied by one, so it cannot tell a stack of
+  // two from a stack of one.
+  assignmentCardSecond: ".assignment-card + .assignment-card",
   assignmentHead: ".assignment-head",
   assignmentDetail: ".assignment-detail",
   assignmentEmpty: ".view-shell--config > .muted",
@@ -130,6 +134,15 @@ export const SELECTORS = {
 /** One step card in the editor, addressed by the step it draws. */
 export function editorCardFor(step) {
   return `.editor-card[data-ref="${step}"]`;
+}
+
+/**
+ * One card in the relation graph, addressed by the config item it draws.
+ * Unreferenced config is still config, so this is what holds the graph to
+ * drawing an orphan rather than dropping it.
+ */
+export function relationCardFor(id) {
+  return `.relation-card[data-ref="${id}"]`;
 }
 
 /**

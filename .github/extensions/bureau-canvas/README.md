@@ -139,6 +139,26 @@ actually take. A config can hold validation errors and advisories at once,
 because `mergeAdvisories` concatenates them, so `invalid-advisory` is a value
 rather than a pair the axis cannot express.
 
+The sibling rule is why the field disclosures have two axes rather than one.
+Every field keeps its own open state, so opening one does not close another,
+and a single-valued `field` made *two editors open at once* unrepresentable —
+a screen with no rule to point at. `fieldPair` gives that screen a tuple to
+be, two structural rules say when it can exist, and a scoping rule plus
+`probe--two-disclosures-open` say why the matrix reviews it once instead of
+once per pair.
+
+And it applies to fixtures, which is where it is easiest to break without
+noticing, because a fixture is a payload rather than a value. A fixture may
+only build a payload `buildState` could have served. `orphans` used to name a
+role the pipeline actually uses and a pipeline the config did not contain,
+which is a payload `lib/view.mjs` cannot produce — `orphanItems` derives the
+list from the config's own roles and pipelines, keeping the ones nothing
+references. The render said so out loud: the header counted one pipeline while
+the strip called another unreferenced, and the graph drew the "unreferenced"
+role wired to its pipeline. Adding a card without its relation node had the
+same shape. Every coupled projection moves together, or the state under review
+is one no user can reach.
+
 Each value also has to promise something a render can fail. An axis that
 contributes no expectation is an axis three states can share one set of
 assertions across, which is how a `dirty` field editor that was quietly clean —

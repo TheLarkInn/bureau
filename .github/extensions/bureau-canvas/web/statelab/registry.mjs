@@ -13,7 +13,7 @@ import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, selectStep } from "./p
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
-const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
 
 /** A stable, readable id: only the axes that carry information appear. */
 function identify(combo) {

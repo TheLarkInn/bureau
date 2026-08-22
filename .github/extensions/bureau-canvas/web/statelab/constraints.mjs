@@ -24,6 +24,7 @@
 //                that renders the cross anyway and holds the claim to account.
 
 import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
+import { PAIRABLE_FIELDS } from "./dimensions.mjs";
 const BOOT_DATA = ["loading", "render-error"];
 const BOOT_SURFACES = ["boot", "boot-editor"];
 const INDEX_SURFACES = ["config", "pipeline"];
@@ -31,7 +32,7 @@ const INDEX_SURFACES = ["config", "pipeline"];
 const ASSIGNMENT_SCOPED_DATA = ["advisory", "invalid-advisory"];
 
 /** Dimensions that must read `n/a` when the surface has no such region. */
-const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const REGIONS = ["draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
 
 /** The body values that count as "at rest" for the scoping rules. */
 const BODY_BASELINE = {
@@ -41,6 +42,7 @@ const BODY_BASELINE = {
   card: ["n/a", "collapsed"],
   field: ["n/a"],
   fieldState: ["n/a"],
+  fieldPair: ["n/a"],
   mode: ["n/a", "design"],
   run: ["n/a", "none"],
   tab: ["n/a", "pipeline"],
@@ -149,6 +151,30 @@ export const CONSTRAINTS = [
     title: "A field only has the lifecycle states it can actually reach",
     why: "`dirty` and `invalid` describe an open editor's draft. Delete is a confirmation and carries none; the work source derives from a pasted URL, so it has no invalid-but-accepted draft; the repo adder's save state belongs to the repo list it returns to.",
     holds: (combo) => lifecycleAllows(combo.field, combo.fieldState),
+  },
+  {
+    id: "a-second-field-needs-a-first",
+    kind: "structural",
+    reads: ["field", "fieldPair"],
+    title: "A second disclosure needs a first one to sit beside",
+    why: "The axis says whether another field editor is open *as well*. With every field at rest there is no first, so there is nothing to be second to. Delete is excluded because it is not a field editor but a preflight, and answering it makes the host republish its own state over the payload the pair was assembled from.",
+    holds: (combo) => (combo.fieldPair !== "n/a") === PAIRABLE_FIELDS.includes(combo.field),
+  },
+  {
+    id: "the-second-disclosure-is-not-the-first",
+    kind: "structural",
+    reads: ["field", "fieldPair"],
+    title: "The second editor cannot be the one already under review",
+    why: "`second-open` is a concrete screen, not an abstraction: it opens the limits disclosure beside whatever field is being reviewed. With limits itself under review there is no second editor, only the first counted twice.",
+    holds: (combo) => combo.fieldPair !== "second-open" || combo.field !== "limits",
+  },
+  {
+    id: "a-second-open-field-is-probed-not-crossed",
+    kind: "scoping",
+    reads: ["fieldPair"],
+    title: "Two open field editors are reviewed once, not once per pair",
+    why: "Each disclosure owns its open state, so opening one leaves the others exactly as they were — which is why the pair is a real screen and gets an axis rather than being quietly unrepresentable. What it is not is one screen per pair: the fields write into separate subtrees and share no state, so every pair shows the same fact — two disclosures coexisting in one column without printing over each other. `probe--two-disclosures-open` renders the crossing and is what holds the claim to account.",
+    holds: (combo) => combo.fieldPair !== "second-open",
   },
   {
     id: "mode-is-pipeline-only",

@@ -35,6 +35,7 @@ const CONFIG_BASE = {
   card: "collapsed",
   field: "n/a",
   fieldState: "n/a",
+  fieldPair: "n/a",
   mode: "n/a",
   run: "n/a",
   tab: "n/a",
@@ -53,6 +54,7 @@ const EDITOR_BASE = {
   card: "n/a",
   field: "n/a",
   fieldState: "n/a",
+  fieldPair: "n/a",
   mode: "n/a",
   run: "n/a",
   tab: "pipeline",
@@ -101,7 +103,7 @@ export const PROBES = [
   crossing({
     id: "probe--draft-over-open-limits",
     rule: "draft-is-orthogonal-to-body",
-    dimensions: { draft: "pending", card: "expanded", field: "limits", fieldState: "rest" },
+    dimensions: { draft: "pending", card: "expanded", field: "limits", fieldState: "rest", fieldPair: "none" },
     summary: "a draft bar above an open limits editor: the tallest body region under the tallest chrome region",
     fixture: "draft-pending",
     ops: [
@@ -126,7 +128,7 @@ export const PROBES = [
   crossing({
     id: "probe--findings-over-open-repos",
     rule: "chrome-is-orthogonal-to-body",
-    dimensions: { data: "invalid", card: "expanded", field: "repos", fieldState: "rest" },
+    dimensions: { data: "invalid", card: "expanded", field: "repos", fieldState: "rest", fieldPair: "none" },
     summary: "a findings strip above a repo editor that draws its own notes",
     fixture: "invalid",
     ops: [
@@ -228,9 +230,10 @@ export const PROBES = [
     ],
     expect: { shows: [S.editorDiscard, S.editorSave], hides: [], copy: ["deterministic-renamed"] },
   }),
-  sample({
+  crossing({
     id: "probe--two-disclosures-open",
-    covers: "two field editors open at once, which the single-valued `field` axis cannot express",
+    rule: "a-second-open-field-is-probed-not-crossed",
+    dimensions: { card: "expanded", field: "repos", fieldState: "rest", fieldPair: "second-open" },
     summary: "two field disclosures open at once — each field owns its own state, so nothing closes the first",
     fixture: "multi-repo",
     ops: [

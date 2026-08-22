@@ -11,7 +11,7 @@
 // surface takes `n/a`, and a constraint rule says why — so an absent axis is
 // recorded rather than silently dropped.
 
-import { SELECTORS as S, offered, replaySpanFor, withheld } from "./selectors.mjs";
+import { SELECTORS as S, offered, relationCardFor, replaySpanFor, withheld } from "./selectors.mjs";
 import { FIELD_SAVE, RUN_END } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
@@ -167,10 +167,17 @@ const section = {
       id: "two-cards",
       summary: "more than one assignment, so the stack is a stack",
       fixture: "two-assignments",
-      shows: [S.assignmentStack],
+      // The second card by name and by selector. `assignmentStack` alone is
+      // satisfied by a stack of one, so this value asserted nothing the
+      // ordinary `stack` value did not already claim.
+      shows: [S.assignmentStack, S.assignmentCardSecond],
+      copy: ["docs-triage"],
     },
   ],
 };
+
+/** The two items `fixtures.mjs` leaves unreferenced, as relation node ids. */
+const ORPHAN_ITEMS = ["role:retired-reviewer", "pipeline:retired-pipeline"];
 
 /**
  * D5 — whether anything in the config is unreferenced.
@@ -193,7 +200,17 @@ const orphans = {
       summary: "a role and a pipeline nothing references",
       fixture: "orphans",
       shows: [S.orphanStrip],
-      copy: ["Unreferenced"],
+      // Naming the items, not just the heading: a strip that rendered its
+      // frame and dropped its entries satisfied "Unreferenced" alone.
+      copy: ["Unreferenced", "retired-reviewer", "retired-pipeline"],
+      /*
+       * An orphan is config the graph still draws — as a card with no edges.
+       * Asserted only where the graph is on screen, so the claim sits on the
+       * states that can actually fail it rather than on every landing.
+       */
+      derive: (combo) => (["relation-open", "both"].includes(combo.disclosure)
+        ? { shows: ORPHAN_ITEMS.map(relationCardFor) }
+        : {}),
     },
   ],
 };
@@ -324,11 +341,19 @@ const field = {
       summary: "delete asks first and shows what breaks",
       enter: [{ op: "click", selector: S.deleteStart }, { op: "wait", selector: S.preflight }],
       shows: [S.preflight],
-      // The preflight is a real intent, so the host republishes its own state
-      // over SSE and the injected status line is replaced by the host's.
-      // Asserting the fixture's status here would assert a payload the page
-      // no longer holds.
-      suppress: ["data"],
+      /*
+       * The preflight is a real intent, so the host answers it by republishing
+       * its own state over SSE — which replaces the injected payload outright,
+       * not merely the status line it wrote. So every axis whose claim comes
+       * from that payload is suppressed here: `data` for the status and
+       * findings, `section` for the assignments the fixture added. Asserting
+       * either would assert a payload the page no longer holds.
+       *
+       * `section` joined this list only once `two-cards` began asserting its
+       * second card; while that value claimed nothing the stack alone gave,
+       * the loss was real and invisible.
+       */
+      suppress: ["data", "section"],
     },
   ],
 };
@@ -357,6 +382,40 @@ function save(combo, shape) {
   const button = FIELD_SAVE[combo.field];
   return button ? { shows: [shape(button)] } : {};
 }
+
+/**
+ * D8b — whether a second field disclosure is open beside the one under review.
+ *
+ * Every field keeps its own open state, so opening one does not close another:
+ * the pair is a real screen, not a hypothetical. `field` is single-valued, and
+ * on its own that made two-open *unrepresentable* rather than excluded — the
+ * one thing the registry may not do, and the same mistake that once folded the
+ * landing's disclosures onto its content axis. This axis gives the pair a tuple
+ * to be, so a rule can exclude it and a probe can answer for it.
+ */
+const fieldPair = {
+  id: "fieldPair",
+  title: "Second field editor",
+  why: "field disclosures are siblings, so a second one open at once is a state rather than a gap",
+  values: [
+    {
+      id: "none",
+      summary: "only the field under review is open",
+      // The limits disclosure is what `second-open` adds, so its absence is
+      // what "only one" means — except where limits is itself the field under
+      // review, and its editor is the first rather than a second.
+      derive: (combo) => (combo.field === "limits" ? {} : { hides: [S.limitsEditor] }),
+    },
+    {
+      id: "second-open",
+      summary: "the limits disclosure open alongside it",
+      shows: [S.limitsEditor],
+    },
+  ],
+};
+
+/** Fields that are editors, so a second one can be open beside them. */
+export const PAIRABLE_FIELDS = ["work-source", "work-rules", "forge-signals", "repos", "repos-add", "limits"];
 
 /** D9 — the pipeline viewer's three graph modes. */
 const mode = {
@@ -394,7 +453,20 @@ const run = {
   title: "Run selection",
   why: "the dry run reports; it never predicts — every overlay state comes from the log",
   values: [
-    { id: "none", summary: "no run picked", hides: [S.overlayRunning, S.overlayPaused] },
+    /*
+     * Not merely "no decoration": a replay that auto-selected a run would
+     * still draw neither overlay class, and this state would have passed. The
+     * negative is taken per mode from the thing a selection is what produces —
+     * the timeline in replay, the pause control in live.
+     */
+    {
+      id: "none",
+      summary: "no run picked",
+      hides: [S.overlayRunning, S.overlayPaused],
+      derive: (combo) => (combo.mode === "replay"
+        ? { hides: [S.replayTimeline] }
+        : { hides: [S.runPause, S.runResume] }),
+    },
     { id: "running", summary: "a run still appending events", derive: (combo) => overlay(combo, "running") },
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
     { id: "finished", summary: "a run that reached a terminal", derive: (combo) => overlay(combo, "finished") },
@@ -446,23 +518,36 @@ const pick = {
   ],
 };
 
-/** D13 — what the editor has done to the draft, and what save did about it. */
+/**
+ * D13 — what the editor has done to the draft, and what save did about it.
+ *
+ * Each value asserts the Save button's own state, which is the only thing that
+ * tells several of these apart: `created` and `invalid` both report issues and
+ * both offer Discard, so without it two states shared one set of assertions.
+ *
+ * Save is withheld for a draft the editor cannot even render — a non-numeric
+ * attempt count — and offered otherwise. It is deliberately *not* withheld for
+ * an inline hint: `lib/edit.mjs` calls those "hints, not verdicts", and
+ * `bureau validate` is the authority. `save-pipeline` writes, re-validates and
+ * reverts on a finding, so an unwired new step is saveable and then refused by
+ * the CLI — which is the rule that the canvas never authors an error.
+ */
 const edit = {
   id: "edit",
   title: "Editor mutation",
   why: "the editor never leaves an unloadable config: dirty, invalid and reverted are distinct and truthful",
   values: [
-    { id: "rest", summary: "no edits", copy: ["saved"], hides: [S.editorDiscard] },
+    { id: "rest", summary: "no edits", copy: ["saved"], shows: [withheld(S.editorSave)], hides: [S.editorDiscard] },
     // A new step is unreachable until it is wired, so the toolbar truthfully
     // reports an issue rather than a bare "unsaved edits". Dirtiness is
     // asserted through the Discard button, which only exists while dirty.
-    { id: "created", summary: "a step added but not saved", shows: [S.editorDiscard, S.editorIssues] },
-    { id: "renamed", summary: "a step renamed, cascading to its referrers", shows: [S.editorDiscard] },
+    { id: "created", summary: "a step added but not saved", shows: [S.editorDiscard, S.editorIssues, offered(S.editorSave)] },
+    { id: "renamed", summary: "a step renamed, cascading to its referrers", shows: [S.editorDiscard, offered(S.editorSave)] },
     { id: "delete-confirm", summary: "the delete confirmation open", shows: [S.editorDangerZone] },
     {
       id: "layout-moved",
       summary: "only a node position changed",
-      shows: [S.editorDiscard],
+      shows: [S.editorDiscard, offered(S.editorSave)],
       // A move acts on a step the fixture already draws, so the graph stays
       // valid and the status reads "unsaved edits" — which is what tells this
       // apart from `created`, whose new step is unwired and reports an issue.
@@ -472,16 +557,18 @@ const edit = {
       copy: ["unsaved edits"],
       hides: [S.editorIssues],
     },
-    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard] },
+    // The one edit Save itself refuses: an attempt count the editor cannot
+    // render. That refusal is the whole difference from `created`.
+    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
   ],
 };
 
-export const DIMENSIONS = [surface, data, draft, section, orphans, disclosure, card, field, fieldState, mode, run, tab, pick, edit];
+export const DIMENSIONS = [surface, data, draft, section, orphans, disclosure, card, field, fieldState, fieldPair, mode, run, tab, pick, edit];
 
 export const DIMENSION_BY_ID = Object.fromEntries(DIMENSIONS.map((item) => [item.id, item]));
 
 /** Every dimension except `surface` can be absent; `n/a` says so. */
-export const OPTIONAL = ["data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+export const OPTIONAL = ["data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "tab", "pick", "edit"];
 
 for (const id of OPTIONAL) {
   DIMENSION_BY_ID[id].values = [NA, ...DIMENSION_BY_ID[id].values];

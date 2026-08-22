@@ -85,6 +85,10 @@ export const MEASURED = [
   ".editor-toolbar",
   ".editor-panel",
   ".pipeline-toolbar",
+  // The relation disclosure is the tallest landing region when it is open, and
+  // it is the last sibling in the column — so it is the one most able to print
+  // over what sits above it, and it was the only one nothing measured.
+  ".relation-section",
 ];
 
 /** Regions that stack vertically and must never sit on top of one another. */
@@ -109,6 +113,9 @@ const SIBLINGS = [
   [".draft-bar", ".general-findings"],
   [".draft-bar", ".create-bar"],
   [".general-findings", ".create-bar"],
+  [".relation-section", ".assignment-card"],
+  [".relation-section", ".orphan-strip"],
+  [".relation-section", ".create-bar"],
 ];
 
 const OVERLAP_TOLERANCE = 1;
