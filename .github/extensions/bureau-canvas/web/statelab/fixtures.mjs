@@ -140,17 +140,25 @@ function empty(state) {
  * `buildState` can produce, and the render said so three ways at once — the
  * header counted a pipeline the strip called unreferenced, the strip called
  * `reviewer` unreferenced while the graph drew it wired to the pipeline that
- * uses it, and `retired-pipeline` had no card at all.
+ * uses it, and the named pipeline had no card at all.
+ *
+ * A role and a repo, rather than a role and a pipeline, because those are the
+ * two orphan kinds whose projections this layer can keep whole. A pipeline is
+ * also keyed into `state.pipelines` by `pipelineStates`, and that entry is a
+ * `pipelineState` — view, layout, handles, containers, summary — which only
+ * `lib/` can build, and `test/bundle.test.mjs` forbids `web/` from importing
+ * it. Hand-writing one would answer a fabricated payload with a fabricated
+ * projection.
  */
 function orphans(state) {
   const next = clone(state);
   const role = { name: "retired-reviewer", agent: "copilot", adapter: "copilot", permissions: [], minTrust: "untrusted", usedBy: [] };
-  const pipeline = { name: "retired-pipeline", stepCount: 2, kinds: ["deterministic"], roles: [], terminals: ["done"], usedBy: [] };
+  const repo = { name: "retired-sandbox", url: "https://github.com/TheLarkInn/bureau-sandbox.git", forge: "github", access: "read", credential: "github-main", usedBy: [] };
   next.config.view = {
     ...next.config.view,
     roles: [...next.config.view.roles, role],
-    pipelines: [...next.config.view.pipelines, pipeline],
-    orphans: [{ kind: "role", name: role.name }, { kind: "pipeline", name: pipeline.name }],
+    repos: [...next.config.view.repos, repo],
+    orphans: [{ kind: "repo", name: repo.name }, { kind: "role", name: role.name }],
   };
   const relation = next.config.relation ?? { nodes: [], edges: [] };
   next.config.relation = {
@@ -158,7 +166,7 @@ function orphans(state) {
     nodes: [
       ...relation.nodes,
       { id: `role:${role.name}`, kind: "role", name: role.name },
-      { id: `pipeline:${pipeline.name}`, kind: "pipeline", name: pipeline.name },
+      { id: `repo:${repo.name}`, kind: "repo", name: repo.name },
     ],
   };
   return next;
@@ -178,12 +186,23 @@ function twoAssignments(state) {
   extra.name = "docs-triage";
   extra.work = { ...extra.work, source: "TheLarkInn/bureau-docs", filter: "is:open label:docs" };
   next.config.view.assignments = [...next.config.view.assignments, extra];
+  const ref = `assignment:${extra.name}`;
+  // `usedBy` is what `orphanItems` reads, so a new referrer that did not
+  // register itself would leave the config claiming nothing points at what
+  // this assignment plainly uses.
+  next.config.view.pipelines = next.config.view.pipelines.map((item) => addUse(item, item.name === extra.pipeline, ref));
+  next.config.view.repos = next.config.view.repos.map((item) => addUse(item, (extra.repos ?? []).includes(item.name), ref));
   const relation = next.config.relation ?? { nodes: [], edges: [] };
   next.config.relation = {
-    nodes: [...relation.nodes, { id: `assignment:${extra.name}`, kind: "assignment", name: extra.name }],
+    nodes: [...relation.nodes, { id: ref, kind: "assignment", name: extra.name }],
     edges: [...relation.edges, ...assignmentEdges(extra)],
   };
   return next;
+}
+
+/** Records `ref` as a user of `item`, in the sorted order `sortedUses` keeps. */
+function addUse(item, applies, ref) {
+  return applies ? { ...item, usedBy: [...(item.usedBy ?? []), ref].sort() } : item;
 }
 
 /** The edges `relationView` draws from an assignment: its pipeline, its repos. */
@@ -209,7 +228,11 @@ function multiRepo(state) {
   const next = clone(state);
   next.config.view.repos = [
     ...next.config.view.repos,
-    { name: "bureau-docs", url: "https://github.com/TheLarkInn/bureau-docs.git", forge: "github", access: "pr", credential: "github-main" },
+    // `usedBy` included because the assignment below names it: `repoItems`
+    // emits the field for every repo, and `orphanItems` reads it to decide
+    // what is unreferenced. A registered-and-used repo with no referrer is
+    // not a payload the CLI can produce.
+    { name: "bureau-docs", url: "https://github.com/TheLarkInn/bureau-docs.git", forge: "github", access: "pr", credential: "github-main", usedBy: ["assignment:agent-eligible"] },
   ];
   assignment(next).repos = ["bureau", "bureau-docs"];
   return next;

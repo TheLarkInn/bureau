@@ -92,7 +92,7 @@ export const FIELD_LIFECYCLE = {
       copy: ["is read-only, so no branch can land there"],
     },
   },
-  "repos-add": { rest: { fixture: "multi-repo" } },
+  "repos-add": { "n/a": { fixture: "multi-repo" } },
   limits: {
     rest: {},
     dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], copy: ["unsaved changes"] },

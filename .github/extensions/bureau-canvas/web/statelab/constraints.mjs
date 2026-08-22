@@ -153,6 +153,14 @@ export const CONSTRAINTS = [
     holds: (combo) => lifecycleAllows(combo.field, combo.fieldState),
   },
   {
+    id: "a-preflight-answers-with-the-hosts-own-config",
+    kind: "structural",
+    reads: ["field", "section"],
+    title: "The delete preflight cannot be reviewed over an injected config",
+    why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by refreshing and republishing the host's own state — which replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. This is an exclusion rather than a suppressed axis on purpose: suppressing would let the host's one-card screen pass under the name `two-cards`.",
+    holds: (combo) => combo.field !== "delete" || combo.section !== "two-cards",
+  },
+  {
     id: "a-second-field-needs-a-first",
     kind: "structural",
     reads: ["field", "fieldPair"],

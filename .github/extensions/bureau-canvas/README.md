@@ -152,12 +152,19 @@ noticing, because a fixture is a payload rather than a value. A fixture may
 only build a payload `buildState` could have served. `orphans` used to name a
 role the pipeline actually uses and a pipeline the config did not contain,
 which is a payload `lib/view.mjs` cannot produce — `orphanItems` derives the
-list from the config's own roles and pipelines, keeping the ones nothing
-references. The render said so out loud: the header counted one pipeline while
-the strip called another unreferenced, and the graph drew the "unreferenced"
-role wired to its pipeline. Adding a card without its relation node had the
-same shape. Every coupled projection moves together, or the state under review
-is one no user can reach.
+list from the config's own roles, repos and pipelines, keeping the ones
+nothing references. The render said so out loud: the header counted one
+pipeline while the strip called another unreferenced, and the graph drew the
+"unreferenced" role wired to its pipeline. Adding a card without its relation
+node, or a repo without its `usedBy`, had the same shape. Every coupled
+projection moves together, or the state under review is one no user can reach.
+
+That rule also decides what a fixture may not attempt. `orphans` leaves a role
+and a *repo* unreferenced rather than a pipeline, because a pipeline is also
+keyed into `state.pipelines`, and that entry is a `pipelineState` — view,
+layout, handles, containers, summary — which only `lib/` can build and which
+`test/bundle.test.mjs` forbids `web/` from importing. Answering a fabricated
+payload with a fabricated projection is the defect, not the fix.
 
 Each value also has to promise something a render can fail. An axis that
 contributes no expectation is an axis three states can share one set of

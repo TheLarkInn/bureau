@@ -12,7 +12,7 @@
 // recorded rather than silently dropped.
 
 import { SELECTORS as S, offered, relationCardFor, replaySpanFor, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END } from "./paths.mjs";
+import { FIELD_SAVE, RUN_END, SAMPLE_STEPS } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -177,7 +177,7 @@ const section = {
 };
 
 /** The two items `fixtures.mjs` leaves unreferenced, as relation node ids. */
-const ORPHAN_ITEMS = ["role:retired-reviewer", "pipeline:retired-pipeline"];
+const ORPHAN_ITEMS = ["role:retired-reviewer", "repo:retired-sandbox"];
 
 /**
  * D5 — whether anything in the config is unreferenced.
@@ -197,12 +197,12 @@ const orphans = {
     { id: "none", summary: "everything is referenced", hides: [S.orphanStrip] },
     {
       id: "present",
-      summary: "a role and a pipeline nothing references",
+      summary: "a role and a repo nothing references",
       fixture: "orphans",
       shows: [S.orphanStrip],
       // Naming the items, not just the heading: a strip that rendered its
       // frame and dropped its entries satisfied "Unreferenced" alone.
-      copy: ["Unreferenced", "retired-reviewer", "retired-pipeline"],
+      copy: ["Unreferenced", "retired-reviewer", "retired-sandbox"],
       /*
        * An orphan is config the graph still draws — as a card with no edges.
        * Asserted only where the graph is on screen, so the claim sits on the
@@ -342,18 +342,17 @@ const field = {
       enter: [{ op: "click", selector: S.deleteStart }, { op: "wait", selector: S.preflight }],
       shows: [S.preflight],
       /*
-       * The preflight is a real intent, so the host answers it by republishing
-       * its own state over SSE — which replaces the injected payload outright,
-       * not merely the status line it wrote. So every axis whose claim comes
-       * from that payload is suppressed here: `data` for the status and
-       * findings, `section` for the assignments the fixture added. Asserting
-       * either would assert a payload the page no longer holds.
+       * The preflight is a real intent, and `runCrudIntent` answers even a
+       * read-only one by refreshing and republishing the host's own state —
+       * which replaces the injected payload, status line and all. So the
+       * status axis has nothing left to assert here.
        *
-       * `section` joined this list only once `two-cards` began asserting its
-       * second card; while that value claimed nothing the stack alone gave,
-       * the loss was real and invisible.
+       * Only the status. What the republished config *contains* is covered by
+       * an exclusion instead: suppressing `section` too would have let the
+       * host's one-card screen pass under the name `two-cards`, which is a
+       * harness artifact recorded as a state.
        */
-      suppress: ["data", "section"],
+      suppress: ["data"],
     },
   ],
 };
@@ -393,6 +392,17 @@ function save(combo, shape) {
  * landing's disclosures onto its content axis. This axis gives the pair a tuple
  * to be, so a rule can exclude it and a probe can answer for it.
  */
+/** Every field editor, and the one each field value opens. */
+const EDITORS = [S.workSourceEditor, S.workRulesEditor, S.signalsEditor, S.reposEditor, S.limitsEditor];
+const EDITOR_OF = {
+  "work-source": S.workSourceEditor,
+  "work-rules": S.workRulesEditor,
+  "forge-signals": S.signalsEditor,
+  repos: S.reposEditor,
+  "repos-add": S.reposEditor,
+  limits: S.limitsEditor,
+};
+
 const fieldPair = {
   id: "fieldPair",
   title: "Second field editor",
@@ -401,10 +411,10 @@ const fieldPair = {
     {
       id: "none",
       summary: "only the field under review is open",
-      // The limits disclosure is what `second-open` adds, so its absence is
-      // what "only one" means — except where limits is itself the field under
-      // review, and its editor is the first rather than a second.
-      derive: (combo) => (combo.field === "limits" ? {} : { hides: [S.limitsEditor] }),
+      // Every *other* editor absent, not merely the one `second-open` adds.
+      // Scoped to the field under review, so this holds whichever it is, and
+      // any disclosure that opened without being asked to fails it.
+      derive: (combo) => ({ hides: EDITORS.filter((editor) => editor !== EDITOR_OF[combo.field]) }),
     },
     {
       id: "second-open",
@@ -543,7 +553,22 @@ const edit = {
     // asserted through the Discard button, which only exists while dirty.
     { id: "created", summary: "a step added but not saved", shows: [S.editorDiscard, S.editorIssues, offered(S.editorSave)] },
     { id: "renamed", summary: "a step renamed, cascading to its referrers", shows: [S.editorDiscard, offered(S.editorSave)] },
-    { id: "delete-confirm", summary: "the delete confirmation open", shows: [S.editorDangerZone] },
+    {
+      id: "delete-confirm",
+      summary: "the delete confirmation open",
+      /*
+       * The confirmation itself looks the same either way; the draft behind it
+       * does not. A decision or concurrent step has to be *added* before it can
+       * be deleted, so the editor is dirty and Save is offered; a step the
+       * fixture already draws leaves it clean and Save withheld. Without this
+       * the two screens shared one assertion — the danger zone — and a
+       * confirmation that silently dirtied the draft would have passed.
+       */
+      derive: (combo) => (SAMPLE_STEPS[combo.pick]
+        ? { shows: [withheld(S.editorSave)], hides: [S.editorDiscard] }
+        : { shows: [S.editorDiscard, offered(S.editorSave)] }),
+      shows: [S.editorDangerZone],
+    },
     {
       id: "layout-moved",
       summary: "only a node position changed",
