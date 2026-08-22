@@ -146,9 +146,10 @@ const SETTLE_POLL_MS = 50;
  *
  * React commits asynchronously, so a verdict taken the instant the last click
  * returns can catch the DOM mid-update — on a loaded machine that reads as a
- * state failing its own registry. The browser suite does not see this because
- * Playwright locators retry; the lab has to retry for itself, and it still
- * reports whatever the last look found, so a genuinely wrong state still fails.
+ * state failing its own registry. The browser suite takes its verdict through
+ * a single `page.evaluate` rather than a locator, so nothing there retries
+ * either; `matrix-fixtures.mjs` runs the same loop for the same reason. Both
+ * report whatever the last look found, so a genuinely wrong state still fails.
  */
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
