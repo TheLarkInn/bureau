@@ -37,14 +37,24 @@ function EditorApp() {
 
   useEffect(() => {
     let alive = true;
+    // The SSE channel can deliver before this fetch resolves, and its payload
+    // is the newer one. The fetch fills the surface only if nothing has
+    // arrived yet, so a slow response cannot revert the editor.
     fetch("./state", { cache: "no-store" })
       .then((response) => response.json())
-      .then((next) => alive && setState(next));
+      .then((next) => alive && setState((current) => current ?? next));
     const events = new EventSource("./events");
+    // The same local-state channel index.html's `App` listens on. Nothing in
+    // editor.html's own bundle dispatches it: this is the seam the state lab
+    // and the matrix suite publish fixtures through, so both surfaces receive
+    // a payload the same way without a test-only flag in production code.
+    const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
+    window.addEventListener("bureau-state", localState);
     return () => {
       alive = false;
       events.close();
+      window.removeEventListener("bureau-state", localState);
     };
   }, []);
 
@@ -62,7 +72,7 @@ function EditorApp() {
       h(
         "div",
         { className: "editor-heading" },
-        h("button", { type: "button", className: "btn btn--small", onClick: () => navigate(backToAssignments) }, "← Assignments"),
+        h("button", { type: "button", className: "btn btn--small", "data-testid": "editor-back", onClick: () => navigate(backToAssignments) }, "← Assignments"),
         h("div", {}, h("h1", {}, "Pipeline editor"), h("p", { className: "summary" }, name ?? state.dir)),
       ),
       h(
@@ -72,12 +82,14 @@ function EditorApp() {
           type: "button",
           className: `editor-tab${tab === "pipeline" ? " is-active" : ""}`,
           "aria-pressed": tab === "pipeline",
+          "data-testid": "editor-tab-pipeline",
           onClick: () => setTab("pipeline"),
         }, "Pipeline"),
         h("button", {
           type: "button",
           className: `editor-tab${tab === "relations" ? " is-active" : ""}`,
           "aria-pressed": tab === "relations",
+          "data-testid": "editor-tab-relations",
           onClick: () => setTab("relations"),
         }, "Relations"),
       ),

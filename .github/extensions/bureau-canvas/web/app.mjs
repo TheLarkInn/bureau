@@ -19,6 +19,7 @@ import { useLiveOverlay } from "./live/live.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
+import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { nextExpandedAssignment } from "./assignment-state.js";
 
@@ -52,9 +53,13 @@ function App() {
 
   useEffect(() => {
     let alive = true;
+    // The SSE channel answers with the current state the instant it connects,
+    // so it can beat this fetch. The fetch carries the older snapshot in that
+    // ordering, and it must not win: it fills the surface only if nothing has
+    // arrived yet.
     fetch("./state", { cache: "no-store" })
       .then((response) => response.json())
-      .then((next) => alive && setState(next));
+      .then((next) => alive && setState((current) => current ?? next));
     const events = new EventSource("./events");
     const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
@@ -148,8 +153,8 @@ function DraftBar({ plan }) {
     h(
       "div",
       { className: "draft-actions" },
-      h("button", { type: "button", className: "btn btn--small btn--primary", disabled: busy, onClick: () => act("save-plan") }, busy ? "Working…" : "Save"),
-      h("button", { type: "button", className: "btn btn--small", disabled: busy, onClick: () => act("discard-plan") }, "Discard"),
+      h("button", { type: "button", className: "btn btn--small btn--primary", "data-testid": "draft-save", disabled: busy, onClick: () => act("save-plan") }, busy ? "Working…" : "Save"),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "draft-discard", disabled: busy, onClick: () => act("discard-plan") }, "Discard"),
     ),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
@@ -191,6 +196,7 @@ function CreateBar({ dir }) {
         type: "button",
         ref: trigger,
         className: "btn btn--primary",
+        "data-testid": "create-open",
         onClick: () => setOpen(true),
       }, "+ New pipeline or role"),
     );
@@ -254,11 +260,13 @@ function CreateBar({ dir }) {
       h("button", {
         type: "submit",
         className: "btn btn--primary",
+        "data-testid": "create-submit",
         disabled: !name.trim(),
       }, `Create ${kind}`),
       h("button", {
         type: "button",
         className: "btn",
+        "data-testid": "create-cancel",
         onClick: () => {
           setName("");
           close();
@@ -295,7 +303,7 @@ function DeleteControl({ dir, kind, name }) {
   });
   if (!preflight) {
     return h(React.Fragment, null,
-      h("button", { type: "button", className: "btn btn--small btn--danger card-action", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
+      h("button", { type: "button", className: "btn btn--small btn--danger card-action", "data-testid": "delete-start", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
       error ? h("p", { className: "note note--err", role: "alert" }, error) : null);
   }
   return h(
@@ -307,7 +315,7 @@ function DeleteControl({ dir, kind, name }) {
       ? h("p", { className: "note note--err" }, "Repoint these references before deleting this item.")
       : null,
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--small btn--danger", disabled: preflight.blocking, onClick: confirm }, "Confirm delete"),
+      h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking, onClick: confirm }, "Confirm delete"),
       h("button", { type: "button", className: "btn btn--small", onClick: () => setPreflight(null) }, "Cancel")),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
@@ -538,45 +546,56 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
     },
     h("label", {}, "Work-item filter", h("input", {
       className: `form-control form-control--mono${fields.filter.trim() ? "" : " form-control--invalid"}`,
+      "data-testid": "wr-filter",
       value: fields.filter,
       onChange: (event) => set("filter", event.target.value),
     })),
     h("label", {}, "Approval label (optional)", h("input", {
       className: "form-control form-control--mono",
+      "data-testid": "wr-approval",
       value: fields.approval_label,
       onChange: (event) => set("approval_label", event.target.value),
     })),
     h("label", {}, "Branch prefix", h("input", {
       className: `form-control form-control--mono${fields.branch_prefix.trim() ? "" : " form-control--invalid"}`,
+      "data-testid": "wr-branch",
       value: fields.branch_prefix,
       onChange: (event) => set("branch_prefix", event.target.value),
     })),
     invalid ? h("p", { className: "note note--err" }, "Filter and branch prefix cannot be empty.") : null,
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--primary", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save work rules"),
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "work-rules-save", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save work rules"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
   );
 }
 
+/**
+ * The forge signals value, clickable. Like every other field on the card, the
+ * value stays on screen and the editor discloses beneath it — swapping the
+ * value out was this field's alone, and it made the row jump.
+ */
 function TerminalLabelsField({ assignment }) {
   const [editing, setEditing] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setEditing, trigger);
-  if (editing) {
-    return h(TerminalLabelsEditor, { assignment, onDone: close });
-  }
   return h(
-    "button",
-    {
-      ref: trigger,
-      type: "button",
-      className: "terminal-label-value",
-      title: "Change the labels Bureau applies at terminal states",
-      onClick: () => setEditing(true),
-    },
-    h(TerminalSignal, { kind: "abort", label: assignment.work?.abortLabel }),
-    h(TerminalSignal, { kind: "escalate", label: assignment.work?.escalateLabel }),
+    "div",
+    { className: "field-disclosure" },
+    h(
+      "button",
+      {
+        ref: trigger,
+        type: "button",
+        className: "terminal-label-value",
+        "aria-expanded": editing,
+        title: "Change the labels Bureau applies at terminal states",
+        onClick: () => setEditing((current) => !current),
+      },
+      h(TerminalSignal, { kind: "abort", label: assignment.work?.abortLabel }),
+      h(TerminalSignal, { kind: "escalate", label: assignment.work?.escalateLabel }),
+    ),
+    editing ? h(TerminalLabelsEditor, { assignment, onDone: close }) : null,
   );
 }
 
@@ -625,11 +644,13 @@ function TerminalLabelsEditor({ assignment, onDone }) {
     { className: "terminal-label-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
     h("label", {}, "Failed run label", h("input", {
       className: "form-control form-control--mono",
+      "data-testid": "sig-abort",
       value: fields.abort_label,
       onChange: (event) => set("abort_label", event.target.value),
     })),
     h("label", {}, "Needs-human label", h("input", {
       className: "form-control form-control--mono",
+      "data-testid": "sig-escalate",
       value: fields.escalate_label,
       onChange: (event) => set("escalate_label", event.target.value),
     })),
@@ -637,7 +658,7 @@ function TerminalLabelsEditor({ assignment, onDone }) {
     invalid ? h("p", { className: "note note--err" }, "Both labels are required and must differ.") : null,
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--primary", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save forge signals"),
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "signals-save", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save forge signals"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
   );
 }
@@ -759,11 +780,11 @@ function ReposEditor({ state, assignment, onDone }) {
     error ? h("p", { className: "note note--err" }, error) : null,
     h("div", { className: "actions" },
       h("button", {
-        type: "button", className: "btn btn--primary",
+        type: "button", className: "btn btn--primary", "data-testid": "repos-save",
         disabled: busy || repos.length === 0 || Boolean(problem) || sameOrder(repos, assignment.repos ?? []),
         onClick: () => commit(repos),
       }, busy ? "Saving…" : "Save repos"),
-      h("button", { type: "button", className: "btn", onClick: () => setAdding(true) }, "+ Add repo"),
+      h("button", { type: "button", className: "btn", "data-testid": "repos-add", onClick: () => setAdding(true) }, "+ Add repo"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
   );
 }
@@ -1011,7 +1032,7 @@ function LimitsEditor({ assignment, saved, onDone }) {
     invalid ? h("p", { className: "note note--err" }, "Enabled count and deadline limits need whole numbers of at least 1. Daily model cost accepts a positive decimal. Switch a limit off for unlimited.") : null,
     error ? h("p", { className: "note note--err" }, error) : null,
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--primary", disabled: busy || !changed || invalid, onClick: save },
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "limits-save", disabled: busy || !changed || invalid, onClick: save },
         busy ? "Saving…" : "Save limits"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
       changed ? h("span", { className: "limits-dirty" }, "unsaved changes") : null),
@@ -1158,6 +1179,7 @@ function WorkSourceEditor({ assignment, onDone }) {
       h("button", {
         type: "button",
         className: "btn btn--primary",
+        "data-testid": "work-source-save",
         disabled: !derived || busy,
         onClick: apply,
       }, busy ? "Saving…" : "Use this"),
@@ -1248,6 +1270,9 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
     () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
     [pipeline, state, selectedStep, active?.decoration],
   );
+  if (state.selectedPipeline.missing) {
+    return h(MissingPipeline, { notice: state.selectedPipeline.notice, name });
+  }
   return h(
     "section",
     { className: "view-shell view-shell--pipeline" },
@@ -1257,7 +1282,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       h(
         "div",
         { className: "pipeline-toolbar" },
-        h("button", { className: "btn btn--small", type: "button", onClick: backToConfig }, "← Assignments"),
+        h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
         h("h2", {}, name),
         h(ModeSwitcher, { mode, onMode: setMode }),
         h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
@@ -1280,10 +1305,29 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           elementsSelectable: true,
           proOptions: { hideAttribution: true },
           onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
-        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
+        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
       ),
     ),
     h(SidePanel, { state, pipeline, name }),
+  );
+}
+
+/**
+ * A pipeline the config no longer has. The editor already said so; the viewer
+ * used to draw an empty graph instead, which reads as "this pipeline has no
+ * steps" rather than "this pipeline is gone".
+ */
+function MissingPipeline({ notice, name }) {
+  return h(
+    "section",
+    { className: "view-shell view-shell--config" },
+    h(
+      "div",
+      { className: "pipeline-toolbar" },
+      h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
+      h("h2", {}, name),
+    ),
+    h("p", { className: "status" }, notice ?? `No pipeline named \`${name}\` in this config.`),
   );
 }
 

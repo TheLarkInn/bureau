@@ -5,9 +5,13 @@ import { defineConfig, devices } from "@playwright/test";
  * URL here: the `canvas` fixture boots one host per worker on an ephemeral
  * port and hands the spec its address. Offline like every other suite —
  * no network, no `bureau` binary, no Copilot SDK.
+ *
+ * `globalSetup` empties the render gallery, so the artefact a reviewer browses
+ * is exactly the states this run produced.
  */
 export default defineConfig({
   testDir: "./specs",
+  globalSetup: "./global-setup.mjs",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,

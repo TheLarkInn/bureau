@@ -19,6 +19,7 @@ export function ModeSwitcher({ mode, onMode }) {
         type: "button",
         role: "tab",
         "aria-selected": mode === option,
+        "data-testid": `mode-${option}`,
         className: `mode-tab${mode === option ? " mode-tab--active" : ""}`,
         onClick: () => onMode(option),
       }, option),

@@ -93,9 +93,9 @@ function RunButtons({ overlay, onAction }) {
     React.Fragment,
     null,
     paused
-      ? h("button", { type: "button", className: "run-control", onClick: () => onAction("resume-run") }, "Resume")
-      : h("button", { type: "button", className: "run-control", onClick: () => onAction("pause-run") }, "Pause"),
-    h("button", { type: "button", className: "run-control run-control--danger", onClick: () => onAction("cancel-run") }, "Cancel"),
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", onClick: () => onAction("resume-run") }, "Resume")
+      : h("button", { type: "button", className: "run-control", "data-testid": "run-pause", onClick: () => onAction("pause-run") }, "Pause"),
+    h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel"),
     h("span", { className: "run-status" }, overlay.status),
   );
 }

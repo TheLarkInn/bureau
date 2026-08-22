@@ -5,6 +5,8 @@
 import React from "react";
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";
 
+import { MeasurementGuard } from "../graph-measure.mjs";
+
 const h = React.createElement;
 const NODE_WIDTH = 240;
 const NODE_HEIGHT = 96;
@@ -34,6 +36,7 @@ export function RelationGraph({ relation }) {
       h(Background, { gap: 24, size: 1.5 }),
       h(Controls),
       h(MiniMap, { pannable: true, zoomable: true }),
+      h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
     ),
   );
 }

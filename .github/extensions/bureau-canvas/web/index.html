@@ -20,6 +20,14 @@
       }
     </script>
     <style>
+      /*
+       * editor.html has always declared this; index.html had not, so every
+       * padded grid child here measured wider than its track and the pipeline
+       * side panel hung a few pixels off the right edge. One design system,
+       * one box model.
+       */
+      * { box-sizing: border-box; }
+
       .limit-key {
         color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
@@ -169,6 +177,19 @@
       .finding--validation { background: var(--finding-validation); }
       .finding--advisory { background: var(--finding-advisory); }
 
+      /*
+       * A chip carries a name and clips to an ellipsis; a finding carries a
+       * whole sentence quoted verbatim from `bureau validate`. Clipping one
+       * would hide a message this canvas is not allowed to rewrite, and
+       * refusing to wrap pushed the side panel past the viewport — so findings
+       * wrap, and break inside a long quoted identifier if they must.
+       */
+      .finding {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        min-width: 0;
+      }
+
       .view-shell {
         display: grid;
         gap: var(--space-4);
@@ -176,7 +197,6 @@
         flex: 1 1 auto;
         min-height: 0;
       }
-
       .view-shell--pipeline {
         grid-template-columns: minmax(50rem, 1fr) 19rem;
         min-height: 0;
@@ -871,6 +891,8 @@
       .pipeline-toolbar {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
+        row-gap: var(--space-2);
         gap: var(--space-3);
       }
 
@@ -977,6 +999,12 @@
       .side-panel {
         display: grid;
         align-content: start;
+        /*
+         * A grid column defaults to max-content, so one long validation
+         * message — a path or a backticked identifier that cannot wrap —
+         * stretched this panel past the viewport. Pin the track to the box.
+         */
+        grid-template-columns: minmax(0, 1fr);
         gap: var(--space-4);
         padding: var(--space-4);
         border: 1px solid var(--border-color-default, #d0d7de);
@@ -986,6 +1014,9 @@
 
       .panel-section {
         display: grid;
+        /* Same reason as `.side-panel`: an unbreakable identifier in a
+         * finding must not widen the panel it is reported in. */
+        grid-template-columns: minmax(0, 1fr);
         gap: var(--space-2);
       }
 
@@ -1009,13 +1040,13 @@
       .mode-tab { border: 0; padding: var(--space-1) var(--space-3); background: var(--background-color-default, #ffffff); color: var(--text-color-muted, #656d76); cursor: pointer; text-transform: capitalize; }
       .mode-tab--active { background: var(--color-focus-outline, #0969da); color: #ffffff; }
       .run-picker { max-width: 22rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; background: var(--background-color-default, #ffffff); color: inherit; font: inherit; }
-      .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; gap: var(--space-2); }
+      .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
       .run-control { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 3px 10px; background: var(--background-color-default, #ffffff); color: inherit; cursor: pointer; }
       .run-control--active { border-color: var(--color-focus-outline, #0969da); color: var(--color-focus-outline, #0969da); }
       .run-control--danger { color: var(--outcome-failure); }
       .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
       .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
-      .replay-scrubber { width: 16rem; }
+      .replay-scrubber { flex: 1 1 10rem; min-width: 6rem; max-width: 16rem; }
       .overlay-pending { opacity: 0.35; }
       .overlay-running { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
       .overlay-success { --accent: var(--outcome-success); }

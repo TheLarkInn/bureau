@@ -6,7 +6,7 @@
 // server's `save-pipeline` intent, which owns validation and the revert.
 // Node positions ride along as the layout sidecar (Q10).
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -20,6 +20,7 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 
+import { MeasurementGuard } from "../graph-measure.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -79,6 +80,18 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
   }, [flowApi]);
+  // A step added at a new layer can land outside the visible canvas, which
+  // reads as "nothing happened". Refit when the graph *gains* a node — not on
+  // mount, where React Flow's own `fitView` already ran and a second animated
+  // one would only keep the nodes moving.
+  const stepCount = view.steps.length;
+  const lastCount = useRef(stepCount);
+  useEffect(() => {
+    if (stepCount > lastCount.current) {
+      flowApi?.fitView({ padding: 0.22, duration: 200 });
+    }
+    lastCount.current = stepCount;
+  }, [flowApi, stepCount]);
   const focusStep = (step) => {
     setSelected(step);
     const node = flow.nodes.find((candidate) => candidate.id === step);
@@ -158,6 +171,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
           h(Background, { gap: 24, size: 1.5 }),
           h(Controls),
           h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
+          h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
         ),
       ),
       h(SidePanel, {
@@ -496,7 +510,7 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDis
         },
         STEP_KINDS.map((option) => h("option", { key: option, value: option }, option)),
       ),
-      h("button", { type: "button", className: "btn", onClick: () => onAdd(kind) }, "+ Add step"),
+      h("button", { type: "button", className: "btn", "data-testid": "editor-add-step", onClick: () => onAdd(kind) }, "+ Add step"),
     ),
     h("span", { className: `editor-status${hints.length ? " editor-status--hints" : ""}` }, statusText(dirty, hints, saveResult)),
     h("span", { className: "editor-legend", "aria-label": "Edge legend" },
@@ -504,8 +518,8 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDis
       h("span", { className: "legend-swatch legend-swatch--failure" }, "failure"),
       h("span", { className: "legend-swatch legend-swatch--blocked" }, "blocked"),
       h("span", { className: "legend-swatch legend-swatch--data" }, "data")),
-    dirty ? h("button", { type: "button", className: "btn", onClick: onDiscard }, "Discard changes") : null,
-    h("button", { type: "button", className: "btn btn--primary", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
+    dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", onClick: onDiscard }, "Discard changes") : null,
+    h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
   );
 }
 
@@ -564,10 +578,11 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
     "section",
     { className: "panel-section editor-step" },
     h("div", { className: "editor-step-head" },
-      h("div", {}, h("h3", {}, step.name), h("span", { className: "kind-label" }, step.kind)),
+      h("div", {}, h("h3", {}, step.name), h("span", { className: `kind-label kind-label--${step.kind}` }, step.kind)),
       h("button", { type: "button", className: "btn btn--small", onClick: onClose }, "Close")),
     h("label", {}, "name", h("input", {
       className: `form-control form-control--mono${nameProblem ? " form-control--invalid" : ""}`,
+      "data-testid": "editor-step-name",
       value: name,
       onChange: (event) => setName(event.target.value),
       onBlur: commitName,
@@ -585,6 +600,7 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
       type: "number",
       min: 1,
       className: `form-control form-control--mono${positiveInteger(step.fields.maxAttempts) ? "" : " form-control--invalid"}`,
+      "data-testid": "editor-max-attempts",
       value: step.fields.maxAttempts ?? "",
       onChange: (event) => set("maxAttempts", numberInput(event.target.value)),
     })),
@@ -595,12 +611,13 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
           { className: "editor-danger-zone" },
           h("p", {}, `Delete \`${step.name}\` and every edge connected to it?`),
           h("div", { className: "editor-danger-actions" },
-            h("button", { type: "button", className: "btn btn--danger", onClick: onDelete }, "Delete step"),
+            h("button", { type: "button", className: "btn btn--danger", "data-testid": "editor-delete-confirm", onClick: onDelete }, "Delete step"),
             h("button", { type: "button", className: "btn", onClick: () => setConfirmDelete(false) }, "Keep step")),
         )
       : h("button", {
           type: "button",
           className: "btn btn--danger",
+          "data-testid": "editor-delete-step",
           onClick: () => setConfirmDelete(true),
         }, "Delete step"),
   );

@@ -1,0 +1,7 @@
+{"kind":"run_started","seq":0,"at_ms":1740000200000,"data":{"run_id":"run-finished","assignment":"agent-eligible","pipeline":"agent-eligible-pipeline"}}
+{"kind":"step_started","seq":1,"at_ms":1740000201000,"data":{"run_id":"run-finished","step":"implement"}}
+{"kind":"output","seq":2,"at_ms":1740000202000,"data":{"run_id":"run-finished","step":"implement","stream":"stdout","data":"edited crates/bureau/src/engine.rs"}}
+{"kind":"step_finished","seq":3,"at_ms":1740000204000,"data":{"run_id":"run-finished","step":"implement","outcome":"success"}}
+{"kind":"step_started","seq":4,"at_ms":1740000205000,"data":{"run_id":"run-finished","step":"verify"}}
+{"kind":"step_finished","seq":5,"at_ms":1740000209000,"data":{"run_id":"run-finished","step":"verify","outcome":"success"}}
+{"kind":"run_finished","seq":6,"at_ms":1740000210000,"data":{"run_id":"run-finished","outcome":"done"}}
