@@ -105,10 +105,11 @@ under permuted orders to keep it that way.
 |---|---|
 | `dimensions.mjs` | the axes the canvas varies along, and what each value promises on screen |
 | `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render) or `scoping` (renders, but adds nothing to cross) |
-| `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^8 tuples; per-rule figures count what each rule pruned *first*, in walk order |
+| `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^9 tuples; per-rule figures count what each rule pruned *first*, in walk order |
 | `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
 | `paths.mjs` | how each state is reached, as data |
-| `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection || `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
+| `fixtures.mjs` | four composable layers of offline payload: status, content, plan, selection |
+| `driver.mjs` | the one interpreter for an entry path; the lab and the browser suite both run it |
 | `checks.mjs` | what "the render matched the registry" means — controls, copy, contrast, overlap, clipping |
 
 Two rules keep it honest. A state is reachable only if the driver can get

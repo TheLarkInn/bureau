@@ -82,7 +82,15 @@ export const FIELD_LIFECYCLE = {
       fixture: "multi-repo",
       ops: [{ op: "click", selector: '[aria-label="Move bureau-docs up"]' }],
     },
-    invalid: { fixture: "read-only-primary", copy: ["is read-only, so no branch can land there"] },
+    invalid: {
+      fixture: "read-only-primary",
+      // The same reorder `dirty` performs, against a registry where the repo
+      // being promoted cannot take a branch. Without the op the fixture's own
+      // order would disable Save through `sameOrder` and the withheld-save
+      // assertion would hold with the read-only gate deleted.
+      ops: [{ op: "click", selector: '[aria-label="Move bureau-docs up"]' }],
+      copy: ["is read-only, so no branch can land there"],
+    },
   },
   "repos-add": { rest: { fixture: "multi-repo" } },
   limits: {

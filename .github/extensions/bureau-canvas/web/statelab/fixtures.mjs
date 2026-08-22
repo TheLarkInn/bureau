@@ -164,14 +164,20 @@ function multiRepo(state) {
   return next;
 }
 
-/** The primary repo is registered read-only, so no branch can land there. */
+/**
+ * The primary repo is registered read-only, so no branch can land there.
+ *
+ * The order stays the one `multi-repo` ships, because the refusal has to be
+ * the *result of the edit*: with the assignment already reordered, `Save`
+ * would be disabled by `sameOrder` alone and the assertion would hold even if
+ * the read-only gate were deleted outright.
+ */
 function readOnlyPrimary(state) {
   const next = multiRepo(state);
   // Stated here rather than inherited: `multi-repo` grants `pr` on purpose, so
   // the read-only grant is this fixture's own claim and survives a change there.
   const docs = next.config.view.repos.find((repo) => repo.name === "bureau-docs");
   docs.access = "read";
-  assignment(next).repos = ["bureau-docs", "bureau"];
   return next;
 }
 
