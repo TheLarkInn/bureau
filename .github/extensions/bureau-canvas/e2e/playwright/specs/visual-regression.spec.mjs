@@ -25,12 +25,23 @@ const SCREENS = [
  * fail on every other, which is the opposite of a regression gate — a reviewer
  * learns to expect a red run and stops reading it.
  *
- * So the path is masked. Its box still takes part in layout, and the ellipsis
- * rule (`white-space: nowrap`) keeps that box one line tall whatever the path,
- * so nothing about the header's geometry is being waived here — only the
- * characters, which no reviewer was approving in the first place.
+ * Masking the box is necessary and was not sufficient. `.status` is an
+ * auto-sized grid and `.config-path` is its widest item, so the column — and
+ * therefore the masked rectangle — is as wide as whatever path this machine
+ * happens to have. Two magenta boxes of different widths differ by more pixels
+ * than the text did. So the width is pinned first and then the box is masked:
+ * the rectangle is identical everywhere, and it stays a visible rectangle in
+ * the approved image rather than a blank, so a reviewer browsing the gallery
+ * can see that this region is excluded instead of wondering where it went.
+ *
+ * What that gives up is the path box's own intrinsic width, which is a
+ * property of the host and not of the canvas. Everything the header does
+ * around it — the right edge every line aligns to, the one-line height the
+ * `white-space: nowrap` rule guarantees, and the rest of the screen below —
+ * is still compared exactly.
  */
 const HOST_PATH = ".config-path";
+const PIN_HOST_PATH = `${HOST_PATH} { width: 12rem; }`;
 
 test.describe("@visual approved product screens", () => {
   for (const item of SCREENS) {
@@ -39,6 +50,7 @@ test.describe("@visual approved product screens", () => {
       const result = await enterState(item.state, watched.page, host);
 
       expect(result.failures, `${item.name} must satisfy its structural checks`).toEqual([]);
+      await watched.page.addStyleTag({ content: PIN_HOST_PATH });
       await expect(watched.page).toHaveScreenshot(`${item.name}.png`, {
         animations: "disabled",
         caret: "hide",
@@ -56,3 +68,32 @@ function screen(name, stateId, viewport) {
   }
   return { name, state, viewport };
 }
+
+/**
+ * The claim the pin-and-mask makes is that the approved image does not depend
+ * on this machine's checkout path. That claim is worth exactly as much as a
+ * test of it, so here it is: the same state is rendered with a path far longer
+ * than any real one, and it has to match the *approved* image — not a second
+ * capture of itself, which would pass no matter what.
+ *
+ * This is the check that would have caught the original defect, and it is also
+ * the one that caught the first attempt at fixing it: masking alone left the
+ * rectangle as wide as the path, so a longer path drew a wider box and the
+ * baseline moved anyway.
+ */
+test("@visual an approved screen does not depend on the host's config path", async ({ watched, host }) => {
+  const item = SCREENS[0];
+  await watched.page.setViewportSize(item.viewport);
+  await enterState(item.state, watched.page, host);
+  await watched.page.addStyleTag({ content: PIN_HOST_PATH });
+  await watched.page.locator(HOST_PATH).evaluate((node) => {
+    node.textContent = "/var/lib/some-other-runner/deeply/nested/checkout/bureau/.bureau";
+  });
+
+  await expect(watched.page).toHaveScreenshot(`${item.name}.png`, {
+    animations: "disabled",
+    caret: "hide",
+    fullPage: true,
+    mask: [watched.page.locator(HOST_PATH)],
+  });
+});
