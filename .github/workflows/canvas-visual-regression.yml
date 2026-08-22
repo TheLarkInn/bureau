@@ -1,0 +1,47 @@
+name: Canvas visual regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    name: 10 approved screens
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .github/extensions/bureau-canvas/e2e/playwright
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: .github/extensions/bureau-canvas/e2e/playwright/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Compare approved screens
+        run: npm run test:visual
+      - name: Report success
+        if: success()
+        run: echo "### ✅ 10 approved screens checked. No visual changes." >> "$GITHUB_STEP_SUMMARY"
+      - name: Report differences
+        if: failure()
+        run: |
+          echo "### ❌ Approved Canvas screens changed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Download **canvas-visual-differences** for expected, actual, and highlighted diff images." >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload visual differences
+        if: failure()
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: canvas-visual-differences
+          path: |
+            .github/extensions/bureau-canvas/e2e/playwright/playwright-report/
+            .github/extensions/bureau-canvas/e2e/playwright/test-results/
+          retention-days: 7
