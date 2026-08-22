@@ -9,8 +9,9 @@ process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
 // `BUREAU_CANVAS_EDGE` overrides the lookup. The default is where the Windows
-// installer puts it; the override is how this runs from WSL, where the same
-// install is visible under /mnt/c rather than at a drive letter.
+// installer puts it; the override is for an install that is somewhere else, or
+// for a non-Windows Edge. It is not a way to drive a Windows Edge from another
+// OS — see `crossOsReason`.
 const EDGE_EXE = process.env.BUREAU_CANVAS_EDGE
   ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
@@ -151,6 +152,10 @@ async function skipReason() {
   if (!existsSync(EDGE_EXE)) {
     return `Microsoft Edge not found at ${EDGE_EXE}`;
   }
+  const crossOs = crossOsReason();
+  if (crossOs) {
+    return crossOs;
+  }
   if (typeof WebSocket !== "function") {
     return "Node global WebSocket is unavailable; run with Node 24 or newer";
   }
@@ -163,6 +168,24 @@ async function skipReason() {
     return `network preflight to esm.sh failed (${error.message})`;
   }
   return null;
+}
+
+/**
+ * A Windows Edge cannot be driven from a POSIX host. It reads
+ * `--user-data-dir=/home/...` as a Windows path, so `DevToolsActivePort` is
+ * written somewhere this process cannot see and the browser exits with an
+ * empty stderr — twenty seconds of waiting and nothing to go on. Under WSL's
+ * default NAT networking the CDP port would not be reachable either, since
+ * Edge binds Windows' loopback and not this one.
+ *
+ * Naming the pairing is the whole point: an unrunnable harness should say
+ * which two things cannot be paired, not fail blank.
+ */
+function crossOsReason() {
+  if (!EDGE_EXE.toLowerCase().endsWith(".exe") || !PROFILE_DIR.startsWith("/")) {
+    return null;
+  }
+  return `${EDGE_EXE} is a Windows browser but this is a POSIX host, so its profile would be ${PROFILE_DIR}, a path Windows cannot open; run this harness with the Windows node`;
 }
 
 async function launchEdge() {

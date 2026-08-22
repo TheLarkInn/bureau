@@ -151,9 +151,14 @@ npm ci && npx playwright install --with-deps chromium
 npx playwright test
 ```
 
-`e2e/run.mjs` looks for Edge where the Windows installer puts it;
-`BUREAU_CANVAS_EDGE` overrides that, which is how it runs against a Windows
-install from somewhere that does not see a drive letter.
+`e2e/run.mjs` looks for Edge where the Windows installer puts it, and
+`BUREAU_CANVAS_EDGE` overrides that for an install kept somewhere else. It has
+to run on the same OS as the browser: this harness talks to Edge over CDP on
+loopback and hands it a `--user-data-dir`, and neither survives an OS boundary.
+Pointing it at `/mnt/c/.../msedge.exe` from WSL launches a Windows Edge that
+reads the POSIX profile path as a Windows one and exits without a word, so the
+harness names that pairing and skips rather than failing with an empty error.
+On a WSL checkout, run it with the Windows `node` against the UNC path.
 
 The Playwright suite covers the assignment card's editable controls, which
 the offline tests cannot see: what each field shows at rest, what opens when
