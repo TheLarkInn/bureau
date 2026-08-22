@@ -78,7 +78,7 @@ export const PROBES = [
   }),
   probe({
     id: "probe--create-bar-over-expanded-card",
-    rule: "one-body-variation-at-a-time",
+    rule: "a-disclosure-is-reviewed-against-a-resting-card",
     summary: "the create form open above an expanded card — both are landing regions and both are tall",
     fixture: "validated",
     ops: [
@@ -90,7 +90,7 @@ export const PROBES = [
   }),
   probe({
     id: "probe--relation-open-under-expanded-card",
-    rule: "one-body-variation-at-a-time",
+    rule: "a-disclosure-is-reviewed-against-a-resting-card",
     summary: "the relation graph expanded below an expanded card, so the graph gets a real height",
     fixture: "validated",
     ops: [
@@ -99,6 +99,17 @@ export const PROBES = [
       { op: "wait", selector: S.relationFlow },
     ],
     expect: { shows: [S.relationFlow, S.assignmentDetail], hides: [], copy: [] },
+  }),
+  probe({
+    id: "probe--orphans-under-expanded-card",
+    rule: "one-body-variation-at-a-time",
+    summary: "the orphan strip below an expanded card — the leftovers keep their own heading under a tall card",
+    fixture: "orphans",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "wait", selector: S.assignmentDetail },
+    ],
+    expect: { shows: [S.orphanStrip, S.assignmentDetail], hides: [], copy: ["Unreferenced"] },
   }),
   probe({
     id: "probe--two-disclosures-open",

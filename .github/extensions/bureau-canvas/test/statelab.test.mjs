@@ -248,6 +248,26 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
   ]);
 });
 
+test("the verdict catches one landing region printing over another", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const snapshot = {
+    counts: {},
+    text: "",
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    // One card, one draft bar, drawn on top of it. Same-selector comparison
+    // sees nothing here: there is one box of each kind.
+    boxes: [
+      { selector: ".assignment-card", x: 0, y: 60, width: 600, height: 200 },
+      { selector: ".draft-bar", x: 0, y: 100, width: 600, height: 48 },
+    ],
+  };
+  assert.deepStrictEqual(verdict(state, snapshot), [
+    { kind: "overlap", detail: ".draft-bar overlaps .assignment-card" },
+  ]);
+});
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {

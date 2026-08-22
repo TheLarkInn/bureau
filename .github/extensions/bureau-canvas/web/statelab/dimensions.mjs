@@ -32,6 +32,21 @@ const surface = {
       page: "index",
     },
     {
+      /*
+       * editor.html boots on its own: it fetches its own `/state` and installs
+       * its own fallback, so "the renderer never started" and "the payload
+       * never arrived" are reachable there too, and look nothing like the
+       * index fallback — a `.status` line in an ordinary shell rather than the
+       * dedicated fallback shell.
+       */
+      id: "boot-editor",
+      summary: "editor.html before the editor exists",
+      page: "editor",
+      derive: (combo) => (combo.data === "render-error"
+        ? { shows: [S.loading], copy: ["Editor could not start"], allowErrors: ["index.mjs", "Failed to load resource"] }
+        : {}),
+    },
+    {
       id: "config",
       summary: "the assignment-first landing",
       page: "index",
@@ -77,6 +92,8 @@ const data = {
       // Blocking the module is the state; the failed request it causes is the
       // symptom being reviewed, not an unrelated defect.
       allowErrors: ["app.mjs", "Failed to load resource"],
+      // editor.html installs a different fallback, which `boot-editor` derives.
+      only: ["boot"],
     },
     { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"], only: ["config", "pipeline"] },
     { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], only: ["config", "pipeline"] },
@@ -117,11 +134,14 @@ const draft = {
   ],
 };
 
-/** D4 — which region of the config landing is on screen. */
+/**
+ * D4 — how much config the landing has to show. These are alternatives: one
+ * config is published at a time, so a stack cannot also be empty.
+ */
 const section = {
   id: "section",
-  title: "Config section",
-  why: "the landing is a stack plus three secondary regions, each of which can be alone on screen",
+  title: "Config content",
+  why: "the landing's shape follows the config it was given, from nothing configured to unreferenced leftovers",
   values: [
     { id: "stack", summary: "the assignment stack at rest", shows: [S.assignmentStack, S.assignmentCard] },
     {
@@ -139,18 +159,44 @@ const section = {
       shows: [S.assignmentStack],
     },
     {
-      id: "create",
-      summary: "the create form open",
-      enter: [{ op: "click", selector: S.createOpen }],
-      shows: [S.createBar, S.createKind, S.createName, S.createSubmit, S.createCancel],
-      copy: ["New reusable config"],
-    },
-    {
       id: "orphans",
       summary: "unreferenced config surfaced without graph noise",
       fixture: "orphans",
       shows: [S.orphanStrip],
       copy: ["Unreferenced"],
+    },
+  ],
+};
+
+/**
+ * D5 — which secondary landing region is disclosed.
+ *
+ * `ConfigView` renders the create bar, the stack, the orphan strip and the
+ * relation disclosure as siblings that are always all present, so a disclosure
+ * is open *over* whatever content the config happens to have — including an
+ * empty one, which is exactly how the first assignment gets made. Folding these
+ * into the content axis would have made "nothing configured yet, create form
+ * open" unrepresentable rather than excluded.
+ */
+const disclosure = {
+  id: "disclosure",
+  title: "Landing disclosure",
+  why: "the create bar and the relation graph are siblings of the stack, not alternatives to it",
+  values: [
+    {
+      id: "none",
+      summary: "every secondary region closed",
+      // The create form is absent from the DOM until it is opened. The relation
+      // graph is not: it lives inside a closed `<details>`, which keeps its
+      // subtree mounted, so "closed" is not something a selector count can say.
+      hides: [S.createBar],
+    },
+    {
+      id: "create",
+      summary: "the create form open",
+      enter: [{ op: "click", selector: S.createOpen }],
+      shows: [S.createBar, S.createKind, S.createName, S.createSubmit, S.createCancel],
+      copy: ["New reusable config"],
     },
     {
       id: "relation-open",
@@ -161,7 +207,7 @@ const section = {
   ],
 };
 
-/** D5 — whether the assignment card is open. */
+/** D6 — whether the assignment card is open. */
 const card = {
   id: "card",
   title: "Assignment card",
@@ -179,7 +225,7 @@ const card = {
 };
 
 /**
- * D6 — which field disclosure is open inside an expanded card. The shared
+ * D7 — which field disclosure is open inside an expanded card. The shared
  * control is the point: every field rests as a button and opens in place.
  */
 const field = {
@@ -243,7 +289,7 @@ const field = {
   ],
 };
 
-/** D7 — the lifecycle of whichever field editor is open. */
+/** D8 — the lifecycle of whichever field editor is open. */
 const fieldState = {
   id: "fieldState",
   title: "Field lifecycle",
@@ -255,7 +301,7 @@ const fieldState = {
   ],
 };
 
-/** D8 — the pipeline viewer's three graph modes. */
+/** D9 — the pipeline viewer's three graph modes. */
 const mode = {
   id: "mode",
   title: "Graph mode",
@@ -277,7 +323,7 @@ const mode = {
   ],
 };
 
-/** D9 — which run the overlay is showing, and how far through it is. */
+/** D10 — which run the overlay is showing, and how far through it is. */
 const run = {
   id: "run",
   title: "Run selection",
@@ -290,7 +336,7 @@ const run = {
   ],
 };
 
-/** D10 — the editor's two tabs. */
+/** D11 — the editor's two tabs. */
 const tab = {
   id: "tab",
   title: "Editor tab",
@@ -306,7 +352,7 @@ const tab = {
   ],
 };
 
-/** D11 — which step kind the editor has selected. */
+/** D12 — which step kind the editor has selected. */
 const pick = {
   id: "pick",
   title: "Step selection",
@@ -320,7 +366,7 @@ const pick = {
   ],
 };
 
-/** D12 — what the editor has done to the draft, and what save did about it. */
+/** D13 — what the editor has done to the draft, and what save did about it. */
 const edit = {
   id: "edit",
   title: "Editor mutation",
@@ -347,12 +393,12 @@ const edit = {
   ],
 };
 
-export const DIMENSIONS = [surface, data, draft, section, card, field, fieldState, mode, run, tab, pick, edit];
+export const DIMENSIONS = [surface, data, draft, section, disclosure, card, field, fieldState, mode, run, tab, pick, edit];
 
 export const DIMENSION_BY_ID = Object.fromEntries(DIMENSIONS.map((item) => [item.id, item]));
 
 /** Every dimension except `surface` and `data` can be absent; `n/a` says so. */
-export const OPTIONAL = ["draft", "section", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+export const OPTIONAL = ["draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 for (const id of OPTIONAL) {
   DIMENSION_BY_ID[id].values = [NA, ...DIMENSION_BY_ID[id].values];

@@ -8,7 +8,11 @@ import { fileURLToPath } from "node:url";
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
-const EDGE_EXE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+// `BUREAU_CANVAS_EDGE` overrides the lookup. The default is where the Windows
+// installer puts it; the override is how this runs from WSL, where the same
+// install is visible under /mnt/c rather than at a drive letter.
+const EDGE_EXE = process.env.BUREAU_CANVAS_EDGE
+  ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
 const SCREENSHOT_DIR = join(E2E_DIR, "screenshots");
 const PROFILE_DIR = join(E2E_DIR, ".edge-profiles");

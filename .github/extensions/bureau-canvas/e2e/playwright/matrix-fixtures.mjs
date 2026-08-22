@@ -141,6 +141,10 @@ async function intercept(page, kind) {
     await page.route(/app\.mjs$/u, (route) => route.abort("failed"));
     return;
   }
+  if (kind === "block-editor-renderer") {
+    await page.route(/editor\/index\.mjs$/u, (route) => route.abort("failed"));
+    return;
+  }
   await page.route(/\/(state|events)$/u, () => {});
 }
 

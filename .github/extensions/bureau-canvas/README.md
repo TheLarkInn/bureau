@@ -71,6 +71,7 @@ testable without a browser:
 | `lib/edit.mjs` | step-graph edits on a pipeline view, plus the editor's inline hints |
 | `lib/pipeline.mjs` | the `save-pipeline` round-trip (write → validate → revert) and the `layout.json` sidecar |
 | `web/` | draws what it is given; `web/editor/` is the pipeline editor and the read-only relation graph |
+| `web/graph-measure.mjs` | the one measurement repair every React Flow surface renders, so a graph cannot stay blank |
 | `web/statelab/` | the UI state registry and the state lab that renders it |
 
 ## The state lab
@@ -127,6 +128,13 @@ it shut.
   positions a user dragged to (`{pipelines: {<name>: {steps: {<step>: {x, y}}}}}`),
   keyed by name so it means nothing to the loader. Steps without a saved
   position fall back to the derived layout.
+- **A graph may not come up blank.** React Flow measures a node once, from a
+  ResizeObserver delivery, and drops the measurement if the viewport element is
+  not queryable at that moment; the node's box never changes, so the observer
+  never fires again and the node stays hidden for good. Every `ReactFlow` here
+  renders `MeasurementGuard` as a child, which re-drives measurement from inside
+  the store. `specs/graph-measurement.spec.mjs` withholds node measurements from
+  the observer entirely and requires all three surfaces to draw anyway.
 - **The pipeline editor never leaves an unloadable config.** `save-pipeline`
   renders the edited step graph, writes the file, and re-runs
   `bureau validate --json`; findings that name the edited pipeline revert the
@@ -142,6 +150,10 @@ cd .github/extensions/bureau-canvas/e2e/playwright             # browser, in scr
 npm ci && npx playwright install --with-deps chromium
 npx playwright test
 ```
+
+`e2e/run.mjs` looks for Edge where the Windows installer puts it;
+`BUREAU_CANVAS_EDGE` overrides that, which is how it runs against a Windows
+install from somewhere that does not see a drive letter.
 
 The Playwright suite covers the assignment card's editable controls, which
 the offline tests cannot see: what each field shows at rest, what opens when

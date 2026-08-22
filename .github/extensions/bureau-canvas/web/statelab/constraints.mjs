@@ -23,14 +23,16 @@
 
 import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
 const BOOT_DATA = ["loading", "render-error"];
+const BOOT_SURFACES = ["boot", "boot-editor"];
 const INDEX_SURFACES = ["config", "pipeline"];
 
 /** Dimensions that must read `n/a` when the surface has no such region. */
-const REGIONS = ["draft", "section", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const REGIONS = ["draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 /** The body values that count as "at rest" for the scoping rules. */
 const BODY_BASELINE = {
   section: ["n/a", "stack"],
+  disclosure: ["n/a", "none"],
   card: ["n/a", "collapsed"],
   field: ["n/a"],
   fieldState: ["n/a"],
@@ -60,8 +62,8 @@ export const CONSTRAINTS = [
     kind: "structural",
     reads: ["surface", "data"],
     title: "Boot is the only surface without data",
-    why: "`loading` and `render-error` are what index.html shows *instead of* a surface; a mounted surface always has a payload.",
-    holds: (combo) => (combo.surface === "boot") === BOOT_DATA.includes(combo.data),
+    why: "`loading` and `render-error` are what a page shows *instead of* a surface; a mounted surface always has a payload. Both pages boot, so both have a boot surface.",
+    holds: (combo) => BOOT_SURFACES.includes(combo.surface) === BOOT_DATA.includes(combo.data),
   },
   {
     id: "boot-has-no-regions",
@@ -69,7 +71,7 @@ export const CONSTRAINTS = [
     reads: ["surface", ...REGIONS],
     title: "Boot renders no regions",
     why: "Before the renderer mounts there is no draft bar, no card and no tab to be in a state.",
-    holds: (combo) => combo.surface !== "boot" || na(combo, REGIONS),
+    holds: (combo) => !BOOT_SURFACES.includes(combo.surface) || na(combo, REGIONS),
   },
   {
     id: "draft-bar-is-index-only",
@@ -86,6 +88,14 @@ export const CONSTRAINTS = [
     title: "Sections exist only on the config surface",
     why: "The assignment stack, the create bar, the orphan strip and the relation disclosure are all children of `ConfigView`.",
     holds: (combo) => (combo.section !== "n/a") === (combo.surface === "config"),
+  },
+  {
+    id: "disclosure-is-a-landing-region",
+    kind: "structural",
+    reads: ["surface", "disclosure"],
+    title: "Landing disclosures exist only on the config surface",
+    why: "`CreateBar` and `RelationSection` are siblings of the stack inside `ConfigView`; no other surface mounts them.",
+    holds: (combo) => (combo.disclosure !== "n/a") === (combo.surface === "config"),
   },
   {
     id: "an-empty-landing-has-no-card",
@@ -195,9 +205,17 @@ export const CONSTRAINTS = [
     id: "one-body-variation-at-a-time",
     kind: "scoping",
     reads: ["section", "card"],
-    title: "Secondary landing regions are reviewed alone",
-    why: "The create bar, the orphan strip and the relation disclosure are siblings of the stack. Reviewing each against a resting stack keeps one region per screenshot; the deliberate crossings live in `probes.mjs`.",
+    title: "The orphan strip is reviewed against a resting stack",
+    why: "`OrphanStrip` is a sibling of the stack with its own local state, so crossing unreferenced config with an open card multiplies screenshots without adding information. Its layout interaction with a tall card is a crossing probe instead.",
     holds: (combo) => ["n/a", "stack", "empty", "two-cards"].includes(combo.section) || combo.card === "collapsed",
+  },
+  {
+    id: "a-disclosure-is-reviewed-against-a-resting-card",
+    kind: "scoping",
+    reads: ["disclosure", "card"],
+    title: "A landing disclosure is reviewed against a resting card",
+    why: "`CreateBar` and `RelationSection` keep their own local open state and share none with a card, so crossing every disclosure with every card state repeats one screenshot. Both crossings are probed, because the three regions are stacked in one column and layout is not state.",
+    holds: (combo) => ["n/a", "none"].includes(combo.disclosure) || ["n/a", "collapsed"].includes(combo.card),
   },
 ];
 

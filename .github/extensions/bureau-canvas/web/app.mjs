@@ -19,6 +19,7 @@ import { useLiveOverlay } from "./live/live.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
+import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { nextExpandedAssignment } from "./assignment-state.js";
 
@@ -1299,7 +1300,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           elementsSelectable: true,
           proOptions: { hideAttribution: true },
           onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
-        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
+        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
       ),
     ),
     h(SidePanel, { state, pipeline, name }),

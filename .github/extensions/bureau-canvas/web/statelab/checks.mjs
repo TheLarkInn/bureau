@@ -77,6 +77,7 @@ export const MEASURED = [
   ".draft-bar",
   ".app-header",
   ".create-bar",
+  ".general-findings",
   ".orphan-strip",
   ".detail-row",
   ".limit-row",
@@ -88,6 +89,27 @@ export const MEASURED = [
 
 /** Regions that stack vertically and must never sit on top of one another. */
 const STACKED = [".assignment-card", ".detail-row", ".limit-row", ".repo-row"];
+
+/**
+ * Regions that are siblings in the landing's single column. None of these
+ * nests inside another — the draft bar, the findings strip and the create form
+ * are drawn above the stack, and the orphan strip below it — so any
+ * intersection between a pair is one region printing over another.
+ *
+ * This is what the scoping probes are for. Each `scoping` rule claims two axes
+ * share no React state, which is true and says nothing about layout: the
+ * crossings still land in one column. Comparing only same-selector pairs would
+ * have let a draft bar cover an assignment card without a word.
+ */
+const SIBLINGS = [
+  [".draft-bar", ".assignment-card"],
+  [".general-findings", ".assignment-card"],
+  [".create-bar", ".assignment-card"],
+  [".orphan-strip", ".assignment-card"],
+  [".draft-bar", ".general-findings"],
+  [".draft-bar", ".create-bar"],
+  [".general-findings", ".create-bar"],
+];
 
 const OVERLAP_TOLERANCE = 1;
 
@@ -164,11 +186,16 @@ function normalise(value) {
 
 /**
  * Two boxes drawn by the same kind of region must not overlap. Nesting is
- * fine — a detail row lives inside a card — so only same-selector pairs are
+ * fine — a detail row lives inside a card — so same-selector pairs are
  * compared, which is exactly the "cards overprinting each other" defect the
- * browser suite has caught before.
+ * browser suite has caught before, plus the sibling pairs above, which is the
+ * defect a crossing probe is rendered to find.
  */
 function overlaps(snapshot) {
+  return [...sameKind(snapshot), ...siblingKinds(snapshot)];
+}
+
+function sameKind(snapshot) {
   const found = [];
   for (const selector of STACKED) {
     const boxes = snapshot.boxes.filter((box) => box.selector === selector);
@@ -176,6 +203,20 @@ function overlaps(snapshot) {
       for (let right = left + 1; right < boxes.length; right += 1) {
         if (intersects(boxes[left], boxes[right])) {
           found.push({ kind: "overlap", detail: `${selector} #${left} overlaps #${right}` });
+        }
+      }
+    }
+  }
+  return found;
+}
+
+function siblingKinds(snapshot) {
+  const found = [];
+  for (const [one, other] of SIBLINGS) {
+    for (const left of snapshot.boxes.filter((box) => box.selector === one)) {
+      for (const right of snapshot.boxes.filter((box) => box.selector === other)) {
+        if (intersects(left, right)) {
+          found.push({ kind: "overlap", detail: `${one} overlaps ${other}` });
         }
       }
     }

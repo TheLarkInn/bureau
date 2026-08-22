@@ -13,7 +13,7 @@ import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, selectStep } from "./p
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
-const ORDER = ["surface", "data", "draft", "section", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
+const ORDER = ["surface", "data", "draft", "section", "disclosure", "card", "field", "fieldState", "mode", "run", "tab", "pick", "edit"];
 
 /** A stable, readable id: only the axes that carry information appear. */
 function identify(combo) {
@@ -69,21 +69,27 @@ function expectations(combo) {
 }
 
 /**
- * The two pre-surface states are the only ones a click cannot reach: one needs
- * the renderer module blocked, the other needs `/state` held open. Both are
- * request interception, which the browser suite does with `page.route` and the
- * lab cannot do from inside an iframe — so these states carry `intercept` and
- * the lab shows the suite's captured render with that reason attached.
+ * The pre-surface states are the only ones a click cannot reach: one needs the
+ * renderer module blocked, the other needs `/state` held open. Both are request
+ * interception, which the browser suite does with `page.route` and the lab
+ * cannot do from inside an iframe — so these states carry `intercept` and the
+ * lab shows the suite's captured render with that reason attached.
+ *
+ * Each page boots itself, so each has both: index.html swaps in its dedicated
+ * fallback shell, editor.html replaces its root with a plain status line.
  */
 function bootOps(combo) {
-  return combo.data === "render-error"
-    ? [{ op: "page", value: "index", intercept: "block-renderer" }, { op: "wait", selector: S.fallback }]
-    : [{ op: "page", value: "index", intercept: "stall-state" }, { op: "wait", selector: S.loading }];
+  const page = pageFor(combo);
+  if (combo.data !== "render-error") {
+    return [{ op: "page", value: page, intercept: "stall-state" }, { op: "wait", selector: S.loading }];
+  }
+  const intercept = page === "editor" ? "block-editor-renderer" : "block-renderer";
+  return [{ op: "page", value: page, intercept }, { op: "wait", selector: page === "editor" ? S.loading : S.fallback }];
 }
 
 function configOps(combo) {
   const ops = [];
-  for (const key of ["section", "card", "field"]) {
+  for (const key of ["section", "disclosure", "card", "field"]) {
     ops.push(...(valueOf(key, combo[key])?.enter ?? []));
   }
   ops.push(...(FIELD_LIFECYCLE[combo.field]?.[combo.fieldState]?.ops ?? []));
@@ -107,7 +113,7 @@ function editorOps(combo) {
 
 /** The full entry path: load a page, publish a fixture, then act like a user. */
 function entryPath(combo) {
-  if (combo.surface === "boot") {
+  if (combo.surface === "boot" || combo.surface === "boot-editor") {
     return bootOps(combo);
   }
   const ops = [{ op: "page", value: pageFor(combo) }, { op: "fixture", value: fixtureFor(combo) }];

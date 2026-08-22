@@ -20,6 +20,7 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 
+import { MeasurementGuard } from "../graph-measure.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -170,6 +171,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
           h(Background, { gap: 24, size: 1.5 }),
           h(Controls),
           h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
+          h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
         ),
       ),
       h(SidePanel, {
