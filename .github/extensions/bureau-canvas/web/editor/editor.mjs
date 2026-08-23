@@ -944,6 +944,16 @@ function serializableView(view) {
  * it was and the toolbar fell back to "unsaved edits" — the same words it showed
  * before the click. A write that failed and a write never dispatched read
  * identically, which is the one thing a draft surface may not do.
+ *
+ * What it says is this surface's own sentence rather than the rejection's
+ * message. `String(error.message)` put "Failed to fetch" in the panel: the
+ * running browser's private wording for a dead socket, which Firefox words
+ * differently, which names no pipeline, which promises nothing about the draft
+ * it just failed to write, and which no state could assert for that reason.
+ * Every sibling save on the config surface already answers a dead transport
+ * with a product sentence, because `postIntent` swallows the rejection and each
+ * caller supplies its own words. This was the one write that reached for the
+ * transport's words instead.
  */
 function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions }) {
   return fetch("./intent", {
@@ -961,8 +971,8 @@ function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, po
       }
       return result;
     })
-    .catch((error) => {
-      setSaveResult({ ok: false, findings: [], error: String(error?.message ?? error) });
+    .catch(() => {
+      setSaveResult({ ok: false, findings: [], error: "could not save this pipeline — nothing was written" });
       return null;
     });
 }

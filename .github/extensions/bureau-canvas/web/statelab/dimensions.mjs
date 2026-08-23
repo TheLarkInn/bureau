@@ -458,7 +458,7 @@ const field = {
       suppress: ["data"],
     },
     /*
-     * The refusal, kept as a value so it is excluded by a named rule rather
+     * The refusal, kept as a value so it is excluded by a named rule rathe
      * than missing — `delete-is-offered-only-where-nothing-refers` says why.
      * It is a real screen of `DeleteControl`, and one no config the canvas can
      * reach draws: the two places the control mounts are an assignment card
@@ -492,7 +492,7 @@ const fieldState = {
     { id: "dirty", summary: "changed and valid — save is offered", derive: (combo) => save(combo, offered) },
     { id: "invalid", summary: "changed into something the field refuses", derive: (combo) => save(combo, withheld) },
     /*
-     * The two ends of a save, reached by routing `./intent` in the browser
+     * The two ends of a save, reached by routing `./intent` in the browse
      * rather than by letting the click reach the shared host — see
      * `SAVE_INTERCEPTS` in `paths.mjs`. They were excluded values until that
      * existed, on the grounds that the harness could not press the button; but
@@ -598,7 +598,7 @@ const mode = {
       // was pinned in one direction only, so the way *back* from Live and
       // Replay — both of which return here — asserted that the design graph had
       // arrived and nothing about the run controls having gone. A `waitGone` is
-      // the only thing that noticed, and a `waitGone` on a selector that never
+      // the only thing that noticed, and a `waitGone` on a selector that neve
       // matches passes instantly.
       hides: [S.runControls, S.replayControls],
     },
@@ -622,7 +622,7 @@ const mode = {
  *
  * Each value asserts something only the *selected* run's log can produce: the
  * step decoration live folds out of it, and the span replay's timeline takes
- * from it. Naming the run alone asserted nothing — three runs rendered under
+ * from it. Naming the run alone asserted nothing — three runs rendered unde
  * three ids with one set of expectations between them, so an overlay that
  * ignored the selection entirely would have passed.
  */
@@ -659,7 +659,7 @@ const run = {
      * says why.
      *
      * The picker's own label still reads `live` here, and that is the state
-     * rather than a defect: the listing is polled every four seconds, so for
+     * rather than a defect: the listing is polled every four seconds, so fo
      * that long it names the run as it was when it was picked while the status
      * beside it reports where the run actually got to. What happens after the
      * poll is that the run leaves the live listing — and `runsOffered` keeps
@@ -681,12 +681,19 @@ const run = {
      * status is unchanged by a refusal, so the transport stays offered — the
      * reader has to be able to try again, and a refusal that withdrew the
      * controls would strand them.
+     *
+     * The copy asserted here is the verb, not merely that something failed.
+     * This state used to pin "intent failed", which is the endpoint's name
+     * rather than the reader's, and which every run control shared — so a
+     * refused pause and a refused cancel were indistinguishable on screen and
+     * the matrix said that was correct. Naming the verb is what makes this
+     * assertion able to fail if the three ever collapse back into one message.
      */
     {
       id: "refused",
-      summary: "a cancel the host refused, with the transport still offered",
+      summary: "a cancel the host refused, named as a cancel, with the transport still offered",
       shows: [S.runControlError, S.overlayRunning, S.runPause, S.runCancel, S.runStatus],
-      copy: ["intent failed"],
+      copy: ["could not cancel this run"],
     },
   ],
 };
@@ -823,7 +830,7 @@ const pick = {
  * both offer Discard, so without it two states shared one set of assertions.
  *
  * Save is withheld for a draft the editor cannot even render — a non-numeric
- * attempt count — and offered otherwise. It is deliberately *not* withheld for
+ * attempt count — and offered otherwise. It is deliberately *not* withheld fo
  * an inline hint: `lib/edit.mjs` calls those "hints, not verdicts", and
  * `bureau validate` is the authority. `save-pipeline` writes, re-validates and
  * reverts on a finding, so an unwired new step is saveable and then refused by
@@ -834,12 +841,42 @@ const edit = {
   title: "Editor mutation",
   why: "the editor never leaves an unloadable config: dirty, invalid and reverted are distinct and truthful",
   values: [
-    { id: "rest", summary: "no edits", copy: ["saved"], shows: [withheld(S.editorSave)], hides: [S.editorDiscard] },
+    /*
+     * The clean editor, and the one state whose promise a substring could not
+     * keep. `copy: ["saved"]` was satisfied by "unsaved edits", because the
+     * body text contains it — so the state whose entire subject is that nothing
+     * is pending passed on the screen saying something is. Scoped to the status
+     * element and compared exactly, the two words are different words.
+     */
+    { id: "rest", summary: "no edits", copy: [{ selector: S.editorStatus, text: "saved" }], shows: [withheld(S.editorSave)], hides: [S.editorDiscard] },
     // A new step is unreachable until it is wired, so the toolbar truthfully
     // reports an issue rather than a bare "unsaved edits". Dirtiness is
     // asserted through the Discard button, which only exists while dirty.
     { id: "created", summary: "a step added but not saved", shows: [S.editorDiscard, S.editorIssues, offered(S.editorSave)] },
-    { id: "renamed", summary: "a step renamed, cascading to its referrers", shows: [S.editorDiscard, offered(S.editorSave)] },
+    /*
+     * A rename, which is two different screens depending on what was renamed.
+     *
+     * The fixture draws a deterministic and an agent step, so those are renamed
+     * in place: the cascade rewrites every referrer, the graph stays wired, and
+     * the status reads a clean "unsaved edits". A decision or concurrent step
+     * does not exist until it is added, so renaming one is renaming a step
+     * nothing points at yet — the toolbar reports an issue, and the card wears
+     * the badge.
+     *
+     * Both were asserted as "Discard is there and Save is offered", which is
+     * true of both and distinguishes neither, so a rename that silently stopped
+     * cascading — leaving the sample's referrers pointing at a name no step has
+     * — would have passed here. This is the same shape `delete-confirm` was
+     * given one round earlier, for the same reason: one path, two screens.
+     */
+    {
+      id: "renamed",
+      summary: "a step renamed — cascading to its referrers when the fixture drew it, still unwired when it had to be added first",
+      shows: [S.editorDiscard, offered(S.editorSave)],
+      derive: (combo) => (SAMPLE_STEPS[combo.pick]
+        ? { copy: [{ selector: S.editorStatus, text: "unsaved edits" }], hides: [S.editorIssues] }
+        : { shows: [S.editorIssues] }),
+    },
     {
       id: "delete-confirm",
       summary: "the delete confirmation open",
@@ -854,7 +891,7 @@ const edit = {
       derive: (combo) => (SAMPLE_STEPS[combo.pick]
         ? { shows: [withheld(S.editorSave)], hides: [S.editorDiscard] }
         : { shows: [S.editorDiscard, offered(S.editorSave)] }),
-      // The confirm button itself, not only the zone that holds it: a danger
+      // The confirm button itself, not only the zone that holds it: a dange
       // zone that asked and offered no way to answer would have passed.
       shows: [S.editorDangerZone, S.editorDeleteConfirm],
     },
@@ -868,7 +905,11 @@ const edit = {
       // Reaching a decision or concurrent selection means adding one first, so
       // "moved" there would really be "created and then moved"; a rule keeps
       // those kinds out rather than letting one state stand for two.
-      copy: ["unsaved edits"],
+      //
+      // Scoped to the status for the same reason its opposite is: this is a
+      // claim about what that element says, and only an exact comparison can
+      // distinguish it from an issue count appearing anywhere on the page.
+      copy: [{ selector: S.editorStatus, text: "unsaved edits" }],
       hides: [S.editorIssues],
     },
     {

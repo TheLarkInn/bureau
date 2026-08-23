@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, verdict } from "./checks.mjs";
 import { CONSTRAINTS, EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
@@ -304,8 +304,9 @@ function expectationList(state, result) {
     list.append(row(selector, "absent", (result?.snapshot.counts[selector] ?? 0) === 0));
   }
   for (const phrase of state.expect.copy) {
-    const ok = !(result?.failures ?? []).some((item) => item.kind === "missing-copy" && item.detail === phrase);
-    list.append(row(`“${phrase}”`, "copy", ok));
+    const label = copyLabel(phrase);
+    const ok = !(result?.failures ?? []).some((item) => item.kind === "missing-copy" && item.detail === label);
+    list.append(row(typeof phrase === "object" && phrase !== null ? label : `“${label}”`, "copy", ok));
   }
   box.append(list);
   // The SSE barrier is best-effort by design; when it does not arm, the host's

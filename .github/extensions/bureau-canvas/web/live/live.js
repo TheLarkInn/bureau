@@ -9,6 +9,26 @@ import { applyEvent, emptyOverlay, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
+/*
+ * What a refused run control says, and why it names the verb.
+ *
+ * It used to say "intent failed" — the name of the endpoint the browser posts
+ * to, which is this canvas's own plumbing and not a thing the reader has any
+ * word for. It also said the same sentence whichever button was pressed, so a
+ * pause the host refused and a cancel the host refused were one message. The
+ * draft bar already settled both points for writes: name the verb, in the
+ * reader's words, because "could not discard" and "could not save" leave the
+ * work in opposite places. A run control is the same claim about a run.
+ *
+ * These are fallbacks. A host that explains itself is quoted instead; this is
+ * what is said when the answer carries no reason, or never arrives at all.
+ */
+const REFUSED = {
+  "pause-run": "could not pause this run",
+  "resume-run": "could not resume this run",
+  "cancel-run": "could not cancel this run",
+};
+
 /**
  * Returns `{ runId, setRunId, decoration, controls }` — the decoration feeds
  * `toFlow(pipeline, state, selectedStep, decoration)`; `controls` renders
@@ -66,14 +86,15 @@ export function useLiveOverlay() {
   } : null), [runId, overlay, collapsed]);
 
   const send = (kind) => {
+    const refused = REFUSED[kind] ?? "could not act on this run";
     fetch("./intent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, run_id: runId }),
     })
       .then((response) => response.json())
-      .then((result) => setControlResult(result))
-      .catch(() => setControlResult({ ok: false, error: "intent failed" }));
+      .then((result) => setControlResult(result?.ok ? result : { ...result, error: result?.error ?? result?.output ?? refused }))
+      .catch(() => setControlResult({ ok: false, error: refused }));
   };
 
   const controls = h(
@@ -81,7 +102,7 @@ export function useLiveOverlay() {
     { className: "run-controls" },
     h(RunPicker, { liveOnly: true, value: runId, onChange: setRunId }),
     runId ? h(RunButtons, { overlay, onAction: send }) : null,
-    controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error ?? controlResult.output ?? "intent failed") : null,
+    controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
   );
 
   return { runId, setRunId, decoration, controls };

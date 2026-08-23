@@ -461,8 +461,8 @@ export const PROBES = [
   }),
   sample({
     id: "probe--editor-save-transport-lost",
-    covers: "the pipeline editor's save when the request is never answered — the panel already draws the error, so it has to be given one",
-    summary: "the host went away mid-save: the editor reports it and keeps the draft rather than falling back to unsaved edits",
+    covers: "the pipeline editor's save when the request is never answered — the panel already draws the error, so it has to be given one, in this surface's words rather than the browser's",
+    summary: "the host went away mid-save: the editor says so in its own sentence, and keeps the draft rather than falling back to unsaved edits",
     page: "editor",
     fixture: "pipeline",
     intercept: "abort-intent",
@@ -477,7 +477,11 @@ export const PROBES = [
     expect: {
       shows: [S.editorSaveReverted, S.editorStatusError, offered(S.editorSave), S.editorDiscard],
       hides: [],
-      copy: ["Save reverted"],
+      // The reason is asserted, not just the heading. A panel that echoed the
+      // rejection's own `message` passed the heading check while printing
+      // "Failed to fetch" — wording this harness supplies, that varies by
+      // browser, and that says nothing about the pipeline or the draft.
+      copy: ["Save reverted", "could not save this pipeline — nothing was written"],
       allowErrors: ["Failed to fetch", "net::ERR_FAILED", "/intent"],
     },
   }),

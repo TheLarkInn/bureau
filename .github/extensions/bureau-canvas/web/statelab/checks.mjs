@@ -19,8 +19,11 @@ export function collect(doc, request) {
   const visible = (node) =>
     node.getClientRects().length > 0 && view.getComputedStyle(node).visibility !== "hidden";
   const counts = {};
+  const texts = {};
   for (const selector of request.selectors) {
-    counts[selector] = [...doc.querySelectorAll(selector)].filter(visible).length;
+    const found = [...doc.querySelectorAll(selector)].filter(visible);
+    counts[selector] = found.length;
+    texts[selector] = found.map((node) => node.innerText ?? node.textContent ?? "").join(" ");
   }
   const root = doc.documentElement;
   const boxes = [];
@@ -161,6 +164,7 @@ export function collect(doc, request) {
   }
   return {
     counts,
+    texts,
     boxes,
     contrast,
     labels,
@@ -354,11 +358,39 @@ function forbidden(state, snapshot) {
     .map((selector) => ({ kind: "unexpected-control", detail: selector }));
 }
 
+/**
+ * Copy, in the two shapes a promise about words can take.
+ *
+ * A plain string is a substring of the whole body, which is right for a
+ * sentence that may be drawn anywhere — a refusal, an advisory, a summary.
+ *
+ * It is wrong for a *status*, and dangerously so: a substring search cannot
+ * distinguish a word from its own negation. `edit: rest` promised the editor
+ * says "saved", and "unsaved edits" contains "saved", so the one state whose
+ * whole subject is that nothing is pending was satisfied by the screen saying
+ * something is. The assertion could not fail in the direction it existed to
+ * catch.
+ *
+ * So a copy expectation may instead name the element that carries it, and then
+ * the element's own text must be *exactly* the phrase. "unsaved edits" is not
+ * "saved", and the state fails by name.
+ */
 function absentCopy(state, snapshot) {
-  const text = normalise(snapshot.text);
   return (state.expect.copy ?? [])
-    .filter((phrase) => !text.includes(normalise(phrase)))
-    .map((phrase) => ({ kind: "missing-copy", detail: phrase }));
+    .filter((phrase) => !satisfied(phrase, snapshot))
+    .map((phrase) => ({ kind: "missing-copy", detail: copyLabel(phrase) }));
+}
+
+function satisfied(phrase, snapshot) {
+  if (typeof phrase !== "object" || phrase === null) {
+    return normalise(snapshot.text).includes(normalise(phrase));
+  }
+  return normalise(snapshot.texts?.[phrase.selector]) === normalise(phrase.text);
+}
+
+/** One stable string per expectation, so a failure names what was promised. */
+export function copyLabel(phrase) {
+  return typeof phrase === "object" && phrase !== null ? `${phrase.selector} reads exactly “${phrase.text}”` : phrase;
 }
 
 /**
@@ -493,9 +525,18 @@ function clipping(snapshot, options) {
 
 /**
  * Every selector a state mentions, so one collect pass covers the verdict.
+ *
+ * Scoped copy is included: an expectation that names an element has to have
+ * that element's own text gathered, and `collect` gathers text for exactly the
+ * selectors it is given.
  */
 export function selectorsFor(state) {
-  return [...new Set([...(state.expect.shows ?? []), ...(state.expect.hides ?? [])])];
+  return [...new Set([...(state.expect.shows ?? []), ...(state.expect.hides ?? []), ...scopedCopy(state).map((item) => item.selector)])];
+}
+
+/** The copy expectations that name an element rather than the whole page. */
+function scopedCopy(state) {
+  return (state.expect?.copy ?? []).filter((phrase) => typeof phrase === "object" && phrase !== null);
 }
 
 /**

@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -323,7 +323,7 @@ test("every fixture ships the relation projection its own config implies", async
 });
 
 /**
- * `relationView` derives the graph from the config's own lists: one node per
+ * `relationView` derives the graph from the config's own lists: one node pe
  * assignment, pipeline, role and repo, one edge per pipeline or repo an
  * assignment names, and one per role a pipeline's steps name — keeping
  * only edges whose endpoints are both nodes, which is why an assignment
@@ -594,8 +594,8 @@ test("every edge's delta is the child's path minus the parent's, and says so", (
  * wrong screen. A return edge is only meaningful as the mirror of an entry
  * edge, so every one of them has to have a partner pointing the other way, and
  * its delta has to be a single click plus the wait that proves the region it
- * moved really moved. The browser suite then executes it and holds the render
- * to `to`'s own expectations, which is where "opens but never closes" — or
+ * moved really moved. The browser suite then executes it and holds the rende
+ * to `to`'s own expectations, which is where "opens but never closes" — o
  * "closes and will not open" — actually fails.
  *
  * Two shapes, because a toggle goes both ways: the undo of a control that
@@ -629,14 +629,14 @@ test("every return edge mirrors an entry edge and undoes exactly one control", (
  * `returnEdge` only fires for a control that ends an entry edge, and an entry
  * edge is a prefix relation over the whole op list — the fixture included. So a
  * declared undo whose state publishes a payload its parent does not simply
- * produces nothing, silently, and the suite walks eleven toggles minus however
+ * produces nothing, silently, and the suite walks eleven toggles minus howeve
  * many were quietly dead. The forge-signals disclosure was exactly that: named
  * in `REVERSIBLE`, asserted nowhere, on the very control this work changed from
  * open-only to a toggle.
  *
  * A toggle is matched by the control that *opened* it rather than by its undo,
  * because two toggles may share one undo — Live and Replay both leave by the
- * Design button. Keyed on the undo, one mode-design return edge answered for
+ * Design button. Keyed on the undo, one mode-design return edge answered fo
  * both, and the whole of Replay could have gone dead behind Live's edge.
  */
 test("every reversible control declares an undo the suite actually walks", () => {
@@ -920,6 +920,69 @@ test("the verdict catches one landing region printing over another", () => {
   ]);
 });
 
+/**
+ * The defect that made this shape necessary, held so it cannot come back.
+ *
+ * A whole-body substring cannot tell a word from its own negation: "unsaved
+ * edits" contains "saved", so `edit: rest` — the state whose entire subject is
+ * that nothing is pending — was satisfied by the editor reporting that
+ * something was. Both halves are asserted here, because only the pair is the
+ * claim: the loose form still passes the screen it should never have passed,
+ * and the scoped form fails it by name.
+ */
+test("a scoped copy expectation tells a status from its own negation", () => {
+  const dirty = {
+    counts: { ".editor-status": 1 },
+    texts: { ".editor-status": "unsaved edits" },
+    text: "Pipeline editor unsaved edits",
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    boxes: [],
+  };
+  const loose = verdict({ expect: { shows: [], hides: [], copy: ["saved"] } }, dirty);
+  const scoped = verdict({ expect: { shows: [], hides: [], copy: [{ selector: ".editor-status", text: "saved" }] } }, dirty);
+
+  assert.deepStrictEqual([loose, scoped], [
+    [],
+    [{ kind: "missing-copy", detail: '.editor-status reads exactly “saved”' }],
+  ]);
+});
+
+/**
+ * And the same expectation passes the screen it is about, so the scoped form
+ * is not simply a check that never holds.
+ */
+test("a scoped copy expectation passes the element it names", () => {
+  const clean = {
+    counts: { ".editor-status": 1 },
+    texts: { ".editor-status": " Saved " },
+    text: "Pipeline editor saved",
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    boxes: [],
+  };
+
+  assert.deepStrictEqual(verdict({ expect: { shows: [], hides: [], copy: [{ selector: ".editor-status", text: "saved" }] } }, clean), []);
+});
+
+/**
+ * A scoped expectation is only checkable if its element was gathered, and
+ * `collect` gathers exactly the selectors it is handed. So the selector list a
+ * state produces has to include the ones its copy names — otherwise the text
+ * would be `undefined`, and the expectation would fail on every render for a
+ * reason that has nothing to do with the screen.
+ */
+test("a state's selector list covers the elements its copy names", () => {
+  const scoped = STATES.filter((state) => (state.expect.copy ?? []).some((phrase) => typeof phrase === "object"));
+  const uncovered = scoped.flatMap((state) => (state.expect.copy ?? [])
+    .filter((phrase) => typeof phrase === "object" && !selectorsFor(state).includes(phrase.selector))
+    .map((phrase) => `${state.id} -> ${phrase.selector}`));
+
+  assert.deepStrictEqual([scoped.length > 0, uncovered], [true, []]);
+});
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {
@@ -984,7 +1047,7 @@ test("the sibling overlap rule spares one element under two selectors, and anyth
 
 /**
  * The measured set has to include what the state is actually about. Measuring
- * only the standing regions is how a clipped Save button passed: nothing ever
+ * only the standing regions is how a clipped Save button passed: nothing eve
  * asked where its box was.
  */
 test("a state is measured against its own expected controls, not just the standing regions", () => {
@@ -1065,6 +1128,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
 
   assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
     counts: { ".a": 1 },
+    texts: { ".a": "saved" },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", flow: true, clipped: false, trimmed: 0 },
       { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", flow: true, clipped: true, trimmed: 150 },
@@ -1127,8 +1191,12 @@ function pageStub() {
   const collapsed = element({}, { parentElement: clip });
 
   // `visible` has to answer both ways over a node that still reports rects.
-  const shown = element({});
-  const unpainted = element({ visibility: "hidden" });
+  // The painted one carries words and the unpainted one carries different
+  // words, so the text gather is exercised *and* shown to skip what the reade
+  // cannot see — a scoped copy expectation that read a hidden node would be
+  // asserting the page's private state rather than its screen.
+  const shown = element({}, { innerText: "saved" });
+  const unpainted = element({ visibility: "hidden" }, { innerText: "unsaved edits" });
 
   // Transparent over white, so `backdrop` must walk up and `opaque` answers
   // false then true before `luminance` runs on what it settles on.
