@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { readStepRequest } from "./read-step-request.mjs";
 
 const HEADERS = {
   Accept: "application/vnd.github+json",
@@ -26,7 +27,7 @@ export function sourceProblem(request, issue, workspace) {
 }
 
 async function main() {
-  const request = JSON.parse(await readFile(0, "utf8"));
+  const request = await readStepRequest();
   const number = request.item.external_id.split("#").at(-1);
   const response = await fetch(
     `https://api.github.com/repos/TheLarkInn/bureau/issues/${number}`,
