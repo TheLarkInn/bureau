@@ -23,12 +23,12 @@
 import { CONSTRAINTS, rulesReadyFor } from "./constraints.mjs";
 
 /** Rules keyed by the depth at which their last input becomes assigned. */
-function rulesByDepth(order) {
+function rulesByDepth(order, rules) {
   const assigned = new Set();
   const seen = new Set();
   return order.map((dimension) => {
     assigned.add(dimension);
-    const ready = rulesReadyFor(assigned).filter((rule) => !seen.has(rule.id));
+    const ready = rulesReadyFor(assigned, rules).filter((rule) => !seen.has(rule.id));
     for (const rule of ready) {
       seen.add(rule.id);
     }
@@ -49,11 +49,17 @@ function tailSizes(order, valuesFor) {
  * Walks the product, pruning on the first rule that rejects a partial
  * assignment. Returns the surviving tuples plus, per rule, how many tuples it
  * was the first to prune and one worked example of such a prune.
+ *
+ * `rules` is a parameter rather than a closed-over import so a caller can ask
+ * the counterfactual: enumerate again without one rule, and the difference in
+ * the kept set is what that rule alone hides. That is how a `harness` rule is
+ * held to its claim — a rule whose exclusions are all covered by other rules
+ * hides nothing and has no business naming a cost.
  */
-export function enumerate(order, valuesFor) {
-  const gates = rulesByDepth(order);
+export function enumerate(order, valuesFor, rules = CONSTRAINTS) {
+  const gates = rulesByDepth(order, rules);
   const tails = tailSizes(order, valuesFor);
-  const removed = new Map(CONSTRAINTS.map((rule) => [rule.id, { rule: rule.id, pruned: 0, example: null }]));
+  const removed = new Map(rules.map((rule) => [rule.id, { rule: rule.id, pruned: 0, example: null }]));
   const kept = [];
   let total = 0;
 

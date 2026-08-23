@@ -177,7 +177,7 @@ const matrixStates = walked.kept.map(toState);
 /** Per-rule prune accounting: how many tuples each rule was first to reject. */
 export const EXCLUSIONS = walked.excluded.map((entry) => ({
   ...entry,
-  ...pick(CONSTRAINTS.find((rule) => rule.id === entry.rule), ["kind", "title", "why"]),
+  ...pick(CONSTRAINTS.find((rule) => rule.id === entry.rule), ["kind", "title", "why", "limit", "stands"]),
 }));
 
 function pick(source, keys) {
@@ -303,6 +303,9 @@ export function summary() {
     dimensionValues: DIMENSIONS.reduce((total, item) => total + item.values.length, 0),
     combinations: walked.combinations,
     constraintRules: CONSTRAINTS.length,
+    structuralRules: CONSTRAINTS.filter((rule) => rule.kind === "structural").length,
+    scopingRules: CONSTRAINTS.filter((rule) => rule.kind === "scoping").length,
+    harnessRules: CONSTRAINTS.filter((rule) => rule.kind === "harness").length,
     excludedCombinations: EXCLUSIONS.reduce((total, entry) => total + entry.pruned, 0),
     matrixStates: matrixStates.length,
     probes: PROBES.length,

@@ -1,6 +1,7 @@
 // The config relation graph (Q16): assignments point at pipelines and repos;
-// pipelines point at the roles their agent steps actually use. Editing
-// happens in the pipeline editor and the existing forms.
+// pipelines point at the roles their steps name, whatever the step's kind —
+// the same reference `lib/preflight.mjs` counts. Editing happens in the
+// pipeline editor and the existing forms.
 
 import React from "react";
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";

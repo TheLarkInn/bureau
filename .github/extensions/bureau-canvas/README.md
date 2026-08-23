@@ -140,8 +140,9 @@ reasoning that exhaustive rendering is discovery work rather than PR feedback.
 That reasoning does not survive the arithmetic: `schedule` fires only on the
 default branch, so until the workflow merged it had never run at all, and
 `scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
-would have merged green and gone unattributed. All 505 assertions take about
-as long as a fraction of the Rust job, so they gate like anything else:
+would have merged green and gone unattributed. Rendering every state at both
+viewports and walking every transition takes about as long as a fraction of the
+Rust job, so they gate like anything else:
 
 ```sh
 npm run test:matrix
@@ -157,7 +158,7 @@ under permuted orders to keep it that way.
 | | |
 |---|---|
 | `dimensions.mjs` | the axes the canvas varies along, and what each value promises on screen |
-| `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render) or `scoping` (renders, but adds nothing to cross) |
+| `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render), `scoping` (renders, but adds nothing to cross), or `harness` (renders in production; this harness cannot produce it, and it names the limit and the state that renders the same screen) |
 | `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^9 tuples; per-rule figures count what each rule pruned *first*, in walk order |
 | `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
 | `paths.mjs` | how each state is reached, as data — and which of them need a route intercepted rather than a click |
@@ -217,7 +218,7 @@ now: `test/statelab.test.mjs` builds the base payload through the real
 `relationView` and requires every fixture's graph to be **exactly** the one its
 own config implies. Both directions, and both halves: a node for every listed
 item and no node for anything unlisted, an edge for every pipeline or repo an
-assignment names and for every role a pipeline's agent steps use, and *no edge
+assignment names and for every role a pipeline's steps name, and *no edge
 the config does not imply*. Deleting `multi-repo`'s relation patch fails it by
 name; so now does adding an edge between two nodes that are already there, or
 dropping a pipeline's role edges — both of which the containment-only form let
@@ -261,8 +262,14 @@ The matrix will not **act on the host**, and for a while that was discharged by
 excluding every screen a write leads to. `./intent` is how the page writes *and*
 how it reads, so the route that answers it in the browser is named by the
 intent's `kind`: `derive-work-source` and `resolve-repo` are let through, and
-everything else — `save-plan`, `discard-plan`, `save-pipeline`, the create and
-delete intents — is held. `.bureau/` is untouched by the run.
+every other kind — `save-plan`, `discard-plan`, `save-pipeline`, the create
+intents — is held wherever a state installs the route. The one intent that
+still reaches the host is the delete **preflight**, which no state intercepts:
+`lib/crud.mjs` `remove()` answers an unconfirmed delete with the preflight and
+writes nothing, so the round trip is a read. It is not free, though — the host
+republishes its own state while answering, which is why the preflight cannot be
+reviewed over an injected config and why the rule that says so is a `harness`
+rule. `.bureau/` is untouched by the run.
 
 That route arrived for the field saves and was not extended to the other four
 families, which kept rules saying `save-plan` "calls `applyPlan` on the host's

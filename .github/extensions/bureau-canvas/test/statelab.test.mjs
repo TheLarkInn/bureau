@@ -288,7 +288,7 @@ test("every fixture ships the relation projection its own config implies", async
 /**
  * `relationView` derives the graph from the config's own lists: one node per
  * assignment, pipeline, role and repo, one edge per pipeline or repo an
- * assignment names, and one per role a pipeline's agent steps use — keeping
+ * assignment names, and one per role a pipeline's steps name — keeping
  * only edges whose endpoints are both nodes, which is why an assignment
  * pointing at an unregistered repo owes none.
  *
@@ -415,6 +415,33 @@ test("every scoping rule is held to account by a crossing probe that really brea
       unlabelled: probes.filter((state) => Boolean(state.rule) === Boolean(state.covers)).map((state) => state.id),
     },
     { unchecked: [], dangling: [], unbroken: [], incomplete: [], unlabelled: [] },
+  );
+});
+
+/**
+ * A `harness` rule is the one kind that excludes a screen a user really
+ * reaches, so it is the one kind that can quietly cost coverage. Three claims
+ * are checked, and the third is the one that cannot be talked around: enumerate
+ * again without the rule, and if the kept set does not grow then the rule hides
+ * nothing of its own and is claiming a cost it does not impose.
+ */
+test("every harness rule names its limit, stands on a rendered screen, and really hides one", () => {
+  const harness = CONSTRAINTS.filter((rule) => rule.kind === "harness");
+  const rendered = new Set(STATES.map((state) => state.id));
+  const base = enumerate(ORDER, valuesOf).kept.length;
+  const withoutRule = (rule) => enumerate(ORDER, valuesOf, CONSTRAINTS.filter((item) => item.id !== rule.id)).kept.length;
+
+  assert.deepStrictEqual(
+    {
+      unnamed: harness.filter((rule) => !rule.limit?.trim()).map((rule) => rule.id),
+      unstood: harness.filter((rule) => !rendered.has(rule.stands)).map((rule) => rule.id),
+      costless: harness.filter((rule) => withoutRule(rule) <= base).map((rule) => rule.id),
+      // The obligations belong to the kind. A structural or scoping rule
+      // carrying them reads as a harness limit that was never re-kinded.
+      mislabelled: CONSTRAINTS.filter((rule) => rule.kind !== "harness" && (rule.limit || rule.stands)).map((rule) => rule.id),
+      unknownKind: CONSTRAINTS.filter((rule) => !["structural", "scoping", "harness"].includes(rule.kind)).map((rule) => rule.id),
+    },
+    { unnamed: [], unstood: [], costless: [], mislabelled: [], unknownKind: [] },
   );
 });
 

@@ -15,7 +15,7 @@
 // That figure is the product of the dimension sizes and moves whenever a
 // dimension gains a value; `summary()` computes it rather than quoting it.
 //
-// Two kinds of rule live here, and the distinction matters:
+// Three kinds of rule live here, and the distinction matters:
 //
 //   structural — the combination cannot be rendered at all, because the
 //                controls that would produce it do not exist on that surface.
@@ -24,6 +24,28 @@
 //                multiplies screenshots without adding information. Every
 //                scoping rule is paired with a crossing probe in `probes.mjs`
 //                that renders the cross anyway and holds the claim to account.
+//   harness    — the screen is real and a user reaches it, and *this harness*
+//                cannot produce it. The limitation is a property of the
+//                harness, never of the canvas.
+//
+// The third kind exists because filing a harness limit as `structural` is the
+// one accounting error this registry keeps making. `structural` asks nothing of
+// a rule and `scoping` owes a crossing probe, so a harness limit wearing either
+// label escapes every obligation — which is how `save-plan`, `save-pipeline`, a
+// refused run and a refused create stayed excluded for a reason that had
+// stopped being true, two of them asserted nowhere in the repository and one
+// hiding a live double-submit.
+//
+// So a `harness` rule owes two things instead of a probe, because a probe is
+// exactly what it cannot have:
+//
+//   limit  — the harness mechanism that stops it, named precisely enough to
+//            re-read when that mechanism changes.
+//   stands — the state that renders the *same screen* at a point on the axis
+//            the harness can reach. That is what keeps the screen asserted
+//            somewhere; an offline test requires the state to exist, and
+//            requires every harness rule to actually hide a renderable
+//            combination, re-enumerating without it to prove the cost is real.
 
 import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
 import { PAIRABLE_FIELDS } from "./dimensions.mjs";
@@ -162,10 +184,12 @@ export const CONSTRAINTS = [
   },
   {
     id: "a-preflight-answers-with-the-hosts-own-config",
-    kind: "structural",
+    kind: "harness",
     reads: ["field", "section"],
     title: "The delete preflight cannot be reviewed over an injected config",
-    why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by refreshing and republishing the host's own state — which replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. This is an exclusion rather than a suppressed axis on purpose: suppressing would let the host's one-card screen pass under the name `two-cards`.",
+    why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by calling `refreshState`, which republishes the host's own state over the SSE channel and replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. The screen itself is ordinary — a user with two assignments reaches it — which is why this is a harness rule and not a structural one. It stays an exclusion rather than a suppressed axis because suppressing would let the host's one-card screen pass under the name `two-cards`.",
+    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and `paths.mjs` `interceptFor` asks for no route on the delete family, so the preflight is the one intent in the matrix that reaches the host.",
+    stands: "surface:config+data:validated+section:stack+card:expanded+field:delete",
     holds: (combo) => combo.field !== "delete" || combo.section !== "two-cards",
   },
   {
@@ -264,10 +288,12 @@ export const CONSTRAINTS = [
      * long enough to still be flipped when the render is measured.
      */
     id: "playing-outlasts-only-the-longest-run",
-    kind: "structural",
+    kind: "harness",
     reads: ["run", "transport"],
     title: "Only the finished run plays for longer than the render is judged",
-    why: "`useReplayOverlay` sets `playing` false on reaching `range.end`, and the button's label and aria name go back to Play with it. The live and paused logs span 2.0s and 5.0s at speed 1, which is at or under the 5s window `judge()` re-samples a disagreeing render for; the finished log spans 10.0s. So the label this state asserts is reviewed on the only run that still holds it when the verdict is taken.",
+    why: "`useReplayOverlay` sets `playing` false on reaching `range.end`, and the button's label and aria name go back to Play with it. The live and paused logs span 2.0s and 5.0s at speed 1, which is at or under the window `judge()` re-samples a disagreeing render for; the finished log spans 10.0s. Playing a short run is an ordinary screen — the harness is what cannot hold it still long enough to be judged — so the label this state asserts is reviewed on the only run that still holds it when the verdict is taken.",
+    limit: "`e2e/playwright/matrix-fixtures.mjs` judges a render by re-sampling to a `SETTLE_MS` deadline, so an assertion whose subject expires inside that budget turns a transient disagreement into a hard failure instead of retrying it away.",
+    stands: "surface:pipeline+data:validated+mode:replay+run:finished+transport:playing",
     holds: (combo) => combo.transport !== "playing" || combo.run === "finished",
   },
   {
@@ -393,6 +419,6 @@ export function violations(combo) {
 }
 
 /** Rules whose every input is assigned, so a pruned walk may apply them. */
-export function rulesReadyFor(assigned) {
-  return CONSTRAINTS.filter((rule) => rule.reads.every((dimension) => assigned.has(dimension)));
+export function rulesReadyFor(assigned, rules = CONSTRAINTS) {
+  return rules.filter((rule) => rule.reads.every((dimension) => assigned.has(dimension)));
 }

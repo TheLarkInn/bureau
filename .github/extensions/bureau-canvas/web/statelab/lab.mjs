@@ -345,6 +345,13 @@ function renderConstraints() {
     item.append(el("summary", null, `${rule.title} — ${pruned.toLocaleString()} pruned here`));
     item.append(el("p", "muted", `${rule.kind} · reads ${rule.reads.join(", ")}`));
     item.append(el("p", null, rule.why));
+    if (rule.kind === "harness") {
+      // A harness rule hides a screen a user really reaches, so it owes the
+      // reviewer both halves: what stops the harness, and where the same screen
+      // is rendered instead.
+      item.append(el("p", "note", `Harness limit — ${rule.limit}`));
+      item.append(el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+    }
     item.append(el("p", "muted", "“Pruned here” counts the tuples this rule was the first to reject, in walk order — not every tuple it forbids. Ask the picker below about a specific combination to see every rule that rejects it."));
     const example = counts[rule.id]?.example;
     if (example) {
@@ -417,6 +424,9 @@ function renderPicker() {
       const rule = CONSTRAINTS.find((item) => item.id === id);
       const entry = el("details");
       entry.append(el("summary", null, `${rule.id} · ${rule.kind}`), el("p", null, rule.why));
+      if (rule.kind === "harness") {
+        entry.append(el("p", "note", `Harness limit — ${rule.limit}`), el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+      }
       parts.push(entry);
     }
     if (!broken.length && !match) {
