@@ -149,18 +149,41 @@ test("the kept set does not depend on the order dimensions are assigned in", () 
     .filter((state) => state.kind === "matrix")
     .map((state) => ORDER.map((key) => state.dimensions[key]).join("|")));
   const mismatches = [];
+  const walks = [];
   for (let seed = 1; seed <= 4; seed += 1) {
-    const permuted = [...ORDER].sort((left, right) => hash(left + seed) - hash(right + seed));
+    const permuted = shuffled(ORDER, seed);
+    walks.push(permuted.join(","));
     const kept = new Set(enumerate(permuted, valuesOf).kept.map((combo) => ORDER.map((key) => combo[key]).join("|")));
     if (kept.size !== canonical.size || [...kept].some((tuple) => !canonical.has(tuple))) {
       mismatches.push(permuted.join(","));
     }
   }
-  assert.deepStrictEqual(mismatches, []);
+  // Four seeds are four samples only if they are four different walks, and the
+  // first version of this test was not: it sorted by `hash(key + seed)`, where
+  // the seed is folded in last and so shifts every key by the same constant.
+  // The relative order never moved, and all four iterations re-ran one
+  // permutation. The count is asserted so that regressing the shuffle fails
+  // here rather than quietly costing three quarters of the coverage.
+  assert.deepStrictEqual(
+    [mismatches, new Set(walks).size, walks.filter((walk) => walk === ORDER.join(",")).length],
+    [[], 4, 0],
+  );
 });
 
-function hash(value) {
-  return [...value].reduce((total, character) => (total * 31 + character.charCodeAt(0)) % 9973, 7);
+/**
+ * A seeded Fisher-Yates. Every dimension can land in every position, so a
+ * different seed is a genuinely different walk rather than the same one
+ * relabelled.
+ */
+function shuffled(keys, seed) {
+  const order = [...keys];
+  let state = (seed * 2654435761) % 2147483647;
+  for (let index = order.length - 1; index > 0; index -= 1) {
+    state = (state * 1103515245 + 12345) % 2147483648;
+    const pick = state % (index + 1);
+    [order[index], order[pick]] = [order[pick], order[index]];
+  }
+  return order;
 }
 
 test("every kept combination survives a fresh run of every rule", () => {
@@ -871,30 +894,115 @@ test("the verdict catches a label that names a control it does not sit beside", 
  * `ReferenceError` inside every single `page.evaluate`, so all 440 renders and
  * every transition go red at once and none of them names the cause.
  *
- * Rebuilding it the way the hosts do and running it over a minimal document
- * catches that offline, in milliseconds, and points at this line.
+ * Rebuilding it the way the hosts do and running it over a document that
+ * reaches every branch catches that offline, in milliseconds, and points at
+ * this line. The document has to be a real one: a free variable is resolved
+ * when the line reading it *runs*, so a stub that answers every query with an
+ * empty list rebuilds cleanly no matter how much of `collect` has escaped —
+ * which is what the first version of this test did, leaving eight of the nine
+ * inner helpers unguarded.
  */
 test("collect survives being rebuilt from its own source, as both hosts run it", () => {
-  const style = { visibility: "visible", overflowX: "visible", overflowY: "visible", backgroundColor: "rgb(255, 255, 255)", color: "rgb(0, 0, 0)", position: "static" };
-  const doc = {
-    defaultView: { getComputedStyle: () => style },
-    documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
-    body: { innerText: "" },
-    querySelectorAll: () => [],
-    getElementById: () => null,
-  };
+  const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
   assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 0 },
-    boxes: [],
-    contrast: [],
-    labels: [],
-    text: "",
+    counts: { ".a": 1 },
+    boxes: [
+      { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", flow: true, clipped: false },
+      { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", flow: true, clipped: true },
+    ],
+    contrast: [{ selector: ".c", text: "Kind", ratio: 21 }],
+    labels: [{
+      text: "Name",
+      label: { x: 0, y: 40, width: 60, height: 16 },
+      control: { x: 70, y: 40, width: 120, height: 24 },
+    }],
+    text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
   });
 });
+
+const BASE_STYLE = {
+  visibility: "visible",
+  overflowX: "visible",
+  overflowY: "visible",
+  backgroundColor: "rgb(255, 255, 255)",
+  color: "rgb(0, 0, 0)",
+  position: "static",
+};
+
+function boxOf(x, y, width, height) {
+  return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height };
+}
+
+/**
+ * A document shaped so that each of `collect`'s inner helpers is called at
+ * least once — `visible`, `keyFor`, `idFor`, `clipper`, `channels`, `opaque`,
+ * `luminance`, `backdrop` and `rectOf`. Fidelity to a browser is not the
+ * point; reaching the lines is.
+ */
+function pageStub() {
+  const styles = new Map();
+  const element = (style, own = {}) => {
+    const node = {
+      getClientRects: () => [{}],
+      getBoundingClientRect: () => boxOf(0, 0, 0, 0),
+      parentElement: null,
+      textContent: "",
+      getAttribute: () => null,
+      ...own,
+    };
+    styles.set(node, { ...BASE_STYLE, ...style });
+    return node;
+  };
+
+  // A clipping ancestor, so `clipper` returns a rect and is asked about both
+  // axes: one measured box sits inside it, one entirely past its right edge.
+  const clip = element(
+    { overflowX: "hidden", overflowY: "hidden" },
+    { getBoundingClientRect: () => boxOf(0, 0, 200, 100) },
+  );
+  const inside = element({}, { parentElement: clip, getBoundingClientRect: () => boxOf(10, 10, 100, 20) });
+  const past = element({}, { parentElement: clip, getBoundingClientRect: () => boxOf(300, 10, 50, 20) });
+  // Zero-area, so the measure loop skips it and the ids stay contiguous.
+  const collapsed = element({}, { parentElement: clip });
+
+  // `visible` has to answer both ways over a node that still reports rects.
+  const shown = element({});
+  const unpainted = element({ visibility: "hidden" });
+
+  // Transparent over white, so `backdrop` must walk up and `opaque` answers
+  // false then true before `luminance` runs on what it settles on.
+  const painted = element({ backgroundColor: "rgb(255, 255, 255)" });
+  const wording = element(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    { parentElement: painted, textContent: " Kind " },
+  );
+  const wordless = element({}, { parentElement: painted, textContent: "   " });
+
+  const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });
+  const label = element({}, {
+    textContent: " Name ",
+    getBoundingClientRect: () => boxOf(0, 40, 60, 16),
+    getAttribute: (name) => (name === "for" ? "field-1" : null),
+  });
+
+  const matches = {
+    ".a": [shown, unpainted],
+    ".b": [inside, past, collapsed],
+    ".c": [wording, wordless],
+    "label[for]": [label],
+  };
+  return {
+    defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },
+    documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
+    body: { innerText: "Bureau" },
+    querySelectorAll: (selector) => matches[selector] ?? [],
+    getElementById: (id) => (id === "field-1" ? control : null),
+  };
+}
 
 test("every contrast selector names small text coloured from a kind hue", () => {
   // A hue that reads as decoration rather than text is a defect the
