@@ -23,9 +23,9 @@
 //! the whole shell, not only `git`, so the agent can run the build and
 //! test commands its own instructions tell it to run (DESIGN.md section
 //! 10, "shell breadth"). Copilot's MXC sandbox confines that shell and
-//! repository policy disables bypass. Roles without forge grants are
-//! additionally denied `gh`; forge-granted roles retain the network and
-//! credential access their work requires.
+//! the managed repository's policy may tighten its defaults. Roles without
+//! forge grants are additionally denied `gh`; forge-granted roles retain the
+//! network and credential access their work requires.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
