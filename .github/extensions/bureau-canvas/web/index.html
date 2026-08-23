@@ -177,8 +177,11 @@
         min-height: 0;
       }
 
+      /* The graph column must be allowed to shrink. A 50rem floor plus the
+         19rem side panel needs 1104px, so in the app's side panel the shell
+         overflowed and the panel covered the toolbar's right-hand controls. */
       .view-shell--pipeline {
-        grid-template-columns: minmax(50rem, 1fr) 19rem;
+        grid-template-columns: minmax(0, 1fr) 19rem;
         min-height: 0;
       }
 
@@ -868,10 +871,15 @@
         min-width: 0;
       }
 
+      /* Wraps: the run picker and the replay timeline are wider than the
+         toolbar, and without this they render past the right edge where they
+         cannot be clicked at all. */
       .pipeline-toolbar {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: var(--space-3);
+        min-width: 0;
       }
 
       /* pipeline-editor: affordance into the editor surface (editor.html). */
@@ -1008,14 +1016,14 @@
       .mode-switcher { display: flex; gap: 0; margin-left: var(--space-4); border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; overflow: hidden; }
       .mode-tab { border: 0; padding: var(--space-1) var(--space-3); background: var(--background-color-default, #ffffff); color: var(--text-color-muted, #656d76); cursor: pointer; text-transform: capitalize; }
       .mode-tab--active { background: var(--color-focus-outline, #0969da); color: #ffffff; }
-      .run-picker { max-width: 22rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; background: var(--background-color-default, #ffffff); color: inherit; font: inherit; }
-      .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; gap: var(--space-2); }
+      .run-picker { flex: 0 1 22rem; min-width: 8rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; background: var(--background-color-default, #ffffff); color: inherit; font: inherit; }
+      .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
       .run-control { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 3px 10px; background: var(--background-color-default, #ffffff); color: inherit; cursor: pointer; }
       .run-control--active { border-color: var(--color-focus-outline, #0969da); color: var(--color-focus-outline, #0969da); }
       .run-control--danger { color: var(--outcome-failure); }
       .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
       .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
-      .replay-scrubber { width: 16rem; }
+      .replay-scrubber { flex: 1 1 10rem; min-width: 6rem; max-width: 16rem; }
       .overlay-pending { opacity: 0.35; }
       .overlay-running { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
       .overlay-success { --accent: var(--outcome-success); }
