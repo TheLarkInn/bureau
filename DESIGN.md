@@ -319,7 +319,7 @@ have a standard home — the plugin/agent frontmatter format:
 name: codebase-analyzer
 description: Analyzes codebase implementation details...
 tools: Glob, Grep, Read, LS, Bash
-model: opus
+model: claude-opus-5
 ---
 <the instructions are the file body>
 ```
@@ -730,8 +730,12 @@ layer 2 rather than bolting it on later.
 
 ## 10. Sandboxing and permissions
 
-**The container is the sandbox boundary.** State that explicitly; do not build a
-per-step sandbox in v0. In exchange, respect it:
+**The container is the outer sandbox boundary.** Copilot steps also enable the
+CLI's MXC command sandbox. This repository carries a policy that denies bypass
+and common host credential paths; every additional managed repository must
+carry an equivalent reviewed policy because `--sandbox` alone uses the CLI's
+defaults. The adapter denies `gh` to roles without forge grants; forge-granted
+roles retain the outbound access their work requires. Respect both boundaries:
 
 - Do not mount the host home directory. Do not forward the host SSH agent.
 - The container gets only the credentials the assignment needs, scoped per repo.
@@ -739,9 +743,10 @@ per-step sandbox in v0. In exchange, respect it:
 
 The reference implementation defaults its sandbox to `disabled` while passing
 `--allow-all-tools` to `copilot` and `--permission-mode bypassPermissions` to
-`claude` — an agent with unrestricted shell on the host by default. Container
-isolation plus per-step credential scoping gets the large majority of that value back
-on day one.
+`claude` — an agent with unrestricted shell on the host by default. Bureau's
+Copilot adapter instead forces `--experimental --sandbox`, scopes file access to
+the run worktree, and relies on container isolation plus per-step credential
+scoping as the outer boundary.
 
 Permissions are a flat list of strings checked before spawn. Keep it under 15:
 
@@ -781,17 +786,15 @@ setting:
   arbitrary code through build scripts, while requiring every repository to
   enumerate its toolchain here — which is host-capability matching (§3) wearing a
   different hat.
-- The blast radius is already implied. A write grant plus `--allow-all-paths` lets
-  the step edit the worktree, and a later deterministic step executes what it
-  wrote. Withholding the shell from the agent does not withhold execution from the
-  run.
+- The blast radius is already implied. A write grant plus
+  `--add-dir <worktree>` lets the step edit the worktree, and a later
+  deterministic step executes what it wrote. Withholding the shell from the
+  agent does not withhold execution from the run.
 
-**The container is doing the work here.** This stance is defensible because of the
-boundary stated at the top of this section, and it is exactly as strong as that
-boundary is. Running a write-granted role outside a container gives the agent an
-unrestricted shell as the invoking user — the same posture this document criticises
-the reference implementation for defaulting to. Do not read this section as
-endorsing that; read it as the container's rent.
+**The container and command sandbox are doing the work here.** This stance is
+defensible because of the boundaries stated at the top of this section, and it
+is exactly as strong as those boundaries are. A write-granted role must not run
+with both boundaries disabled.
 
 Tighten this once there is evidence: after enough repositories have run, the set of
 commands agent steps actually need will be visible in the run logs, and a narrower
@@ -1142,3 +1145,49 @@ Deliver in seven tested stages:
 
 Each stage passes the four repository gates before the next begins. Every Rust
 stage also receives a small-crate modularity review.
+
+---
+
+## 16. Refused upstream capabilities
+
+**Decision date: 2026-08-23. Review window: 2026-08-09 through 2026-08-23.**
+
+This decision records the capabilities reviewed in `Agent-Clubhouse/Goobers`,
+the reference implementation, during that window. It does not assess changes
+outside the window.
+
+| Upstream capability | Decision and governing reason |
+|---|---|
+| A dispatcher that gives each stage an isolated Kubernetes workload (upstream's `pod`) and distributed execution called "mode 3" | Refuse. Section 3 bans upstream's Kubernetes, `pod`, `namespace`, and identity abstractions; section 1 requires one process on one machine, with no cluster or control plane. |
+| Content-addressed blob storage for artifacts | Refuse. Section 3 requires directories and files until a measured problem demands content-addressed storage. No such problem has been measured. |
+| A Kubernetes `NetworkPolicy` generator for each execution environment (upstream's runner class) | Refuse. In ordinary terms, this generates network rules for isolated workloads and depends on the Kubernetes substrate already refused under sections 1 and 3. Section 10 makes the container the sandbox boundary. |
+| Inventory of execution environments (upstream's runner classes) and a constraint solver | Refuse. In ordinary terms, this matches work to hosts by their available tools. Section 3 bans a general host-capability matching engine, and section 10 puts toolchain needs in the container image. |
+| Version 3.0 configuration-language interpreter and `--to 3.0` migrator | Refuse. The migrator rewrites user configuration into another executable form, which is the compile step section 3 bans: the file edited must be the file that runs. |
+| Daemon HTTP write API for claims, run records, triggers, and human approval | Refuse. This lets remote processes change daemon state. Section 1 requires one process with no service or control plane, so these operations are function calls; section 4 makes events only a wake-up optimization. |
+| Short-lived credential issuing service | Refuse. It limits credential exposure across many disposable containers, a topology refused by sections 1 and 3. Sections 5 and 10 instead require credentials scoped per repository and resolved at process spawn. |
+| Merge review and merge arbitration | Refuse. Section 1 assigns pull requests, reviews, and merge queues to the forge; section 3 says to use the forge's merge queue. |
+| Learning system for causal credit, "Thompson sampling" selection, statistical drift detection ("SPC/CUSUM"), graph analysis, path simulation, and "Tutor" training episodes | Refuse. Section 3 targets fewer than 15,000 lines for the complete system. **New judgment:** this system needs a multi-run corpus that one developer does not generate; upstream defers efficacy evaluation and its feedback loop depends on a quarantined component, so the reviewed implementation provides no shipped evidence of better outcomes. |
+| A second execution engine for orchestration | Refuse. Section 3 requires one engine. |
+
+### 16.1 Selective adoptions
+
+The same review identified correctness problems bureau shares, rather than
+platform surface to copy:
+
+- [#72](https://github.com/TheLarkInn/bureau/issues/72) bounds repeated
+  failures so one work item cannot consume an assignment's budget;
+- [#73](https://github.com/TheLarkInn/bureau/issues/73) keeps security and
+  request-delivery behavior consistent across adapters;
+- [#74](https://github.com/TheLarkInn/bureau/issues/74) verifies that a
+  resolved credential has the intended identity;
+- [#86](https://github.com/TheLarkInn/bureau/issues/86) implements the
+  different-role retry already promised by section 1; and
+- [#90](https://github.com/TheLarkInn/bureau/issues/90) adds bounded child-agent
+  spawning with reviewed roles, inherited permissions, durable provenance,
+  budget accounting, cancellation, and offline tests.
+
+Upstream's distributed problems are real for upstream. Its design principle,
+"make the thing addressable by identity, make the write idempotent, and the
+coordination problem disappears instead of moving," is good engineering.
+Bureau refuses that machinery because sections 1 and 3 refuse the distributed
+topology that requires it, not because the machinery is bad.

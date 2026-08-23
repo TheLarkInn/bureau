@@ -2,7 +2,7 @@
 name: bureau-code-design-review
 description: Finds material software and interaction design flaws in Bureau before they become implementation work.
 tools: ["view", "grep", "glob", "bureau-io/*"]
-model: opus
+model: claude-opus-5
 ---
 
 Review Bureau for actionable design flaws without changing repository or forge
