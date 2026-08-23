@@ -1142,3 +1142,47 @@ Deliver in seven tested stages:
 
 Each stage passes the four repository gates before the next begins. Every Rust
 stage also receives a small-crate modularity review.
+
+---
+
+## 16. Refused upstream capabilities
+
+**Decision date: 2026-08-23. Review window: 2026-08-09 through 2026-08-23.**
+
+This decision records the capabilities reviewed in `Agent-Clubhouse/Goobers`,
+the reference implementation, during that window. It does not assess changes
+outside the window.
+
+| Upstream capability | Decision and governing reason |
+|---|---|
+| A dispatcher that gives each stage an isolated Kubernetes workload (upstream's `pod`) and distributed execution called "mode 3" | Refuse. Section 3 bans upstream's Kubernetes, `pod`, `namespace`, and identity abstractions; section 1 requires one process on one machine, with no cluster or control plane. |
+| Content-addressed blob storage for artifacts | Refuse. Section 3 requires directories and files until a measured problem demands content-addressed storage. No such problem has been measured. |
+| A Kubernetes `NetworkPolicy` generator for each execution environment (upstream's runner class) | Refuse. In ordinary terms, this generates network rules for isolated workloads and depends on the Kubernetes substrate already refused under sections 1 and 3. Section 10 makes the container the sandbox boundary. |
+| Inventory of execution environments (upstream's runner classes) and a constraint solver | Refuse. In ordinary terms, this matches work to hosts by their available tools. Section 3 bans a general host-capability matching engine, and section 10 puts toolchain needs in the container image. |
+| Version 3.0 configuration-language interpreter and `--to 3.0` migrator | Refuse. The migrator rewrites user configuration into another executable form, which is the compile step section 3 bans: the file edited must be the file that runs. |
+| Daemon HTTP write API for claims, run records, triggers, and human approval | Refuse. This lets remote processes change daemon state. Section 1 requires one process with no service or control plane, so these operations are function calls; section 4 makes events only a wake-up optimization. |
+| Short-lived credential issuing service | Refuse. It limits credential exposure across many disposable containers, a topology refused by sections 1 and 3. Sections 5 and 10 instead require credentials scoped per repository and resolved at process spawn. |
+| Merge review and merge arbitration | Refuse. Section 1 assigns pull requests, reviews, and merge queues to the forge; section 3 says to use the forge's merge queue. |
+| Learning system for causal credit, "Thompson sampling" selection, statistical drift detection ("SPC/CUSUM"), graph analysis, path simulation, and "Tutor" training episodes | Refuse. Section 3 targets fewer than 15,000 lines for the complete system. **New judgment:** this system needs a multi-run corpus that one developer does not generate; upstream defers efficacy evaluation and its feedback loop depends on a quarantined component, so the reviewed implementation provides no shipped evidence of better outcomes. |
+| Nested agent delegation and permission ceilings | Refuse for now. **New judgment:** bureau does not spawn sub-agents, so delegation limits are premature until a step delegates work. This does not judge the quality of upstream's implementation. |
+| A second execution engine for orchestration | Refuse. Section 3 requires one engine. |
+
+### 16.1 Selective adoptions
+
+The same review identified correctness problems bureau shares, rather than
+platform surface to copy:
+
+- [#72](https://github.com/TheLarkInn/bureau/issues/72) bounds repeated
+  failures so one work item cannot consume an assignment's budget;
+- [#73](https://github.com/TheLarkInn/bureau/issues/73) keeps security and
+  request-delivery behavior consistent across adapters;
+- [#74](https://github.com/TheLarkInn/bureau/issues/74) verifies that a
+  resolved credential has the intended identity; and
+- [#86](https://github.com/TheLarkInn/bureau/issues/86) implements the
+  different-role retry already promised by section 1.
+
+Upstream's distributed problems are real for upstream. Its design principle,
+"make the thing addressable by identity, make the write idempotent, and the
+coordination problem disappears instead of moving," is good engineering.
+Bureau refuses that machinery because sections 1 and 3 refuse the distributed
+topology that requires it, not because the machinery is bad.
