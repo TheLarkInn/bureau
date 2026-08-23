@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use bureau::config::{ActivatedConfig, Config, ConfigManager, GitSource};
 use bureau::engine::{Engine, rehydrate};
-use bureau::forge::Forge;
+use bureau::forge::{Forge, LabelForge};
 use bureau::process::Secret;
 use bureau::reconcile::Reconciler;
 use bureau::runlog::{ConfigSource, RunSnapshot};
@@ -20,6 +20,7 @@ struct Revision {
     config: Config,
     credentials: BTreeMap<String, Secret>,
     forges: BTreeMap<String, Arc<dyn Forge>>,
+    label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     source: ConfigSource,
     direct_agents: BTreeMap<String, Vec<u8>>,
 }
@@ -27,10 +28,12 @@ struct Revision {
 fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>) -> Revision {
     let credentials = build::credentials(&active.config, settings);
     let forges = build::forges(&active.config, &credentials);
+    let label_forges = build::label_forges(&active.config, &credentials);
     Revision {
         config: active.config,
         credentials,
         forges,
+        label_forges,
         source: ConfigSource {
             remote: active.remote,
             reference: active.reference,
@@ -88,6 +91,7 @@ impl Daemon {
             config: revision.config.clone(),
             state: self.state.clone(),
             forges: revision.forges.clone(),
+            label_forges: revision.label_forges.clone(),
             engine: self.engine.clone(),
             credentials: revision.credentials.clone(),
             config_source: revision.source.clone(),

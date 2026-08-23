@@ -46,6 +46,7 @@ impl World {
             config: fixtures::config(&url, run, limits),
             state: store.clone(),
             forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
+            label_forges: BTreeMap::new(),
             engine: Arc::new(Engine::new(
                 dir.path().join("runs"),
                 dir.path().join("cache"),

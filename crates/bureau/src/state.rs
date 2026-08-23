@@ -9,9 +9,12 @@
 //! - **budget counters** — run history for limits checked *before* spawn.
 //! - **dedup markers** — content hashes of proposed output, so a
 //!   scheduled pipeline never re-proposes an identical change.
+//! - **label-rule events** — an append-only audit trail and hourly
+//!   mutation counter for deterministic forge-label reconciliation.
 
 mod claim;
 mod disposition;
+mod label_rule;
 mod lease;
 mod limits;
 mod project;
@@ -25,6 +28,7 @@ use rusqlite::{Connection, OpenFlags};
 
 pub use claim::LeaseOwner;
 pub use disposition::Disposition;
+pub use label_rule::{LabelRuleAudit, LabelRuleEvent, LabelRuleEventKind};
 pub use lease::maintain_lease;
 pub use project::{TerminalRecord, project_run, project_terminal};
 
@@ -47,6 +51,12 @@ pub enum Error {
     /// A stored dedup token this build does not recognize.
     #[error("unknown stored disposition: {0}")]
     UnknownDisposition(String),
+    /// A stored label-rule event token this build does not recognize.
+    #[error("unknown stored label-rule event: {0}")]
+    UnknownLabelRuleEvent(String),
+    /// A label-rule audit payload could not be encoded or decoded.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
     /// A supervised run returned without a durable terminal event.
     #[error("run `{0}` has no durable terminal event")]
     MissingTerminal(String),

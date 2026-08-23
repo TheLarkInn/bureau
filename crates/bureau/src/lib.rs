@@ -17,6 +17,7 @@ pub mod engine;
 pub mod forge;
 pub mod git;
 mod identity;
+pub mod label_reconcile;
 pub mod mcp;
 pub mod process;
 pub mod reconcile;
