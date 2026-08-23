@@ -9,6 +9,7 @@
     "test:matrix": "playwright test --grep @matrix",
     "test:visual": "playwright test --grep @visual",
     "test:visual:update": "playwright test --grep @visual --update-snapshots",
+    "capture-review": "playwright test --config=playwright.review.config.mjs && playwright test",
     "install-browsers": "playwright install chromium"
   },
   "devDependencies": {

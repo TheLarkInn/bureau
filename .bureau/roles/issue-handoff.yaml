@@ -1,0 +1,10 @@
+name: issue-handoff
+agent: agents/bureau-design-issue-handoff.agent.md
+adapter: copilot
+permissions:
+- repo:read
+- repo:write
+- issues:read
+- issues:write
+- model:invoke
+min_trust: derived

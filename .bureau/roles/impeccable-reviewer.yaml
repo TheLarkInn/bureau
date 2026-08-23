@@ -1,0 +1,8 @@
+name: impeccable-reviewer
+agent: agents/bureau-impeccable-review.agent.md
+adapter: copilot
+permissions:
+- repo:read
+- repo:write
+- model:invoke
+min_trust: maintainer

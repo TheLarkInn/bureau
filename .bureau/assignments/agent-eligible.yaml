@@ -3,7 +3,7 @@ work:
   forge: github
   source: TheLarkInn/bureau
   filter: is:open label:agent-eligible
-  approval_label: null
+  approval_label: agent-eligible
   abort_label: bureau:failed
   escalate_label: bureau:needs-human
 repos:

@@ -39,9 +39,9 @@ Runs in a Linux dev container on one developer's machine; one process, no
 cluster. Operated through a TUI (graph designer) and a browser UI
 (`.github/extensions/bureau-canvas`, the Copilot app canvas) against the same
 `.bureau/` config. The forge (GitHub/ADO) owns work items, PRs, review
-threads, and identity; bureau consumes them via API. Upcoming practice:
-self-hosted bureau runs its own agentic loops for design review and visual
-testing of the TUI and web UI.
+threads, and identity; bureau consumes them via API. Bureau's reviewed config
+runs its own agentic loop for code and design review, visual testing, and
+creation of implementation-ready GitHub issues.
 
 ## Capabilities and Constraints
 
