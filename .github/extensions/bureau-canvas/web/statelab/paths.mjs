@@ -94,6 +94,11 @@ const FIELD_DRAFTS = {
     // DAG never forms, taking this disclosure's open and close edges with it.
     // Opening and closing the signals editor does not need unset labels; only
     // a draft that must differ from what the payload already holds does.
+    //
+    // Nothing is lost by that here, because this field's `dirty` fills *two*
+    // inputs and a prefix edge is a single operation: rest and dirty were never
+    // an edge, whatever fixture rest carried. `repos` below is the case where
+    // that is not true, and it keeps its fixture for exactly that reason.
     rest: {},
     dirty: {
       fixture: "no-signals",
@@ -106,10 +111,14 @@ const FIELD_DRAFTS = {
     },
   },
   repos: {
-    // As above: the ranked list opens and closes on whatever the config holds,
-    // so rest stays on the resting card's payload and keeps its edges. The
-    // reorder that `dirty` performs is what needs a second repo.
-    rest: {},
+    // Unlike forge-signals, the resting repos editor keeps its fixture. Its
+    // `dirty` is a *single* click — the reorder — so rest and dirty are a
+    // prefix pair and the edge between them is walked; dropping the fixture
+    // here to buy a card→field edge would have paid for it by deleting that
+    // one, which is the interaction that makes this editor dirty at all. The
+    // `.repos-value` disclosure gets its open and close edges from the
+    // findings probe pair instead.
+    rest: { fixture: "multi-repo" },
     dirty: {
       fixture: "multi-repo",
       ops: [{ op: "click", selector: '[aria-label="Move bureau-docs up"]' }],
@@ -124,7 +133,7 @@ const FIELD_DRAFTS = {
       copy: ["is read-only, so no branch can land there"],
     },
   },
-  "repos-add": { "n/a": {} },
+  "repos-add": { "n/a": { fixture: "multi-repo" } },
   limits: {
     rest: {},
     dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], shows: [S.limitsDirty], copy: ["unsaved changes"] },

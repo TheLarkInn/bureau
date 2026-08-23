@@ -140,7 +140,7 @@ reasoning that exhaustive rendering is discovery work rather than PR feedback.
 That reasoning does not survive the arithmetic: `schedule` fires only on the
 default branch, so until the workflow merged it had never run at all, and
 `scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
-would have merged green and gone unattributed. All 442 assertions take about
+would have merged green and gone unattributed. All 440 assertions take about
 as long as a fraction of the Rust job, so they gate like anything else:
 
 ```sh
@@ -298,14 +298,22 @@ expectations. Acyclicity is asserted over the entry subset alone: a return edge
 is a cycle by definition, which is what "the way back" means.
 
 That declaration has to be worth something, so an offline test holds every
-`REVERSIBLE` entry to at least one edge. It was not free: because an entry edge
-is a prefix over the whole path, *including which fixture the state publishes*,
-a field whose resting lifecycle entry named its own payload diverged from the
-resting card before the click and produced no edge at all. The forge-signals
-disclosure was in that position — declared reversible, walked never, on the one
-control this work had changed from open-only to a toggle. A resting field now
-opens on whatever the card already holds, and only a draft that must differ
-from the committed value brings a fixture of its own.
+`REVERSIBLE` entry to at least one edge — matched by the control that *opened*
+it, not by its undo, since Live and Replay share the Design button and one
+shared return edge would otherwise answer for both. It was not free: because an
+entry edge is a prefix over the whole path, *including which fixture the state
+publishes*, a field whose resting lifecycle entry named its own payload
+diverged from the resting card before the click and produced no edge at all.
+The forge-signals disclosure was in that position — declared reversible, walked
+never, on the one control this work had changed from open-only to a toggle. Its
+resting state now opens on whatever the card already holds.
+
+The repos editor is the case where that trade does not pay, and it is worth
+knowing which is which. Its `dirty` is a single click — the reorder — so rest
+and dirty are themselves a prefix pair, and taking the fixture off rest to buy
+an edge from the card would have paid for it by deleting the edge that proves
+one click on Move-up makes this editor dirty. It keeps its fixture; its
+disclosure gets its edges from the findings probe pair instead.
 
 
 ## Rules worth knowing before changing it

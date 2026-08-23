@@ -20,8 +20,10 @@
 // where a shot written after the run began reads as older than it. CI is such
 // a filesystem, and said so.
 //
-// Publishing is a rename, so the gallery is never half-replaced: it is either
-// the previous run's or this one's.
+// Publishing is a rename, so the gallery is never a mixture of two runs: a
+// reviewer sees the previous run's or this one's, and a crash between the
+// removal and the rename leaves an empty directory, which is visibly nothing
+// rather than quietly half a matrix.
 
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 

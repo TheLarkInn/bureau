@@ -531,10 +531,18 @@ test("every return edge mirrors an entry edge and undoes exactly one control", (
  * many were quietly dead. The forge-signals disclosure was exactly that: named
  * in `REVERSIBLE`, asserted nowhere, on the very control this work changed from
  * open-only to a toggle.
+ *
+ * A toggle is matched by the control that *opened* it rather than by its undo,
+ * because two toggles may share one undo — Live and Replay both leave by the
+ * Design button. Keyed on the undo, one mode-design return edge answered for
+ * both, and the whole of Replay could have gone dead behind Live's edge.
  */
 test("every reversible control declares an undo the suite actually walks", () => {
-  const undone = new Set(TRANSITIONS.filter((edge) => edge.kind === "return").map((edge) => edge.via));
-  const dead = REVERSIBLE.filter((toggle) => !undone.has(`click ${toggle.undo}`)).map((toggle) => toggle.via);
+  const opened = new Set(ENTRY_TRANSITIONS.map((edge) => `${edge.from}→${edge.to}:${edge.via}`));
+  const walked = TRANSITIONS.filter((edge) => edge.kind === "return")
+    .map((edge) => `${edge.to}→${edge.from}:`);
+  const covered = (toggle) => walked.some((back) => opened.has(`${back}click ${toggle.via}`));
+  const dead = REVERSIBLE.filter((toggle) => !covered(toggle)).map((toggle) => toggle.via);
   assert.deepStrictEqual({ dead, declared: REVERSIBLE.length === 0 }, { dead: [], declared: false });
 });
 
