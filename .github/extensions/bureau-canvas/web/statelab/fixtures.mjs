@@ -16,6 +16,13 @@
 // Composition is what keeps states distinguishable: without it, "a pipeline
 // viewer with findings" and "a pipeline viewer without" would resolve to the
 // same payload and the matrix would quietly render one state twice.
+//
+// One fixture is an exception and names itself as one: `concurrent-run` carries
+// a payload the host built, because a concurrent group's geometry is
+// `lib/layout.mjs`'s and that module is on the other side of the bundle
+// boundary. See `concurrentRun` below.
+
+import { CONCURRENT_STATE } from "./concurrent-state.mjs";
 
 /** Deep clone that keeps the payload a plain JSON value, like the wire does. */
 function clone(state) {
@@ -313,6 +320,31 @@ function noSignals(state) {
   return next;
 }
 
+/**
+ * A pipeline whose middle step is a concurrent group, so the run viewer's group
+ * card has something to draw on.
+ *
+ * The one fixture that *replaces* rather than projects, and it says so. Every
+ * other fixture is a pure transform of the served payload precisely so it
+ * cannot drift from `buildState`; a concurrent group has geometry, and that
+ * geometry belongs to `lib/layout.mjs`, which the two-host bundle boundary
+ * keeps out of the browser. Hand-placing the cards here would be the drift the
+ * doctrine exists to prevent, so `CONCURRENT_STATE` is built by the host from a
+ * committed validate payload and rebuilt by `test/statelab.test.mjs` on every
+ * run — a stronger guarantee than a transform, not a weaker one.
+ *
+ * The host's own four header fields are still taken from the payload being
+ * projected over, so the header reads as this host and only the config below it
+ * is the fixture's.
+ */
+function concurrentRun(state) {
+  const next = clone(CONCURRENT_STATE);
+  for (const key of ["canvasId", "instanceId", "repoRoot", "dir"]) {
+    next[key] = state[key];
+  }
+  return next;
+}
+
 // --- plan layer -----------------------------------------------------------
 
 /** Unsaved work: the draft bar must read as unsaved and stay discardable. */
@@ -377,6 +409,7 @@ export const FIXTURES = Object.fromEntries([
   entry("unknown-primary", "content", "the primary repo is not in repos.yaml", unknownPrimary),
   entry("no-credential", "content", "no registered repo names a credential", noCredential),
   entry("no-limits", "content", "every limit off", noLimits),
+  entry("concurrent-run", "content", "a pipeline whose middle step is a concurrent group, laid out by the host", concurrentRun),
   entry("all-limits", "content", "every limit capped", allLimits),
   entry("no-signals", "content", "abort and escalate labels unset", noSignals),
   entry("draft-pending", "plan", "three unsaved changes waiting in the plan", draftPending),

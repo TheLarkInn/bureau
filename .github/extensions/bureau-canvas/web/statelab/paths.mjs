@@ -231,6 +231,7 @@ export function interceptFor(combo) {
     SAVE_INTERCEPTS[combo.draft],
     SAVE_INTERCEPTS[combo.edit],
     combo.run === "refused" ? "fail-intent" : null,
+    combo.run === "ended" ? "offer-ended-run" : null,
     combo.disclosure === "create-error" ? "fail-intent" : null,
   ].filter(Boolean);
   // One page gets one route. Two axes wanting different ones would mean a
@@ -348,6 +349,10 @@ export const RUN_IDS = {
   running: "run-live",
   paused: "run-paused",
   finished: "run-finished",
+  // The same committed log the replay side calls `finished`. What differs is
+  // where it is picked from: `offer-ended-run` reports it to the live listing,
+  // which is the instant after a watched run reaches its terminal.
+  ended: "run-finished",
 };
 
 /**
@@ -401,8 +406,17 @@ export function runOps(mode, runValue) {
   ];
 }
 
-/** Live folds the log into step decoration; that is what proves it landed. */
+/**
+ * Live folds the log into step decoration; that is what proves it landed.
+ *
+ * An ended run has no running step to wait on — every step in its log has
+ * already completed — so what proves the fold landed there is the status the
+ * fold produced, which is also the thing that withdrew the transport.
+ */
 function liveArrival(runValue) {
+  if (runValue === "ended") {
+    return [{ op: "wait", selector: S.runStatusFinished }];
+  }
   return [{ op: "wait", selector: runValue === "paused" ? S.overlayPaused : S.overlayRunning }];
 }
 

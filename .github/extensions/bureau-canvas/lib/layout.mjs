@@ -279,9 +279,19 @@ function placeTerminals(view, steps) {
   });
 }
 
+/**
+ * Where the terminal rail stands: clear of the widest row, whatever widened it.
+ *
+ * This used to measure only the steps on the rail (`parentId == null`), on the
+ * reasoning that a concurrent group's members belong to their group rather than
+ * to the spine. They are placed in the same coordinates as everything else,
+ * though — `column * X_GAP`, from the same per-row counter — so a group with two
+ * members puts a card in column 1 while the rail still measured one column, and
+ * the terminals came to rest 120px inside it. A terminal pill printed over a
+ * member card, in the one shape of pipeline the bundled sample does not have.
+ */
 function terminalX(steps) {
-  const railSteps = steps.filter((step) => step.parentId == null);
-  const maxColumn = Math.max(0, ...railSteps.map((step) => step.column));
+  const maxColumn = Math.max(0, ...steps.map((step) => step.column));
   return (maxColumn + 1) * X_GAP + TERMINAL_GAP;
 }
 

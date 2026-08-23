@@ -63,6 +63,15 @@ export function refusalFor(kind) {
 }
 
 /**
+ * The run whose log has already reached its terminal.
+ *
+ * Named here rather than in `paths.mjs` because both hosts install the same
+ * condition from this module, and the condition is "this run id is offered as
+ * live" — which is a fact about the route, not about a path.
+ */
+export const ENDED_RUN = "run-finished";
+
+/**
  * The kinds an in-frame shim can serve.
  *
  * `fetch` and `EventSource` are ordinary window properties, so a same-origin
@@ -71,7 +80,7 @@ export function refusalFor(kind) {
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent", "offer-ended-run"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -107,9 +116,45 @@ export function installIntercept(win, kind) {
     stallState(win);
     return;
   }
+  if (kind === "offer-ended-run") {
+    offerEndedRun(win);
+    return;
+  }
   if (kind) {
     stallIntent(win, kind);
   }
+}
+
+/**
+ * The live listing a moment after the watched run reached its terminal.
+ *
+ * A run is live exactly while its log holds no `run_finished` event, so a
+ * committed log is one or the other and the live picker can never offer this
+ * one. What a reader does is pick a run *while* it is running and stay on the
+ * screen; the listing is what still names it, and the log is what has ended.
+ * Reporting the ended run as live is that instant, and it is the only way a
+ * static log can produce a screen whose subject is a run ending under the
+ * reader.
+ *
+ * A projection of the host's own answer rather than a replacement for it: the
+ * other runs are passed through exactly as served.
+ */
+export function offeredAsLive(payload) {
+  return { ...payload, runs: (payload?.runs ?? []).map((run) => (run.run_id === ENDED_RUN ? { ...run, live: true } : run)) };
+}
+
+function offerEndedRun(win) {
+  const native = win.fetch.bind(win);
+  win.fetch = async (input, init) => {
+    const response = await native(input, init);
+    if (!/\/runs$/u.test(urlOf(input)) || !response.ok) {
+      return response;
+    }
+    return new win.Response(JSON.stringify(offeredAsLive(await response.json())), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
 }
 
 /**

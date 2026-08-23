@@ -11,6 +11,7 @@ import {
   emptyOverlay,
   resolveOverlay,
   runActions,
+  runsOffered,
   stateUpTo,
 } from "../web/live/overlay.js";
 
@@ -269,8 +270,8 @@ test("applyEvent is pure: unknown kinds and group events for other runs leave st
 test("a run control is offered only while the run can still be acted on", () => {
   // Branching on `paused` alone offered Pause on a run that had already
   // reached its terminal — a control whose only possible outcome is a refusal.
-  // The live picker lists live runs only, so no committed log can render this
-  // screen; the assertion is here rather than in the matrix for that reason.
+  // The screen it produces is `run: ended` in the state matrix, which renders
+  // the withdrawal; this is the same claim without a browser.
   assert.deepEqual(
     ["idle", "running", "paused", "finished"].map((status) => runActions(status)),
     [
@@ -279,5 +280,34 @@ test("a run control is offered only while the run can still be acted on", () => 
       { transport: "resume", cancel: true },
       { transport: null, cancel: false },
     ],
+  );
+});
+
+test("the run being watched stays listed after its log stops being live", () => {
+  // A run is live exactly while its log holds no `run_finished` event, so one
+  // that ends under the reader leaves the live listing on the next poll. A
+  // `<select>` whose value matches no option draws blank while its overlay is
+  // still on screen, so the watched run is offered whatever the filter says —
+  // and only that one, so the live tab does not quietly become the replay tab.
+  const runs = [
+    { run_id: "run-live", live: true },
+    { run_id: "run-finished", live: false },
+    { run_id: "run-other", live: false },
+  ];
+  const ids = (options) => runsOffered(runs, options).map((run) => run.run_id);
+
+  assert.deepEqual(
+    {
+      liveOnly: ids({ liveOnly: true, watching: null }),
+      watchingEnded: ids({ liveOnly: true, watching: "run-finished" }),
+      watchingLive: ids({ liveOnly: true, watching: "run-live" }),
+      replay: ids({ liveOnly: false, watching: null }),
+    },
+    {
+      liveOnly: ["run-live"],
+      watchingEnded: ["run-live", "run-finished"],
+      watchingLive: ["run-live"],
+      replay: ["run-live", "run-finished", "run-other"],
+    },
   );
 });

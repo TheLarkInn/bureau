@@ -105,7 +105,7 @@ function RunButtons({ overlay, onAction }) {
     cancel
       ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel")
       : null,
-    h("span", { className: "run-status" }, overlay.status),
+    h("span", { className: "run-status", "data-status": overlay.status }, overlay.status),
   );
 }
 

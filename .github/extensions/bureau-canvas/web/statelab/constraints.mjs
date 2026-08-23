@@ -244,21 +244,40 @@ export const CONSTRAINTS = [
   {
     /*
      * The one rule in this family whose subject is *selection* rather than
-     * render. A live run that reaches its terminal while being watched is an
-     * ordinary screen — `useLiveOverlay` holds the id in local state and the
-     * reducer sets `finished` on the appended event — and the harness cannot
-     * produce it, because a run is live exactly while its log has no
-     * `run_finished` event (`lib/runs.mjs`). A static log is one or the other,
-     * so the picker can never offer it. What that screen shows is settled by
-     * `runActions`, which withdraws the transport once nothing can act on the
-     * run, and `test/overlay.test.mjs` holds it.
+     * render, and the distinction is the whole of it.
+     *
+     * `run: finished` means "the run the picker offered as finished". A run is
+     * live exactly while its log has no `run_finished` event (`lib/runs.mjs`),
+     * so the live listing never offers that one and the control this value
+     * needs is not on the screen — structural, not a limit of this harness.
+     *
+     * The screen behind the confusion is a different one: a run picked *while
+     * live* that reaches its terminal under the reader. That is an ordinary
+     * screen, it is where `runActions` withdraws the transport, and it is
+     * `run: ended` — rendered, screenshotted and asserted like any other state.
+     * This rule used to stand in for it and hide it, which is how a real screen
+     * came to be excluded by a rule that owed nothing for excluding it.
      */
     id: "live-cannot-show-a-finished-run",
     kind: "structural",
     reads: ["mode", "run"],
     title: "The live picker lists only live runs",
-    why: "A run is live exactly while its `events.jsonl` holds no `run_finished` event (`lib/runs.mjs`), and `RunPicker` lists only live runs — so no committed log can be both selectable in live mode and finished. The screen a reader reaches by watching a picked run end arrives on an appended event, which the matrix's static logs cannot deliver; `runActions` says what it shows and `test/overlay.test.mjs` asserts it.",
+    why: "A run is live exactly while its `events.jsonl` holds no `run_finished` event (`lib/runs.mjs`), and `RunPicker` filters the live tab to live runs — so no committed log can be picked from that listing *as* finished. The screen a reader reaches by watching a picked run end is `run: ended`, which renders it.",
     holds: (combo) => combo.mode !== "live" || combo.run !== "finished",
+  },
+  {
+    /*
+     * Replay picks any run and reports it for what it is, so a log that ended
+     * is simply `finished` there — nothing was ever offered to act on, and
+     * nothing is withdrawn. `ended` is the live chrome after the withdrawal,
+     * so it is a live screen by construction.
+     */
+    id: "an-ended-run-is-a-live-screen",
+    kind: "structural",
+    reads: ["mode", "run"],
+    title: "Only the live transport can be withdrawn",
+    why: "`ended` is the screen `runActions` produces when Pause, Resume and Cancel go, and those are drawn by `useLiveOverlay` (`web/live/live.js`). Replay draws a picker and a timeline and offers no control over the run, so it has nothing to withdraw — the same log there is `finished`.",
+    holds: (combo) => combo.run !== "ended" || combo.mode === "live",
   },
   {
     /*

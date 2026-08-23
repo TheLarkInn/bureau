@@ -188,10 +188,28 @@ export const MEASURED = [
   // it is the last sibling in the column — so it is the one most able to print
   // over what sits above it, and it was the only one nothing measured.
   ".relation-section",
+  // The graph's own cards, which nothing here measured at all. Every card on
+  // the pipeline surface is placed by `lib/layout.mjs` at coordinates it
+  // computes, so a placement rule that gets one wrong draws two cards on top of
+  // each other and every check still passed: `shows` counts them, and the
+  // pannable surface excuses clipping. That is how the terminal rail came to
+  // stand 120px inside a concurrent group's member row — a collision the
+  // offline suite could not see and the Edge harness only checked on the two
+  // pipelines it happens to open.
+  ".flow-card",
 ];
 
-/** Regions that stack vertically and must never sit on top of one another. */
-const STACKED = [".assignment-card", ".detail-row", ".limit-row", ".repo-row"];
+/**
+ * Regions that stack vertically and must never sit on top of one another.
+ *
+ * `.flow-card` is the exception that is not vertical: the graph places its
+ * cards in two dimensions, and the rule there is simply that no two of them may
+ * intersect. It belongs on this list rather than in `SIBLINGS` because React
+ * Flow gives every node its own absolutely positioned wrapper — so the cards
+ * share no DOM parent and are not in normal flow, and neither the sibling rule
+ * nor the flow rule can reach them. Same-selector comparison can.
+ */
+const STACKED = [".assignment-card", ".detail-row", ".limit-row", ".repo-row", ".flow-card"];
 
 /**
  * Regions that are siblings in the landing's single column. None of these

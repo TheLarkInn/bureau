@@ -50,6 +50,24 @@ export function runActions(status) {
   return { transport: status === "paused" ? "resume" : "pause", cancel: true };
 }
 
+/**
+ * Which runs a picker offers, given its filter and the run being watched.
+ *
+ * The live tab lists live runs, and a run is live exactly while its log holds
+ * no `run_finished` event — so a run that ends under the reader leaves the list
+ * on the next poll. A `<select>` whose `value` matches no `<option>` reports
+ * `selectedIndex === -1` and draws blank, while the overlay it belongs to is
+ * still on screen: a picker claiming no run beside a run being shown. So the
+ * watched run is always offered, whatever the filter says, and its label is
+ * then the one place the chrome reports that it finished.
+ *
+ * Here beside `runActions` for the same reason: it is a pure fact about a
+ * listing, and this is the module the offline suite can hold without a browser.
+ */
+export function runsOffered(runs, { liveOnly, watching }) {
+  return (runs ?? []).filter((run) => !liveOnly || run.live || run.run_id === watching);
+}
+
 export function emptyOverlay() {
   return {
     runId: null,

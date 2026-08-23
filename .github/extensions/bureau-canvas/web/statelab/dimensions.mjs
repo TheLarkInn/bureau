@@ -649,6 +649,33 @@ const run = {
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
     { id: "finished", summary: "a run that reached a terminal", derive: (combo) => overlay(combo, "finished") },
     /*
+     * The screen a reader is left on when the run they picked ends under them.
+     *
+     * Not the same state as `finished`, which is a finished run *chosen from
+     * the replay listing* — there the chrome is a timeline and nothing was
+     * ever offered to act on. Here the transport was offered a moment ago and
+     * has been withdrawn, which is the whole subject: `runActions` takes Pause,
+     * Resume and Cancel once nothing can act on the run, and the status is what
+     * says why.
+     *
+     * The picker's own label still reads `live` here, and that is the state
+     * rather than a defect: the listing is polled every four seconds, so for
+     * that long it names the run as it was when it was picked while the status
+     * beside it reports where the run actually got to. What happens after the
+     * poll is that the run leaves the live listing — and `runsOffered` keeps
+     * the watched run in it, because a `<select>` whose value matches no option
+     * draws blank beside an overlay that is still up. That half is a fact about
+     * a listing rather than a screen a click reaches, so `test/overlay.test.mjs`
+     * holds it directly instead of the matrix waiting out a timer for it.
+     */
+    {
+      id: "ended",
+      summary: "a run picked while live that has since reached its terminal",
+      shows: [S.runStatusFinished, S.runPickerLive],
+      hides: [S.runPause, S.runResume, S.runCancel, S.overlayRunning, S.overlayPaused],
+      copy: ["finished"],
+    },
+    /*
      * A run control the host refused. Cancel is sent against a live running run
      * with `./intent` routed in the browser, so no real run is acted on. The
      * status is unchanged by a refusal, so the transport stays offered — the

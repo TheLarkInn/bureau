@@ -212,6 +212,14 @@ export const STATES = [...matrixStates, ...PROBES];
  * `undo` is usually the same control — these are toggles — but not always: the
  * way out of the Relations tab is the Pipeline tab, and the way out of a create
  * bar is Cancel. Both are the real control a user would reach for.
+ *
+ * Each entry names the region the toggle moves, and which way it moves it.
+ * `gone` is a region `via` reveals, so the way back is over when it has gone;
+ * `hidden` is a region `via` takes away — the group fold is the one of those,
+ * because a finished group draws its members until it is asked not to — so the
+ * way back is over when it is on screen again. The direction is not cosmetic: a
+ * `waitGone` on a selector that never matches passes instantly, so a restoring
+ * undo declared as a removing one would be an edge that asserts nothing.
  */
 export const REVERSIBLE = [
   { via: S.assignmentHead, undo: S.assignmentHead, gone: S.assignmentDetail },
@@ -225,6 +233,11 @@ export const REVERSIBLE = [
   { via: S.editorTabRelations, undo: S.editorTabPipeline, gone: S.relationFlow },
   { via: S.modeLive, undo: S.modeDesign, gone: S.runControls },
   { via: S.modeReplay, undo: S.modeDesign, gone: S.replayControls },
+  // The fold on a finished concurrent group, and the one toggle whose first
+  // press *removes* a region. It sits on the card rather than inside the member
+  // list precisely so that collapsing does not take the only button that could
+  // undo it, and that claim is only under test if the matrix walks it back.
+  { via: S.groupFold, undo: S.groupFold, hidden: S.groupMembers },
 ];
 
 /**
@@ -268,12 +281,18 @@ function returnEdge(edge) {
   if (!toggle) {
     return null;
   }
+  // A toggle that revealed a region is undone when the region has gone; one
+  // that removed a region is undone when it is back. Waiting the wrong way
+  // round would be an edge that passes on the instant it is called.
+  const settled = toggle.gone
+    ? { op: "waitGone", selector: toggle.gone }
+    : { op: "wait", selector: toggle.hidden };
   return {
     kind: "return",
     from: edge.to,
     to: edge.from,
     via: `click ${toggle.undo}`,
-    delta: [{ op: "click", selector: toggle.undo }, { op: "waitGone", selector: toggle.gone }],
+    delta: [{ op: "click", selector: toggle.undo }, settled],
   };
 }
 

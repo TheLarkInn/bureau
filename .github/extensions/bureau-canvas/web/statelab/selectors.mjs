@@ -113,6 +113,12 @@ export const SELECTORS = {
   // be acted on, and it is the one run control that cannot be undone — so a
   // state that draws it has to say so.
   runCancel: '[data-testid="run-cancel"]',
+  // The status the run reached, addressable rather than only readable. The
+  // span has always carried the word; a state whose whole subject is that the
+  // transport went because the run ended has to be able to say *which* status
+  // took it, and copy alone cannot — "finished" appears in the picker's own
+  // label for the same run.
+  runStatusFinished: '.run-status[data-status="finished"]',
   runControlError: ".run-control-error",
   replayControls: ".replay-controls",
   replayTimeline: ".replay-timeline",
@@ -129,6 +135,18 @@ export const SELECTORS = {
   replayLoaded: '.replay-scrubber:not([max="0"])',
   overlayRunning: ".flow-card.overlay-running",
   overlayPaused: ".flow-card.overlay-paused",
+  // A concurrent group's card, the members it lists once it has finished, and
+  // the control that folds them away. The fold lives on the card rather than
+  // inside the member list, so that collapsing does not take the only control
+  // that could undo it — the `aria-expanded` pair is how a state says which
+  // side of that toggle it is on.
+  groupCard: ".flow-card--concurrent",
+  groupMemberCard: ".flow-card--member",
+  groupMembers: ".member-list",
+  groupMemberRow: ".member-row",
+  groupFold: ".member-collapse",
+  groupFoldOpen: '.member-collapse[aria-expanded="true"]',
+  groupFoldShut: '.member-collapse[aria-expanded="false"]',
   pausedBadge: ".paused-badge",
   legend: ".legend",
   stepCard: ".flow-card",

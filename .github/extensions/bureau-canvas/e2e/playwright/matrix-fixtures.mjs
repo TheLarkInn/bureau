@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { READ_INTENTS, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
+import { READ_INTENTS, offeredAsLive, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -307,6 +307,15 @@ async function intercept(page, kind) {
     "block-renderer": () => page.route(/app\.mjs$/u, (route) => route.abort("failed")),
     "block-editor-renderer": () => page.route(/editor\/index\.mjs$/u, (route) => route.abort("failed")),
     "stall-state": () => page.route(/\/(state|events)$/u, () => {}),
+    // The live listing a moment after the watched run reached its terminal.
+    // A committed log is live or finished and never both, so this is the only
+    // way a static log renders the screen a reader is left on when the run they
+    // picked ends under them. `offeredAsLive` is the lab's own projection, so
+    // both hosts report the same listing.
+    "offer-ended-run": () => page.route(/\/runs$/u, async (route) => {
+      const response = await route.fetch();
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(offeredAsLive(await response.json())) });
+    }),
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })

@@ -64,6 +64,25 @@ const EDITOR_BASE = {
   edit: "rest",
 };
 
+/**
+ * The way to a finished concurrent group: publish the pipeline that has one,
+ * then watch the run that ran it.
+ *
+ * Live rather than replay, and that is the whole reason `run-group` has no
+ * `run_finished` event. Live backfills the entire log before it renders, so the
+ * group is already done; replay parks at the first event, where no group has
+ * started yet and there is nothing to fold. A group that has finished inside a
+ * run that has not is an ordinary shape — `completion: all` returns and the
+ * pipeline moves on — and it is the one the fold is offered on.
+ */
+const GROUP_RUN_OPS = [
+  { op: "wait", selector: S.pipelineView },
+  { op: "click", selector: S.modeLive },
+  { op: "present", selector: `${S.runPickerLive} option[value="run-group"]` },
+  { op: "select", selector: S.runPickerLive, value: "run-group" },
+  { op: "wait", selector: S.groupMembers },
+];
+
 function state({ id, summary, page = "index", surface, fixture, ops, expect, intercept, ...rest }) {
   return {
     id,
@@ -280,6 +299,64 @@ export const PROBES = [
     fixture: "pipeline-missing",
     ops: [{ op: "wait", selector: S.shell }],
     expect: { shows: [S.shell], hides: [], copy: ["No pipeline named"] },
+  }),
+  /*
+   * The concurrent group, which the dimensions cannot reach.
+   *
+   * A group card is drawn by the run viewer for a `concurrent` step, and the
+   * bundled sample has none — so no combination of the sixteen axes produces
+   * one, and the whole family (the member rows, the outcome per member, and the
+   * control that folds them away) was rendered by nothing. That is the one
+   * thing this registry may not do, and a rule could not fix it: an axis whose
+   * every value is excluded has nowhere for a `harness` rule to stand.
+   *
+   * So it is a payload the dimensions do not model, which is what a content
+   * sample is for. `concurrent-run` carries a pipeline the *host* laid out and
+   * `run-group` is a committed log in which the group has finished while the
+   * run carries on — which is what makes the fold offered, since `groupHidden`
+   * honours a collapse only once a group is done.
+   *
+   * The pair is deliberate rather than one state with two assertions. They
+   * differ by exactly one click, so the registry derives an edge between them,
+   * and `REVERSIBLE` gives the way back. That is the defect this control
+   * already had once: collapsing used to remove the members and the only button
+   * that could restore them in the same click, and nothing here could have
+   * failed. Now the door has to open both ways or the transition fails by name.
+   */
+  sample({
+    id: "probe--group-expanded",
+    covers: "a finished concurrent group in a run, listing an outcome per member — a card the sixteen axes cannot produce, because the bundled sample has no concurrent step",
+    summary: "a finished concurrent group with its members listed, each carrying its own outcome",
+    surface: "pipeline",
+    fixture: "concurrent-run",
+    ops: [...GROUP_RUN_OPS],
+    expect: {
+      shows: [S.groupCard, S.groupMembers, S.groupMemberRow, S.groupFoldOpen, S.groupMemberCard],
+      hides: [],
+      // The members disagreed, and the card says so per member rather than
+      // reporting only the group's own verdict.
+      copy: ["read-diff", "read-tests", "success", "failure"],
+    },
+  }),
+  sample({
+    id: "probe--group-collapsed",
+    covers: "the same group folded away, and the control that folds it surviving its own collapse",
+    summary: "the group folded shut — the members are gone and the control that brings them back is not",
+    surface: "pipeline",
+    fixture: "concurrent-run",
+    ops: [
+      ...GROUP_RUN_OPS,
+      { op: "click", selector: S.groupFold },
+      { op: "waitGone", selector: S.groupMembers },
+    ],
+    expect: {
+      shows: [S.groupCard, S.groupFoldShut],
+      // Both halves of the fold: the rows go from the card and the member
+      // cards go from the canvas. Asserting only the rows would pass on a
+      // collapse that left two orphaned cards behind.
+      hides: [S.groupMembers, S.groupMemberRow, S.groupMemberCard],
+      copy: ["run-checks"],
+    },
   }),
   sample({
     id: "probe--no-credential-registry",

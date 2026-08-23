@@ -57,7 +57,7 @@ test("every intercept the registry asks for is one this module names", () => {
   assert.deepEqual(
     { asked, unservable, preSurface: asked.filter(isPreSurface).sort() },
     {
-      asked: ["block-editor-renderer", "block-renderer", "fail-intent", "stall-intent", "stall-state"],
+      asked: ["block-editor-renderer", "block-renderer", "fail-intent", "offer-ended-run", "stall-intent", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
@@ -202,6 +202,37 @@ test("a stalled write hangs on its own shim rather than on the floor beneath it"
     // two, so the difference costs no screen — and the safe direction for a
     // condition that exists to hold saves is to hold more, not less.
     { write: false, read: true },
+  );
+});
+
+test("the ended run is offered as live, and no other listing is touched", async () => {
+  const listing = { runs: [{ run_id: "run-live", live: true }, { run_id: "run-finished", live: false }, { run_id: "run-paused", live: true }] };
+  const win = windowStub();
+  win.fetch = (input) => Promise.resolve(new Response(JSON.stringify(listing), { status: 200, headers: { "Content-Type": "application/json" }, url: String(input) }));
+  installIntercept(win, "offer-ended-run");
+  const served = await (await win.fetch("./runs")).json();
+  const untouched = await (await win.fetch("./state")).json();
+
+  assert.deepEqual(
+    {
+      // The whole listing is passed through; exactly one entry is relabelled,
+      // which is the instant after the watched run reached its terminal.
+      served: served.runs.map((run) => [run.run_id, run.live]),
+      // A projection, not a replacement: any other request is the host's own.
+      untouched: untouched.runs.map((run) => [run.run_id, run.live]),
+      pureOfInput: listing.runs.find((run) => run.run_id === "run-finished").live,
+      known: IN_FRAME.has("offer-ended-run"),
+      // It routes `./runs`, so it is not a pre-surface condition: the page
+      // boots and settles normally and only the picker's poll is answered.
+      preSurface: isPreSurface("offer-ended-run"),
+    },
+    {
+      served: [["run-live", true], ["run-finished", true], ["run-paused", true]],
+      untouched: [["run-live", true], ["run-finished", false], ["run-paused", true]],
+      pureOfInput: false,
+      known: true,
+      preSurface: false,
+    },
   );
 });
 

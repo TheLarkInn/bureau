@@ -14,6 +14,8 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
+import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
+import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
 import { collect, CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
@@ -24,6 +26,7 @@ import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
+const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
 
 async function servedState() {
   const payload = JSON.parse(await readFile(PAYLOAD, "utf8"));
@@ -304,7 +307,18 @@ test("every fixture is a pure projection of the served payload", async () => {
 
 test("every fixture ships the relation projection its own config implies", async () => {
   const base = await servedState();
-  const drawn = base.config.relation;
+  // Role edges are the one class a *view* cannot yield, so they are taken from
+  // the projections of the raw configs the fixtures are built from: the served
+  // sample, and the committed payload `concurrent-run` carries. Deriving them
+  // from the base alone was sound only while no fixture brought its own
+  // pipeline, and that premise is now false by design rather than by accident —
+  // so the sources are named here, and `newPipelines` still fails a fixture
+  // that invents a pipeline neither of them explains.
+  const known = relationView(JSON.parse(await readFile(CONCURRENT_PAYLOAD, "utf8")));
+  const drawn = {
+    edges: [...base.config.relation.edges, ...known.edges],
+    nodes: [...base.config.relation.nodes, ...known.nodes],
+  };
   assert.deepStrictEqual(FIXTURE_IDS.flatMap((id) => disagreements(id, applyFixture(id, base), drawn)), []);
 });
 
@@ -329,9 +343,10 @@ test("every fixture ships the relation projection its own config implies", async
  * which is the same class of lie as a missing one.
  *
  * Role edges are the one class the view cannot yield, because `view.pipelines`
- * carries names and `usedBy` and never steps. They are taken from the base
- * projection instead, which is sound only while no fixture invents a pipeline;
- * that premise is checked here rather than assumed.
+ * carries names and `usedBy` and never steps. They are taken from the raw
+ * configs the fixtures are built from instead, which is sound only while every
+ * pipeline a fixture draws comes from one of them; that premise is checked here
+ * rather than assumed.
  */
 function disagreements(id, state, base) {
   const view = state.config?.view ?? {};
@@ -579,22 +594,31 @@ test("every edge's delta is the child's path minus the parent's, and says so", (
  * wrong screen. A return edge is only meaningful as the mirror of an entry
  * edge, so every one of them has to have a partner pointing the other way, and
  * its delta has to be a single click plus the wait that proves the region it
- * closed is really gone. The browser suite then executes it and holds the
- * render to `to`'s own expectations, which is where "opens but never closes"
- * actually fails.
+ * moved really moved. The browser suite then executes it and holds the render
+ * to `to`'s own expectations, which is where "opens but never closes" — or
+ * "closes and will not open" — actually fails.
+ *
+ * Two shapes, because a toggle goes both ways: the undo of a control that
+ * revealed a region waits for it to go, and the undo of one that removed a
+ * region waits for it to come back. Both are one click and one wait; a delta
+ * that is anything else is not an undo.
  */
 test("every return edge mirrors an entry edge and undoes exactly one control", () => {
   const entries = new Set(ENTRY_TRANSITIONS.map((edge) => `${edge.from} -> ${edge.to}`));
   const returns = TRANSITIONS.filter((edge) => edge.kind === "return");
   const shapeOf = (edge) => edge.delta.map((op) => op.op).join("+");
+  const shapes = ["click+waitGone", "click+wait"];
   assert.deepStrictEqual(
     {
       unmirrored: returns.filter((edge) => !entries.has(`${edge.to} -> ${edge.from}`)).map((edge) => `${edge.from} -> ${edge.to}`),
-      misshapen: returns.filter((edge) => shapeOf(edge) !== "click+waitGone").map((edge) => `${edge.from} -> ${edge.to}: ${shapeOf(edge)}`),
+      misshapen: returns.filter((edge) => !shapes.includes(shapeOf(edge))).map((edge) => `${edge.from} -> ${edge.to}: ${shapeOf(edge)}`),
       unlabelled: returns.filter((edge) => edge.via !== `click ${edge.delta[0].selector}`).map((edge) => `${edge.from} -> ${edge.to}`),
       none: returns.length === 0,
+      // Both shapes must actually occur, or the pair above is one live branch
+      // and one that has never been taken.
+      restoring: returns.some((edge) => shapeOf(edge) === "click+wait"),
     },
-    { unmirrored: [], misshapen: [], unlabelled: [], none: false },
+    { unmirrored: [], misshapen: [], unlabelled: [], none: false, restoring: true },
   );
 });
 
@@ -625,29 +649,46 @@ test("every reversible control declares an undo the suite actually walks", () =>
 });
 
 /**
- * And that the region a return edge waits to lose was ever there.
+ * And that the region a return edge waits on was ever in the state it claims.
  *
- * A return edge is `click undo` then `waitGone gone`, and `waitGone` on a
- * selector that never matches passes the instant it is called. So a `gone` that
- * names nothing downgrades the edge from "this control closed something" to
- * "this control was clicked", silently — the same shape of nothing as a
- * declared toggle with no edge, one level down.
+ * A return edge is `click undo` then a wait, and either wait passes instantly
+ * on a selector that never matches. So a region that names nothing downgrades
+ * the edge from "this control moved something" to "this control was clicked",
+ * silently — the same shape of nothing as a declared toggle with no edge, one
+ * level down.
  *
- * Requiring the opened state to promise `gone` is what makes the wait mean
- * something: the selector is one the registry already claims is on screen
- * there, so its disappearance is a real event. Most toggles are backstopped
- * anyway by a destination that names the region absent, but three were not —
- * the repos disclosure, whose return lands on a probe, and the two overlay
- * modes, whose destination said nothing about the controls it had dropped.
+ * Requiring the two states to promise the region is what makes the wait mean
+ * something. A `gone` toggle reveals it, so the state it opens has to show it;
+ * a `hidden` toggle takes it away, so the state it opens has to say it is
+ * absent *and* the state it left has to have had it — otherwise "it came back"
+ * is a claim about a region neither screen ever mentions.
  */
-test("every reversible control opens the region its undo waits to lose", () => {
+test("every reversible control names a region both of its states account for", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
   const unpromised = ENTRY_TRANSITIONS.flatMap((edge) => {
     const toggle = REVERSIBLE.find((item) => edge.via === `click ${item.via}`);
-    const shows = byId.get(edge.to)?.expect.shows ?? [];
-    return toggle && !shows.includes(toggle.gone) ? [`${edge.to} does not show ${toggle.gone}`] : [];
+    if (!toggle) {
+      return [];
+    }
+    const child = byId.get(edge.to)?.expect ?? { shows: [], hides: [] };
+    const parent = byId.get(edge.from)?.expect ?? { shows: [], hides: [] };
+    if (toggle.gone) {
+      return child.shows.includes(toggle.gone) ? [] : [`${edge.to} does not show ${toggle.gone}`];
+    }
+    return [
+      ...(child.hides.includes(toggle.hidden) ? [] : [`${edge.to} does not name ${toggle.hidden} absent`]),
+      ...(parent.shows.includes(toggle.hidden) ? [] : [`${edge.from} does not show ${toggle.hidden}`]),
+    ];
   });
   assert.deepStrictEqual(unpromised, []);
+});
+
+/** A toggle declares exactly one region, and says which way it moves it. */
+test("every reversible control says which way it moves its region", () => {
+  const malformed = REVERSIBLE
+    .filter((toggle) => Boolean(toggle.gone) === Boolean(toggle.hidden))
+    .map((toggle) => toggle.via);
+  assert.deepStrictEqual({ malformed, declared: REVERSIBLE.length === 0 }, { malformed: [], declared: false });
 });
 
 /** The child's ops from its (skip + 1)-th acting operation onwards. */
@@ -682,14 +723,22 @@ function describeOp(op) {
  * span is the last `at_ms` in a committed log, so it is read back from the log
  * here: a fixture edited without the registry would otherwise leave the matrix
  * asserting a `max` that no run produces.
+ *
+ * A span belongs to a *replayed* run, and not every run value is one — `ended`
+ * is the live chrome after its transport was withdrawn and never reaches a
+ * timeline. So the tables are held to exactly the run values the registry
+ * actually replays, read off the states themselves: a value that gains a replay
+ * state without a span fails here, and so does a span for a run nothing replays.
  */
 test("every run span the registry addresses is the end of that run's log", async () => {
+  const replayed = new Set(STATES
+    .filter((state) => state.dimensions?.mode === "replay" && state.dimensions.run !== "none")
+    .map((state) => state.dimensions.run));
   const ends = {};
   const steps = {};
-  for (const [value, runId] of Object.entries(RUN_IDS)) {
-    const log = await readFile(new URL(`./fixtures/runs/${runId}/events.jsonl`, import.meta.url), "utf8");
-    const events = log.trim().split("\n").map((line) => JSON.parse(line));
-    const stamps = events.map((event) => event.at_ms);
+  for (const value of replayed) {
+    const log = await readFile(new URL(`./fixtures/runs/${RUN_IDS[value]}/events.jsonl`, import.meta.url), "utf8");
+    const stamps = log.trim().split("\n").map((line) => JSON.parse(line).at_ms);
     ends[value] = stamps.at(-1);
     // The transport's two claims, derived the way `stepBy` derives them: park
     // at the first event, and one forward step lands on the next distinct
@@ -698,6 +747,85 @@ test("every run span the registry addresses is the end of that run's log", async
     steps[value] = { start: stamps[0], next, readout: `+${((next - stamps[0]) / 1000).toFixed(1)}s` };
   }
   assert.deepStrictEqual({ ends, steps }, { ends: RUN_END, steps: RUN_STEP });
+});
+
+/**
+ * Every run value the registry names has a committed log behind it, replayed
+ * or not. The span test above only reaches the replayed ones, so without this a
+ * live-only value could address a run directory that does not exist and nothing
+ * offline would say so — the browser suite would just fail to find an option.
+ */
+test("every run value the registry picks names a committed log", async () => {
+  const missing = [];
+  for (const [value, runId] of Object.entries(RUN_IDS)) {
+    const log = await readFile(new URL(`./fixtures/runs/${runId}/events.jsonl`, import.meta.url), "utf8").catch(() => "");
+    if (!log.trim()) {
+      missing.push(`${value} -> ${runId}`);
+    }
+  }
+  assert.deepStrictEqual(missing, []);
+});
+
+/**
+ * The one fixture that carries a payload instead of projecting one, held to
+ * what the host would actually serve.
+ *
+ * `concurrent-run` exists because a concurrent group has geometry and the
+ * projector that places it is on the other side of the two-host bundle
+ * boundary. That makes it the one fixture that could drift from `buildState` —
+ * so it is rebuilt here, through the same `extension.mjs` the canvas runs, and
+ * any difference fails. `regenerate-concurrent-state.mjs` writes the file this
+ * compares against, and both call the same builder, so the check cannot quietly
+ * diverge from the thing it checks.
+ */
+test("the committed concurrent-group payload is the one the host builds", async () => {
+  const rebuilt = await buildConcurrentState();
+
+  assert.deepStrictEqual(
+    { state: rebuilt, hostOwned: PROJECTED_FIELDS.filter((field) => field in CONCURRENT_STATE) },
+    { state: CONCURRENT_STATE, hostOwned: [] },
+  );
+});
+
+/**
+ * The group family is the payload's whole reason for existing, so the payload
+ * has to keep containing it. A pipeline edited down to plain steps would leave
+ * both probes waiting on a card that is never drawn — a timeout rather than a
+ * statement about the canvas.
+ */
+test("the concurrent-group payload draws a group with members and a run to fill it", async () => {
+  const pipeline = CONCURRENT_STATE.pipelines?.["review-queue-pipeline"];
+  const steps = pipeline?.layout?.steps ?? [];
+  const log = await readFile(new URL("./fixtures/runs/run-group/events.jsonl", import.meta.url), "utf8");
+  const events = log.trim().split("\n").map((line) => JSON.parse(line));
+  const group = events.find((event) => event.kind === "group_started");
+
+  assert.deepStrictEqual(
+    {
+      groupStep: steps.filter((step) => step.kind === "concurrent").map((step) => step.name),
+      members: steps.filter((step) => step.parentId).map((step) => step.name).sort(),
+      container: (pipeline?.containers ?? []).map((item) => item.parent),
+      logGroup: group?.data?.group,
+      logMembers: [...(group?.data?.members ?? [])].sort(),
+      // The members must disagree, or "an outcome per member" is a claim one
+      // shared verdict would satisfy.
+      outcomes: events.filter((event) => event.kind === "group_member_finished").map((event) => event.data.result.outcome).sort(),
+      // Live backfills the whole log, so the group has to be finished in it —
+      // and the run must not be, or the live picker will not list it.
+      groupFinished: events.some((event) => event.kind === "group_finished"),
+      runFinished: events.some((event) => event.kind === "run_finished"),
+    },
+    {
+      groupStep: ["run-checks"],
+      members: ["read-diff", "read-tests"],
+      container: ["run-checks"],
+      logGroup: "run-checks",
+      logMembers: ["read-diff", "read-tests"],
+      outcomes: ["failure", "success"],
+      groupFinished: true,
+      runFinished: false,
+    },
+  );
 });
 
 test("every dimension and rule carries the prose the lab shows", () => {
