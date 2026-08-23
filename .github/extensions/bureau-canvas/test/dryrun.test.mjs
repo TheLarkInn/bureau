@@ -30,9 +30,9 @@ test("committed agent-eligible pipeline dry-runs through every step", async () =
     },
     {
       ok: true,
-      steps: ["implement", "verify", "review", "repair"],
+      steps: ["implement", "verify", "review", "repair", "reverify", "rereview"],
       terminal: "terminal:done",
-      stepEvents: ["implement", "verify", "review", "repair"],
+      stepEvents: ["implement", "verify", "review", "repair", "reverify", "rereview"],
       hashStable: true,
     },
   );
@@ -52,9 +52,9 @@ test("scratch config uses fake roles and absolute fixtures", async () => {
     },
     {
       validation: 0,
-      adapters: ["fake", "fake", "fake"],
-      absoluteFixtures: [true, true, true],
-      roleNames: ["dryrun-fake", "dryrun-fake", "dryrun-fake"],
+      adapters: ["fake", "fake", "fake", "fake"],
+      absoluteFixtures: [true, true, true, true],
+      roleNames: ["dryrun-fake", "dryrun-fake", "dryrun-fake", "dryrun-fake"],
     },
   );
 });

@@ -23,7 +23,9 @@
 //! the whole shell, not only `git`, so the agent can run the build and
 //! test commands its own instructions tell it to run (DESIGN.md section
 //! 10, "shell breadth"). Copilot's MXC sandbox confines that shell and
-//! repository policy disables bypass and ambient git/`gh` credentials.
+//! repository policy disables bypass. Roles without forge grants are
+//! additionally denied `gh`; forge-granted roles retain the network and
+//! credential access their work requires.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
@@ -89,6 +91,9 @@ fn permission_flags(permissions: &[Permission], worktree: &Path) -> Vec<String> 
     if !write {
         return vec!["--deny-tool=shell(*)".to_owned()];
     }
+    let forge = real::FORGE_GRANTS
+        .iter()
+        .any(|grant| permissions.contains(grant));
     let mut flags = vec![
         "--allow-tool=write".to_owned(),
         "--allow-tool=shell".to_owned(),
@@ -97,6 +102,9 @@ fn permission_flags(permissions: &[Permission], worktree: &Path) -> Vec<String> 
     ];
     if !push {
         flags.push("--deny-tool=shell(git push)".to_owned());
+    }
+    if !forge {
+        flags.push("--deny-tool=shell(gh:*)".to_owned());
     }
     flags
 }

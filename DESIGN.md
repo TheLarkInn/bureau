@@ -731,8 +731,10 @@ layer 2 rather than bolting it on later.
 ## 10. Sandboxing and permissions
 
 **The container is the outer sandbox boundary.** Copilot steps also enable the
-CLI's MXC command sandbox with repository policy that denies bypass and
-git/`gh` credential injection. Respect both boundaries:
+CLI's MXC command sandbox with repository policy that denies bypass and common
+host credential paths. The adapter denies `gh` to roles without forge grants;
+forge-granted roles retain the outbound access their work requires. Respect both
+boundaries:
 
 - Do not mount the host home directory. Do not forward the host SSH agent.
 - The container gets only the credentials the assignment needs, scoped per repo.

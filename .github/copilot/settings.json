@@ -19,7 +19,7 @@
     "allowBypass": false,
     "auth": {
       "git": false,
-      "gh": false
+      "gh": true
     },
     "sandboxMcpServers": true,
     "sandboxLspServers": true,
@@ -28,14 +28,17 @@
         "deniedPaths": [
           "~/.aws",
           "~/.azure",
+          "~/.copilot",
           "~/.config/gh",
+          "~/.git-credentials",
           "~/.gnupg",
           "~/.kube",
+          "~/.netrc",
           "~/.ssh"
         ]
       },
       "network": {
-        "allowOutbound": false,
+        "allowOutbound": true,
         "allowLocalNetwork": false
       }
     }

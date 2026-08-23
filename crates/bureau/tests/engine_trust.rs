@@ -76,6 +76,17 @@ async fn a_derived_input_fails_a_maintainer_gate() {
 }
 
 #[tokio::test]
+async fn an_explicit_derived_gate_allows_agent_input() {
+    let rig = Rig::new();
+    let mut steps = gated_steps(&rig);
+    steps[2].trust = Some(Trust::Derived);
+    let plan = maintainer_plan(&rig, steps);
+    let outcome = rig.engine().run(&plan).await;
+    assert_ne!(outcome.outcome, StepOutcome::Blocked);
+    assert_eq!(starts(&rig, &plan.run_id, "land"), 1);
+}
+
+#[tokio::test]
 async fn an_inputless_step_keeps_the_item_grade() {
     let rig = Rig::new();
     let transcript = fixture(

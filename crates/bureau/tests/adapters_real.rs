@@ -108,10 +108,7 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
     &argv[at + 1]
 }
 
-/// Asserts copilot's argv carries the JSON prompt and selected agent.
-/// This grant-less role also gets the deny-by-default flag, so argv has
-/// 11 elements including sandboxing, the bureau-io grant, and its server
-/// definition.
+/// Asserts the prompt, agent, sandbox, bureau-io, and deny-by-default argv.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
@@ -238,48 +235,6 @@ fn claude_carries_the_request_on_stdin_only() {
 }
 
 #[test]
-fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
-    let cases: [(&[Permission], Option<bool>); 4] = [
-        (&[Permission::RepoWrite], Some(false)),
-        (&[Permission::RepoPush], Some(true)),
-        (&[Permission::RepoRead], None),
-        (&[], None),
-    ];
-    for (permissions, push) in cases {
-        let dir = TestDir::new("copilot-flags");
-        let role = role("/p:a", AdapterKind::Copilot, permissions);
-        let req = copilot_request(&role, &step(None), dir.path());
-        assert!(
-            req.argv
-                .windows(2)
-                .any(|args| args == ["--experimental", "--sandbox"])
-        );
-        let flags = push.map_or_else(
-            || "--deny-tool=shell(*)".to_owned(),
-            |push| {
-                let mut flags = vec![
-                    "--allow-tool=write".to_owned(),
-                    "--allow-tool=shell".to_owned(),
-                    "--add-dir".to_owned(),
-                    dir.path().to_string_lossy().into_owned(),
-                ];
-                if !push {
-                    flags.push("--deny-tool=shell(git push)".to_owned());
-                }
-                flags.join(SEP)
-            },
-        );
-        let at = req
-            .argv
-            .iter()
-            .position(|a| a == "--additional-mcp-config")
-            .expect("mcp config present");
-        assert_eq!(req.argv[at + 2..].join(SEP), flags);
-        assert!(!req.argv.iter().any(|arg| arg == "--allow-all-paths"));
-    }
-}
-
-#[test]
 fn claude_mirrors_the_push_boundary_and_denies_by_default() {
     let edit = "--allowedTools\u{1f}Edit,Write,Bash";
     let cases: [(&[Permission], String); 4] = [
@@ -304,3 +259,5 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
 
 #[path = "adapters_real/env.rs"]
 mod env;
+#[path = "adapters_real/permissions.rs"]
+mod permissions;

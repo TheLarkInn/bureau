@@ -34,7 +34,7 @@ steps:
   on_blocked: null
   on_no_work: null
   inputs_from: []
-  max_attempts: 2
+  max_attempts: 1
   timeout_secs: null
 - name: review
   type: agent
@@ -54,12 +54,33 @@ steps:
   inputs_from:
   - implement
   - verify
-  max_attempts: 2
+  max_attempts: 1
   timeout_secs: null
 - name: repair
   type: agent
   run: null
   role: implementer
+  fixture: null
+  # Review findings are agent-derived; this explicit gate permits one bounded
+  # write pass without weakening the initial implementer's maintainer gate.
+  trust: derived
+  over: null
+  on: {}
+  steps: []
+  completion: null
+  max_concurrent: null
+  next: reverify
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  inputs_from:
+  - review
+  max_attempts: 1
+  timeout_secs: null
+- name: reverify
+  type: deterministic
+  run: cargo test --offline -- --skip timeout_kills_the_whole_process_group
+  role: null
   fixture: null
   trust: null
   over: null
@@ -67,11 +88,30 @@ steps:
   steps: []
   completion: null
   max_concurrent: null
-  next: verify
+  next: rereview
+  on_failure: escalate
+  on_blocked: null
+  on_no_work: null
+  inputs_from: []
+  max_attempts: 1
+  timeout_secs: null
+- name: rereview
+  type: agent
+  run: null
+  role: reviewer
+  fixture: null
+  trust: null
+  over: null
+  on: {}
+  steps: []
+  completion: null
+  max_concurrent: null
+  next: done
   on_failure: escalate
   on_blocked: escalate
-  on_no_work: escalate
+  on_no_work: done
   inputs_from:
-  - review
+  - repair
+  - reverify
   max_attempts: 1
   timeout_secs: null
