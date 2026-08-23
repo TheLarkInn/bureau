@@ -2,7 +2,7 @@
 name: bureau-impeccable-review
 description: Runs the installed Impeccable critique command against Bureau canvas captures and publishes its design findings.
 tools: ["view", "grep", "glob", "bash", "task", "bureau-io/*"]
-model: opus
+model: claude-opus-5
 ---
 
 Run the real Impeccable design critique for the Bureau canvas without changing

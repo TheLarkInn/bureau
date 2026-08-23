@@ -319,7 +319,7 @@ have a standard home — the plugin/agent frontmatter format:
 name: codebase-analyzer
 description: Analyzes codebase implementation details...
 tools: Glob, Grep, Read, LS, Bash
-model: opus
+model: claude-opus-5
 ---
 <the instructions are the file body>
 ```
@@ -730,8 +730,9 @@ layer 2 rather than bolting it on later.
 
 ## 10. Sandboxing and permissions
 
-**The container is the sandbox boundary.** State that explicitly; do not build a
-per-step sandbox in v0. In exchange, respect it:
+**The container is the outer sandbox boundary.** Copilot steps also enable the
+CLI's MXC command sandbox with repository policy that denies bypass and
+git/`gh` credential injection. Respect both boundaries:
 
 - Do not mount the host home directory. Do not forward the host SSH agent.
 - The container gets only the credentials the assignment needs, scoped per repo.
@@ -739,9 +740,10 @@ per-step sandbox in v0. In exchange, respect it:
 
 The reference implementation defaults its sandbox to `disabled` while passing
 `--allow-all-tools` to `copilot` and `--permission-mode bypassPermissions` to
-`claude` — an agent with unrestricted shell on the host by default. Container
-isolation plus per-step credential scoping gets the large majority of that value back
-on day one.
+`claude` — an agent with unrestricted shell on the host by default. Bureau's
+Copilot adapter instead forces `--experimental --sandbox`, scopes file access to
+the run worktree, and relies on container isolation plus per-step credential
+scoping as the outer boundary.
 
 Permissions are a flat list of strings checked before spawn. Keep it under 15:
 
@@ -781,17 +783,15 @@ setting:
   arbitrary code through build scripts, while requiring every repository to
   enumerate its toolchain here — which is host-capability matching (§3) wearing a
   different hat.
-- The blast radius is already implied. A write grant plus `--allow-all-paths` lets
-  the step edit the worktree, and a later deterministic step executes what it
-  wrote. Withholding the shell from the agent does not withhold execution from the
-  run.
+- The blast radius is already implied. A write grant plus
+  `--add-dir <worktree>` lets the step edit the worktree, and a later
+  deterministic step executes what it wrote. Withholding the shell from the
+  agent does not withhold execution from the run.
 
-**The container is doing the work here.** This stance is defensible because of the
-boundary stated at the top of this section, and it is exactly as strong as that
-boundary is. Running a write-granted role outside a container gives the agent an
-unrestricted shell as the invoking user — the same posture this document criticises
-the reference implementation for defaulting to. Do not read this section as
-endorsing that; read it as the container's rent.
+**The container and command sandbox are doing the work here.** This stance is
+defensible because of the boundaries stated at the top of this section, and it
+is exactly as strong as those boundaries are. A write-granted role must not run
+with both boundaries disabled.
 
 Tighten this once there is evidence: after enough repositories have run, the set of
 commands agent steps actually need will be visible in the run logs, and a narrower

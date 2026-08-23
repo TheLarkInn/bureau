@@ -34,7 +34,7 @@ steps:
   on_blocked: null
   on_no_work: null
   inputs_from: []
-  max_attempts: 1
+  max_attempts: 2
   timeout_secs: null
 - name: review
   type: agent
@@ -48,11 +48,30 @@ steps:
   completion: null
   max_concurrent: null
   next: done
-  on_failure: escalate
+  on_failure: repair
   on_blocked: escalate
   on_no_work: done
   inputs_from:
   - implement
   - verify
+  max_attempts: 2
+  timeout_secs: null
+- name: repair
+  type: agent
+  run: null
+  role: implementer
+  fixture: null
+  trust: null
+  over: null
+  on: {}
+  steps: []
+  completion: null
+  max_concurrent: null
+  next: verify
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  inputs_from:
+  - review
   max_attempts: 1
   timeout_secs: null

@@ -5,7 +5,7 @@
 //! activates `/plugin:agent` resources before spawn. A direct `.md` path
 //! is copied verbatim into `<worktree>/.github/agents/<name>.agent.md`.
 //!
-//! argv is `copilot -p <request-json> --agent <name>`;
+//! argv is `copilot -p <request-json> --agent <name> --experimental --sandbox`;
 //! the request JSON also arrives on stdin per the layer-2 contract.
 //! The push boundary is mirrored in argv (section 10), and a role
 //! without a write grant is denied shell outright — the tool grammar
@@ -14,15 +14,16 @@
 //!
 //! | permissions                   | flags |
 //! |-------------------------------|-------|
-//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell --allow-all-paths --deny-tool='shell(git push)'` |
-//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell --allow-all-paths` |
+//! | `repo:write`, not `repo:push` | `--allow-tool=write --allow-tool=shell --add-dir <worktree> --deny-tool='shell(git push)'` |
+//! | `repo:push`                   | `--allow-tool=write --allow-tool=shell --add-dir <worktree>` |
 //! | anything else                 | `--deny-tool='shell(*)'` |
 //!
 //! `repo:write` grants editing the run worktree (`write` +
-//! `--allow-all-paths`), not only the git shell — see issue #16 — and
+//! `--add-dir <worktree>`), not only the git shell — see issue #16 — and
 //! the whole shell, not only `git`, so the agent can run the build and
 //! test commands its own instructions tell it to run (DESIGN.md section
-//! 10, "shell breadth").
+//! 10, "shell breadth"). Copilot's MXC sandbox confines that shell and
+//! repository policy disables bypass and ambient git/`gh` credentials.
 //!
 //! Credentials arrive by env convention, gated on the role's grants
 //! (section 10): `GH_TOKEN` is a forge credential, forwarded into the
@@ -31,7 +32,7 @@
 //! adapter, run
 //! `bureau fake record out.json -- <the argv spawn_request builds>`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::real;
@@ -74,8 +75,8 @@ const MCP_CONFIG: &str = r#"{"mcpServers":{"bureau-io":{"type":"local","command"
 /// A write grant must allow the agent to *edit* the run worktree, not
 /// only run `git` — `shell(git:*)` alone left every `apply_patch`/edit
 /// denied (issue #16). So `repo:write` adds the file-edit tool plus
-/// `--allow-all-paths` (the worktree sits under `BUREAU_HOME`, outside
-/// any repo root the CLI would otherwise verify paths against).
+/// an explicit `--add-dir` for the worktree (it sits under `BUREAU_HOME`,
+/// outside any repo root the CLI would otherwise verify paths against).
 ///
 /// The shell is granted whole, not just `git`. A step told to validate
 /// its own edit needs the repo's build and test commands, and the
@@ -83,7 +84,7 @@ const MCP_CONFIG: &str = r#"{"mcpServers":{"bureau-io":{"type":"local","command"
 /// to name every tool a repository happens to use. `git push` stays
 /// gated behind `repo:push`: denial beats any allow, so the push
 /// boundary survives the wider grant.
-fn permission_flags(permissions: &[Permission]) -> Vec<String> {
+fn permission_flags(permissions: &[Permission], worktree: &Path) -> Vec<String> {
     let (write, push) = real::push_boundary(permissions);
     if !write {
         return vec!["--deny-tool=shell(*)".to_owned()];
@@ -91,7 +92,8 @@ fn permission_flags(permissions: &[Permission]) -> Vec<String> {
     let mut flags = vec![
         "--allow-tool=write".to_owned(),
         "--allow-tool=shell".to_owned(),
-        "--allow-all-paths".to_owned(),
+        "--add-dir".to_owned(),
+        worktree.to_string_lossy().into_owned(),
     ];
     if !push {
         flags.push("--deny-tool=shell(git push)".to_owned());
@@ -104,18 +106,20 @@ fn permission_flags(permissions: &[Permission]) -> Vec<String> {
 /// The `bureau-io` definition rides on argv so the server the agent is
 /// granted is the server that actually launches, and so a recorded
 /// fixture reproduces the real invocation.
-fn argv(role: &Role, agent: &str, prompt: &[u8]) -> Vec<String> {
+fn argv(role: &Role, agent: &str, prompt: &[u8], worktree: &Path) -> Vec<String> {
     let mut argv = vec![
         BINARY.to_owned(),
         "-p".to_owned(),
         String::from_utf8_lossy(prompt).into_owned(),
         "--agent".to_owned(),
         agent.to_owned(),
+        "--experimental".to_owned(),
+        "--sandbox".to_owned(),
         "--allow-tool=bureau-io".to_owned(),
         "--additional-mcp-config".to_owned(),
         MCP_CONFIG.to_owned(),
     ];
-    argv.extend(permission_flags(&role.permissions));
+    argv.extend(permission_flags(&role.permissions, worktree));
     argv
 }
 
@@ -138,7 +142,7 @@ pub fn spawn_request(
     let found = real::scoped_credentials(&role.permissions, &real::FORGE_GRANTS, &CREDENTIAL_VARS);
     let (env, secrets) = real::child_env(found, secrets);
     SpawnRequest {
-        argv: argv(role, &agent, &json),
+        argv: argv(role, &agent, &json, &request.worktree),
         dir: request.worktree.clone(),
         env,
         stdin: json,
