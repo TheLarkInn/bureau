@@ -21,8 +21,8 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered } from "./selectors.mjs";
-import { INFERRED_FILTER_URL, REPO_ADD_URL, SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, viewerCardFor } from "./selectors.mjs";
+import { INFERRED_FILTER_URL, REPO_ADD_URL, SAMPLE_STEPS, runOps } from "./paths.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -581,8 +581,14 @@ export const PROBES = [
    * it is never not on the page — but until now no state said what it should
    * contain, and an empty region that says nothing is indistinguishable from a
    * region that failed to render. Both of these are ordinary: a reader arrives
-   * at Live before picking a run, and a step that has started but not yet
-   * written anything has a head and no body.
+   * at Live before picking a run, and a reader on a live run clicks a step the
+   * run has not reached yet.
+   *
+   * The two share the `.step-log-empty` paragraph and are told apart by what
+   * surrounds it, which is exactly the distinction worth asserting: the idle
+   * log has no head because there is no step to name, and the unwritten one
+   * has a head and no body. A log that answered "select a step" while a step
+   * was selected would pass either assertion alone.
    */
   sample({
     id: "probe--step-log-idle",
@@ -599,6 +605,30 @@ export const PROBES = [
       shows: [S.stepLog, S.stepLogIdle],
       hides: [S.stepLogHead],
       copy: ["Select a step to see what it did."],
+    },
+  }),
+  /*
+   * A step the live run has not written to. `verify` is in the sample pipeline
+   * and absent from `run-live`'s log, so it has a head and an empty body —
+   * which is the honest answer, and distinct from the step having failed.
+   */
+  sample({
+    id: "probe--step-log-unwritten",
+    covers: "a selected step the run has not reached: a log head with nothing under it, said in words rather than left blank",
+    summary: "a step with no captured output names itself and says so",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      ...runOps("live", "running"),
+      { op: "click", selector: viewerCardFor(SAMPLE_STEPS.deterministic) },
+      { op: "wait", selector: S.stepLogEmpty },
+    ],
+    expect: {
+      shows: [S.stepLog, S.stepLogHead, S.stepLogEmpty],
+      hides: [S.stepLogIdle],
+      copy: ["No output captured for this step yet.", SAMPLE_STEPS.deterministic],
     },
   }),
 ];

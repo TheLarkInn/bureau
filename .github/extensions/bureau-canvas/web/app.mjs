@@ -507,21 +507,51 @@ function draftRoot(className, dirty, onDone) {
 }
 
 /**
-* An editable control on a field editor, held still while a save is in flight.
-*
-* Every one of these editors submits the draft it held at the moment Save was
-* pressed and then calls `onDone()` when the host answers — so anything typed
-* *during* the round trip was never submitted, and the close throws it away
-* without the leave guard ever being consulted, because the editor closed
-* itself rather than being navigated away from. A form whose button already
-* reads "Saving…" has nothing useful to do with input, so it stops taking it.
-*
-* Only the inputs. Cancel stays live on purpose: a host that never answers
-* would otherwise leave the reader inside a form with no way out, which is a
-* worse trap than the edit this is protecting.
-*/
+ * An editable control on a field editor, held still while a save is in flight.
+ *
+ * Every one of these editors submits the draft it held at the moment Save was
+ * pressed and then calls `onDone()` when the host answers — so anything typed
+ * *during* the round trip was never submitted, and the close throws it away
+ * without the leave guard ever being consulted, because the editor closed
+ * itself rather than being navigated away from. A form whose button already
+ * reads "Saving…" has nothing useful to do with input, so it stops taking it.
+ *
+ * Only the inputs. Cancel stays live on purpose: a host that never answers
+ * would otherwise leave the reader inside a form with no way out, which is a
+ * worse trap than the edit this is protecting.
+ */
 function editable(busy, props) {
- return { ...props, disabled: busy || props.disabled };
+  return { ...props, disabled: busy || props.disabled };
+}
+
+/**
+ * Whether this editor is still the screen the reader is looking at.
+ *
+ * Cancel staying live during a save is the decision above; this is the rest of
+ * it. A save submits and then closes when the host answers, so once Cancel has
+ * closed the editor the reply belongs to nobody — and an unguarded
+ * continuation then does two things the reader never asked for. It calls
+ * `publishLocalState`, applying the edit that was just cancelled with no
+ * message; and it calls `onDone()`, whose `closeDisclosure` re-focuses the
+ * field's trigger, pulling focus out of whatever was opened next, mid
+ * keystroke. On a refusal it calls `setError` on a component that has gone,
+ * so the reason is dropped rather than shown.
+ *
+ * The two derivations already carry a ticket against a reply that outlived the
+ * question. This is that guard one level up: after unmount the answer is not
+ * anyone's, so it is dropped rather than acted on. It is the one draft-safety
+ * path `confirmClosingEditor` cannot cover, because the editor was not
+ * navigated away from — it closed itself.
+ */
+function useLive() {
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  return live;
 }
 
 /**
@@ -586,6 +616,7 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
   const [fields, setFields] = useState(initial);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
   const invalid = !fields.filter.trim() || !fields.branch_prefix.trim();
   const set = (field, value) => setFields((current) => ({ ...current, [field]: value }));
@@ -598,6 +629,9 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
       branch_prefix: fields.branch_prefix.trim(),
     }) };
     postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -684,6 +718,7 @@ function TerminalLabelsEditor({ assignment, onDone }) {
   const [fields, setFields] = useState(initial);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
   const invalid = !fields.abort_label.trim() || !fields.escalate_label.trim()
     || fields.abort_label.trim() === fields.escalate_label.trim();
@@ -697,6 +732,9 @@ function TerminalLabelsEditor({ assignment, onDone }) {
     };
     const input = { assignment: assignment.name, fields: runtimeFields(assignment, labels) };
     postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -798,11 +836,15 @@ function ReposEditor({ state, assignment, onDone }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
 
   const commit = (next, register) => {
     setBusy(true);
     const input = { assignment: assignment.name, repos: next, ...(register ? { register } : {}) };
     postIntent({ kind: "set-repos", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -1080,6 +1122,7 @@ function LimitsEditor({ assignment, saved, onDone }) {
   const [lastValues, setLastValues] = useState(saved);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
 
   const changed = LIMIT_FIELDS.some((field) => draft[field.key] !== saved[field.key]);
   // A cleared box is kept as its raw text rather than coerced: `Number("")`
@@ -1105,6 +1148,9 @@ function LimitsEditor({ assignment, saved, onDone }) {
   const save = () => {
     setBusy(true);
     postIntent({ kind: "set-limits", input: { assignment: assignment.name, limits: draft } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -1214,6 +1260,7 @@ function WorkSourceEditor({ assignment, onDone }) {
   const [derived, setDerived] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   // The same guard the repo adder keeps, and for the same reason: every
   // keystroke asks the host to read the URL and the answers need not come back
   // in the order they were asked. Without it, clearing the box could be
@@ -1254,6 +1301,9 @@ function WorkSourceEditor({ assignment, onDone }) {
       escalate_label: assignment.work?.escalateLabel ?? "",
     };
     postIntent({ kind: "set-work-source", input: { assignment: assignment.name, work } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);

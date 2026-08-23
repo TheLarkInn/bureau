@@ -695,13 +695,28 @@ const run = {
      * Pause and cancel are pressed on a running run; resume needs a paused one,
      * so it is a different screen and not the same one with another button
      * pressed — its transport offers Resume where the others offer Pause.
+     *
+     * The transport comes from `overlay()`, the same helper the unrefused run
+     * values use, rather than from the verb that was refused. Naming only the
+     * refused control was how a refused *cancel* stopped asserting Pause at
+     * all — so the one regression this state exists to catch, a refusal that
+     * withdrew the rest of the transport, would have rendered green. Deriving
+     * it also brings the `hides` along, so each refusal now denies the verb the
+     * other run offers instead of being silent about it.
      */
-    ...Object.entries(RUN_REFUSALS).map(([id, refusal]) => ({
-      id,
-      summary: `a ${refusal.verb} the host refused, named as a ${refusal.verb}, with the transport still offered`,
-      shows: [S.runControlError, refusal.run === "paused" ? S.overlayPaused : S.overlayRunning, refusal.control, S.runCancel, S.runStatus],
-      copy: [`could not ${refusal.verb} this run`],
-    })),
+    ...Object.entries(RUN_REFUSALS).map(([id, refusal]) => {
+      const transport = overlay({ mode: "live" }, refusal.run);
+      return {
+        id,
+        summary: `a ${refusal.verb} the host refused, named as a ${refusal.verb}, with the transport still offered`,
+        shows: [S.runControlError, ...transport.shows],
+        hides: [...(transport.hides ?? [])],
+        // The status is unchanged by a refusal, so the run still reads as the
+        // one it was — asserted here rather than assumed, because a refusal
+        // that also moved the run would be the worst version of this bug.
+        copy: [`could not ${refusal.verb} this run`, ...(transport.copy ?? [])],
+      };
+    }),
   ],
 };
 

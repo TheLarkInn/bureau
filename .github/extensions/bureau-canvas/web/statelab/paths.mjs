@@ -58,6 +58,30 @@ export const SAMPLE_STEP_COUNT = 3;
 export const ADDED_STEP = `step-${SAMPLE_STEP_COUNT + 1}`;
 
 /**
+ * The one control per field that a save in flight has to hold still.
+ *
+ * This exists so the claim is falsifiable. Every editor stops taking input
+ * while it is saving, because each submits the draft it held when Save was
+ * pressed and then closes on the answer — so a keystroke landing in between is
+ * thrown away without the leave guard being consulted. `saving` already
+ * asserted the withheld Save and the "Saving…" label, but both of those were
+ * true before the inputs were held, so the behaviour was unasserted: deleting
+ * the `busy ||` from `editable` left every suite green.
+ *
+ * Each entry is deliberately a control whose *only* disabled condition is the
+ * save. The repos editor is named by its Remove rather than the reorder its
+ * `dirty` path presses, because a repo moved to the top disables its own Move
+ * up — an assertion that would then hold with the guard removed.
+ */
+const FIELD_HELD = {
+  "work-source": S.workSourceUrl,
+  "work-rules": FILTER,
+  "forge-signals": ABORT,
+  repos: '[aria-label="Remove bureau-docs"]',
+  limits: CONCURRENT_LIMIT,
+};
+
+/**
  * Per-field lifecycle: how an open field editor is driven from `rest` into a
  * `dirty` draft or an `invalid` one, and which fixture makes that meaningful.
  *
@@ -261,10 +285,14 @@ function saveStates(field, dirty) {
   const save = FIELD_SAVE[field];
   const refusal = `${FIELD_EDITOR[field]} .note--err`;
   const draft = [...(dirty.ops ?? []), { op: "click", selector: save }];
+  const held = FIELD_HELD[field];
   return {
     saving: {
       fixture: dirty.fixture,
       ops: [...draft, { op: "wait", selector: withheld(save) }],
+      // Both ends of the in-flight form: the save cannot be pressed twice, and
+      // the field cannot be typed into and have the keystroke silently lost.
+      shows: [withheld(save), withheld(held)],
       copy: ["Saving…"],
     },
     // The refusal is asserted as a *treatment*, not only as words: an editor

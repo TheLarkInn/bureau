@@ -290,6 +290,55 @@ test.describe("leaving an open field editor", () => {
     await expect(card.page.locator(".ws-open")).toHaveAttribute("data-dirty", "false");
     expect(await settled(card.page)).toEqual({ preview: 0, save: true, mark: 0 });
   });
+  /**
+   * Cancel during a save, and the reply that lands after it.
+   *
+   * Cancel stays live for the whole round trip on purpose — a host that never
+   * answers would otherwise leave the reader inside a form with no way out.
+   * That is the decision; this is its consequence. Every editor closes itself
+   * when the host answers, so a reply arriving after Cancel used to run the
+   * success path anyway: it published the edit the reader had just cancelled,
+   * and it re-focused the field's trigger, pulling the caret out of whatever
+   * was opened next.
+   *
+   * The reply is held until after Cancel *and* after the next editor has been
+   * opened, so both halves are genuinely in the past when it arrives. Waiting
+   * for the save to finish first would leave nothing in flight and the test
+   * would pass against the bug.
+   */
+  test("a save reply that lands after Cancel changes nothing and takes no focus", async ({ card }) => {
+    let release = () => {};
+    const held = new Promise((resolve) => { release = resolve; });
+    await card.page.route("**/intent", async (route) => {
+      if (route.request().postDataJSON()?.kind === "set-limits") {
+        await held;
+      }
+      await route.continue();
+    });
+
+    await card.page.locator(".limits-value").click();
+    await card.page.getByRole("button", { name: "runs per day limit" }).click();
+    await card.page.getByRole("button", { name: "Save limits" }).click();
+    await expect(card.page.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await card.page.locator(".limits-editor").getByRole("button", { name: "Cancel" }).click();
+    await expect(card.page.locator(".limits-editor")).toHaveCount(0);
+
+    // Where the reader went next, and the counter the stale reply would move.
+    await card.page.locator(".ws-value").click();
+    const url = card.page.getByLabel("Board, query, or issues URL");
+    await expect(url).toBeFocused();
+    await card.page.evaluate(() => {
+      window.__published = 0;
+      window.addEventListener("bureau-state", () => { window.__published += 1; });
+    });
+
+    release();
+    await card.page.waitForTimeout(250);
+
+    expect(await card.page.evaluate(() => window.__published)).toBe(0);
+    await expect(url).toBeFocused();
+    await expect(card.page.locator(".limits-editor")).toHaveCount(0);
+  });
 });
 
 /** What the work-source editor looks like once nothing is in flight. */

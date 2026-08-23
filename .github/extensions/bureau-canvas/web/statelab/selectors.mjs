@@ -209,6 +209,18 @@ export function editorCardFor(step) {
 }
 
 /**
+ * One step card in the pipeline *viewer*, addressed by the step it draws.
+ *
+ * The viewer's cards are React Flow nodes rather than the editor's own list, so
+ * the step name is on the node wrapper React Flow renders and not on the card.
+ * Selecting one is how a reader reads a step's log, which is the only way to
+ * reach a log for a step the run has not written to.
+ */
+export function viewerCardFor(step) {
+  return `.react-flow__node[data-id="${step}"] .flow-card`;
+}
+
+/**
  * One card in the relation graph, addressed by the config item it draws.
  * Unreferenced config is still config, so this is what holds the graph to
  * drawing an orphan rather than dropping it.
