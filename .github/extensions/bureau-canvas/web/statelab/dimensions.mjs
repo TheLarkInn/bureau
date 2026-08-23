@@ -174,6 +174,24 @@ const draft = {
       // `fieldState: save-error` makes, for the same reason.
       allowErrors: ["status of 500"],
     },
+    /*
+     * Discard is the other half of the bar and it fails on its own sentence.
+     * `act()` shares `busy` and `error` between the two buttons, so a discard
+     * *in flight* is the same screen `saving` already draws — one equivalence
+     * class, not a sixth value — but the refusal is not: the fallback names the
+     * verb, so a bar that reported a failed discard as a failed save would read
+     * as work still pending when it is the discard that did not happen.
+     *
+     * It was the last write family on these surfaces with neither a value nor a
+     * rule, which is the one thing this registry may not do.
+     */
+    {
+      id: "discard-error",
+      summary: "the discard came back refused, and says so in its own words",
+      shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
+      copy: ["could not discard changes"],
+      allowErrors: ["status of 500"],
+    },
   ],
 };
 

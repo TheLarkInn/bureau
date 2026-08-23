@@ -199,7 +199,7 @@ const FIELD_ERROR = {
  * pins `busy` on, and a refusal returns no `ok`, which is precisely the branch
  * that renders the editor's fallback sentence.
  */
-export const SAVE_INTERCEPTS = { saving: "stall-intent", "save-error": "fail-intent" };
+export const SAVE_INTERCEPTS = { saving: "stall-intent", "save-error": "fail-intent", "discard-error": "fail-intent" };
 
 /**
  * Every axis whose values are answered by a routed `./intent`, and the one
@@ -434,7 +434,7 @@ function planLayer(combo) {
   // The two save screens need a plan to be saving, and it is the same plan
   // `pending` publishes — a save state that invented its own plan would be
   // asserting a bar no user reaches from the bar next to it.
-  return { pending: "draft-pending", "pending-one": "draft-single", saving: "draft-pending", "save-error": "draft-pending" }[combo.draft] ?? null;
+  return { pending: "draft-pending", "pending-one": "draft-single", saving: "draft-pending", "save-error": "draft-pending", "discard-error": "draft-pending" }[combo.draft] ?? null;
 }
 
 /**
@@ -448,10 +448,13 @@ export function draftOps(draftValue) {
   if (!SAVE_INTERCEPTS[draftValue]) {
     return [];
   }
-  const click = { op: "click", selector: S.draftSave };
-  return draftValue === "saving"
-    ? [click, { op: "wait", selector: withheld(S.draftSave) }]
-    : [click, { op: "wait", selector: S.draftRefused }];
+  if (draftValue === "saving") {
+    return [{ op: "click", selector: S.draftSave }, { op: "wait", selector: withheld(S.draftSave) }];
+  }
+  // Each refusal is pressed on the button whose verb it names, so the sentence
+  // under review is the one that button owns.
+  const selector = draftValue === "discard-error" ? S.draftDiscard : S.draftSave;
+  return [{ op: "click", selector }, { op: "wait", selector: S.draftRefused }];
 }
 
 /**
