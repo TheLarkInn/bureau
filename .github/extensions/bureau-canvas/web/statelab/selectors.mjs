@@ -154,6 +154,10 @@ export const SELECTORS = {
   editorDeleteConfirm: '[data-testid="editor-delete-confirm"]',
   editorDangerZone: ".editor-danger-zone",
   editorIssues: ".editor-issues",
+  // The reverted panel specifically, not the hint list it shares a class with.
+  // `.editor-issues` draws both, so asserting it cannot tell "the editor has
+  // advice about this draft" apart from a write the host refused.
+  editorSaveReverted: '[data-testid="editor-save-reverted"]',
   editorHints: ".editor-hints",
   editorBack: '[data-testid="editor-back"]',
   editorMissing: ".editor-view .status",

@@ -9,7 +9,7 @@
 import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, runOps, SAVE_INTERCEPTS, selectStep } from "./paths.mjs";
+import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runOps, runRefusalOps, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
@@ -92,6 +92,9 @@ function configOps(combo) {
 }
 
 function pipelineOps(combo) {
+  if (combo.run === "refused") {
+    return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runRefusalOps()];
+  }
   return [
     ...(valueOf("mode", combo.mode)?.enter ?? []),
     ...runOps(combo.mode, combo.run),
@@ -123,8 +126,23 @@ function editorOps(combo) {
  * without the route in place cannot acquire it, so claiming an edge into them
  * would be claiming a transition the suite could not walk.
  */
-function interceptFor(combo) {
-  const kind = SAVE_INTERCEPTS[combo.fieldState];
+/**
+ * The request interception a state needs in place before its page loads.
+ *
+ * A save state is not something a user navigates *into* from the state next to
+ * it — it is the same screen under a host that is slow or refusing, which is a
+ * condition of the environment rather than a click. So it rides on the `page`
+ * op the way the two pre-surface states do, and for the same reason: what is
+ * being varied is the network, not the path.
+ *
+ * That is also why these states have no incoming edge. A page already loaded
+ * without the route in place cannot acquire it, so claiming an edge into them
+ * would be claiming a transition the suite could not walk.
+ *
+ * `paths.mjs` owns which axes ask for a route; this only places it.
+ */
+function interceptOp(combo) {
+  const [kind] = interceptFor(combo);
   return kind ? { intercept: kind } : {};
 }
 
@@ -133,13 +151,15 @@ function entryPath(combo) {
   if (combo.surface === "boot" || combo.surface === "boot-editor") {
     return bootOps(combo);
   }
-  const ops = [{ op: "page", value: pageFor(combo), ...interceptFor(combo) }, { op: "fixture", value: fixtureFor(combo) }];
+  const ops = [{ op: "page", value: pageFor(combo), ...interceptOp(combo) }, { op: "fixture", value: fixtureFor(combo) }];
   const bySurface = {
     config: () => [{ op: "wait", selector: S.configView }, ...configOps(combo)],
     pipeline: () => [{ op: "wait", selector: S.pipelineView }, ...pipelineOps(combo)],
     editor: () => [{ op: "wait", selector: S.editorTabs }, ...editorOps(combo)],
   };
-  return [...ops, ...bySurface[combo.surface]()];
+  // The draft bar sits above the body on both index surfaces, so its own save
+  // is walked last — after the body has settled into whatever rest it is in.
+  return [...ops, ...bySurface[combo.surface](), ...draftOps(combo.draft)];
 }
 
 function summarize(combo) {

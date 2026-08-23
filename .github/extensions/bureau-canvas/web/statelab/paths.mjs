@@ -202,6 +202,42 @@ const FIELD_ERROR = {
 export const SAVE_INTERCEPTS = { saving: "stall-intent", "save-error": "fail-intent" };
 
 /**
+ * Every axis whose values are answered by a routed `./intent`, and the one
+ * place that decides which route a combination needs.
+ *
+ * `fieldState` was the first axis to get this treatment and for a while the
+ * only one, which left four families — the plan bar's save, the pipeline
+ * editor's save, a refused run control and a refused create — excluded by rules
+ * that still gave the pre-interception reason: "the matrix may not write to the
+ * host". That reason had stopped being true. `matrix-fixtures.mjs` holds every
+ * intent except the two known reads, so none of those clicks reaches the host
+ * whether a rule excludes them or not, and the rules were excluding screens
+ * that the harness could by then render perfectly safely.
+ *
+ * That is the failure mode this registry exists to prevent, so it is worth
+ * naming exactly: a `structural` rule claims a screen *cannot be rendered*, and
+ * kinding a harness limitation as one waives every obligation the registry has
+ * — no probe is owed, and `test/statelab.test.mjs` only demands probes of
+ * `scoping` rules. Two of the six screens were consequently asserted nowhere in
+ * the repository, and one of them (`edit: saving`) was hiding a real defect:
+ * the editor's Save stayed live for the whole round trip, so a second click
+ * raced a second write against the first one's revert.
+ */
+export function interceptFor(combo) {
+  const wanted = [
+    SAVE_INTERCEPTS[combo.fieldState],
+    SAVE_INTERCEPTS[combo.draft],
+    SAVE_INTERCEPTS[combo.edit],
+    combo.run === "refused" ? "fail-intent" : null,
+    combo.disclosure === "create-error" ? "fail-intent" : null,
+  ].filter(Boolean);
+  // One page gets one route. Two axes wanting different ones would mean a
+  // state whose render depends on which was installed, so it is a registry
+  // error rather than a preference — `test/statelab.test.mjs` fails on it.
+  return [...new Set(wanted)];
+}
+
+/**
  * The two ends of a save, derived from each field's own `dirty` path.
  *
  * They are derived rather than written out because they are the *same* draft:
@@ -241,20 +277,39 @@ export const FIELD_LIFECYCLE = Object.fromEntries(
 );
 
 /** How the editor is driven into each mutation state, per selected step kind. */
+const renamedPath = (kind) => [
+  ...selectStep(kind),
+  { op: "fill", selector: S.editorStepName, value: `${kind}-renamed` },
+  { op: "press", selector: S.editorStepName, value: "Enter" },
+];
+
 export const EDIT_PATHS = {
   rest: () => [],
   created: (kind) => [
     { op: "select", selector: S.editorAddKind, value: kind },
     { op: "click", selector: S.editorAddStep },
   ],
-  renamed: (kind) => [
-    ...selectStep(kind),
-    { op: "fill", selector: S.editorStepName, value: `${kind}-renamed` },
-    { op: "press", selector: S.editorStepName, value: "Enter" },
-  ],
+  renamed: renamedPath,
   "delete-confirm": (kind) => [...selectStep(kind), { op: "click", selector: S.editorDeleteStep }],
   "layout-moved": (kind) => [...selectStep(kind), { op: "drag", selector: editorCardFor(stepFor(kind)), dx: 80, dy: 60 }],
   invalid: (kind) => [...selectStep(kind), { op: "fill", selector: S.editorMaxAttempts, value: "0" }],
+  /*
+   * The two ends of a pipeline save, derived from `renamed` for the same reason
+   * the field saves derive from their own `dirty`: a save reachable only from a
+   * different edit than the one the path claims would assert a screen no user
+   * reaches by that route. `renamed` is the dirty edit that leaves the graph
+   * valid, so Save is offered and the click is the whole difference.
+   */
+  saving: (kind) => [
+    ...EDIT_PATHS.renamed(kind),
+    { op: "click", selector: S.editorSave },
+    { op: "wait", selector: withheld(S.editorSave) },
+  ],
+  "save-error": (kind) => [
+    ...EDIT_PATHS.renamed(kind),
+    { op: "click", selector: S.editorSave },
+    { op: "wait", selector: S.editorSaveReverted },
+  ],
 };
 
 /**
@@ -375,7 +430,40 @@ function contentLayer(combo) {
 }
 
 function planLayer(combo) {
-  return { pending: "draft-pending", "pending-one": "draft-single" }[combo.draft] ?? null;
+  // The two save screens need a plan to be saving, and it is the same plan
+  // `pending` publishes — a save state that invented its own plan would be
+  // asserting a bar no user reaches from the bar next to it.
+  return { pending: "draft-pending", "pending-one": "draft-single", saving: "draft-pending", "save-error": "draft-pending" }[combo.draft] ?? null;
+}
+
+/**
+ * The draft bar's own save, driven to whichever end the intercept has set up.
+ *
+ * The bar is an index-level region drawn above whatever body the surface has,
+ * so these ride at the end of the entry path rather than inside a surface's own
+ * ops: the click is on the bar, and the body is at rest underneath it.
+ */
+export function draftOps(draftValue) {
+  if (!SAVE_INTERCEPTS[draftValue]) {
+    return [];
+  }
+  const click = { op: "click", selector: S.draftSave };
+  return draftValue === "saving"
+    ? [click, { op: "wait", selector: withheld(S.draftSave) }]
+    : [click, { op: "wait", selector: S.draftRefused }];
+}
+
+/**
+ * Refusing a run control. Cancel is the one intent offered in every actionable
+ * run state, so it is the one the path sends; `fail-intent` answers it in the
+ * browser, which is what keeps a real run untouched.
+ */
+export function runRefusalOps() {
+  return [
+    ...runOps("live", "running"),
+    { op: "click", selector: S.runCancel },
+    { op: "wait", selector: S.runControlError },
+  ];
 }
 
 function selectionLayer(combo) {

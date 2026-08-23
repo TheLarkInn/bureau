@@ -61,10 +61,11 @@ function assignmentRelations(name, assignment) {
   ];
 }
 
+/** Reads `step.role` exactly as `addPipelineUses` does — see the note there. */
 function pipelineRelations(name, pipeline) {
   const roles = [];
   for (const step of pipeline.steps ?? []) {
-    if (step.type === "agent" && step.role && !roles.includes(step.role)) {
+    if (step.role && !roles.includes(step.role)) {
       roles.push(step.role);
     }
   }
@@ -163,6 +164,11 @@ function addAssignmentUses(used, name, assignment) {
  * as Unreferenced while deleting it was blocked by the very step the strip said
  * did not exist. Whether the reference is legal is `validate`'s judgement to
  * make; whether one exists is not.
+ *
+ * `pipelineRelations` is the third projection of the same question, and it has
+ * to answer it the same way or the contradiction only moves: a filtered graph
+ * would draw that role as an edgeless card — the graph's own way of saying
+ * "unreferenced" — beside a strip that had just stopped saying it.
  */
 function addPipelineUses(roles, name, pipeline) {
   for (const step of pipeline.steps ?? []) {

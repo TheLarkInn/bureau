@@ -151,11 +151,11 @@ const draft = {
       copy: ["1 unsaved change"],
     },
     /*
-     * What the two buttons do about a plan, which the matrix may not perform —
-     * `a-plan-save-would-write-the-config` says why. Named here so the two
-     * screens are excluded rather than missing: both are real renders of
-     * `DraftBar` (`app.mjs`), and the refusal is the only one of the three
-     * draft screens nothing else in the suite draws.
+     * The two ends of a plan save. Both are ordinary renders of `DraftBar`
+     * (`app.mjs`), reached by pressing Save with `./intent` routed in the
+     * browser — so the plan is never applied and the host's `.bureau/` is
+     * untouched. They were excluded outright while that route already existed,
+     * which is why the refusal shipped asserted by nothing at all.
      */
     {
       id: "saving",
@@ -167,6 +167,10 @@ const draft = {
       id: "save-error",
       summary: "the plan came back refused and is still there to retry",
       shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
+      copy: ["could not save changes"],
+      // The 500 is the state, not a defect in it — the same declaration
+      // `fieldState: save-error` makes, for the same reason.
+      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -311,17 +315,23 @@ const disclosure = {
       copy: ["New reusable config"],
     },
     /*
-     * What submitting does, which the matrix may not perform —
-     * `a-create-would-write-the-config` says why. Kept as a value for the same
-     * reason `fieldState: save-error` and `run: refused` are: the refusal is a
-     * real screen, and a create surface with no refusal state recorded is the
-     * one write path in this registry that would have had neither a value nor
-     * a rule.
+     * A create the host refused. The form stays open with the name still in it,
+     * which is the whole point — a refusal that closed the form would lose the
+     * work. `./intent` is routed in the browser, so nothing is written.
      */
     {
       id: "create-error",
       summary: "the create came back refused, with the form still there to retry",
+      enter: [
+        { op: "click", selector: S.createOpen },
+        { op: "fill", selector: S.createName, value: "second-reviewer" },
+        { op: "click", selector: S.createSubmit },
+        { op: "wait", selector: S.createRefused },
+      ],
       shows: [S.createBar, S.createRefused, offered(S.createSubmit)],
+      hides: [S.relationOpen],
+      copy: ["could not create pipeline"],
+      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -610,14 +620,19 @@ const run = {
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
     { id: "finished", summary: "a run that reached a terminal", derive: (combo) => overlay(combo, "finished") },
     /*
-     * A run control the host refused, kept as a value so the omission is a
-     * named exclusion rather than a gap — `a-run-intent-would-act-on-the-host`
-     * says why. Pause, resume and cancel are the three intents that reach a
-     * real run, and the matrix shares one host across every state, so it may
-     * not send one. The screen is real: `.run-control-error` under the picker,
-     * with the transport still offered so the reader can try again.
+     * A run control the host refused. Cancel is sent against a live running run
+     * with `./intent` routed in the browser, so no real run is acted on. The
+     * status is unchanged by a refusal, so the transport stays offered — the
+     * reader has to be able to try again, and a refusal that withdrew the
+     * controls would strand them.
      */
-    { id: "refused", summary: "a pause, resume or cancel the host refused", shows: [S.runControlError, S.runCancel] },
+    {
+      id: "refused",
+      summary: "a cancel the host refused, with the transport still offered",
+      shows: [S.runControlError, S.overlayRunning, S.runPause, S.runCancel, S.runStatus],
+      copy: ["intent failed"],
+      allowErrors: ["status of 500"],
+    },
   ],
 };
 
@@ -678,15 +693,20 @@ const transport = {
       hides: [replaySpeedActive(1)],
     },
     /*
-     * The one transport control the matrix may not take — `playing-advances-
-     * on-a-timer` says why. Kept as a value rather than left to a comment,
-     * because a comment is not something the lab shows a reviewer: the axis
-     * would otherwise present three controls where the timeline ships four.
+     * Playing. The position it reaches depends on the clock, so this state
+     * asserts the one thing that does not: the button's own label and aria
+     * name flip to Pause, and the rest of the transport stays offered. The
+     * matrix gallery is a browsable render rather than a pinned baseline —
+     * only the ten `@visual` screens are compared — so a scrubber that has
+     * moved on by a frame costs nothing, while an unasserted Play button was
+     * a control the timeline shipped and no state exercised.
      */
     {
       id: "playing",
-      summary: "playing, so the position is whatever the clock has reached",
-      shows: [S.replayPause],
+      summary: "playing, so the button offers Pause and the position is the clock's",
+      enter: [{ op: "click", selector: S.replayPlay }, { op: "wait", selector: S.replayPause }],
+      shows: [S.replayPause, S.replayStepForward, S.replayStepBack],
+      copy: ["Pause"],
     },
   ],
 };
@@ -800,14 +820,26 @@ const edit = {
     // render. That refusal is the whole difference from `created`.
     { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
     /*
-     * What `save-pipeline` does about it, which the matrix may not perform —
-     * `an-editor-save-would-write-the-config` says why. Named here so the two
-     * screens are excluded rather than missing: the write is real, and the
-     * revert-with-findings path is the one that proves the editor never leaves
-     * an unloadable config.
+     * The two ends of a pipeline save, rendered with `./intent` routed in the
+     * browser so nothing is written. `saving` is the state that was hiding a
+     * defect: the registry claimed the button was withheld while it was in
+     * flight, the rule excluding it meant nobody ever rendered the claim, and
+     * `EditorToolbar` in fact left Save live for the whole round trip — a
+     * second click racing a second write against the first one's revert.
      */
-    { id: "saving", summary: "save-pipeline in flight, so the button refuses a second click", shows: [withheld(S.editorSave)] },
-    { id: "save-error", summary: "the write was reverted and validate's findings name the steps", shows: [S.editorIssues, S.editorDiscard, offered(S.editorSave)] },
+    {
+      id: "saving",
+      summary: "save-pipeline in flight, so neither button takes a second click",
+      shows: [withheld(S.editorSave), withheld(S.editorDiscard)],
+      copy: ["Saving…"],
+    },
+    {
+      id: "save-error",
+      summary: "the write was refused, and the draft is still there to retry",
+      shows: [S.editorSaveReverted, S.editorDiscard, offered(S.editorSave)],
+      copy: ["save reverted — see findings"],
+      allowErrors: ["status of 500"],
+    },
   ],
 };
 

@@ -63,43 +63,15 @@ function na(combo, dimensions) {
   return dimensions.every((dimension) => combo[dimension] === "n/a");
 }
 
-/** Selection-bearing mutations: these controls exist only for a selected step. */
-const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "layout-moved"];
-
 /**
- * The two lifecycle values that only a performed save can reach. Shared by the
- * draft, field and editor axes because it is one fact about the harness, not
- * three: each save mutates the host — the plan bar writes the config directory,
- * the pipeline editor writes the pipeline file, a field records a plan on the
- * shared instance — and the matrix host is read-only and worker-scoped.
+ * Selection-bearing mutations: these controls exist only for a selected step.
+ * The two save states belong here because their path is `renamed` plus a click
+ * — an editor with nothing selected has nothing to rename, so a save there
+ * would be a save of a draft the path never made.
  */
-const SAVE_STATES = ["saving", "save-error"];
+const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "layout-moved", "saving", "save-error"];
 
 export const CONSTRAINTS = [
-  {
-    /*
-     * The draft bar's own two buttons, and the only one of the three rules in
-     * this family whose act really does reach the disk: `save-plan` runs
-     * `applyPlan` against the host's config directory (`extension.mjs`), and
-     * the matrix host is pointed at the repository's own `.bureau/`. Discard
-     * is no safer to perform, because it clears the plan the fixture published
-     * and the states sharing that worker are still being judged against it.
-     */
-    id: "a-plan-save-would-write-the-config",
-    kind: "structural",
-    reads: ["draft"],
-    title: "The matrix cannot review a plan save it is not allowed to perform",
-    why: "`save-plan` calls `applyPlan` on the host's config directory and `discard-plan` clears the shared plan, and the matrix runs every state against one read-only host per worker pointed at the repository's own `.bureau/`. The in-flight and refused bars are real renders of `DraftBar` and are excluded here for that reason, not absent; `specs/controls.spec.mjs` and `specs/worksource.spec.mjs` walk the successful save and discard against their own scratch configs.",
-    holds: (combo) => !SAVE_STATES.includes(combo.draft),
-  },
-  {
-    id: "an-editor-save-would-write-the-config",
-    kind: "structural",
-    reads: ["edit"],
-    title: "The matrix cannot review a pipeline save it is not allowed to perform",
-    why: "`save-pipeline` writes the pipeline file, re-runs `bureau validate --json` and reverts on a finding — three writes to the shared host's config. The in-flight and reverted-with-findings screens are real and excluded here for that reason, not absent; `specs/editor.spec.mjs` walks the round trip against a scratch config and `test/pipeline-roundtrip.test.mjs` owns the revert-on-findings half offline.",
-    holds: (combo) => !SAVE_STATES.includes(combo.edit),
-  },
   {
     id: "boot-is-pre-surface",
     kind: "structural",
@@ -257,44 +229,18 @@ export const CONSTRAINTS = [
   },
   {
     /*
-     * Pause, resume and cancel are the three intents that reach a real run.
-     * The matrix shares one worker-scoped host across every state, so pressing
-     * one would change what every later state on that worker is judged
-     * against — and cancelling is not undoable. Kept as a value so the
-     * omission is a named exclusion rather than a gap.
+     * Pause, resume and cancel are drawn by `web/live/live.js`; replay's
+     * controls are the transport, which moves the reader's own position and
+     * never posts an intent. Crossing the refusal with replay produced tuples
+     * whose entry path was the live one over again — three ids for one render,
+     * which the distinguishability gate caught by name.
      */
-    id: "a-run-intent-would-act-on-the-host",
+    id: "a-refused-control-is-a-live-control",
     kind: "structural",
-    reads: ["run"],
-    title: "The matrix cannot review a run control it may not press",
-    why: "`send` in `web/live/live.js` POSTs `pause-run`, `resume-run` or `cancel-run` against the host's real run, and the matrix shares one host across every state — so a refusal cannot be provoked without acting on a run the later states are still being judged against. The screen is real: `.run-control-error` under the picker, with the transport still offered so it can be tried again.",
-    holds: (combo) => combo.run !== "refused",
-  },
-  {
-    /*
-     * A create writes a file. `runCrudIntent` builds the item in the host's
-     * own config directory, and the matrix points every worker at the
-     * repository's `.bureau/` — so a create performed by one state would be
-     * config every later state on that worker is judged against.
-     */
-    id: "a-create-would-write-the-config",
-    kind: "structural",
-    reads: ["disclosure"],
-    title: "The matrix cannot review a create it is not allowed to perform",
-    why: "Submitting the create form runs a `create-*` intent, which writes a role or pipeline file into the host's config directory — and the matrix shares one read-only host across every state. So the refusal is a value the axis keeps and this rule excludes; `specs/controls.spec.mjs` and the Edge harness own the successful create, each against its own scratch config.",
-    holds: (combo) => combo.disclosure !== "create-error",
-  },
-  {
-    /*
-     * Play is the one transport control whose result is a function of when the
-     * screenshot was taken rather than of what was clicked.
-     */
-    id: "playing-advances-on-a-timer",
-    kind: "structural",
-    reads: ["transport"],
-    title: "A playing timeline has no position to assert",
-    why: "`useReplayOverlay` advances the position on a 100ms interval, so a state that pressed Play would assert whatever the clock had reached when the render was measured — a screenshot that differs run to run, which is the one thing a matrix state may not be. Stepping is the same movement made deterministic, and `transport: stepped` is where the transport is held to account.",
-    holds: (combo) => combo.transport !== "playing",
+    reads: ["mode", "run"],
+    title: "Only the live transport can have an intent refused",
+    why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control whose refusal could be shown.",
+    holds: (combo) => combo.run !== "refused" || combo.mode === "live",
   },
   {
     /*

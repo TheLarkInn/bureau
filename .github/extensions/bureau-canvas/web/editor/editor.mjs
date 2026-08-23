@@ -44,6 +44,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const [layoutDirty, setLayoutDirty] = useState(false);
   const [selected, setSelected] = useState(null);
   const [saveResult, setSaveResult] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [flowApi, setFlowApi] = useState(null);
 
   const view = useMemo(() => draft ?? editableView(pipeline?.view), [draft, pipeline]);
@@ -106,15 +107,19 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
     setSaveResult(null);
     setSelected(null);
   };
-  const saveCurrent = () => save({
-    setSaveResult,
-    setDraft,
-    setLayoutDirty,
-    onSaved,
-    name,
-    view,
-    positions,
-  });
+  /*
+   * A save in flight has to withhold its own button. `save-pipeline` writes the
+   * pipeline file, re-validates and reverts, so a second click while the first
+   * is outstanding is a second write racing the revert of the first. The button
+   * used to stay live for the whole round trip, and nothing caught it because
+   * the in-flight screen was an excluded state — the registry asserted the
+   * button was withheld and the matrix never rendered it to find out.
+   */
+  const saveCurrent = () => {
+    setSaving(true);
+    return save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions })
+      .finally(() => setSaving(false));
+  };
 
   return h(
     "section",
@@ -126,6 +131,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       hints,
       saveResult,
       invalidNumbers,
+      saving,
       onSave: saveCurrent,
       onDiscard: discard,
       onAdd: (kind) => addStep(name, view, kind, edit, setSelected),
@@ -491,7 +497,7 @@ function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
 
 // --- toolbar + side panel ---
 
-function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDiscard, onAdd }) {
+function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSave, onDiscard, onAdd }) {
   const [kind, setKind] = useState("deterministic");
   return h(
     "div",
@@ -526,8 +532,8 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDis
     h(
       "span",
       { className: "editor-toolbar-actions" },
-      dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", onClick: onDiscard }, "Discard changes") : null,
-      h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
+      dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", disabled: saving, onClick: onDiscard }, "Discard changes") : null,
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers || saving, onClick: onSave }, saving ? "Saving…" : "Save changes"),
     ),
   );
 }
@@ -561,7 +567,7 @@ function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, on
             h("button", { type: "button", onClick: () => onIssue(hint.step) }, `${hint.step}: ${hint.message}`)))))
       : null,
     saveResult && !saveResult.ok
-      ? h("section", { className: "panel-section" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
+      ? h("section", { className: "panel-section", "data-testid": "editor-save-reverted" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
           (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
             .map((finding, index) => h("li", { key: index }, finding.message))))
       : null,

@@ -140,7 +140,7 @@ reasoning that exhaustive rendering is discovery work rather than PR feedback.
 That reasoning does not survive the arithmetic: `schedule` fires only on the
 default branch, so until the workflow merged it had never run at all, and
 `scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
-would have merged green and gone unattributed. All 440 assertions take about
+would have merged green and gone unattributed. All 511 assertions take about
 as long as a fraction of the Rust job, so they gate like anything else:
 
 ```sh
@@ -257,33 +257,56 @@ still be there on the way back. The isolation is asserted both ways: the
 probes require the editor panel gone behind Relations, and `tab: pipeline`
 requires the relation graph gone behind Pipeline.
 
-The one thing the matrix will not do is **act on the host**. `save-pipeline`
-writes, re-validates and reverts, and a run control POSTs a pause, resume or
-cancel against a real run — both against the one directory and instance the
-suite shares read-only across every state running in parallel. So the editor's
-`saving` and `save-error`, a create refusal and a refused run control are
-enumerated values excluded by `an-editor-save-would-write-the-config`,
-`a-plan-save-would-write-the-config`, `a-create-would-write-the-config` and
-`a-run-intent-would-act-on-the-host`. They are real screens; recording them as
-named exclusions is the difference between a boundary a reviewer can see and a
-gap they cannot. The write path itself belongs to `specs/editor.spec.mjs`,
-which boots its own scratch config, and what a finished run's controls should
-show is pinned by `runActions` in `test/overlay.test.mjs`.
+The matrix will not **act on the host**, and for a while that was discharged by
+excluding every screen a write leads to. `./intent` is how the page writes *and*
+how it reads, so the route that answers it in the browser is named by the
+intent's `kind`: `derive-work-source` and `resolve-repo` are let through, and
+everything else — `save-plan`, `discard-plan`, `save-pipeline`, the create and
+delete intents — is held. `.bureau/` is untouched by the run.
 
-A **field** save is no longer among them, and the distinction is worth keeping
-straight, because "the harness may not press this button" was being used to
-mean "this screen cannot be rendered". They are not the same claim. A field
-save posts `set-*` to `./intent`, and a route installed in the browser answers
-it before it ever leaves the page — so `saving` and `save-error` are ordinary
-states now, at every field that has a save. Both are exact rather than
-timing-dependent: stalling pins `busy` on, which is the "Saving…" label with
-the button refusing a second click, and a refusal returns no `ok`, which is
-precisely the branch that renders each editor's own fallback sentence. The
-route matches on the intent's `kind`, not the URL, because `./intent` is also
-how the page *reads* — `derive-work-source` builds the paste preview — and
-holding the whole endpoint stalled the derivation the save state existed to
-save. `.bureau/` is untouched by the run, which is the property that made the
-exclusion necessary in the first place.
+That route arrived for the field saves and was not extended to the other four
+families, which kept rules saying `save-plan` "calls `applyPlan` on the host's
+config directory" long after nothing of the sort could happen. The distinction
+those rules blurred is the one this registry exists to keep: **"the harness may
+not press this button" is not "this screen cannot be rendered."** A rule marked
+`structural` claims the second, and claiming it waives every obligation the
+registry has — only `scoping` rules owe a crossing probe, so no test asks a
+`structural` rule for anything. Two of the six screens were consequently
+asserted nowhere in the repository at all.
+
+So the plan bar's save, the pipeline editor's save, a refused create and a
+refused run control are ordinary states now, each reached by pressing the real
+button under `stall-intent` or `fail-intent`. Both ends are exact rather than
+timing-dependent: stalling pins the in-flight branch on, and a refusal is the
+branch that renders each surface's own sentence. Each declares the 500 the
+browser logs as its own, the way `data: render-error` declares its failed
+module request — the registry stays the only place that says which failures are
+a state and which are a bug.
+
+One of them was hiding a defect, which is the argument for rendering them made
+concretely. `edit: saving` promised the Save button was withheld while the write
+was in flight. `EditorToolbar` disabled it on `!dirty || invalidNumbers` and
+nothing else, so it stayed live for the whole round trip and a second click
+raced a second write against the first one's revert. The registry asserted the
+truth; the exclusion is what meant nobody ever rendered it to find out.
+
+`transport: playing` came back on the same reasoning, with the opposite
+resolution. Its *position* really is a function of the clock, but the matrix
+gallery is a browsable render rather than a pinned baseline — only the ten
+`@visual` screens are compared — so a scrubber a frame further on costs nothing.
+The state asserts the label and aria name flipping to Pause and leaves the
+position alone. What it replaces is a Play button the timeline shipped and no
+state ever pressed.
+
+Two exclusions in this family remain, and they are narrower. `a-refused-control-
+is-a-live-control` is structural in the strict sense: `web/replay/replay.js`
+draws a picker and a timeline, and its transport moves the reader's own position
+without posting anything, so there is no control there whose refusal could be
+shown. Crossing it with replay produced three ids for one render, which the
+distinguishability gate caught by name. The successful write paths still belong
+to `specs/editor.spec.mjs` and `specs/controls.spec.mjs`, each against its own
+scratch config, and what a finished run's controls should show is pinned by
+`runActions` in `test/overlay.test.mjs`.
 
 The transition graph has two kinds of edge, for the same reason. An `enter`
 edge is a prefix relation — the child's path is the parent's plus one
