@@ -244,6 +244,14 @@ async function intercept(page, kind) {
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false }) })
       : route.continue()),
+    // The third end of a save, and the one that used to have no screen: the
+    // request never reaches a responder at all, so `fetch` rejects rather than
+    // answering. `fail-intent` cannot stand in for it — a 500 resolves, and it
+    // is precisely the difference between resolving and rejecting that decided
+    // whether the page cleared its `busy` flag.
+    "abort-intent": () => page.route(/\/intent$/u, (route) => writes(route)
+      ? route.abort("failed")
+      : route.continue()),
   };
   await routes[kind]();
 }

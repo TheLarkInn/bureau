@@ -1717,10 +1717,22 @@ function publishLocalState(result) {
   }
 }
 
+/*
+ * The rejection path collapses into the same `null` the non-ok path returns, so
+ * every caller's existing `result?.ok` branch handles a dead transport the way
+ * it already handles a refusal. Without it a rejected `fetch` — the host process
+ * gone, the socket reset, the page outliving the session that served it — skips
+ * every `.then` on this promise, which is where the callers clear their `busy`
+ * flag. The draft bar would sit on "Working…" with both buttons disabled and no
+ * message: a stuck screen pixel-identical to a save still in flight, so no
+ * screenshot could tell them apart. A body that is not JSON lands here too.
+ */
 function postIntent(body) {
   return fetch("./intent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).then((response) => response.ok ? response.json() : null);
+  })
+    .then((response) => response.ok ? response.json() : null)
+    .catch(() => null);
 }

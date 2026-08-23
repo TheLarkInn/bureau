@@ -64,7 +64,7 @@ const EDITOR_BASE = {
   edit: "rest",
 };
 
-function state({ id, summary, page = "index", surface, fixture, ops, expect, ...rest }) {
+function state({ id, summary, page = "index", surface, fixture, ops, expect, intercept, ...rest }) {
   return {
     id,
     kind: "probe",
@@ -72,7 +72,7 @@ function state({ id, summary, page = "index", surface, fixture, ops, expect, ...
     page,
     fixture,
     surface: surface ?? (page === "editor" ? "editor" : "config"),
-    ops: [{ op: "page", value: page }, { op: "fixture", value: fixture }, ...ops],
+    ops: [{ op: "page", value: page, ...(intercept ? { intercept } : {}) }, { op: "fixture", value: fixture }, ...ops],
     expect,
     ...rest,
   };
@@ -345,5 +345,63 @@ export const PROBES = [
     fixture: "no-limits",
     ops: [{ op: "click", selector: S.assignmentHead }, { op: "wait", selector: S.limitsValue }],
     expect: { shows: [S.limitsValue], hides: [], copy: ["unbounded — no limits set"] },
+  }),
+  /*
+   * The third end of a save, on each surface that has one.
+   *
+   * `saving` and `save-error` are the two the `draft` and `edit` axes model: a
+   * request in flight, and one the host answered with a refusal. A request that
+   * never gets answered *at all* is a third outcome, and it was the one screen
+   * on this surface that no rule excluded and no state rendered — so it went
+   * unasserted while rendering as a permanent "Working…" with both controls
+   * disabled and nothing said. A stuck draft bar is indistinguishable from a
+   * slow one in a screenshot, which is why this had to be closed in the
+   * renderer and then pinned here rather than found by looking.
+   *
+   * They are samples rather than a fourth value on `draft` and `edit`: the fix
+   * makes a dead transport land in the same rendered class as a refusal, and
+   * two routes that produce one screen are one equivalence class, not two. What
+   * is worth asserting is exactly that convergence — the refusal is drawn, and
+   * the controls come back.
+   */
+  sample({
+    id: "probe--draft-save-transport-lost",
+    covers: "the draft bar's save when the request is never answered — the third end of a save, which must refuse rather than hang",
+    summary: "the host went away mid-save: the draft bar says so and returns both controls instead of sitting on Working…",
+    fixture: "draft-pending",
+    intercept: "abort-intent",
+    ops: [
+      { op: "wait", selector: S.draftBar },
+      { op: "click", selector: S.draftSave },
+      { op: "wait", selector: S.draftRefused },
+    ],
+    expect: {
+      shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
+      hides: [],
+      copy: ["could not save changes"],
+      allowErrors: ["Failed to fetch", "net::ERR_FAILED", "/intent"],
+    },
+  }),
+  sample({
+    id: "probe--editor-save-transport-lost",
+    covers: "the pipeline editor's save when the request is never answered — the panel already draws the error, so it has to be given one",
+    summary: "the host went away mid-save: the editor reports it and keeps the draft rather than falling back to unsaved edits",
+    page: "editor",
+    fixture: "pipeline",
+    intercept: "abort-intent",
+    ops: [
+      { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
+      { op: "fill", selector: S.editorStepName, value: "deterministic-renamed" },
+      { op: "press", selector: S.editorStepName, value: "Enter" },
+      { op: "wait", selector: S.editorSave },
+      { op: "click", selector: S.editorSave },
+      { op: "wait", selector: S.editorSaveReverted },
+    ],
+    expect: {
+      shows: [S.editorSaveReverted, offered(S.editorSave), S.editorDiscard],
+      hides: [],
+      copy: ["Save reverted"],
+      allowErrors: ["Failed to fetch", "net::ERR_FAILED", "/intent"],
+    },
   }),
 ];

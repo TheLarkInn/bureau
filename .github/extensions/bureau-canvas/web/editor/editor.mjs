@@ -915,6 +915,13 @@ function serializableView(view) {
   };
 }
 
+/*
+ * The panel already draws `saveResult.error`; this is the branch that fills it.
+ * A rejected `fetch` used to skip every `.then` here, so `saveResult` stayed as
+ * it was and the toolbar fell back to "unsaved edits" — the same words it showed
+ * before the click. A write that failed and a write never dispatched read
+ * identically, which is the one thing a draft surface may not do.
+ */
 function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions }) {
   return fetch("./intent", {
     method: "POST",
@@ -930,5 +937,9 @@ function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, po
         onSaved?.(result.state);
       }
       return result;
+    })
+    .catch((error) => {
+      setSaveResult({ ok: false, findings: [], error: String(error?.message ?? error) });
+      return null;
     });
 }
