@@ -68,6 +68,43 @@ test("vendors renderer modules locally and serves a fallback", async () => {
     },
   );
 });
+
+/**
+ * The Edge harness must not gate itself on a network it no longer uses.
+ *
+ * A preflight to esm.sh stood in `skipReason` from when the pages loaded React
+ * from a CDN. The renderer was vendored an hour later — the test above asserts
+ * the page carries no remote reference at all — and the preflight stayed,
+ * turning "this machine is offline" into "skip the whole browser suite and
+ * exit 0". A harness may name a pairing it cannot run; it may not pass by
+ * running nothing, so the absence is pinned rather than left to be re-added.
+ *
+ * Both halves of that are pinned, because either alone is escapable. Removing
+ * the URL still leaves `async function skipReason()` free to `await` a bare
+ * hostname through `dns.lookup`; and pinning only the call site measures the
+ * symptom rather than the defect, since an `async` declaration under an
+ * un-awaited call returns a promise, `if (skip)` takes it as truthy, and the
+ * harness prints `skipped: [object Promise]` and exits 0 — the exact silence
+ * this test exists to prevent, wearing a green tick.
+ */
+test("the Edge harness gates on the browser, never on the network", async () => {
+  const harness = await readFile(new URL("../e2e/run.mjs", import.meta.url), "utf8");
+  const remote = [...harness.matchAll(/["'`](https?:\/\/[^"'`]+)["'`]/gu)].map((match) => match[1]);
+
+  assert.deepEqual(
+    {
+      // Loopback is the DevTools endpoint; a fixture URL is a string the
+      // harness types into a form, not something it fetches. Both allowances
+      // end at a host boundary, so they admit the host and not merely names
+      // that begin with it.
+      offHost: remote.filter((url) => !/^https?:\/\/(?:127\.0\.0\.1|localhost|x)(?:[:/]|$)/u.test(url)),
+      declaredSynchronous: /\nfunction skipReason\(\) \{/u.test(harness),
+      calledSynchronously: /\n\s*const skip = skipReason\(\);/u.test(harness),
+    },
+    { offHost: [], declaredSynchronous: true, calledSynchronously: true },
+  );
+});
+
 test("serves the config renderer markup and fallback state", async () => {
   const instance = await openInstance("bureau-render-state-test");
 

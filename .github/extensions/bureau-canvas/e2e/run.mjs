@@ -119,7 +119,7 @@ class CdpSession {
 }
 
 async function main() {
-  const skip = await skipReason();
+  const skip = skipReason();
   if (skip) {
     console.log(`bureau-canvas e2e skipped: ${skip}`);
     return;
@@ -148,7 +148,7 @@ async function main() {
   }
 }
 
-async function skipReason() {
+function skipReason() {
   // The cross-OS pairing is read from the *shape* of the two paths, so it does
   // not need the executable to exist — and it has to be asked first. On WSL a
   // Windows Edge is installed and perfectly real, but `C:\...` is not a path
@@ -166,14 +166,13 @@ async function skipReason() {
   if (typeof WebSocket !== "function") {
     return "Node global WebSocket is unavailable; run with Node 24 or newer";
   }
-  try {
-    const response = await fetch("https://esm.sh/react@18.3.1", { signal: AbortSignal.timeout(7_000) });
-    if (!response.ok) {
-      return `network preflight to esm.sh returned HTTP ${response.status}`;
-    }
-  } catch (error) {
-    return `network preflight to esm.sh failed (${error.message})`;
-  }
+  // There is deliberately no network preflight. One used to stand here, from
+  // when the pages loaded React from esm.sh; `d9556b1` vendored the renderer an
+  // hour later and `render.test.mjs` now asserts the page carries no remote
+  // reference at all. Left in place it gated a fully offline harness on the
+  // CDN it had stopped using — so an offline machine skipped every assertion
+  // below and still exited 0. A harness may name a pairing it cannot run,
+  // which is what `crossOsReason` does; it may not pass by running nothing.
   return null;
 }
 
