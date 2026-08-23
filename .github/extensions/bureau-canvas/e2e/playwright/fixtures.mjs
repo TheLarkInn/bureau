@@ -12,6 +12,20 @@ const CONFIG_FIXTURE = fileURLToPath(new URL("../../../../../.bureau/", import.m
 export const RUN_ID = "replay-fixture-run";
 const RUN_START = 1_700_000_000_000;
 
+/** What an agent step streams: a Copilot CLI transcript. */
+export const TRANSCRIPT = [
+  "● Read DESIGN.md",
+  "  │ DESIGN.md",
+  "  └ L1:120 (120 lines read)",
+  "",
+  "I read the contract before editing.",
+  "",
+].join("\n");
+
+/** What a deterministic step streams: one v2 contract line. */
+export const CONTRACT = '{"schema":"v2","outcome":"success","outputs":{"tests":42},'
+  + '"artifacts":[],"trust":"derived","message":"suite passed"}';
+
 /**
  * The config these specs assert against.
  *
@@ -44,7 +58,8 @@ async function scratchConfig() {
  * A `runs/` dir holding one finished run of the fixture pipeline, so the
  * replay specs have a real event log to scrub without a `bureau` binary or a
  * live engine. Step names match `agent-eligible-pipeline`, because overlays
- * key on step name.
+ * key on step name, and the output covers both shapes a step can produce: an
+ * agent's CLI transcript and a deterministic step's contract line.
  */
 async function scratchRuns() {
   await mkdir(SCRATCH_ROOT, { recursive: true });
@@ -52,8 +67,10 @@ async function scratchRuns() {
   const events = [
     { kind: "run_started", data: { run_id: RUN_ID, assignment: SAMPLE.assignment } },
     { kind: "step_started", data: { step: "implement" } },
+    { kind: "output", data: { step: "implement", stream: "combined", data: TRANSCRIPT } },
     { kind: "step_finished", data: { step: "implement", outcome: "success" } },
     { kind: "step_started", data: { step: "verify" } },
+    { kind: "output", data: { step: "verify", stream: "combined", data: `${CONTRACT}\n` } },
     { kind: "step_finished", data: { step: "verify", outcome: "success" } },
     { kind: "step_started", data: { step: "review" } },
     { kind: "step_finished", data: { step: "review", outcome: "success" } },

@@ -21,6 +21,13 @@ async function openReplay(page, canvas) {
   });
 }
 
+/** Clicks a step card so the log panel follows it. */
+async function selectStep(page, name) {
+  await page.locator(".flow-card", { has: page.locator(`h2:text-is("${name}")`) })
+    .click({ position: { x: 20, y: 12 } });
+  await expect(page.locator(".step-log-title")).toHaveText(name);
+}
+
 test.describe("replay in a narrow panel", () => {
   test.use({ viewport: { width: 920, height: 900 } });
 
@@ -51,5 +58,36 @@ test.describe("replay in a narrow panel", () => {
     await scrubber.fill(await scrubber.getAttribute("max"));
     await expect(page.locator(".flow-card.overlay-success")).toHaveCount(3);
     expect(atStart).toBe(3);
+  });
+
+  test("an agent step's log is blocks, not the CLI's drawing characters", async ({ page, canvas }) => {
+    await openReplay(page, canvas);
+    await page.locator(".replay-scrubber").fill(await page.locator(".replay-scrubber").getAttribute("max"));
+    await selectStep(page, "implement");
+
+    const tool = page.locator(".log-tool");
+    await expect(tool.locator(".log-tool-name")).toHaveText("Read DESIGN.md");
+    await expect(tool.locator(".log-tool-result")).toHaveText("L1:120 (120 lines read)");
+    await expect(page.locator(".log-note")).toHaveText("I read the contract before editing.");
+  });
+
+  test("the log never shows the glyphs it parsed away", async ({ page, canvas }) => {
+    await openReplay(page, canvas);
+    await page.locator(".replay-scrubber").fill(await page.locator(".replay-scrubber").getAttribute("max"));
+    await selectStep(page, "implement");
+
+    const shown = await page.locator(".step-log").innerText();
+    expect([shown.includes("●"), shown.includes("└"), shown.includes("│")]).toEqual([false, false, false]);
+  });
+
+  test("a deterministic step's log is its contract, read out", async ({ page, canvas }) => {
+    await openReplay(page, canvas);
+    await page.locator(".replay-scrubber").fill(await page.locator(".replay-scrubber").getAttribute("max"));
+    await selectStep(page, "verify");
+
+    const result = page.locator(".log-result");
+    await expect(result.locator(".outcome-pill")).toHaveText("success");
+    await expect(result.locator(".log-result-message")).toHaveText("suite passed");
+    await expect(result.locator(".log-outputs")).toHaveText("tests42");
   });
 });

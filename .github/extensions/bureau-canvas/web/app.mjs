@@ -16,6 +16,8 @@ import {
 // pipeline graph rendering below stays as-is; overlay modes only restyle it.
 import { ModeSwitcher } from "./modes.js";
 import { useLiveOverlay } from "./live/live.js";
+import { StepLog, focusStep } from "./live/logs.js";
+import { stepOutput } from "./live/transcript.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
@@ -1282,9 +1284,24 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
         }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true })),
       ),
+      // graph-overlays: a run's steps left output; design mode has no run.
+      active ? h(StepLog, stepLogProps(pipeline, active, selectedStep)) : null,
     ),
     h(SidePanel, { state, pipeline, name }),
   );
+}
+
+/** What the log panel needs: the focused step, its kind, record and output. */
+function stepLogProps(pipeline, active, selectedStep) {
+  const overlay = active.decoration?.overlay ?? null;
+  const step = focusStep(selectedStep, overlay);
+  const layoutStep = (pipeline?.layout?.steps ?? []).find((item) => item.name === step);
+  return {
+    step,
+    kind: layoutStep?.kind ?? null,
+    record: overlay?.steps?.[step] ?? null,
+    text: step ? stepOutput(active.events, step, active.until) : "",
+  };
 }
 
 function toFlow(pipeline, state, selectedStep, decoration = null) {

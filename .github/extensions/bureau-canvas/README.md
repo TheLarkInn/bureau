@@ -76,7 +76,26 @@ testable without a browser:
 | `lib/runs.mjs` | run liveness, event-log replay and tailing, and the `bureau` shell-out |
 | `lib/edit.mjs` | step-graph edits on a pipeline view, plus the editor's inline hints |
 | `lib/pipeline.mjs` | the `save-pipeline` round-trip (write → validate → revert) and the `layout.json` sidecar |
+| `web/live/transcript.js` | parses a step's captured output into blocks: an agent's Copilot CLI transcript, a deterministic step's contract line, or raw process output |
 | `web/` | draws what it is given; `web/editor/` is the pipeline editor and the read-only relation graph |
+
+## The step log
+
+Live and replay show what the focused step actually did, under the graph.
+Click a step to follow it; with nothing selected it follows the step the run
+is inside, then the last one it finished.
+
+An agent step streams a Copilot CLI transcript, where a tool call is a marker
+line with indented argument and result lines drawn in box characters. Those
+glyphs are layout, not content, so `web/live/transcript.js` consumes them and
+the panel draws a block per tool call instead of echoing the drawing. A
+deterministic step streams one line of the v2 step-result contract, rendered
+as its outcome, message, outputs and artifacts. Anything that is neither —
+a stack trace from a failed step — is kept byte-for-byte in a preformatted
+block, because reflowing a stack trace destroys it.
+
+Output events are not retained by the overlay reducer, which is why both mode
+hooks also hand the panel the raw events.
 
 ## Rules worth knowing before changing it
 

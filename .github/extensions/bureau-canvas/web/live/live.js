@@ -17,15 +17,18 @@ const h = React.createElement;
 export function useLiveOverlay() {
   const [runId, setRunId] = useState(null);
   const [overlay, setOverlay] = useState(emptyOverlay);
+  const [events, setEvents] = useState([]);
   const [collapsed, setCollapsed] = useState(new Set());
   const [controlResult, setControlResult] = useState(null);
 
   useEffect(() => {
     if (!runId) {
       setOverlay(emptyOverlay());
+      setEvents([]);
       return undefined;
     }
     setOverlay(emptyOverlay());
+    setEvents([]);
     setCollapsed(new Set());
     setControlResult(null);
     // Backfill the current log once, then append live: the tail starts at
@@ -42,6 +45,9 @@ export function useLiveOverlay() {
           overlayState = applyEvent(overlayState, event);
         }
         setOverlay(overlayState);
+        // Kept raw as well: the step log renders the output events, which
+        // the overlay reducer deliberately does not retain.
+        setEvents(payload.events ?? []);
       })
       .catch(() => {});
     const source = new EventSource("./events");
@@ -52,6 +58,7 @@ export function useLiveOverlay() {
       }
       overlayState = applyEvent(overlayState, event);
       setOverlay(overlayState);
+      setEvents((current) => [...current, event]);
     });
     return () => {
       alive = false;
@@ -84,7 +91,7 @@ export function useLiveOverlay() {
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error ?? controlResult.output ?? "intent failed") : null,
   );
 
-  return { runId, setRunId, decoration, controls };
+  return { runId, setRunId, decoration, controls, events, until: Infinity };
 }
 
 function RunButtons({ overlay, onAction }) {

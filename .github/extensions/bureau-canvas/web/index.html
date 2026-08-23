@@ -1024,6 +1024,95 @@
       .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
       .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
       .replay-scrubber { flex: 1 1 10rem; min-width: 6rem; max-width: 16rem; }
+
+      /* Step log: the CLI's drawing glyphs are parsed away, so each tool
+         call, contract and stack trace is drawn as its own block. Flat
+         content on the neutral ramp; only outcomes carry hue. */
+      .step-log {
+        display: grid;
+        gap: var(--space-2);
+        margin-top: var(--space-3);
+        padding: var(--space-3);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+        min-width: 0;
+      }
+      .step-log-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+      .step-log-title { margin: 0; font-size: 1rem; font-weight: 700; line-height: 1.25rem; }
+      .step-log-elapsed { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .step-log-empty { margin: 0; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .step-log-body { display: grid; gap: var(--space-2); max-height: 26rem; overflow: auto; }
+
+      .log-tool {
+        display: grid;
+        gap: 2px;
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius-sm, 6px);
+        background: var(--surface-subtle, #f6f8fa);
+      }
+      .log-tool-name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+      .log-tool-arg { margin: 0; color: var(--text-color-muted, #656d76); overflow-wrap: anywhere; }
+      .log-tool-result {
+        margin: 2px 0 0;
+        padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-sm, 6px);
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-muted, #656d76);
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+
+      .log-note { margin: 0; }
+      .log-warning {
+        margin: 0;
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius-sm, 6px);
+        background: var(--finding-advisory-bg, #fff8c5);
+      }
+      .log-raw {
+        margin: 0;
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius-sm, 6px);
+        background: var(--surface-subtle, #f6f8fa);
+        overflow-x: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .log-result {
+        display: grid;
+        gap: var(--space-2);
+        padding: var(--space-2);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius-sm, 6px);
+      }
+      .log-result-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+      .log-result-message { overflow-wrap: anywhere; }
+      .log-outputs { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--space-2); margin: 0; }
+      .log-outputs dt { color: var(--text-color-muted, #656d76); }
+      .log-outputs dd { margin: 0; overflow-wrap: anywhere; }
+      .log-artifacts { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+
+      .outcome-pill, .kind-pill {
+        border-radius: var(--radius-pill, 999px);
+        padding: 2px 10px;
+        font-size: var(--text-code-inline, 12px);
+        font-weight: 700;
+        color: var(--background-color-default, #ffffff);
+        background: var(--text-color-muted, #656d76);
+      }
+      .outcome-pill--success { background: var(--outcome-success); }
+      .outcome-pill--failure { background: var(--outcome-failure); }
+      .outcome-pill--blocked { background: var(--outcome-blocked); }
+      .outcome-pill--running { background: var(--color-focus-outline, #0969da); }
+      .kind-pill--agent { background: var(--kind-agent); }
+      .kind-pill--deterministic { background: var(--kind-deterministic); }
+      .kind-pill--decision { background: var(--kind-decision); }
+      .kind-pill--concurrent { background: var(--kind-concurrent); }
       .overlay-pending { opacity: 0.35; }
       .overlay-running { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
       .overlay-success { --accent: var(--outcome-success); }
