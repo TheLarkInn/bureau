@@ -546,6 +546,32 @@ test("every reversible control declares an undo the suite actually walks", () =>
   assert.deepStrictEqual({ dead, declared: REVERSIBLE.length === 0 }, { dead: [], declared: false });
 });
 
+/**
+ * And that the region a return edge waits to lose was ever there.
+ *
+ * A return edge is `click undo` then `waitGone gone`, and `waitGone` on a
+ * selector that never matches passes the instant it is called. So a `gone` that
+ * names nothing downgrades the edge from "this control closed something" to
+ * "this control was clicked", silently — the same shape of nothing as a
+ * declared toggle with no edge, one level down.
+ *
+ * Requiring the opened state to promise `gone` is what makes the wait mean
+ * something: the selector is one the registry already claims is on screen
+ * there, so its disappearance is a real event. Most toggles are backstopped
+ * anyway by a destination that names the region absent, but three were not —
+ * the repos disclosure, whose return lands on a probe, and the two overlay
+ * modes, whose destination said nothing about the controls it had dropped.
+ */
+test("every reversible control opens the region its undo waits to lose", () => {
+  const byId = new Map(STATES.map((state) => [state.id, state]));
+  const unpromised = ENTRY_TRANSITIONS.flatMap((edge) => {
+    const toggle = REVERSIBLE.find((item) => edge.via === `click ${item.via}`);
+    const shows = byId.get(edge.to)?.expect.shows ?? [];
+    return toggle && !shows.includes(toggle.gone) ? [`${edge.to} does not show ${toggle.gone}`] : [];
+  });
+  assert.deepStrictEqual(unpromised, []);
+});
+
 /** The child's ops from its (skip + 1)-th acting operation onwards. */
 function tailAfter(ops, skip) {
   let seen = 0;

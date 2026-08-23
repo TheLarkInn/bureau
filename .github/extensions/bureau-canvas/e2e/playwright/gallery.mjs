@@ -37,16 +37,16 @@ export async function openGallery(staging) {
  * Replaces `gallery` with `staging` when this run rendered anything, and
  * discards `staging` when it did not.
  *
- * Returns how many renders were published, so the caller can say what it did
- * rather than replacing a reviewer's gallery in silence.
+ * Returns the names published, so the caller can say what it did rather than
+ * replacing a reviewer's gallery in silence.
  */
 export async function publishGallery(staging, gallery) {
   const rendered = await readdir(staging).catch(() => []);
   if (!rendered.length) {
     await rm(staging, { recursive: true, force: true });
-    return 0;
+    return [];
   }
   await rm(gallery, { recursive: true, force: true });
   await rename(staging, gallery);
-  return rendered.length;
+  return rendered;
 }

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
+import { stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
 
 /** A staging and a gallery directory, with the gallery already populated. */
 async function pair(t, published) {
@@ -31,34 +32,58 @@ async function pair(t, published) {
 }
 
 test("a run that rendered nothing leaves the published gallery in place", async (t) => {
-  const { staging, gallery } = await pair(t, ["desktop--old.png", "index.html"]);
+  const { staging: stage, gallery } = await pair(t, ["desktop--old.png", "index.html"]);
 
-  await openGallery(staging);
-  const published = await publishGallery(staging, gallery);
+  await openGallery(stage);
+  const published = await publishGallery(stage, gallery);
 
   assert.deepEqual(
-    [published, (await readdir(gallery)).sort(), await readdir(staging).catch(() => "gone")],
-    [0, ["desktop--old.png", "index.html"], "gone"],
+    [published, (await readdir(gallery)).sort(), await readdir(stage).catch(() => "gone")],
+    [[], ["desktop--old.png", "index.html"], "gone"],
   );
 });
 
 test("a run that rendered replaces the gallery with exactly what it wrote", async (t) => {
-  const { staging, gallery } = await pair(t, ["desktop--dropped.png", "desktop--kept.png"]);
+  const { staging: stage, gallery } = await pair(t, ["desktop--dropped.png", "desktop--kept.png"]);
 
-  await openGallery(staging);
-  await writeFile(join(staging, "desktop--kept.png"), "fresh", "utf8");
-  const published = await publishGallery(staging, gallery);
+  await openGallery(stage);
+  await writeFile(join(stage, "desktop--kept.png"), "fresh", "utf8");
+  const published = await publishGallery(stage, gallery);
 
-  assert.deepEqual([published, await readdir(gallery)], [1, ["desktop--kept.png"]]);
+  assert.deepEqual([published, await readdir(gallery)], [["desktop--kept.png"], ["desktop--kept.png"]]);
 });
 
 test("opening staging discards whatever a crashed run left in it", async (t) => {
-  const { staging, gallery } = await pair(t, []);
-  await mkdir(staging, { recursive: true });
-  await writeFile(join(staging, "desktop--abandoned.png"), "stale", "utf8");
+  const { staging: stage, gallery } = await pair(t, []);
+  await mkdir(stage, { recursive: true });
+  await writeFile(join(stage, "desktop--abandoned.png"), "stale", "utf8");
 
-  await openGallery(staging);
-  const published = await publishGallery(staging, gallery);
+  await openGallery(stage);
+  const published = await publishGallery(stage, gallery);
 
-  assert.deepEqual([published, await readdir(gallery)], [0, []]);
+  assert.deepEqual([published, await readdir(gallery)], [[], []]);
+});
+
+/**
+ * Two runs in one checkout must not share a staging directory: `openGallery`
+ * empties what it is given, so a fixed path let a `test:visual` started beside
+ * a running matrix delete the shots that run had already written, and the
+ * matrix would publish the remainder and print a count for it.
+ */
+test("each run stages under its own process, and a worker without one refuses", () => {
+  const before = process.env[STAGING_ENV];
+  delete process.env[STAGING_ENV];
+  const refused = (() => {
+    try {
+      staging();
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  })();
+  process.env[STAGING_ENV] = before ?? "";
+  assert.deepEqual(
+    [stagingFor(1) === stagingFor(2), refused?.includes(STAGING_ENV) === true],
+    [false, true],
+  );
 });

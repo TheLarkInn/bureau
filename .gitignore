@@ -1,7 +1,7 @@
 /target/
 .github/extensions/bureau-canvas/e2e/screenshots/
 .github/extensions/bureau-canvas/e2e/gallery/
-.github/extensions/bureau-canvas/e2e/.gallery-staging/
+.github/extensions/bureau-canvas/e2e/.gallery-staging-*/
 .github/extensions/bureau-canvas/e2e/.edge-profiles/
 
 # impeccable-ignore-start

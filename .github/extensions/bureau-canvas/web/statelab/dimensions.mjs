@@ -555,6 +555,13 @@ const mode = {
       id: "design",
       summary: "the static config graph",
       shows: [S.modeSwitcher, S.legend, S.terminalPill, ...VIEWER_EDGES],
+      // The overlay controls are named absent, not merely unmentioned. Design
+      // was pinned in one direction only, so the way *back* from Live and
+      // Replay — both of which return here — asserted that the design graph had
+      // arrived and nothing about the run controls having gone. A `waitGone` is
+      // the only thing that noticed, and a `waitGone` on a selector that never
+      // matches passes instantly.
+      hides: [S.runControls, S.replayControls],
     },
     {
       id: "live",

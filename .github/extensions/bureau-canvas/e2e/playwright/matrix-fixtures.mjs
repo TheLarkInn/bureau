@@ -16,18 +16,19 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { STAGING } from "./gallery-paths.mjs";
+import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
 const CONFIG = fileURLToPath(new URL("../../../../../.bureau/", import.meta.url));
 const RUNS = fileURLToPath(new URL("../../test/fixtures/runs/", import.meta.url));
 /*
- * Shots are written to the staging directory, not to the gallery itself.
+ * Shots are written to this run's staging directory, not to the gallery itself.
  * `global-teardown.mjs` publishes it over the gallery when the run rendered
  * anything, which is what keeps a filtered run from deleting a gallery it never
- * refilled. Specs need no other path.
+ * refilled — and what keeps two runs in one checkout apart. Specs need no other
+ * path.
  */
-export const GALLERY = STAGING;
+export const GALLERY = staging();
 
 /** Marks a page whose init script already clears the surface's session memory. */
 const FRESH = Symbol("fresh-session");
