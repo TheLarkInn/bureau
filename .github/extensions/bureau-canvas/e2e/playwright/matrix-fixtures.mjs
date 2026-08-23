@@ -19,16 +19,29 @@ import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
+/*
+ * Only the header's config path comes from here. Under `BUREAU_CANVAS_TEST=1`
+ * the binary lookup is pointed at a path that does not exist, so `buildState`
+ * answers from the committed bundled sample rather than from this directory —
+ * which is why an edit to the repository's own `.bureau/` cannot move a single
+ * fixture. Worth saying out loud, because the argument reads the other way.
+ */
 const CONFIG = fileURLToPath(new URL("../../../../../.bureau/", import.meta.url));
 const RUNS = fileURLToPath(new URL("../../test/fixtures/runs/", import.meta.url));
-/*
- * Shots are written to this run's staging directory, not to the gallery itself.
+/**
+ * Where this run's shots go: its staging directory, not the gallery itself.
  * `global-teardown.mjs` publishes it over the gallery when the run rendered
  * anything, which is what keeps a filtered run from deleting a gallery it never
  * refilled — and what keeps two runs in one checkout apart. Specs need no other
  * path.
+ *
+ * It is a function rather than a constant because it refuses when the run has
+ * no staging directory, and Playwright evaluates spec modules while merely
+ * *listing* tests — with no `globalSetup`, and so no staging. As a constant
+ * that refusal ran at import and took listing down for every spec in the
+ * directory, including the eight that have nothing to do with the gallery.
  */
-export const GALLERY = staging();
+export const galleryDir = staging;
 
 /** Marks a page whose init script already clears the surface's session memory. */
 const FRESH = Symbol("fresh-session");
@@ -64,7 +77,7 @@ export const test = base.extend({
     async ({}, use) => {
       const { child, url } = await bootCanvas();
       const base = await fetch(new URL("/state", url)).then((response) => response.json());
-      await mkdir(GALLERY, { recursive: true });
+      await mkdir(galleryDir(), { recursive: true });
       await use({ url, base });
       child.kill("SIGTERM");
     },

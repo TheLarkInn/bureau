@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
-import { enterState, applyOps, expect, GALLERY, test } from "../matrix-fixtures.mjs";
+import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
 
@@ -26,9 +26,9 @@ for (const viewport of VIEWPORT_LIST) {
         await watched.page.setViewportSize({ width: viewport.width, height: viewport.height });
         const result = await enterState(state, watched.page, host);
 
-        await watched.page.screenshot({ path: join(GALLERY, shot(state, viewport)), fullPage: true });
+        await watched.page.screenshot({ path: join(galleryDir(), shot(state, viewport)), fullPage: true });
         await testInfo.attach(`${viewport.id} ${state.id}`, {
-          path: join(GALLERY, shot(state, viewport)),
+          path: join(galleryDir(), shot(state, viewport)),
           contentType: "image/png",
         });
 
@@ -95,9 +95,9 @@ test("@matrix gallery index", async () => {
       </div>
     </article>`).join("");
 
-  await writeFile(join(GALLERY, "index.html"), page(rows), "utf8");
+  await writeFile(join(galleryDir(), "index.html"), page(rows), "utf8");
 
-  const written = await readFile(join(GALLERY, "index.html"), "utf8");
+  const written = await readFile(join(galleryDir(), "index.html"), "utf8");
   const missing = STATES.flatMap((state) =>
     VIEWPORT_LIST
       .filter((viewport) => !written.includes(`src="./${shot(state, viewport)}"`))
