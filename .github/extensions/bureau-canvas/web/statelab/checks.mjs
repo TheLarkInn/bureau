@@ -85,33 +85,46 @@ export function collect(doc, request) {
     }
     return found ? { ...found, pannable } : null;
   };
+  // Measured elements are collected before they are described, so each box can
+  // name the measured boxes that *contain* it. `sameKind` compares boxes drawn
+  // by the same selector, and that comparison assumed a selector never nests
+  // inside itself — which is false: the repo adder's resolved preview draws a
+  // `.detail-row` per field inside the `.detail-row` that holds the whole repos
+  // field. Containment is not overprinting, and without this the checker
+  // reported five overlaps on a screen that renders perfectly.
+  const measured = [];
   for (const selector of request.measure) {
     for (const node of doc.querySelectorAll(selector)) {
       const rect = node.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
-        const position = view.getComputedStyle(node).position;
-        const clip = clipper(node);
-        const outsideX = clip?.clipsX && (rect.x >= clip.rect.right || rect.x + rect.width <= clip.rect.left);
-        const outsideY = clip?.clipsY && (rect.y >= clip.rect.bottom || rect.y + rect.height <= clip.rect.top);
-        const trimX = clip?.clipsX ? Math.max(clip.rect.left - rect.x, rect.x + rect.width - clip.rect.right, 0) : 0;
-        const trimY = clip?.clipsY ? Math.max(clip.rect.top - rect.y, rect.y + rect.height - clip.rect.bottom, 0) : 0;
-        boxes.push({
-          selector,
-          id: idFor(node),
-          x: rect.x, y: rect.y, width: rect.width, height: rect.height,
-          parent: node.parentElement ? keyFor(node.parentElement) : null,
-          // Absolute and fixed boxes overlap on purpose — a badge over a card,
-          // a minimap over a graph — so only normal-flow boxes are held to the
-          // sibling rule.
-          flow: position === "static" || position === "relative",
-          // Entirely outside its clipper: gone, whatever surface it is on.
-          clipped: Boolean(outsideX || outsideY),
-          // How far a clipping ancestor cuts into it, judged only off a
-          // pannable surface, where nothing brings the rest into view.
-          trimmed: clip?.pannable ? 0 : Math.round(Math.max(trimX, trimY)),
-        });
+        measured.push({ node, selector, rect, id: idFor(node) });
       }
     }
+  }
+  for (const { node, selector, rect, id } of measured) {
+    const position = view.getComputedStyle(node).position;
+    const clip = clipper(node);
+    const outsideX = clip?.clipsX && (rect.x >= clip.rect.right || rect.x + rect.width <= clip.rect.left);
+    const outsideY = clip?.clipsY && (rect.y >= clip.rect.bottom || rect.y + rect.height <= clip.rect.top);
+    const trimX = clip?.clipsX ? Math.max(clip.rect.left - rect.x, rect.x + rect.width - clip.rect.right, 0) : 0;
+    const trimY = clip?.clipsY ? Math.max(clip.rect.top - rect.y, rect.y + rect.height - clip.rect.bottom, 0) : 0;
+    boxes.push({
+      selector,
+      id,
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      parent: node.parentElement ? keyFor(node.parentElement) : null,
+      // The measured boxes this one sits inside, by id.
+      within: measured.filter((other) => other.node !== node && other.node.contains(node)).map((other) => other.id),
+      // Absolute and fixed boxes overlap on purpose — a badge over a card,
+      // a minimap over a graph — so only normal-flow boxes are held to the
+      // sibling rule.
+      flow: position === "static" || position === "relative",
+      // Entirely outside its clipper: gone, whatever surface it is on.
+      clipped: Boolean(outsideX || outsideY),
+      // How far a clipping ancestor cuts into it, judged only off a
+      // pannable surface, where nothing brings the rest into view.
+      trimmed: clip?.pannable ? 0 : Math.round(Math.max(trimX, trimY)),
+    });
   }
   const channels = (value) => (String(value).match(/[\d.]+/gu) ?? []).map(Number);
   const opaque = (value) => {
@@ -407,11 +420,8 @@ function normalise(value) {
 }
 
 /**
- * Two boxes drawn by the same kind of region must not overlap. Nesting is
- * fine — a detail row lives inside a card — so same-selector pairs are
- * compared, which is exactly the "cards overprinting each other" defect the
- * browser suite has caught before, plus the sibling pairs above, which is the
- * defect a crossing probe is rendered to find.
+ * Two boxes drawn by the same kind of region must not overlap, plus the named
+ * sibling pairs and anything in normal flow that prints over its own sibling.
  */
 function overlaps(snapshot) {
   return dedupe([...sameKind(snapshot), ...siblingKinds(snapshot), ...siblingBoxes(snapshot)]);
@@ -451,19 +461,36 @@ function dedupe(problems) {
   });
 }
 
+/**
+ * Two boxes drawn by the same kind of region must not overlap. Nesting a
+ * *different* kind is fine — a detail row lives inside a card — and so is
+ * nesting the same kind inside itself, which the repo adder does: its resolved
+ * preview draws a `.detail-row` per field inside the `.detail-row` that holds
+ * the repos field. Containment is checked and skipped rather than measured,
+ * because a parent always intersects its child and that is not a defect.
+ *
+ * What is left is exactly the "cards overprinting each other" defect the
+ * browser suite has caught before, plus the sibling pairs above, which is the
+ * defect a crossing probe is rendered to find.
+ */
 function sameKind(snapshot) {
   const found = [];
   for (const selector of STACKED) {
     const boxes = snapshot.boxes.filter((box) => box.selector === selector);
     for (let left = 0; left < boxes.length; left += 1) {
       for (let right = left + 1; right < boxes.length; right += 1) {
-        if (intersects(boxes[left], boxes[right])) {
+        if (!nested(boxes[left], boxes[right]) && intersects(boxes[left], boxes[right])) {
           found.push({ kind: "overlap", detail: `${selector} #${left} overlaps #${right}` });
         }
       }
     }
   }
   return found;
+}
+
+/** Whether either box is drawn inside the other. */
+function nested(left, right) {
+  return Boolean(left.within?.includes(right.id) || right.within?.includes(left.id));
 }
 
 function siblingKinds(snapshot) {

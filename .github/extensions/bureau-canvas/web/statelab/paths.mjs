@@ -21,14 +21,20 @@
 // `driver.mjs` implements exactly this set, and an offline test fails if a
 // path uses a verb that is not on it.
 
-import { SELECTORS as S, editorCardFor, withheld } from "./selectors.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, withheld } from "./selectors.mjs";
 const FILTER = '[data-testid="wr-filter"]';
 const BRANCH = '[data-testid="wr-branch"]';
 const ABORT = '[data-testid="sig-abort"]';
 const ESCALATE = '[data-testid="sig-escalate"]';
 const CONCURRENT_LIMIT = '[aria-label="Concurrent runs"]';
 const BOARD_URL = "https://github.com/TheLarkInn/bureau/issues?q=is%3Aopen+label%3Aready";
-const REPO_URL = "https://github.com/TheLarkInn/bureau-docs";
+/**
+ * A repository the `multi-repo` fixture has not registered, so pasting it
+ * really does reach the resolved preview with its Add offered. Naming one the
+ * fixture already holds would draw the "already names a different repository"
+ * refusal instead, which is a different screen from the one this covers.
+ */
+export const REPO_ADD_URL = "https://github.com/microsoft/rushstack";
 /**
  * The other two answers `deriveWorkSource` can give, which the paste has to
  * report differently. A host it does not know is a refusal — no derivation, no
@@ -136,7 +142,7 @@ const FIELD_DRAFTS = {
   "repos-add": { "n/a": { fixture: "multi-repo" } },
   limits: {
     rest: {},
-    dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], shows: [S.limitsDirty], copy: ["unsaved changes"] },
+    dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }] },
     invalid: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "0" }], copy: ["need whole numbers of at least 1"] },
   },
   delete: { "n/a": {} },
@@ -226,11 +232,12 @@ export const SAVE_INTERCEPTS = { saving: "stall-intent", discarding: "stall-inte
  * raced a second write against the first one's revert.
  */
 export function interceptFor(combo) {
+  const refusedRun = String(combo.run ?? "").startsWith("refused");
   const wanted = [
     SAVE_INTERCEPTS[combo.fieldState],
     SAVE_INTERCEPTS[combo.draft],
     SAVE_INTERCEPTS[combo.edit],
-    combo.run === "refused" ? "fail-intent" : null,
+    refusedRun ? "fail-intent" : null,
     combo.run === "ended" ? "offer-ended-run" : null,
     combo.disclosure === "create-error" ? "fail-intent" : null,
   ].filter(Boolean);
@@ -272,11 +279,40 @@ function saveStates(field, dirty) {
   };
 }
 
+/**
+ * The draft contract every field editor now publishes, folded into the
+ * lifecycle so all five fields make the same claim rather than one of them.
+ *
+ * `data-dirty` is what the two controls that navigate away from an open editor
+ * read, so a field whose root said `false` while holding typed work would take
+ * the reader off the screen without a word — and one that said `true` at rest
+ * would demand a confirmation for changes nobody made. Both are silent
+ * failures on a screen that otherwise looks perfect, which is exactly the class
+ * of defect the marker makes visible to a human and this makes visible to CI.
+ *
+ * `rest` also names the marker absent. An editor that drew "unsaved changes"
+ * before anything was typed satisfies every other expectation this state has.
+ */
+function draftContract(field, name, state) {
+  const editor = FIELD_EDITOR[field];
+  if (!editor || !["rest", "dirty", "invalid"].includes(name)) {
+    return state;
+  }
+  const held = name !== "rest";
+  return {
+    ...state,
+    shows: [...(state.shows ?? []), held ? dirtyEditor(editor) : cleanEditor(editor), ...(held ? [draftMarkIn(editor)] : [])],
+    hides: [...(state.hides ?? []), ...(held ? [cleanEditor(editor)] : [draftMarkIn(editor), dirtyEditor(editor)])],
+    copy: [...(state.copy ?? []), ...(held ? ["unsaved changes"] : [])],
+  };
+}
+
 /** Every field's drafts, plus the two save states for the fields that save. */
 export const FIELD_LIFECYCLE = Object.fromEntries(
   Object.entries(FIELD_DRAFTS).map(([field, states]) => [
     field,
-    FIELD_SAVE[field] ? { ...states, ...saveStates(field, states.dirty) } : states,
+    Object.fromEntries(Object.entries(FIELD_SAVE[field] ? { ...states, ...saveStates(field, states.dirty) } : states)
+      .map(([name, state]) => [name, draftContract(field, name, state)])),
   ]),
 );
 
@@ -484,14 +520,32 @@ export function draftOps(draftValue) {
 }
 
 /**
- * Refusing a run control. Cancel is the one intent offered in every actionable
- * run state, so it is the one the path sends; `fail-intent` answers it in the
- * browser, which is what keeps a real run untouched.
+ * Refusing a run control, per verb.
+ *
+ * `live.js` names three — pause, resume and cancel — and it names them
+ * separately on purpose: "could not pause" and "could not cancel" leave the run
+ * in opposite places, so a single shared sentence would be a lie about one of
+ * them. Only cancel was ever under test, which meant two thirds of that claim
+ * rested on nothing: collapsing pause and resume back into one message, or into
+ * cancel's, would have failed no assertion in the repository.
+ *
+ * Each verb is pressed on the run that actually offers it. Pause and cancel are
+ * offered on a running run; resume needs a paused one, so it enters through a
+ * different run and is a genuinely different screen rather than the same one
+ * with a different button pressed. `fail-intent` answers every one of them in
+ * the browser, so no real run is acted on.
  */
-export function runRefusalOps() {
+export const RUN_REFUSALS = {
+  "refused-cancel": { run: "running", control: S.runCancel, verb: "cancel" },
+  "refused-pause": { run: "running", control: S.runPause, verb: "pause" },
+  "refused-resume": { run: "paused", control: S.runResume, verb: "resume" },
+};
+
+export function runRefusalOps(runValue) {
+  const refusal = RUN_REFUSALS[runValue];
   return [
-    ...runOps("live", "running"),
-    { op: "click", selector: S.runCancel },
+    ...runOps("live", refusal.run),
+    { op: "click", selector: refusal.control },
     { op: "wait", selector: S.runControlError },
   ];
 }

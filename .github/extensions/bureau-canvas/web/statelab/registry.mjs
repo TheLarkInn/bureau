@@ -98,8 +98,8 @@ function configOps(combo) {
 }
 
 function pipelineOps(combo) {
-  if (combo.run === "refused") {
-    return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runRefusalOps()];
+  if (combo.run.startsWith("refused")) {
+    return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runRefusalOps(combo.run)];
   }
   return [
     ...(valueOf("mode", combo.mode)?.enter ?? []),

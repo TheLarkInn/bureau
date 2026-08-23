@@ -21,8 +21,8 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, editorCardFor, offered } from "./selectors.mjs";
-import { INFERRED_FILTER_URL, SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered } from "./selectors.mjs";
+import { INFERRED_FILTER_URL, REPO_ADD_URL, SAMPLE_STEPS } from "./paths.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -483,6 +483,122 @@ export const PROBES = [
       // browser, and that says nothing about the pipeline or the draft.
       copy: ["Save reverted", "could not save this pipeline — nothing was written"],
       allowErrors: ["Failed to fetch", "net::ERR_FAILED", "/intent"],
+    },
+  }),
+  /*
+   * The one optional field on the card, and the only production control the
+   * registry did not name.
+   *
+   * Every other input in the work-rules editor is required, and the axis drives
+   * `dirty` and `invalid` through those. The approval label is the exception —
+   * emptying it is legal, and `save` writes `null` for it — so it is the one
+   * field where "changed" and "valid" come apart from each other. Typing into
+   * it alone has to leave the editor dirty, the save offered and *no* refusal
+   * drawn; a copy-pasted `form-control--invalid` on this input, or an `invalid`
+   * that read all three fields, would be a form that refuses to save a value it
+   * documents as optional, and nothing in the matrix would have noticed.
+   */
+  sample({
+    id: "probe--work-rules-optional-only",
+    covers: "the one work-rules field whose emptiness is legal, edited on its own",
+    summary: "only the optional approval label was changed — the draft is held and offered, and nothing is called invalid",
+    fixture: "validated",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.workRulesValue },
+      { op: "fill", selector: '[data-testid="wr-approval"]', value: "bureau:approved" },
+      { op: "wait", selector: offered(S.workRulesSave) },
+    ],
+    expect: {
+      shows: [S.workRulesEditor, dirtyEditor(S.workRulesEditor), draftMarkIn(S.workRulesEditor), offered(S.workRulesSave)],
+      hides: [`${S.workRulesEditor} .note--err`, cleanEditor(S.workRulesEditor)],
+      copy: ["unsaved changes", "Approval label (optional)"],
+    },
+  }),
+  /*
+   * The repo adder with nothing left to add.
+   *
+   * `RepoAdder` lists the registered repos this assignment does not already
+   * hold, and that list can be empty — which is not a failure and must not read
+   * as one. The paste box stays, because registering a new repo is still the
+   * way forward; what changes is that the pick list is replaced by a sentence
+   * saying why there is nothing to pick.
+   */
+  sample({
+    id: "probe--repos-registry-exhausted",
+    covers: "the repo adder when the assignment already holds every registered repo",
+    summary: "nothing left to pick — the adder says so and still offers the paste box that registers a new one",
+    fixture: "multi-repo",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "wait", selector: S.reposUrl },
+    ],
+    expect: {
+      shows: [S.reposUrl, cleanEditor(S.reposEditor)],
+      hides: [draftMarkIn(S.reposEditor)],
+      copy: ["Every registered repo is already listed."],
+    },
+  }),
+  /*
+   * The adder holding a draft of its own.
+   *
+   * Its `data-dirty` is the list's edits *or* its own pasted URL, and the list
+   * half is what the browser suite drives. This is the other half, rendered:
+   * an untouched list under a box with a URL in it still has to read as unsaved
+   * work, because "Add to registry and this assignment" is offered from it.
+   *
+   * The wait is on the resolved preview rather than the marker, and that is the
+   * point of the state as well as its timing. The marker appears the instant a
+   * character is typed, so waiting on it would let the render be judged before
+   * the preview arrived — and the preview is the only place in this UI where a
+   * `.detail-row` is drawn inside another `.detail-row`, which is the
+   * containment `checks.mjs` had been reporting as five overlapping rows.
+   */
+  sample({
+    id: "probe--repos-add-url-typed",
+    covers: "the repo adder's own draft — a pasted URL over a list nobody edited, resolved into the nested preview",
+    summary: "a URL pasted into the adder: unsaved work even though the ranked list is untouched",
+    fixture: "multi-repo",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "fill", selector: S.reposUrl, value: REPO_ADD_URL },
+      { op: "wait", selector: S.reposPreview },
+    ],
+    expect: {
+      shows: [S.reposUrl, S.reposPreview, dirtyEditor(S.reposEditor), draftMarkIn(S.reposEditor)],
+      hides: [cleanEditor(S.reposEditor)],
+      copy: ["unsaved changes", "rushstack"],
+    },
+  }),
+  /*
+   * The step log with nothing selected, and with a step that produced nothing.
+   *
+   * The log occupies the full width below the graph on every overlay screen, so
+   * it is never not on the page — but until now no state said what it should
+   * contain, and an empty region that says nothing is indistinguishable from a
+   * region that failed to render. Both of these are ordinary: a reader arrives
+   * at Live before picking a run, and a step that has started but not yet
+   * written anything has a head and no body.
+   */
+  sample({
+    id: "probe--step-log-idle",
+    covers: "the step log before anything is selected — a region that is always drawn and had no expectation on it",
+    summary: "no step selected: the log invites a selection rather than sitting blank",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "wait", selector: S.stepLogIdle },
+    ],
+    expect: {
+      shows: [S.stepLog, S.stepLogIdle],
+      hides: [S.stepLogHead],
+      copy: ["Select a step to see what it did."],
     },
   }),
 ];

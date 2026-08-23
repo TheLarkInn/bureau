@@ -71,12 +71,19 @@ export const SELECTORS = {
   reposSave: '[data-testid="repos-save"]',
   reposAdd: '[data-testid="repos-add"]',
   reposUrl: '[aria-label="Repository URL"]',
+  // The resolved preview: the one place a `.detail-row` is drawn inside
+  // another, which is why it is the render that exercises the overlap rule's
+  // containment case.
+  reposPreview: ".repos-preview",
   repoRow: ".repo-row",
 
   limitsValue: ".limits-value",
   limitsEditor: ".limits-editor",
   limitsSave: '[data-testid="limits-save"]',
-  limitsDirty: ".limits-dirty",
+  // The unsaved-changes marker, addressed inside the editor that drew it. The
+  // class is shared by all five field editors now, so a bare `.draft-mark`
+  // would be satisfied by whichever editor happened to be open beside it.
+  limitsDirty: ".limits-editor .draft-mark",
   limitRow: ".limit-row",
 
   deleteStart: '[data-testid="delete-start"]',
@@ -148,6 +155,14 @@ export const SELECTORS = {
   groupFoldOpen: '.member-collapse[aria-expanded="true"]',
   groupFoldShut: '.member-collapse[aria-expanded="false"]',
   pausedBadge: ".paused-badge",
+  // The step log below the graph: the region itself, the head it grows once a
+  // step is selected, and the invitation it draws when none is. It is on every
+  // overlay screen, so "nothing selected" is a state rather than an absence —
+  // a blank strip and a failed render look identical in a screenshot.
+  stepLog: ".step-log",
+  stepLogIdle: ".step-log--idle",
+  stepLogHead: ".step-log-head",
+  stepLogEmpty: ".step-log-empty",
   legend: ".legend",
   stepCard: ".flow-card",
   terminalPill: ".terminal-pill",
@@ -228,6 +243,20 @@ export function replaySpeedActive(rate) {
  */
 export function replayPositionAt(ms) {
   return `.replay-scrubber[value="${ms}"]`;
+}
+
+/** A field editor that is publishing unsaved work, and one that is not. */
+export function dirtyEditor(editor) {
+  return `${editor}[data-dirty="true"]`;
+}
+
+export function cleanEditor(editor) {
+  return `${editor}[data-dirty="false"]`;
+}
+
+/** The unsaved-changes marker, scoped to the editor that drew it. */
+export function draftMarkIn(editor) {
+  return `${editor} .draft-mark`;
 }
 
 /** A save button that is offered, and one that is withheld. */
