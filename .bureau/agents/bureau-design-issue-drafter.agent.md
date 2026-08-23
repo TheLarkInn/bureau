@@ -1,7 +1,7 @@
 ---
 name: bureau-design-issue-drafter
 description: Converts Bureau audit evidence into one deduplicated GitHub issue for verified handoff.
-tools: ["view", "bash", "bureau-io"]
+tools: ["view", "bash", "bureau-io/*"]
 model: sonnet
 ---
 

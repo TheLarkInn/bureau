@@ -1,7 +1,7 @@
 ---
 name: bureau-design-issue-handoff
 description: Activates one verified design-audit issue for implementation and retires its source trigger.
-tools: ["view", "bash", "bureau-io"]
+tools: ["view", "bash", "bureau-io/*"]
 model: sonnet
 ---
 
