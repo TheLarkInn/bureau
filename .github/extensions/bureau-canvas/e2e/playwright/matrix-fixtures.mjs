@@ -264,7 +264,8 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * which paths happened to click what, not a guarantee. `holdWrites` installs
  * the same deny unconditionally now, under every state, so the next path to
  * click a Save it never modelled is stopped and named instead of landing on
- * disk.
+ * disk. `installFloor` does the same job inside the lab's frame, where it
+ * matters more still: that host is pointed at a contributor's own `.bureau/`.
  *
  * `READ_INTENTS`, `reachesHost` and `refusalFor` come from
  * `web/statelab/intercept.mjs`, which the lab installs inside its frame. One

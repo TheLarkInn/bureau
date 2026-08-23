@@ -84,20 +84,56 @@ export function isPreSurface(kind) {
 }
 
 /**
- * Installs `kind` into a frame window whose document is still parsing.
+ * Installs the write floor and then `kind` into a frame window whose document
+ * is still parsing.
  *
  * Deliberately total: it either patches the window or does nothing, and never
- * reports a condition it did not apply. `servableInFrame` is the guard.
+ * reports a condition it did not apply. `servableInFrame` is the guard — a kind
+ * this module cannot serve gets no floor either, because the lab refuses to
+ * render that state at all.
+ *
+ * Order is load-bearing. The floor goes on first so the kind's shim wraps it
+ * and is offered every request first: a `stall-intent` still hangs its own
+ * writes, and only what it declines to claim — the reads — falls through to the
+ * floor and on to the host. Installed the other way round, the floor would
+ * reject a write before the state that exists to stall it ever saw it.
  */
 export function installIntercept(win, kind) {
-  if (!servableInFrame(kind) || !kind) {
+  if (!servableInFrame(kind)) {
     return;
   }
+  installFloor(win);
   if (kind === "stall-state") {
     stallState(win);
     return;
   }
-  stallIntent(win, kind);
+  if (kind) {
+    stallIntent(win, kind);
+  }
+}
+
+/**
+ * The lab's write floor: `./intent` is refused unless it writes nothing.
+ *
+ * The same guarantee `matrix-fixtures.mjs` gives CI, on the surface where it
+ * matters most — the lab is the one host pointed at a contributor's *own*
+ * `.bureau/`, and a state that clicks a Save it never modelled would rewrite it
+ * for real. Every state gets one, including the ones that asked for no
+ * condition, so "the lab does not act on the host" is a property of the lab
+ * rather than of which paths happen to click what.
+ *
+ * A rejection rather than a stall, because that is what the page must survive:
+ * `postIntent` sees a `fetch` that failed, which is the branch a `TypeError`
+ * from an offline host would take.
+ */
+export function installFloor(win) {
+  const native = win.fetch.bind(win);
+  win.fetch = (input, init) => {
+    if (!/\/intent$/u.test(urlOf(input)) || reachesHost(bodyOf(init))) {
+      return native(input, init);
+    }
+    return Promise.reject(new TypeError(`the state lab refused an unmodelled write to ./intent (${kindOf(init) ?? "unreadable body"})`));
+  };
 }
 
 /**
@@ -153,8 +189,12 @@ function urlOf(input) {
 }
 
 function kindOf(init) {
+  return bodyOf(init)?.kind ?? null;
+}
+
+function bodyOf(init) {
   try {
-    return JSON.parse(init?.body ?? "{}").kind ?? null;
+    return JSON.parse(init?.body ?? "{}");
   } catch {
     return null;
   }

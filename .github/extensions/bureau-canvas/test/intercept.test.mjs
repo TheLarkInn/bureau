@@ -183,16 +183,54 @@ test("a held payload closes both channels, not just the fetch", async () => {
   );
 });
 
-test("nothing is installed for a state that asked for no condition", async () => {
+test("a stalled write hangs on its own shim rather than on the floor beneath it", async () => {
+  const win = windowStub();
+  installIntercept(win, "stall-intent");
+
+  assert.deepEqual(
+    {
+      write: await settles(win.fetch(...post("save-plan"))),
+      read: (await win.fetch(...post("resolve-repo"))).native,
+    },
+    // Order is the claim: the floor is installed first so the kind's shim
+    // wraps it and is asked first. A write therefore hangs — which is the
+    // "Saving…" screen — instead of being rejected by the floor, and what the
+    // shim declines to claim falls through both and reaches the host.
+    //
+    // The shim is the stricter of the two: `isWrite` holds the delete
+    // preflight that the floor's `reachesHost` lets by. Nothing crosses the
+    // two, so the difference costs no screen — and the safe direction for a
+    // condition that exists to hold saves is to hold more, not less.
+    { write: false, read: true },
+  );
+});
+
+test("a state that asked for no condition still sits on the write floor", async () => {
   const win = windowStub();
   const native = win.fetch;
   installIntercept(win, null);
+  const floored = win.fetch;
   installIntercept(win, "block-renderer");
 
   assert.deepEqual(
-    { untouched: win.fetch === native, refusalIsPlain: refusalFor("set-limits") },
-    // `block-renderer` is not servable here, so it must be a no-op rather than
-    // a condition this module claims to have applied.
-    { untouched: true, refusalIsPlain: { ok: false } },
+    {
+      floorInstalled: win.fetch !== native,
+      // `block-renderer` is not servable here, so it must be a no-op rather
+      // than a condition this module claims to have applied — and it adds no
+      // floor either, because the lab refuses to render that state at all.
+      unservableIsANoOp: win.fetch === floored,
+      write: await win.fetch(...post("save-plan")).then(() => "sent", () => "refused"),
+      read: await win.fetch(...post("derive-work-source")).then((response) => (response.native ? "sent" : "refused")),
+      otherUrl: (await win.fetch("./state")).native,
+      refusalIsPlain: refusalFor("set-limits"),
+    },
+    {
+      floorInstalled: true,
+      unservableIsANoOp: true,
+      write: "refused",
+      read: "sent",
+      otherUrl: true,
+      refusalIsPlain: { ok: false },
+    },
   );
 });

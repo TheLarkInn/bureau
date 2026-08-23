@@ -19,7 +19,7 @@ const POLL_MS = 25;
 const NEVER_ARMED = "the SSE observer never armed";
 
 import { assertAdapter, PUBLISH_EVENT } from "./driver.mjs";
-import { installIntercept, isPreSurface, servableInFrame } from "./intercept.mjs";
+import { installFloor, installIntercept, isPreSurface, servableInFrame } from "./intercept.mjs";
 
 export function domAdapter(frame) {
   const win = () => frame.contentWindow;
@@ -71,6 +71,15 @@ export function domAdapter(frame) {
       // host it is reviewing is not, so this one refuses instead of carrying on.
       if (kind && channel.reason === NEVER_ARMED) {
         throw new Error(`the ${kind} condition never armed, so this state's controls would write to the host`);
+      }
+      // The floor rides that same window, but unlike an intercept it is not
+      // needed until something is clicked — so when the window was missed and
+      // this state asked for no condition, it can simply go on now, before the
+      // path can press anything. Only safe in this branch: with no kind there
+      // is no shim to wrap, so the floor cannot end up outside a stall it was
+      // supposed to fall through to.
+      if (!kind && channel.reason === NEVER_ARMED) {
+        installFloor(win());
       }
     },
     publish(state) {
