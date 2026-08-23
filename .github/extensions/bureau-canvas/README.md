@@ -79,7 +79,24 @@ testable without a browser:
 | `web/live/transcript.js` | parses a step's captured output into blocks: an agent's Copilot CLI transcript, a deterministic step's contract line, or raw process output |
 | `web/` | draws what it is given; `web/editor/` is the pipeline editor and the read-only relation graph |
 | `web/graph-measure.mjs` | the one measurement repair every React Flow surface renders, so a graph cannot stay blank |
+| `web/assignment-state.js` | which assignment is open, and which open field editors actually hold unsaved work |
 | `web/statelab/` | the UI state registry and the state lab that renders it |
+
+### Draft safety on the config card
+
+Every field editor on an assignment card publishes `data-dirty` on its root,
+from the same value it uses to decide whether to offer its own save, and draws
+the shared `.draft-mark` — "unsaved changes" — while that value is true. The two
+controls that navigate away from an open card (collapsing it, and opening its
+pipeline) read `DIRTY_FIELD_EDITORS` from `web/assignment-state.js` and confirm
+only when something really is unsaved.
+
+That is one rule rather than two: the pipeline editor's own `navigate` has
+always gated on its `dirty` flag. The config surface used to ask whether an
+editor was *open*, so opening the repos editor to read it and then clicking the
+pipeline beside it demanded you dismiss a prompt about discarding changes you
+had not made — and a prompt that cries wolf trains the reader to dismiss the one
+that was protecting real work.
 
 ## The state lab
 

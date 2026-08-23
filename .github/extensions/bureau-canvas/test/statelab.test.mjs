@@ -1021,6 +1021,32 @@ test("the verdict catches a control off either edge or cut away by an ancestor",
 });
 
 /**
+ * The same-kind rule, and the containment it must not mistake for a defect.
+ *
+ * `STACKED` compares every pair of boxes drawn by one selector, which was
+ * written on the assumption that such a selector never nests inside itself. The
+ * repo adder breaks that: its resolved preview draws a `.detail-row` per field
+ * inside the `.detail-row` that holds the whole repos field, and a parent
+ * always intersects its child. Five overlaps were reported on a screen that
+ * renders correctly, so the rule now skips a pair when one box contains the
+ * other — and only that pair, so two rows that really do print over each other
+ * still fail.
+ */
+test("the same-kind overlap rule spares a row drawn inside another row", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const row = (id, extra) => ({ selector: ".detail-row", id, x: 0, y: 0, width: 400, height: 40, parent: `parent-${id}`, flow: true, within: [], ...extra });
+  const snapshot = (boxes) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes });
+
+  assert.deepStrictEqual(
+    {
+      nested: verdict(state, snapshot([row("node-0", { height: 200 }), row("node-1", { y: 40, within: ["node-0"] })])),
+      overprinted: verdict(state, snapshot([row("node-0"), row("node-1", { y: 20 })])).map((item) => item.detail),
+    },
+    { nested: [], overprinted: [".detail-row #0 overlaps #1"] },
+  );
+});
+
+/**
  * The sibling rule, and the two things it must not mistake for a defect.
  *
  * `SIBLINGS` in `checks.mjs` is a hand-kept list of landing pairs; this is the
@@ -1130,8 +1156,8 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
     counts: { ".a": 1 },
     texts: { ".a": "saved" },
     boxes: [
-      { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", flow: true, clipped: false, trimmed: 0 },
-      { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", flow: true, clipped: true, trimmed: 150 },
+      { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
+      { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", within: [], flow: true, clipped: true, trimmed: 150 },
     ],
     contrast: [{ selector: ".c", text: "Kind", ratio: 21 }],
     labels: [{
@@ -1173,6 +1199,10 @@ function pageStub() {
       parentElement: null,
       textContent: "",
       getAttribute: () => null,
+      // `collect` asks each measured node which other measured nodes contain
+      // it, so a stub node has to be able to answer. Nothing here nests, which
+      // is the case that must produce an empty `within`.
+      contains: () => false,
       ...own,
     };
     styles.set(node, { ...BASE_STYLE, ...style });

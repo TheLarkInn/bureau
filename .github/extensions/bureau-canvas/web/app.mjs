@@ -23,7 +23,7 @@ import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
 import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
-import { nextExpandedAssignment } from "./assignment-state.js";
+import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
 
 const h = React.createElement;
 const CARD_WIDTH = 240;
@@ -488,9 +488,56 @@ function PipelineLink({ state, name }) {
   );
 }
 
+/** The props every field editor's root carries, and the marker it draws.
+*
+* Each editor already knew whether it had been changed — it is how each one
+* decides whether to offer its own save — but the knowledge stopped at the
+* component, so the controls that navigate away could only ask whether an
+* editor was open. `data-dirty` is that knowledge published where the guard in
+* `assignment-state.js` can read it, which is also what the pipeline editor's
+* own `navigate` has always done on the other surface: draft safety is now one
+* rule rather than two.
+*/
+function draftRoot(className, dirty, onDone) {
+ return {
+   className,
+   "data-dirty": String(Boolean(dirty)),
+   onKeyDown: (event) => event.key === "Escape" && onDone(),
+ };
+}
+
+/**
+* An editable control on a field editor, held still while a save is in flight.
+*
+* Every one of these editors submits the draft it held at the moment Save was
+* pressed and then calls `onDone()` when the host answers — so anything typed
+* *during* the round trip was never submitted, and the close throws it away
+* without the leave guard ever being consulted, because the editor closed
+* itself rather than being navigated away from. A form whose button already
+* reads "Saving…" has nothing useful to do with input, so it stops taking it.
+*
+* Only the inputs. Cancel stays live on purpose: a host that never answers
+* would otherwise leave the reader inside a form with no way out, which is a
+* worse trap than the edit this is protecting.
+*/
+function editable(busy, props) {
+ return { ...props, disabled: busy || props.disabled };
+}
+
+/**
+ * The unsaved-changes marker, shared by all five editors.
+ *
+ * It used to belong to limits alone, which meant the identical situation —
+ * typed, not yet saved — was announced in one editor and silent in the other
+ * four. A shared control has to give shared feedback, or the reader learns the
+ * marker means "limits" rather than "unsaved".
+ */
+function DraftMark({ dirty }) {
+  return dirty ? h("span", { className: "draft-mark" }, "unsaved changes") : null;
+}
+
 function confirmClosingEditor() {
-  const editor = document.querySelector(".ws-open, .repos-editor, .limits-editor, .assignment-runtime-editor, .terminal-label-editor");
-  return !editor || window.confirm("Discard the unsaved field changes?");
+  return !document.querySelector(DIRTY_FIELD_EDITORS) || window.confirm("Discard the unsaved field changes?");
 }
 
 function runtimeFields(assignment, changes = {}) {
@@ -562,33 +609,31 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
   };
   return h(
     "div",
-    {
-      className: "assignment-runtime-editor",
-      onKeyDown: (event) => event.key === "Escape" && onDone(),
-    },
-    h("label", {}, "Work-item filter", h("input", {
+    draftRoot("assignment-runtime-editor", changed, onDone),
+    h("label", {}, "Work-item filter", h("input", editable(busy, {
       className: `form-control form-control--mono${fields.filter.trim() ? "" : " form-control--invalid"}`,
       "data-testid": "wr-filter",
       value: fields.filter,
       onChange: (event) => set("filter", event.target.value),
-    })),
-    h("label", {}, "Approval label (optional)", h("input", {
+    }))),
+    h("label", {}, "Approval label (optional)", h("input", editable(busy, {
       className: "form-control form-control--mono",
       "data-testid": "wr-approval",
       value: fields.approval_label,
       onChange: (event) => set("approval_label", event.target.value),
-    })),
-    h("label", {}, "Branch prefix", h("input", {
+    }))),
+    h("label", {}, "Branch prefix", h("input", editable(busy, {
       className: `form-control form-control--mono${fields.branch_prefix.trim() ? "" : " form-control--invalid"}`,
       "data-testid": "wr-branch",
       value: fields.branch_prefix,
       onChange: (event) => set("branch_prefix", event.target.value),
-    })),
+    }))),
     invalid ? h("p", { className: "note note--err" }, "Filter and branch prefix cannot be empty.") : null,
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h("div", { className: "actions" },
       h("button", { type: "button", className: "btn btn--primary", "data-testid": "work-rules-save", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save work rules"),
-      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
+      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
+      h(DraftMark, { dirty: changed })),
   );
 }
 
@@ -663,25 +708,26 @@ function TerminalLabelsEditor({ assignment, onDone }) {
   };
   return h(
     "div",
-    { className: "terminal-label-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
-    h("label", {}, "Failed run label", h("input", {
+    draftRoot("terminal-label-editor", changed, onDone),
+    h("label", {}, "Failed run label", h("input", editable(busy, {
       className: "form-control form-control--mono",
       "data-testid": "sig-abort",
       value: fields.abort_label,
       onChange: (event) => set("abort_label", event.target.value),
-    })),
-    h("label", {}, "Needs-human label", h("input", {
+    }))),
+    h("label", {}, "Needs-human label", h("input", editable(busy, {
       className: "form-control form-control--mono",
       "data-testid": "sig-escalate",
       value: fields.escalate_label,
       onChange: (event) => set("escalate_label", event.target.value),
-    })),
+    }))),
     h("p", { className: "note" }, "Bureau preserves unrelated work-item labels."),
     invalid ? h("p", { className: "note note--err" }, "Both labels are required and must differ.") : null,
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h("div", { className: "actions" },
       h("button", { type: "button", className: "btn btn--primary", "data-testid": "signals-save", disabled: busy || invalid || !changed, onClick: save }, busy ? "Saving…" : "Save forge signals"),
-      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
+      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
+      h(DraftMark, { dirty: changed })),
   );
 }
 
@@ -773,9 +819,16 @@ function ReposEditor({ state, assignment, onDone }) {
     setRepos(next);
   };
 
+  // The list's own draft, computed before the adder branch because the adder
+  // sits *on top of* it: a repo picked from the registry lands in `repos` and
+  // then the reader may open the adder again. Judging the adder on its own
+  // pasted URL alone would report a clean editor while the list behind it held
+  // an unsaved pick, and the leave guard would then discard it without asking —
+  // the one direction this contract may never fail in.
+  const changed = !sameOrder(repos, assignment.repos ?? []);
   if (adding) {
     return h(RepoAdder, {
-      state, repos, busy, error,
+      state, repos, busy, error, changed,
       onCancel: () => { setAdding(false); setError(null); },
       onPick: (name) => { setRepos([...repos, name]); setAdding(false); },
       onRegister: (register) => commit([...repos, register.name], register),
@@ -784,10 +837,10 @@ function ReposEditor({ state, assignment, onDone }) {
   const problem = repos.length ? landingProblem(state, repos[0]) : null;
   return h(
     "div",
-    { className: "repos-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
+    draftRoot("repos-editor", changed, onDone),
     repos.length
       ? repos.map((name, index) => h(RepoRow, {
-          key: name, state, name, index, total: repos.length,
+          key: name, state, name, index, total: repos.length, busy,
           problem: index === 0 ? problem : null,
           onUp: () => move(index, index - 1),
           onDown: () => move(index, index + 1),
@@ -803,11 +856,12 @@ function ReposEditor({ state, assignment, onDone }) {
     h("div", { className: "actions" },
       h("button", {
         type: "button", className: "btn btn--primary", "data-testid": "repos-save",
-        disabled: busy || repos.length === 0 || Boolean(problem) || sameOrder(repos, assignment.repos ?? []),
+        disabled: busy || repos.length === 0 || Boolean(problem) || !changed,
         onClick: () => commit(repos),
       }, busy ? "Saving…" : "Save repos"),
       h("button", { type: "button", className: "btn", "data-testid": "repos-add", onClick: () => setAdding(true) }, "+ Add repo"),
-      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel")),
+      h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
+      h(DraftMark, { dirty: changed })),
   );
 }
 
@@ -815,7 +869,7 @@ function sameOrder(left, right) {
   return left.length === right.length && left.every((name, index) => name === right[index]);
 }
 
-function RepoRow({ state, name, index, total, problem, onUp, onDown, onRemove }) {
+function RepoRow({ state, name, index, total, problem, busy, onUp, onDown, onRemove }) {
   const primary = index === 0;
   const entry = repoEntry(state, name);
   const flag = problem ? ` repo-row--${problem.kind === "unknown" ? "unknown" : "broken"}` : "";
@@ -827,13 +881,13 @@ function RepoRow({ state, name, index, total, problem, onUp, onDown, onRemove })
     h("span", { className: "repo-primary" }, primary ? "primary — the branch lands here" : ""),
     h(AccessTag, { access: entry?.access }),
     h("span", { className: "repo-move" },
-      h("button", { type: "button", className: "icon-btn", disabled: index === 0, "aria-label": `Move ${name} up`, onClick: onUp }, "↑"),
-      h("button", { type: "button", className: "icon-btn", disabled: index === total - 1, "aria-label": `Move ${name} down`, onClick: onDown }, "↓")),
-    h("button", { type: "button", className: "icon-btn", "aria-label": `Remove ${name}`, onClick: onRemove }, "✕"),
+      h("button", editable(busy, { type: "button", className: "icon-btn", disabled: index === 0, "aria-label": `Move ${name} up`, onClick: onUp }), "↑"),
+      h("button", editable(busy, { type: "button", className: "icon-btn", disabled: index === total - 1, "aria-label": `Move ${name} down`, onClick: onDown }), "↓")),
+    h("button", editable(busy, { type: "button", className: "icon-btn", "aria-label": `Remove ${name}`, onClick: onRemove }), "✕"),
   );
 }
 
-function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) {
+function RepoAdder({ state, repos, busy, error, changed, onCancel, onPick, onRegister }) {
   const [url, setUrl] = useState("");
   const [resolved, setResolved] = useState(null);
   const [failure, setFailure] = useState(null);
@@ -877,27 +931,34 @@ function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) 
   const willLand = repos.length === 0;
   const landBlocked = willLand && !LANDING_ACCESS.includes(access);
   const credentials = credentialsOf(state);
+  const dirty = changed || Boolean(url.trim());
 
   return h(
     "div",
-    { className: "repos-editor" },
+    // The adder is a repos editor too, and it holds real unsaved work: a pasted
+    // URL, a resolved name, an access grant — and, behind it, whatever the list
+    // it was opened from has already collected. Publishing the same
+    // `data-dirty` for both is what keeps navigating away from it guarded, and
+    // Escape backs out of it the way Escape backs out of every other field
+    // editor on this card.
+    draftRoot("repos-editor", dirty, onCancel),
     h("span", { className: "detail-label" }, "add a repo"),
     unlisted.length
       ? h("div", { className: "repo-known" }, unlisted.map((repo) =>
           h("div", { key: repo.name, className: "repo-row" },
             h("span", { className: "repo-name" }, repo.name),
             h(AccessTag, { access: repo.access }),
-            h("button", { type: "button", className: "icon-btn", "aria-label": `Add ${repo.name}`, onClick: () => onPick(repo.name) }, "add"))))
+            h("button", editable(busy, { type: "button", className: "icon-btn", "aria-label": `Add ${repo.name}`, onClick: () => onPick(repo.name) }), "add"))))
       : h("p", { className: "note" }, "Every registered repo is already listed."),
     h("p", { className: "note" }, "Not in the registry? Paste its URL and it is added to repos.yaml as well."),
-    h("input", {
+    h("input", editable(busy, {
       type: "text", className: "form-control form-control--mono", value: url, autoFocus: true, "aria-label": "Repository URL",
       placeholder: "Paste a repository URL…", onChange: (event) => resolve(event.target.value),
-    }),
+    })),
     failure ? h("p", { className: "note note--err" }, failure) : null,
     resolved ? h(ResolvedRepo, {
       resolved, name, setName, access, setAccess, credential, setCredential,
-      credentials, taken, willLand, landBlocked,
+      credentials, taken, willLand, landBlocked, busy,
     }) : null,
     error ? h("p", { className: "note note--err" }, error) : null,
     h("div", { className: "actions" },
@@ -908,7 +969,8 @@ function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) 
             onClick: () => onRegister({ name, url: resolved.url, forge: resolved.forge, access, credential }),
           }, busy ? "Adding…" : "Add to registry and this assignment")
         : null,
-      h("button", { type: "button", className: "btn", onClick: onCancel }, "Back")),
+      h("button", { type: "button", className: "btn", onClick: onCancel }, "Back"),
+      h(DraftMark, { dirty })),
   );
 }
 
@@ -917,23 +979,23 @@ function credentialsOf(state) {
 }
 
 function ResolvedRepo(props) {
-  const { resolved, name, setName, access, setAccess, credential, setCredential, credentials, taken, willLand, landBlocked } = props;
+  const { resolved, name, setName, access, setAccess, credential, setCredential, credentials, taken, willLand, landBlocked, busy } = props;
   return h(
     "div",
     { className: "repos-preview" },
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-name" }, "name"),
-      h("input", { id: "repo-name", type: "text", className: "form-control form-control--mono", value: name, onChange: (event) => setName(event.target.value) })),
+      h("input", editable(busy, { id: "repo-name", type: "text", className: "form-control form-control--mono", value: name, onChange: (event) => setName(event.target.value) }))),
     h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "forge"), h("code", {}, resolved.forge)),
     h("div", { className: "detail-row" }, h("span", { className: "detail-label" }, "url"), h("code", {}, resolved.url)),
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-access" }, "access"),
-      h("select", { id: "repo-access", className: "form-control form-select", value: access, onChange: (event) => setAccess(event.target.value) },
+      h("select", editable(busy, { id: "repo-access", className: "form-control form-select", value: access, onChange: (event) => setAccess(event.target.value) }),
         ACCESS_LEVELS.map((value) => h("option", { key: value, value }, value)))),
     h("div", { className: "detail-row" },
       h("label", { className: "detail-label", htmlFor: "repo-credential" }, "credential"),
       credentials.length
-        ? h("select", { id: "repo-credential", className: "form-control form-select", value: credential, onChange: (event) => setCredential(event.target.value) },
+        ? h("select", editable(busy, { id: "repo-credential", className: "form-control form-select", value: credential, onChange: (event) => setCredential(event.target.value) }),
             credentials.map((value) => h("option", { key: value, value }, value)))
         : h("p", { className: "note note--err" }, "No credential is referenced by any registered repo yet. Add one to repos.yaml before registering — a repo without a credential cannot be cloned.")),
     taken ? h("p", { className: "note note--err" }, `\`${name}\` already names a different repository in the registry — rename this one.`) : null,
@@ -1055,9 +1117,9 @@ function LimitsEditor({ assignment, saved, onDone }) {
 
   return h(
     "div",
-    { className: "limits-editor", onKeyDown: (event) => event.key === "Escape" && onDone() },
+    draftRoot("limits-editor", changed, onDone),
     LIMIT_FIELDS.map((field) => h(LimitRow, {
-      key: field.key, field, value: draft[field.key],
+      key: field.key, field, value: draft[field.key], busy,
       onToggle: () => toggle(field),
       onChange: (value) => change(field, value),
     })),
@@ -1068,7 +1130,7 @@ function LimitsEditor({ assignment, saved, onDone }) {
       h("button", { type: "button", className: "btn btn--primary", "data-testid": "limits-save", disabled: busy || !changed || invalid, onClick: save },
         busy ? "Saving…" : "Save limits"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
-      changed ? h("span", { className: "limits-dirty" }, "unsaved changes") : null),
+      h(DraftMark, { dirty: changed })),
   );
 }
 
@@ -1079,22 +1141,22 @@ function validLimit(field, value) {
   return !field.integer || (Number.isInteger(value) && value <= field.max);
 }
 
-function LimitRow({ field, value, onToggle, onChange }) {
+function LimitRow({ field, value, busy, onToggle, onChange }) {
   const on = value !== null && value !== undefined;
   const uncapped = !on && !field.defaulted;
   const bad = on && !validLimit(field, value);
   return h(
     "div",
     { className: `limit-row${uncapped ? " limit-row--off" : ""}` },
-    h("button", {
+    h("button", editable(busy, {
       type: "button", className: "switch", "aria-pressed": on,
       "aria-label": `${field.noun} limit`,
       onClick: onToggle,
-    }, on ? "on" : "off"),
+    }), on ? "on" : "off"),
     h("span", { className: "limit-name" }, field.noun,
       h("code", { className: "limit-key" }, field.key)),
     on
-      ? h("input", {
+      ? h("input", editable(busy, {
           type: "number",
           min: field.integer ? "1" : "0.01",
           max: field.max ? String(field.max) : undefined,
@@ -1106,7 +1168,7 @@ function LimitRow({ field, value, onToggle, onChange }) {
             const raw = event.target.value;
             onChange(raw === "" || Number.isNaN(Number(raw)) ? raw : Number(raw));
           },
-        })
+        }))
       : h("span", { className: `note${field.defaulted ? "" : " note--warn"}` },
           field.defaulted ? "system default" : "unlimited"),
     h("span", { className: "limit-unit" }, !on && field.defaulted ? `${field.defaulted} ${field.unit}` : field.unit),
@@ -1152,15 +1214,26 @@ function WorkSourceEditor({ assignment, onDone }) {
   const [derived, setDerived] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The same guard the repo adder keeps, and for the same reason: every
+  // keystroke asks the host to read the URL and the answers need not come back
+  // in the order they were asked. Without it, clearing the box could be
+  // overtaken by the reply for what it used to say — leaving a preview, and a
+  // live "Use this", describing a source the field no longer shows.
+  const latestDerive = useRef(0);
 
   const derive = (next) => {
     setUrl(next);
     setDerived(null);
     setError(null);
+    latestDerive.current += 1;
+    const ticket = latestDerive.current;
     if (!next.trim()) {
       return;
     }
     postIntent({ kind: "derive-work-source", url: next }).then((result) => {
+      if (ticket !== latestDerive.current) {
+        return;
+      }
       const outcome = result?.derived;
       if (outcome?.ok) {
         setDerived(outcome);
@@ -1191,11 +1264,17 @@ function WorkSourceEditor({ assignment, onDone }) {
     });
   };
 
+  // What this editor holds that is not on disk. The preview is counted as well
+  // as the box, so the guard can never be weaker than the save it is guarding:
+  // "Use this" is offered on `derived`, so anything that leaves a derivation
+  // standing must read as unsaved work whatever the box happens to say.
+  const changed = Boolean(url.trim() || derived);
+
   return h(
     "div",
-    { className: "ws-open", onKeyDown: (event) => event.key === "Escape" && onDone() },
+    draftRoot("ws-open", changed, onDone),
     h("span", { className: "detail-label" }, "link a work source"),
-    h("input", {
+    h("input", editable(busy, {
       type: "text",
       className: "form-control form-control--mono",
       autoFocus: true,
@@ -1203,7 +1282,7 @@ function WorkSourceEditor({ assignment, onDone }) {
       "aria-label": "Board, query, or issues URL",
       value: url,
       onChange: (event) => derive(event.target.value),
-    }),
+    })),
     error ? h("p", { className: "note note--err" }, error) : null,
     derived ? h(DerivedWorkSource, { derived }) : null,
     h(
@@ -1217,6 +1296,7 @@ function WorkSourceEditor({ assignment, onDone }) {
         onClick: apply,
       }, busy ? "Saving…" : "Use this"),
       h("button", { type: "button", className: "btn", onClick: onDone }, "Cancel"),
+      h(DraftMark, { dirty: changed }),
     ),
   );
 }

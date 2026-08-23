@@ -292,7 +292,7 @@ export const CONSTRAINTS = [
     reads: ["mode", "run"],
     title: "Only the live transport can have an intent refused",
     why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control whose refusal could be shown.",
-    holds: (combo) => combo.run !== "refused" || combo.mode === "live",
+    holds: (combo) => !combo.run.startsWith("refused") || combo.mode === "live",
   },
   {
     /*

@@ -12,7 +12,7 @@
 // recorded rather than silently dropped.
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, RUN_STEP, SAMPLE_STEPS, stepFor } from "./paths.mjs";
+import { FIELD_SAVE, RUN_END, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, stepFor } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -676,25 +676,32 @@ const run = {
       copy: ["finished"],
     },
     /*
-     * A run control the host refused. Cancel is sent against a live running run
-     * with `./intent` routed in the browser, so no real run is acted on. The
-     * status is unchanged by a refusal, so the transport stays offered — the
-     * reader has to be able to try again, and a refusal that withdrew the
-     * controls would strand them.
+     * A run control the host refused, once per verb.
+     *
+     * The intent is routed in the browser with `fail-intent`, so no real run is
+     * acted on. The status is unchanged by a refusal, so the transport stays
+     * offered — the reader has to be able to try again, and a refusal that
+     * withdrew the controls would strand them.
      *
      * The copy asserted here is the verb, not merely that something failed.
      * This state used to pin "intent failed", which is the endpoint's name
      * rather than the reader's, and which every run control shared — so a
      * refused pause and a refused cancel were indistinguishable on screen and
      * the matrix said that was correct. Naming the verb is what makes this
-     * assertion able to fail if the three ever collapse back into one message.
+     * assertion able to fail if the three ever collapse back into one message,
+     * and that only holds once all three are named: for a while only cancel
+     * was, which left the other two free to say anything at all.
+     *
+     * Pause and cancel are pressed on a running run; resume needs a paused one,
+     * so it is a different screen and not the same one with another button
+     * pressed — its transport offers Resume where the others offer Pause.
      */
-    {
-      id: "refused",
-      summary: "a cancel the host refused, named as a cancel, with the transport still offered",
-      shows: [S.runControlError, S.overlayRunning, S.runPause, S.runCancel, S.runStatus],
-      copy: ["could not cancel this run"],
-    },
+    ...Object.entries(RUN_REFUSALS).map(([id, refusal]) => ({
+      id,
+      summary: `a ${refusal.verb} the host refused, named as a ${refusal.verb}, with the transport still offered`,
+      shows: [S.runControlError, refusal.run === "paused" ? S.overlayPaused : S.overlayRunning, refusal.control, S.runCancel, S.runStatus],
+      copy: [`could not ${refusal.verb} this run`],
+    })),
   ],
 };
 

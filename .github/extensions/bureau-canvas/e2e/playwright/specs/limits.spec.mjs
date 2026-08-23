@@ -40,10 +40,10 @@ test.describe("limits field", () => {
     const save = card.page.getByRole("button", { name: "Save limits" });
 
     await expect(save).toBeDisabled();
-    await expect(card.page.locator(".limits-dirty")).toHaveCount(0);
+    await expect(card.page.locator(".limits-editor .draft-mark")).toHaveCount(0);
     await card.page.getByRole("button", { name: "runs per day limit" }).click();
     await expect(save).toBeEnabled();
-    await expect(card.page.locator(".limits-dirty")).toHaveText("unsaved changes");
+    await expect(card.page.locator(".limits-editor .draft-mark")).toHaveText("unsaved changes");
   });
 
   test("switching a limit on gives it a usable starting value", async ({ card }) => {
