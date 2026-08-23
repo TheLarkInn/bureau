@@ -241,8 +241,8 @@ export const REVERSIBLE = [
 ];
 
 /**
- * The transition DAG. An edge exists when one operation on a state's path
- * turns it into another reachable state — which is exactly what the browser
+ * The transition DAG. An edge exists when the operations on one state's path
+ * turn it into another reachable state — which is exactly what the browser
  * suite executes, so every drawn edge is one the suite has walked.
  *
  * Each edge carries the `delta`: the operations to apply to a page already
@@ -250,7 +250,7 @@ export const REVERSIBLE = [
  * re-entering the child from scratch, so the edge is the thing under test.
  *
  * Two kinds. An `enter` edge is a prefix relation: the child's path is the
- * parent's plus one operation. A `return` edge is the way back out, and it is
+ * parent's plus the delta. A `return` edge is the way back out, and it is
  * not derivable from any path, because no state's *entry* contains it.
  */
 export const TRANSITIONS = buildTransitions();
@@ -263,15 +263,39 @@ function buildTransitions() {
   const edges = [];
   for (const state of STATES) {
     const acting = state.ops.filter(isAction);
-    if (acting.length < 2) {
-      continue;
-    }
-    const parent = byPath.get(JSON.stringify(acting.slice(0, -1)));
-    if (parent && parent !== state.id) {
-      edges.push({ kind: "enter", from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaAfter(state.ops, acting.length - 1) });
+    const found = nearestParent(byPath, acting, state.id);
+    if (found) {
+      const delta = deltaAfter(state.ops, found.actions);
+      edges.push({ kind: "enter", from: found.id, to: state.id, via: describe(delta), delta });
     }
   }
   return [...edges, ...edges.map(returnEdge).filter(Boolean)];
+}
+
+/**
+ * The nearest ancestor: the longest proper action-prefix that is itself a state.
+ *
+ * It used to be the prefix exactly one action short, which quietly meant that
+ * any step a user takes in *two* operations was not a transition at all. That
+ * lost the whole create-and-rename family — `select a kind` then `press Add` is
+ * one act of creating a step, and typing a name then pressing Enter is one act
+ * of renaming it — so the editor's most-used controls were entered by every
+ * state that needed them and walked as an edge by none.
+ *
+ * Longest-first is what keeps the parent honest: a state is attributed to the
+ * closest screen it can actually be reached from, rather than to some distant
+ * ancestor that happens to share an opening. For a kind the sample has no step
+ * of, that closest screen is the created step itself — a decision step is
+ * reached by making one — and the edge says so.
+ */
+function nearestParent(byPath, acting, id) {
+  for (let actions = acting.length - 1; actions >= 1; actions -= 1) {
+    const found = byPath.get(JSON.stringify(acting.slice(0, actions)));
+    if (found && found !== id) {
+      return { id: found, actions };
+    }
+  }
+  return null;
 }
 
 /** The way back out of `edge`, when the control it used declares an undo. */
@@ -315,7 +339,20 @@ function signature(ops) {
   return JSON.stringify(ops.filter(isAction));
 }
 
-function describe(op) {
+/**
+ * The label: every acting operation the delta performs, in order.
+ *
+ * The whole delta rather than its last operation, because a delta can now
+ * carry more than one — and an edge labelled only "press Enter" would be
+ * naming the smaller half of renaming a step. `test/statelab.test.mjs` rebuilds
+ * this from the two states' own paths and compares, so a label that drifts from
+ * the work it claims fails there.
+ */
+function describe(delta) {
+  return delta.filter(isAction).map(describeOp).join(" → ");
+}
+
+function describeOp(op) {
   if (op.op === "click") {
     return `click ${op.selector}`;
   }
