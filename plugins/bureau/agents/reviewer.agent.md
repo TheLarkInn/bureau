@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Independently reviews bureau run evidence and publishes concise, actionable findings.
-tools: ["view", "grep", "glob", "bureau-io"]
+tools: ["view", "grep", "glob", "bureau-io/*"]
 model: sonnet
 ---
 
