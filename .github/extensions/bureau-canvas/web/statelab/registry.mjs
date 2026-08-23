@@ -66,10 +66,14 @@ function expectations(combo) {
 /**
  * The pre-surface states are the only ones a click cannot reach: one needs the
  * renderer module blocked, the other needs `/state` held open. Both are request
- * interception, which the browser suite does with `page.route` and the lab
- * cannot do from inside an iframe — so these states carry `intercept`, and the
- * lab blanks its stage and names the reason rather than leaving the previous
- * state's render on screen. The suite is where they are rendered and captured.
+ * conditions rather than paths, which is why they ride on the `page` op.
+ *
+ * The suite applies them with `page.route`; the lab installs them inside the
+ * frame (`intercept.mjs`) before the page's modules run. A held payload it can
+ * stage itself. A blocked renderer it cannot — a `<script type="module">` is
+ * not fetched through `window.fetch` — so for that one the lab blanks its stage
+ * and names the reason rather than leaving the previous state's render on
+ * screen, and the suite is where it is rendered and captured.
  *
  * Each page boots itself, so each has both, and both now answer a blocked
  * renderer with the same fallback shell — index.html for the config it still

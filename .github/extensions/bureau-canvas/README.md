@@ -94,12 +94,16 @@ dimensions, expected controls against what actually rendered, at either
 recorded viewport — and a picker answers "is this a state?" for any
 combination a reviewer assembles, naming every rule that rejects it.
 
-The states that need request interception are the exception, and the lab says
-so out loud: it cannot install a route from inside its own frame, so it blanks
-the stage and names the intercept and the gallery file the browser suite wrote.
-It used to return early and leave the *previous* state's render on screen
-beside the new state's description, which is the one thing a review surface may
-not do — present a screen it never produced as though it had.
+The lab installs each state's request condition inside the frame before the
+page's own modules run — a stalled save, a refused one, a payload that never
+arrives — so a saving or a refused screen is something a reviewer looks at
+rather than a note about a screenshot. Two states are the exception: a
+`<script type="module">` is not fetched through `window.fetch`, so a blocked
+renderer cannot be staged from inside the frame. For those the lab blanks the
+stage and names the condition and the gallery file the browser suite wrote. It
+used to return early and leave the *previous* state's render on screen beside
+the new state's description, which is the one thing a review surface may not do
+— present a screen it never produced as though it had.
 
 ### Visual regression checks
 

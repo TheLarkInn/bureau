@@ -302,6 +302,7 @@ export function resolveOverlay(pipeline, overlay, options = {}) {
     nodes,
     animatedEdges: animated,
     expandedGroups: expanded,
+    foldableGroups: foldableGroups(overlay),
     overlayGroups: overlay.groups,
     remapEdge: remap,
     onToggleGroup: options.onToggleGroup ?? null,
@@ -376,4 +377,17 @@ function groupHidden(overlay, collapsed, groupName) {
     return true;
   }
   return group.state === "finished" && collapsed.has(groupName);
+}
+
+/**
+ * The groups whose members can actually be folded away.
+ *
+ * `groupHidden` only honours `collapsed` once a group has finished, so a
+ * running group's toggle was a control that reported nothing back: the click
+ * landed, the set grew, and the members stayed exactly where they were. The
+ * card asks this before drawing the control, so the only groups offering one
+ * are the ones it moves.
+ */
+function foldableGroups(overlay) {
+  return new Set(Object.keys(overlay.groups).filter((name) => overlay.groups[name].state === "finished"));
 }

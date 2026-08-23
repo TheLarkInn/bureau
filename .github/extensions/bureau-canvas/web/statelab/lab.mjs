@@ -11,8 +11,9 @@ import { CONSTRAINTS, EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "./
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
+import { servableInFrame } from "./intercept.mjs";
 import { runPath } from "./driver.mjs";
-import { FIXTURES, describeFixture } from "./fixtures.mjs";
+import { FIXTURES, describeFixture, SAMPLE_ASSIGNMENT } from "./fixtures.mjs";
 import { VIEWPORTS } from "./selectors.mjs";
 
 const frame = document.querySelector("#stage-frame");
@@ -36,6 +37,7 @@ const el = (tag, className, text) => {
 
 async function boot() {
   base = await fetch("./state", { cache: "no-store" }).then((response) => response.json());
+  renderBaseNote();
   renderSummary();
   renderList();
   renderDimensions();
@@ -48,6 +50,37 @@ async function boot() {
       void show(next);
     }
   });
+}
+
+/**
+ * Every fixture is a *transform* of whatever the host serves, so the renders
+ * are only the ones CI asserts when the host is serving the bundled sample —
+ * which it is under `BUREAU_CANVAS_TEST=1`, and is not when a contributor
+ * opens the lab against their own `.bureau/`. Same state id, different content.
+ *
+ * The lab cannot fix that from here without ceasing to be the production page
+ * reading its real host. What it can do is refuse to let a reviewer read their
+ * own config as the fixture, so a state that looks wrong is not blamed on the
+ * UI when it is the payload underneath that differs.
+ */
+function renderBaseNote() {
+  const note = document.querySelector("#base-note");
+  const missing = expectedByFixtures();
+  note.hidden = missing.length === 0;
+  if (missing.length) {
+    note.textContent = `This host is not serving the bundled sample (${missing.join("; ")}). Fixtures are applied over whatever it serves, so these renders are your own config in the shape of each state — not the payload the browser suite asserts.`;
+  }
+}
+
+/** What the fixture transforms assume the served payload already contains. */
+function expectedByFixtures() {
+  const view = base?.config?.view ?? {};
+  const sample = (view.assignments ?? []).find((item) => item.name === SAMPLE_ASSIGNMENT);
+  const pipelines = (view.pipelines ?? []).map((item) => item.name);
+  return [
+    sample ? null : `no assignment called \`${SAMPLE_ASSIGNMENT}\``,
+    !sample || pipelines.includes(sample.pipeline) ? null : `it names a pipeline (\`${sample.pipeline}\`) this config does not define`,
+  ].filter(Boolean);
 }
 
 function stateFromHash() {
@@ -122,7 +155,7 @@ async function walk(state) {
     node.classList.toggle("is-active", node.querySelector(".state-id")?.textContent === state.id);
   }
   applyViewport();
-  if (state.intercept) {
+  if (state.intercept && !servableInFrame(state.intercept)) {
     // Clearing the frame is the point. Returning early used to leave the
     // *previous* state's render on screen beside this state's description, so
     // the lab presented a screen it had not produced as though it had — the
@@ -255,7 +288,7 @@ function expectationList(state, result) {
     return box;
   }
   if (result?.intercepted) {
-    box.append(el("p", "note note--warn", `Needs request interception (${state.intercept}), which cannot be installed from inside this frame. The stage is left blank on purpose rather than showing the previous state's render.`));
+    box.append(el("p", "note note--warn", `Needs the renderer module blocked (${state.intercept}). A \`<script type="module">\` is not fetched through \`window.fetch\`, so this is the one condition the lab cannot install from inside the frame. The stage is left blank on purpose rather than showing the previous state's render.`));
     box.append(el("p", "note", `specs/state-matrix.spec.mjs renders this state and writes it to the gallery as ${galleryShot(state)}.`));
     return box;
   }

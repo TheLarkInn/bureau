@@ -6,10 +6,11 @@
 // about a state matches what the registry says about that state.
 
 import { STATES } from "../../../web/statelab/registry.mjs";
+import { servableInFrame } from "../../../web/statelab/intercept.mjs";
 import { expect, test } from "../matrix-fixtures.mjs";
 
-/** A state the lab can drive itself: no request interception involved. */
-const DRIVABLE = STATES.filter((state) => !state.intercept);
+/** A state the lab can drive itself, interception included. */
+const DRIVABLE = STATES.filter((state) => servableInFrame(state.intercept));
 
 async function openLab(page, host) {
   const errors = [];
@@ -30,6 +31,11 @@ test("the lab lists every state in the registry and boots clean", async ({ page,
 
   expect(errors).toEqual([]);
   expect(listed.sort()).toEqual(STATES.map((state) => state.id).sort());
+  // This host serves the bundled sample, so the fixtures land on the payload
+  // they were written against and the lab has nothing to warn about. The note
+  // exists for a contributor opening the lab against their own `.bureau/`,
+  // where the same state id renders different content.
+  await expect(page.locator("#base-note")).toBeHidden();
 });
 
 test("the lab reports the registry's own counts", async ({ page, host }) => {
@@ -78,10 +84,10 @@ test("the compact control resizes the stage and re-runs the entry path", async (
   expect(errors).toEqual([]);
 });
 
-test("a state that needs request interception blanks the stage rather than showing the last render", async ({ page, host }) => {
+test("a state the lab cannot install blanks the stage rather than showing the last render", async ({ page, host }) => {
   await openLab(page, host);
   const drivable = DRIVABLE.find((state) => state.id.endsWith("card:expanded"));
-  const intercepted = STATES.find((state) => state.intercept);
+  const blocked = STATES.find((state) => state.intercept && !servableInFrame(state.intercept));
 
   // Drive a state the lab can produce first, so there is a real render on the
   // stage for the next selection to inherit. Returning early used to leave it
@@ -91,9 +97,25 @@ test("a state that needs request interception blanks the stage rather than showi
   await page.locator(".state-item", { hasText: drivable.id }).first().click();
   await expect(page.frameLocator("#stage-frame").locator(".assignment-detail")).toBeVisible();
 
-  await page.locator(".state-item", { hasText: intercepted.id }).first().click();
-  await expect(page.locator("#detail .note--warn")).toContainText(intercepted.intercept);
+  await page.locator(".state-item", { hasText: blocked.id }).first().click();
+  await expect(page.locator("#detail .note--warn")).toContainText(blocked.intercept);
   await expect(page.locator("#stage-frame")).toHaveAttribute("src", "about:blank");
+});
+
+test("the lab renders a save state itself, under the same refusal the suite asserts", async ({ page, host }) => {
+  const errors = await openLab(page, host);
+  // `fail-intent` is installed inside the frame before the page's modules run,
+  // so a refused save is a screen a reviewer can look at rather than a note
+  // saying the browser suite has it. This is the claim that a third of the
+  // registry stopped being unreachable in the lab.
+  const refused = STATES.find((state) => state.intercept === "fail-intent");
+
+  await page.locator(".state-item", { hasText: refused.id }).first().click();
+  await page.locator("#detail .expectations").waitFor();
+
+  await expect(page.locator("#stage-frame")).not.toHaveAttribute("src", "about:blank");
+  await expect(page.locator("#detail .expectations li.bad")).toHaveCount(0);
+  expect(errors).toEqual([]);
 });
 
 test("the lab explains why an excluded combination is not a state", async ({ page, host }) => {

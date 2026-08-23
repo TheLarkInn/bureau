@@ -838,6 +838,12 @@ function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) 
   const [name, setName] = useState("");
   const [access, setAccess] = useState("read");
   const [credential, setCredential] = useState(credentialsOf(state)[0] ?? "");
+  // Every keystroke asks the host to read the URL, and the answers are not
+  // guaranteed to come back in the order they were asked. Without this, a slow
+  // reply for an earlier URL could land last and leave the preview — and the
+  // `resolved.url` that registration actually submits — describing a
+  // repository the field no longer shows. Only the newest ask may write.
+  const latestResolve = useRef(0);
 
   const registry = state.config?.view?.repos ?? [];
   const unlisted = registry.filter((repo) => !repos.includes(repo.name));
@@ -846,10 +852,15 @@ function RepoAdder({ state, repos, busy, error, onCancel, onPick, onRegister }) 
     setUrl(next);
     setResolved(null);
     setFailure(null);
+    latestResolve.current += 1;
+    const ticket = latestResolve.current;
     if (!next.trim()) {
       return;
     }
     postIntent({ kind: "resolve-repo", url: next }).then((result) => {
+      if (ticket !== latestResolve.current) {
+        return;
+      }
       const outcome = result?.resolved;
       if (outcome?.ok) {
         setResolved(outcome);
@@ -1416,6 +1427,7 @@ function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
       overlayClass: node?.className ?? "",
       paused: Boolean(node?.paused),
       expanded: resolved?.expandedGroups.has(step.name) ?? false,
+      foldable: resolved?.foldableGroups?.has(step.name) ?? false,
       members: memberRows(resolved, step),
       onToggleGroup: resolved?.onToggleGroup ?? null,
     },
@@ -1551,22 +1563,47 @@ function StepCard({ data }) {
       h("h2", {}, step.name, data.paused ? h("span", { className: "paused-badge" }, "paused") : null),
       h("p", { className: "detail", title: stepDetail(step) }, stepDetail(step)),
       h(Chips, { chips: stepChips(step) }),
-      data.expanded ? h(MemberList, { members: data.members ?? [], group: step.name, onToggleGroup: data.onToggleGroup }) : null,
+      data.expanded ? h(MemberList, { members: data.members ?? [] }) : null,
       h(Findings, { findings: data.findings }),
     ),
+    h(GroupToggle, { step, foldable: data.foldable, expanded: data.expanded, onToggleGroup: data.onToggleGroup }),
+  );
+}
+
+/**
+ * The fold control for a finished concurrent group.
+ *
+ * It sits on the card rather than inside `MemberList`, because `MemberList` is
+ * drawn only while the group is expanded: collapsing used to remove the
+ * members and the only control that could bring them back in the same click,
+ * leaving a one-way door. On the card it survives its own collapse, so the
+ * transition runs both ways.
+ *
+ * It is also a sibling of `.step-button` rather than a child, since a button
+ * inside a button is not something HTML lets you nest.
+ */
+function GroupToggle({ step, foldable, expanded, onToggleGroup }) {
+  if (!foldable || !onToggleGroup) {
+    return null;
+  }
+  return h(
+    "button",
+    {
+      className: "member-collapse",
+      type: "button",
+      "aria-expanded": String(Boolean(expanded)),
+      "aria-label": `${expanded ? "Collapse" : "Expand"} ${step.name} members`,
+      onClick: (event) => { event.stopPropagation(); onToggleGroup(step.name); },
+    },
+    expanded ? "collapse" : "expand",
   );
 }
 
 /** Expanded groups list member outcomes on the group card itself. */
-function MemberList({ members, group, onToggleGroup }) {
+function MemberList({ members }) {
   return h(
     "div",
     { className: "member-list" },
-    h(
-      "button",
-      { className: "member-collapse", type: "button", onClick: (event) => { event.stopPropagation(); onToggleGroup?.(group); } },
-      "collapse",
-    ),
     h(
       "ul",
       {},

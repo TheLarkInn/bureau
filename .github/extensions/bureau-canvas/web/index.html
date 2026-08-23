@@ -1060,7 +1060,8 @@
       .member-row--failure { color: var(--outcome-failure); }
       .member-row--blocked { color: var(--outcome-blocked); }
       .member-row--running { color: var(--color-focus-outline, #0969da); }
-      .member-collapse { border: 0; padding: 0; background: none; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); cursor: pointer; text-align: left; }
+      .member-collapse { justify-self: start; border: 0; padding: var(--space-1, 4px) 0 0; background: none; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); cursor: pointer; text-align: left; }
+      .member-collapse:focus-visible { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 2px; }
       .react-flow__edge.animated .react-flow__edge-path { stroke-dasharray: 8 6; animation: overlay-edge-flow 0.8s linear infinite; }
       @keyframes overlay-edge-flow { to { stroke-dashoffset: -14; } }
 

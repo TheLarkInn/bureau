@@ -22,7 +22,10 @@ function clone(state) {
   return JSON.parse(JSON.stringify(state));
 }
 
-function assignment(state, name = "agent-eligible") {
+/** The assignment every fixture transform reaches for by name. */
+export const SAMPLE_ASSIGNMENT = "agent-eligible";
+
+function assignment(state, name = SAMPLE_ASSIGNMENT) {
   return state.config.view.assignments.find((item) => item.name === name)
     ?? state.config.view.assignments[0];
 }

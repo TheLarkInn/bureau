@@ -11,6 +11,7 @@ const MOUNT_TIMEOUT = 8000;
 const POLL_MS = 25;
 
 import { assertAdapter, PUBLISH_EVENT } from "./driver.mjs";
+import { installIntercept, isPreSurface, servableInFrame } from "./intercept.mjs";
 
 export function domAdapter(frame) {
   const win = () => frame.contentWindow;
@@ -30,15 +31,24 @@ export function domAdapter(frame) {
   return assertAdapter({
     channel,
     async goto(page, op) {
-      if (op?.intercept) {
-        throw new Error(`this state needs request interception (${op.intercept}); the browser suite renders it`);
+      const kind = op?.intercept ?? null;
+      if (!servableInFrame(kind)) {
+        throw new Error(`this state needs the renderer module blocked (${kind}); the browser suite renders it`);
       }
       // The assignment stack remembers its expanded card in `sessionStorage`,
       // which is shared across same-origin frames. Without clearing it a
       // replayed path would toggle a card closed instead of opening it, and
       // "reachable" would depend on what the reviewer clicked ten minutes ago.
       freshSession();
-      await load(frame, page === "editor" ? "./editor.html" : "./index.html");
+      await load(frame, page === "editor" ? "./editor.html" : "./index.html", kind);
+      // A state that holds the payload never gets a surface, and never gets an
+      // SSE event either — waiting for both would time out on a page that is
+      // behaving exactly as the state says. Its own path waits for the loading
+      // shell instead.
+      if (isPreSurface(kind)) {
+        Object.assign(channel, { observed: false, reason: "this state holds the payload open on purpose" });
+        return;
+      }
       // Wait for the payload the page fetches itself; publishing a fixture
       // before it arrives would be overwritten the moment it did.
       await waitFor(doc, page === "editor" ? ".editor-tabs" : ".app-header");
@@ -79,11 +89,11 @@ export function domAdapter(frame) {
   });
 }
 
-function load(frame, url) {
+function load(frame, url, intercept) {
   return new Promise((resolve) => {
     frame.addEventListener("load", () => resolve(), { once: true });
     frame.src = url;
-    armSse(frame);
+    arm(frame, intercept);
   });
 }
 
@@ -105,12 +115,22 @@ function load(frame, url) {
 const SSE_STATE = "__bureauLabSseState";
 const CHANNEL_TIMEOUT = 3000;
 
-function armSse(frame) {
+/**
+ * Installs everything that has to be in place before the frame's own module
+ * scripts run: the SSE observer, and this state's request condition.
+ *
+ * The same window that makes the observer possible makes interception possible
+ * — a same-origin document is reachable here while it is still parsing, which
+ * is before its deferred modules execute. That is why the lab can render a
+ * saving or a refused screen itself instead of describing one.
+ */
+function arm(frame, intercept) {
   const deadline = Date.now() + CHANNEL_TIMEOUT;
   const spin = () => {
     const win = frame.contentWindow;
     if (frame.contentDocument?.readyState === "loading" && win?.EventSource && win[SSE_STATE] === undefined) {
       observe(win);
+      installIntercept(win, intercept);
       return;
     }
     if (Date.now() < deadline) {

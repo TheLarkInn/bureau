@@ -154,6 +154,12 @@ test("concurrent group: fan-out on start, member outcomes, collapse after finish
       afterFinish: afterFinish.nodes.map((node) => node.id),
       collapsedNodes: collapsed.nodes.map((node) => node.id),
       collapsedExpanded: [...collapsed.expandedGroups],
+      // A running group's fold does nothing, so it is not offered one; a
+      // finished group keeps its control after collapsing, which is the only
+      // way back to its members.
+      duringFoldable: [...duringRun.foldableGroups],
+      afterFinishFoldable: [...afterFinish.foldableGroups],
+      collapsedFoldable: [...collapsed.foldableGroups],
     },
     {
       beforeStart: ["propose", "run-checks"],
@@ -165,6 +171,9 @@ test("concurrent group: fan-out on start, member outcomes, collapse after finish
       afterFinish: ["propose", "run-checks", "apply", "review"],
       collapsedNodes: ["propose", "run-checks"],
       collapsedExpanded: [],
+      duringFoldable: [],
+      afterFinishFoldable: ["run-checks"],
+      collapsedFoldable: ["run-checks"],
     },
   );
 });

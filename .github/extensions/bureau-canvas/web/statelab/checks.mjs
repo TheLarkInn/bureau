@@ -60,15 +60,27 @@ export function collect(doc, request) {
   // are tracked apart for the same reason: `overflow-x: hidden` with a
   // scrolling y is an ordinary vertical scroller, not a lid.
   const clipper = (node) => {
+    let found = null;
+    let pannable = false;
     for (let item = node.parentElement; item; item = item.parentElement) {
-      const style = view.getComputedStyle(item);
-      const clipsX = /hidden|clip/u.test(style.overflowX);
-      const clipsY = /hidden|clip/u.test(style.overflowY);
-      if (clipsX || clipsY) {
-        return { rect: item.getBoundingClientRect(), clipsX, clipsY };
+      if (!found) {
+        const style = view.getComputedStyle(item);
+        const clipsX = /hidden|clip/u.test(style.overflowX);
+        const clipsY = /hidden|clip/u.test(style.overflowY);
+        if (clipsX || clipsY) {
+          found = { rect: item.getBoundingClientRect(), clipsX, clipsY };
+        }
+      }
+      // Graph content pans: a step card half out of frame is the surface
+      // working, and the reader drags it back. Ordinary controls have no such
+      // gesture, so for them any trim is text or a click target the user
+      // cannot reach. The walk continues past the clipper because the pannable
+      // surface is the graph root, above the pane that does the clipping.
+      if (/(^|\s)react-flow(\s|$)/u.test(item.getAttribute("class") ?? "")) {
+        pannable = true;
       }
     }
-    return null;
+    return found ? { ...found, pannable } : null;
   };
   for (const selector of request.measure) {
     for (const node of doc.querySelectorAll(selector)) {
@@ -78,6 +90,8 @@ export function collect(doc, request) {
         const clip = clipper(node);
         const outsideX = clip?.clipsX && (rect.x >= clip.rect.right || rect.x + rect.width <= clip.rect.left);
         const outsideY = clip?.clipsY && (rect.y >= clip.rect.bottom || rect.y + rect.height <= clip.rect.top);
+        const trimX = clip?.clipsX ? Math.max(clip.rect.left - rect.x, rect.x + rect.width - clip.rect.right, 0) : 0;
+        const trimY = clip?.clipsY ? Math.max(clip.rect.top - rect.y, rect.y + rect.height - clip.rect.bottom, 0) : 0;
         boxes.push({
           selector,
           id: idFor(node),
@@ -87,10 +101,11 @@ export function collect(doc, request) {
           // a minimap over a graph — so only normal-flow boxes are held to the
           // sibling rule.
           flow: position === "static" || position === "relative",
-          // Entirely outside its clipper, rather than merely trimmed: a graph
-          // node panned half out of frame is ordinary, a control cut away
-          // completely is not.
+          // Entirely outside its clipper: gone, whatever surface it is on.
           clipped: Boolean(outsideX || outsideY),
+          // How far a clipping ancestor cuts into it, judged only off a
+          // pannable surface, where nothing brings the rest into view.
+          trimmed: clip?.pannable ? 0 : Math.round(Math.max(trimX, trimY)),
         });
       }
     }
@@ -430,6 +445,11 @@ function intersects(left, right) {
  * is just as unreachable, and a control cut away entirely by an
  * `overflow: hidden` parent is worse than either, because it still reports a
  * box — so `shows` passes while the user sees nothing.
+ *
+ * Total loss was too generous a bar on its own, though: a control whose label
+ * or click target is half eaten by its own container is a defect a reader can
+ * see and this could not. So a trim is judged too, everywhere except the one
+ * surface that pans.
  */
 function clipping(snapshot, options) {
   const slack = options.slack ?? 2;
@@ -446,6 +466,8 @@ function clipping(snapshot, options) {
     }
     if (box.clipped) {
       problems.push({ kind: "clipped", detail: `${box.selector} is cut away entirely by a clipping ancestor` });
+    } else if ((box.trimmed ?? 0) > slack) {
+      problems.push({ kind: "clipped", detail: `${box.selector} is cut ${box.trimmed}px into by a clipping ancestor` });
     }
   }
   return dedupe(problems);

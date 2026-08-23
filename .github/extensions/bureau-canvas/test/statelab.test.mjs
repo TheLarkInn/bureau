@@ -909,8 +909,8 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
     counts: { ".a": 1 },
     boxes: [
-      { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", flow: true, clipped: false },
-      { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", flow: true, clipped: true },
+      { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", flow: true, clipped: false, trimmed: 0 },
+      { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", flow: true, clipped: true, trimmed: 150 },
     ],
     contrast: [{ selector: ".c", text: "Kind", ratio: 21 }],
     labels: [{
