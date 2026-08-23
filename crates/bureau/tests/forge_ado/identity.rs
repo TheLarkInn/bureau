@@ -1,7 +1,8 @@
 //! Who a resolved credential is, according to Azure DevOps: the
 //! organization-level `connectionData` call, offline against the stub.
 
-use bureau::forge::Forge as _;
+use bureau::forge::identity::Reported;
+use bureau::forge::{Forge as _, Identity};
 use bureau::process::Secret;
 
 use super::stub;
@@ -12,6 +13,8 @@ const CONNECTED: &str = concat!(
     r#""properties":{"Account":{"$type":"System.String","$value":"bot@example.invalid"}}}}"#,
 );
 const DISPLAY_ONLY: &str = r#"{"authenticatedUser":{"providerDisplayName":"Bureau Bot"}}"#;
+const NO_USER: &str = "{}";
+const EMPTY_USER: &str = r#"{"authenticatedUser":{"providerDisplayName":"  "}}"#;
 
 /// The account property answers first; the display name is the fallback.
 /// Both requests carry the credential passed in, not the client's own.
@@ -30,18 +33,36 @@ async fn identity_reports_the_connected_account() {
     let requests = stub.requests();
     assert_eq!(
         (
-            account.map(|identity| identity.account),
-            display.map(|identity| identity.account),
+            account,
+            display,
             requests[0].path.as_str(),
             requests[0].authorization.as_str(),
         ),
         (
-            Some("bot@example.invalid".to_owned()),
-            Some("Bureau Bot".to_owned()),
+            Reported::Account(Identity::new("bot@example.invalid")),
+            Reported::Account(Identity::new("Bureau Bot")),
             CONNECTION_PATH,
             super::AUTH,
         )
     );
+}
+
+/// A body with no authenticated user, and one whose account and display
+/// name are both blank, are unexpected responses — never a verified
+/// empty identity, which would match a declared account by accident.
+#[tokio::test]
+async fn a_connection_without_an_account_is_an_unexpected_response() {
+    let stub = stub(&[("200 OK", NO_USER), ("200 OK", EMPTY_USER)]);
+    let forge = stub.forge();
+    let missing = forge.identity(&Secret::new("hunter2")).await;
+    let empty = forge.identity(&Secret::new("hunter2")).await;
+    let kinds = [missing, empty].map(|answer| {
+        matches!(
+            answer.expect_err("must fail"),
+            bureau::forge::Error::Parse(_)
+        )
+    });
+    assert_eq!(kinds, [true, true]);
 }
 
 /// A refused personal access token is an API error carrying the status,

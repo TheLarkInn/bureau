@@ -1,11 +1,17 @@
 //! Credential identity: the pre-spawn check that a resolved value both
-//! works and belongs to the declared account (DESIGN.md section 7).
+//! works and belongs to the expected account (DESIGN.md section 7).
 //!
 //! Offline throughout: the fake forge answers nothing about identity
 //! until a test opts in, which is exactly the rule being pinned here.
 
 #[path = "engine/rig.rs"]
 mod rig;
+
+#[path = "credential_identity/routing.rs"]
+mod routing;
+
+#[path = "credential_identity/resumed.rs"]
+mod resumed;
 
 use std::collections::BTreeMap;
 
@@ -14,7 +20,7 @@ use bureau::config::{Access, Config, ForgeKind, Repo};
 use bureau::contract::StepOutcome;
 use bureau::engine::RunPlan;
 use bureau::forge::fake::FakeForge;
-use bureau::forge::identity::{IdentityError, verify, verify_all};
+use bureau::forge::identity::{Check, Expected, IdentityError, Reported, verify};
 use bureau::process::Secret;
 use bureau::runlog::{self, EventKind, RunStartedData};
 use bureau::setup::Settings;
@@ -31,6 +37,16 @@ const SETTINGS_YAML: &str = concat!(
     "    variable: BUREAU_CREDENTIAL_GIT_MAIN\n    identity: bureau-bot\n",
     "  other:\n    source: file\n    path: /run/credentials/other\n",
 );
+
+/// One credential to check against the fake, as a run would.
+const fn check<'a>(credential: &'a Secret, expected: Option<&'a str>) -> Check<'a> {
+    Check {
+        reference: "git-main",
+        credential,
+        expected,
+        expectation: Expected::Declared,
+    }
+}
 
 /// One registry repo referencing `credential`.
 fn config_with_credential(credential: &str) -> Config {
@@ -149,29 +165,22 @@ async fn the_fake_forge_skips_verification_until_a_test_opts_in() {
     );
 }
 
-/// The verified identity is recorded in the run log and pinned there: a
-/// re-entry keeps the identity the run started with, even after the
-/// underlying source starts answering with another account.
+/// A forge that accepts a value without naming an account — a GitHub
+/// App installation token — proves the value works and nothing more:
+/// permissive without a declaration, unverifiable with one.
 #[tokio::test]
-async fn a_pinned_identity_survives_a_later_source_change() {
-    let rig = rig::Rig::new();
-    rig.forge.verify_identity_as(DECLARED);
-    let plan = declaring_plan(&rig);
-    let engine = rig.engine();
-    let first = engine.run(&plan).await;
-    rig.forge.verify_identity_as("someone-else");
-    let again = engine.run(&plan).await;
+async fn an_unnamed_acceptance_cannot_satisfy_a_declared_identity() {
+    let forge = FakeForge::default();
+    forge.accept_identity_unnamed();
+    let credential = Secret::new("value");
+    let permissive = verify(&forge, &check(&credential, None)).await;
+    let declared = verify(&forge, &check(&credential, Some(DECLARED))).await;
     assert_eq!(
         (
-            first.outcome,
-            again.outcome,
-            pinned(&rig, &plan.run_id).get("git-main").cloned(),
+            permissive.ok(),
+            matches!(declared, Err(IdentityError::Unverifiable { .. })),
         ),
-        (
-            StepOutcome::NoWork,
-            StepOutcome::NoWork,
-            Some(DECLARED.to_owned())
-        )
+        (Some(Reported::Unnamed), true)
     );
 }
 
@@ -181,13 +190,13 @@ async fn a_pinned_identity_survives_a_later_source_change() {
 async fn an_undeclared_identity_is_verified_but_not_matched() {
     let forge = FakeForge::default();
     forge.verify_identity_as("whoever");
-    let credentials = BTreeMap::from([("git-main".to_owned(), Secret::new("value"))]);
-    let verified = verify_all(&forge, &credentials, &BTreeMap::new())
+    let credential = Secret::new("value");
+    let verified = verify(&forge, &check(&credential, None))
         .await
         .expect("permissive verification");
     assert_eq!(
         verified,
-        BTreeMap::from([("git-main".to_owned(), "whoever".to_owned())])
+        Reported::Account(bureau::forge::Identity::new("whoever"))
     );
 }
 
@@ -196,14 +205,18 @@ async fn an_undeclared_identity_is_verified_but_not_matched() {
 async fn a_declared_identity_matches_regardless_of_case() {
     let forge = FakeForge::default();
     forge.verify_identity_as("Bureau-Bot");
-    let matched = verify(&forge, "git-main", &Secret::new("value"), Some(DECLARED)).await;
-    let mismatched = verify(&forge, "git-main", &Secret::new("value"), Some("other")).await;
+    let credential = Secret::new("value");
+    let matched = verify(&forge, &check(&credential, Some(DECLARED))).await;
+    let mismatched = verify(&forge, &check(&credential, Some("other"))).await;
     assert_eq!(
         (
-            matched.expect("match").map(|identity| identity.account),
+            matched.expect("match"),
             matches!(mismatched, Err(IdentityError::Mismatch { .. })),
         ),
-        (Some("Bureau-Bot".to_owned()), true)
+        (
+            Reported::Account(bureau::forge::Identity::new("Bureau-Bot")),
+            true
+        )
     );
 }
 
@@ -222,12 +235,15 @@ fn settings_declare_identity_per_credential_and_omission_declares_none() {
 }
 
 /// An identity declared for a credential no repo references is reported
-/// against `settings.yaml`, in the accumulate-all validation pass.
+/// against `settings.yaml`, in the accumulate-all validation pass. The
+/// reserved `config` reference is exempt: the runner clones the config
+/// repo with it, so `repos.yaml` never names it.
 #[test]
 fn validate_reports_an_identity_no_repo_references() {
     let config = config_with_credential("git-main");
     let declared = BTreeMap::from([
         ("git-main".to_owned(), DECLARED.to_owned()),
+        ("config".to_owned(), DECLARED.to_owned()),
         ("unused".to_owned(), DECLARED.to_owned()),
     ]);
     let errors = validate_identities(&config, &declared);

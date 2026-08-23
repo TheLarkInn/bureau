@@ -24,12 +24,6 @@ fn resolve_reference(
     )
 }
 
-fn ado_base_url(repo_url: &str) -> String {
-    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
-    head.rsplit_once('/')
-        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
-}
-
 fn resolve_optional(
     settings: Option<&bureau::setup::Settings>,
     reference: &str,
@@ -60,7 +54,7 @@ pub(super) fn forge(
         .context("primary repo credential was not resolved")?;
     Ok(match assignment.work.forge {
         ForgeKind::Github => Arc::new(GitHubForge::new(token)),
-        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&primary.url), token)),
+        ForgeKind::Ado => Arc::new(AdoForge::new(primary.api_root(), token)),
     })
 }
 

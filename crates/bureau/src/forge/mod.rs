@@ -214,11 +214,12 @@ impl Error {
 /// runner never parses it (WIQL for ADO, search syntax for GitHub).
 #[async_trait]
 pub trait Forge: Send + Sync {
-    /// The identity `credential` authenticates as, or `None` when this
-    /// forge reports none (the offline fake, unless a test opts in).
-    /// The credential is passed in, so one client verifies every
-    /// credential its repos declare (DESIGN.md section 7, layer 0).
-    async fn identity(&self, credential: &Secret) -> Result<Option<Identity>, Error>;
+    /// What this forge reports about `credential`: the account it
+    /// authenticates as, an acceptance it will not name, or nothing at
+    /// all (the offline fake, unless a test opts in). The credential is
+    /// passed in, so one client verifies every credential a repo on its
+    /// own host declares (DESIGN.md section 7, layer 0).
+    async fn identity(&self, credential: &Secret) -> Result<identity::Reported, Error>;
 
     /// Work items matching the forge-native `filter` at `source`.
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error>;

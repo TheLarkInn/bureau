@@ -1,6 +1,10 @@
-//! Pre-spawn preparation for `run`/`retry`: credentials, the work forge
-//! client, and the item lookup. Everything here happens before anything
-//! spawns (DESIGN.md section 13).
+//! Pre-spawn preparation for a run: credentials, the work forge client,
+//! the hosts authorized to verify each credential, and the item lookup.
+//! `run`/`retry` and the reconcile daemon both prepare through this
+//! module, and all of it happens before anything spawns (DESIGN.md
+//! section 13).
+
+mod authorize;
 
 use crate::cli::out;
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,6 +17,8 @@ use bureau::forge::ado::AdoForge;
 use bureau::forge::github::GitHubForge;
 use bureau::forge::{Forge, Item};
 use bureau::process::Secret;
+
+pub use authorize::authorizations;
 
 /// The distinct credential references across the assignment's repos,
 /// sorted so the first failure reported is deterministic.
@@ -57,15 +63,6 @@ pub fn resolve_credentials(
     Some(credentials)
 }
 
-/// The ADO organization root from the primary repo URL:
-/// `https://dev.azure.com/org/project/_git/repo` becomes
-/// `https://dev.azure.com/org`.
-fn ado_base_url(repo_url: &str) -> String {
-    let head = repo_url.split("/_git/").next().unwrap_or(repo_url);
-    head.rsplit_once('/')
-        .map_or_else(|| head.to_owned(), |(base, _)| base.to_owned())
-}
-
 /// The client for the forge the work items live on. v0: its token is the
 /// PRIMARY repo's credential — the work forge shares that credential.
 ///
@@ -86,7 +83,7 @@ pub fn work_forge(
         .context("primary repo credential was not resolved")?;
     Ok(match assignment.work.forge {
         ForgeKind::Github => Arc::new(GitHubForge::new(token)),
-        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&primary.url), token)),
+        ForgeKind::Ado => Arc::new(AdoForge::new(primary.api_root(), token)),
     })
 }
 
@@ -98,7 +95,7 @@ pub fn work_forge(
 pub fn repo_forge(repo: &Repo, token: Secret) -> anyhow::Result<Arc<dyn Forge>> {
     Ok(match repo.forge {
         ForgeKind::Github => Arc::new(GitHubForge::for_repo(token, &repo.url)?),
-        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&repo.url), token)),
+        ForgeKind::Ado => Arc::new(AdoForge::new(repo.api_root(), token)),
     })
 }
 

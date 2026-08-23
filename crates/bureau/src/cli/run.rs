@@ -156,6 +156,7 @@ fn plan(
     prepared: Prepared,
     run_id: String,
 ) -> RunPlan {
+    let repos = prepare::plan_repos(config, assignment);
     RunPlan {
         run_id,
         assignment: assignment.clone(),
@@ -165,11 +166,12 @@ fn plan(
             .expect("config validation guarantees the pipeline")
             .clone(),
         roles: config.roles.clone(),
-        repos: prepare::plan_repos(config, assignment),
         item,
         forge: prepared.forge,
+        identity_forges: prepare::authorizations(&repos, &prepared.credentials),
         credentials: prepared.credentials,
         identities: prepared.identities,
+        repos,
         config_source: None,
         plugin_sources: BTreeMap::new(),
         direct_agents: BTreeMap::new(),

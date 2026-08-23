@@ -201,7 +201,7 @@ impl AdoForge {
 
 #[async_trait]
 impl Forge for AdoForge {
-    async fn identity(&self, credential: &Secret) -> Result<Option<Identity>, Error> {
+    async fn identity(&self, credential: &Secret) -> Result<super::identity::Reported, Error> {
         identity::get(self, credential).await
     }
 

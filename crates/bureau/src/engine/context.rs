@@ -58,6 +58,10 @@ pub(super) struct RunCtx {
     /// Forge identity per credential, verified once before the first
     /// spawn and pinned into `run_started`.
     pub(super) verified: BTreeMap<String, String>,
+    /// The identities this run's own `run_started` pinned. Empty on a
+    /// fresh run; on a resume it is what re-resolved credentials must
+    /// still authenticate as.
+    pub(super) pinned: BTreeMap<String, String>,
 }
 
 impl RunCtx {
@@ -110,6 +114,7 @@ pub(super) fn run_ctx(
     plan: &RunPlan,
     log: crate::runlog::RunLog,
     history: resume::History,
+    pinned: BTreeMap<String, String>,
 ) -> RunCtx {
     let deadline = deadline::at(history.started_at_ms, plan.assignment.limits.max_run_hours);
     RunCtx {
@@ -129,6 +134,7 @@ pub(super) fn run_ctx(
         start: history.start,
         started: history.started,
         verified: BTreeMap::new(),
+        pinned,
     }
 }
 

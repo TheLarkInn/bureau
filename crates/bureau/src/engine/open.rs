@@ -3,14 +3,16 @@
 //!
 //! Resume pins the plan the run started with — including the identities
 //! its `run_started` recorded — so re-entry never adopts a newer plan
-//! for a run already under way.
+//! for a run already under way, and re-resolved credentials are checked
+//! against the identities the run began with.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::context::{self, RunCtx};
 use super::{RunOutcome, RunPlan, resume};
 use crate::process::Secret;
-use crate::runlog::{self, EventKind, RunLog};
+use crate::runlog::{self, EventKind, RunLog, RunStartedData};
 
 /// The open phase's verdict.
 pub(super) enum Open {
@@ -26,16 +28,23 @@ fn fresh_open(runs_dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Ope
         .map_err(|e| format!("creating run log: {e}"))?;
     let history = resume::fresh(resume::entry(&plan.pipeline), false);
     Ok(Open::Running(Box::new(context::run_ctx(
-        plan, log, history,
+        plan,
+        log,
+        history,
+        BTreeMap::new(),
     ))))
 }
 
-fn pinned_plan(events: &[runlog::Event], fallback: &RunPlan) -> RunPlan {
-    let snapshot = events
+/// The `run_started` payload this run already recorded, when it has one.
+fn started_data(events: &[runlog::Event]) -> Option<RunStartedData> {
+    events
         .iter()
         .find(|event| event.kind == EventKind::RunStarted)
-        .and_then(|event| serde_json::from_value::<runlog::RunStartedData>(event.data.clone()).ok())
-        .and_then(|started| started.snapshot);
+        .and_then(|event| serde_json::from_value::<RunStartedData>(event.data.clone()).ok())
+}
+
+fn pinned_plan(started: Option<&RunStartedData>, fallback: &RunPlan) -> RunPlan {
+    let snapshot = started.and_then(|started| started.snapshot.clone());
     let Some(snapshot) = snapshot else {
         return fallback.clone();
     };
@@ -45,6 +54,7 @@ fn pinned_plan(events: &[runlog::Event], fallback: &RunPlan) -> RunPlan {
             fallback.forge.clone(),
             fallback.credentials.clone(),
             fallback.identities.clone(),
+            fallback.identity_forges.clone(),
         );
         plan.lease.clone_from(&fallback.lease);
         return plan;
@@ -60,22 +70,27 @@ fn resume_ctx(
     plan: &RunPlan,
     secrets: &[Secret],
     history: resume::History,
+    pinned: BTreeMap<String, String>,
 ) -> Result<Open, String> {
     let log = RunLog::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
     Ok(Open::Running(Box::new(context::run_ctx(
-        plan, log, history,
+        plan, log, history, pinned,
     ))))
 }
 
 /// Replays an existing run's log into a finished outcome or a resume.
 fn resume_open(dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
     let events = runlog::read_events(dir).map_err(|e| format!("reading run log: {e}"))?;
-    let pinned = pinned_plan(&events, plan);
-    match resume::replay(events, &pinned.pipeline) {
+    let started = started_data(&events);
+    let pinned = started.as_ref().map(|started| started.identities.clone());
+    let plan = pinned_plan(started.as_ref(), plan);
+    match resume::replay(events, &plan.pipeline) {
         resume::Replay::Finished(data) => {
-            Ok(Open::Finished(RunOutcome::finished(&pinned.run_id, data)))
+            Ok(Open::Finished(RunOutcome::finished(&plan.run_id, data)))
         }
-        resume::Replay::Resume(history) => resume_ctx(dir, &pinned, secrets, history),
+        resume::Replay::Resume(history) => {
+            resume_ctx(dir, &plan, secrets, history, pinned.unwrap_or_default())
+        }
     }
 }
 

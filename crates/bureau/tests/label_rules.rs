@@ -99,6 +99,7 @@ impl World {
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::new(),
             identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         };

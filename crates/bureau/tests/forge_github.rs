@@ -246,40 +246,10 @@ async fn malformed_json_becomes_error_parse() {
     assert!(matches!(err, Error::Parse(_)), "got {err:?}");
 }
 
-/// The identity call: `GET /user`, signed with the credential passed in
-/// rather than the client's own, mapped to the account's login.
-#[tokio::test]
-async fn identity_reports_the_login_for_the_passed_credential() {
-    let server = TestServer::start(|_| vec![ok_json(r#"{"login":"bureau-bot"}"#)]);
-    let identity = server
-        .forge()
-        .identity(&Secret::new("other-token"))
-        .await
-        .expect("identity");
-    let (request, lower) = only_request(server);
-    let got = (
-        identity.map(|identity| identity.account),
-        decoded_target(&request) == "/user",
-        lower.contains("authorization: bearer other-token"),
-    );
-    assert_eq!(got, (Some("bureau-bot".to_owned()), true, true));
-}
-
-/// A refused token is an API error carrying the status, which is what
-/// lets the caller say "invalid or expired" rather than "unreachable".
-#[tokio::test]
-async fn a_refused_credential_is_an_api_error() {
-    let server = TestServer::start(|_| vec![response(401, r#"{"message":"Bad"}"#, "")]);
-    let error = server
-        .forge()
-        .identity(&Secret::new("test-token"))
-        .await
-        .expect_err("must fail");
-    assert!(
-        matches!(error, Error::Api { status: 401, .. }),
-        "got {error:?}"
-    );
-}
+/// The identity call and its installation fallback live beside their
+/// own fixtures.
+#[path = "forge_github/identity.rs"]
+mod identity;
 
 #[tokio::test]
 async fn query_follows_next_links() {

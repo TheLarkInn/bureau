@@ -37,9 +37,20 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
+/// A bureau home that does not exist, so the binary reads no settings
+/// from the developer's own machine: `validate` must judge a config
+/// directory the same way on every host.
+fn isolated_home() -> PathBuf {
+    repo_root()
+        .join("target")
+        .join("bureau-test-work")
+        .join(format!("validate-json-home-{}", std::process::id()))
+}
+
 fn bureau(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_bureau"))
         .args(args)
+        .env("BUREAU_HOME", isolated_home())
         .output()
         .expect("run bureau")
 }

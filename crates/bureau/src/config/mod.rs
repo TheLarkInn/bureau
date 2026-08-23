@@ -8,6 +8,7 @@
 mod files;
 mod label_rule;
 mod pipeline;
+mod repo_host;
 mod source;
 mod source_tree;
 mod validate;
@@ -24,7 +25,7 @@ pub use label_rule::{LabelRule, LabelRuleCondition, LabelRuleLimits, LabelRuleWo
 pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
 pub use source::GitSource;
 pub use validate::{validate, validate_pipelines};
-pub use validate_identity::validate_identities;
+pub use validate_identity::{CONFIG_CREDENTIAL, validate_identities};
 
 /// A validated, activated configuration source.
 pub type ActivatedConfig = source::Activated;

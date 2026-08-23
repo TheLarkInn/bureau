@@ -214,6 +214,7 @@ impl Rig {
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new(secret))]),
             identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),
@@ -232,6 +233,7 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
         identities: BTreeMap::new(),
+        identity_forges: BTreeMap::new(),
         config_source: ConfigSource {
             remote: "fixture".to_owned(),
             reference: "main".to_owned(),

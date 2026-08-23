@@ -6,7 +6,7 @@
 //! deleted, and no credential value reaches the report.
 
 use bureau::doctor::{CredentialIdentity, IdentityTarget, LocalEffects};
-use bureau::forge::identity::IdentityError;
+use bureau::forge::identity::{Check, Expected, IdentityError, Reported};
 use bureau::setup::Settings;
 
 use crate::cli::prepare;
@@ -22,6 +22,24 @@ fn failure(reference: &str, error: &IdentityError) -> CredentialIdentity {
     }
 }
 
+/// What the forge answered, as one report line. A value accepted
+/// without a name proves the credential works and nothing more.
+fn reported(reference: &str, answer: Result<Reported, IdentityError>) -> CredentialIdentity {
+    match answer {
+        Ok(Reported::Account(identity)) => {
+            CredentialIdentity::verified(reference, &identity.account)
+        }
+        Ok(Reported::Unnamed) => CredentialIdentity::unchecked(
+            reference,
+            "the forge accepts the value but names no account for it",
+        ),
+        Ok(Reported::Silent) => {
+            CredentialIdentity::unchecked(reference, "the forge reported no identity")
+        }
+        Err(error) => failure(reference, &error),
+    }
+}
+
 async fn check(settings: &Settings, target: &IdentityTarget) -> CredentialIdentity {
     let reference = target.reference.as_str();
     let secret = match bureau::credential::resolve(settings, reference) {
@@ -32,12 +50,16 @@ async fn check(settings: &Settings, target: &IdentityTarget) -> CredentialIdenti
         Ok(forge) => forge,
         Err(error) => return CredentialIdentity::unchecked(reference, &error.to_string()),
     };
-    let declared = target.declared.as_deref();
-    match bureau::forge::identity::verify(forge.as_ref(), reference, &secret, declared).await {
-        Ok(Some(identity)) => CredentialIdentity::verified(reference, &identity.account),
-        Ok(None) => CredentialIdentity::unchecked(reference, "the forge reported no identity"),
-        Err(error) => failure(reference, &error),
-    }
+    let check = Check {
+        reference,
+        credential: &secret,
+        expected: target.declared.as_deref(),
+        expectation: Expected::Declared,
+    };
+    reported(
+        reference,
+        bureau::forge::identity::verify(forge.as_ref(), &check).await,
+    )
 }
 
 /// Verifies every credential a registered repo references, read-only.

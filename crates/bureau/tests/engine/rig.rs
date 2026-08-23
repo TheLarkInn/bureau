@@ -15,6 +15,7 @@ use bureau::contract::{SCHEMA_VERSION, StepOutcome, StepResult, Trust};
 use bureau::engine::{Engine, RunPlan, new_run_id};
 use bureau::forge::Item;
 use bureau::forge::fake::FakeForge;
+use bureau::forge::identity::Authorized;
 use bureau::process::Secret;
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
@@ -246,6 +247,8 @@ impl Rig {
     }
 
     /// A plan for `steps`; the repo credential resolves so pushes work.
+    /// The registry's one repo names `git-main`, so the fake forge is
+    /// the only host authorized to answer for that credential.
     pub fn plan(&self, steps: Vec<StepDef>) -> RunPlan {
         RunPlan {
             run_id: new_run_id("fix-tests").expect("run id"),
@@ -260,10 +263,23 @@ impl Rig {
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
             identities: BTreeMap::new(),
+            identity_forges: BTreeMap::from([(
+                "git-main".to_owned(),
+                vec![authorized("fake main", &self.forge)],
+            )]),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),
             lease: None,
         }
+    }
+}
+
+/// One authorized host for a credential: the fake forge, under the host
+/// name a registered repo would imply.
+pub fn authorized(host: &str, forge: &Arc<FakeForge>) -> Authorized {
+    Authorized {
+        host: host.to_owned(),
+        client: forge.clone(),
     }
 }

@@ -94,12 +94,16 @@ git. `settings.yaml` declares exactly where each reference resolves:
 
 A credential may also declare the forge `identity` it must authenticate
 as. Before a run spawns anything, each credential its repos require is
-checked against the forge: a refused value fails the run as invalid or
+checked against the forge a repo naming that credential points at — and
+never against any other host: a refused value fails the run as invalid or
 expired, and a value belonging to another account fails it as a wrong
 identity, naming the reference and both identities. Declaring no
-`identity` verifies the value and matches it against no name. The check
-runs once per run and its result is pinned in the run log, so a later
-change to the source cannot change a running run's identity.
+`identity` verifies the value and matches it against no name. A GitHub
+App installation token can be checked for validity but carries no account
+name, so it satisfies no declared `identity`. The result is pinned in the
+run log, and a resumed run re-checks its freshly resolved credentials
+against that pinned identity, so a value rotated mid-run aborts the
+resume rather than continue as somebody else.
 
 Values are scrubbed from everything written to the run log.
 

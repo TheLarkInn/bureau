@@ -200,6 +200,7 @@ impl World {
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
             identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });
@@ -242,13 +243,8 @@ impl World {
 
     /// The primary repo's registry URL, as the observation resolves it.
     fn repo_url(&self) -> &str {
-        &self
-            .reconciler
-            .config
-            .repos
-            .get("main")
-            .expect("main repo")
-            .url
+        let repos = &self.reconciler.config.repos;
+        &repos.get("main").expect("main repo").url
     }
 
     /// An open PR for an item, as a finished run would leave behind.

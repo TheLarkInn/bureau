@@ -100,6 +100,7 @@ async fn check_idempotent_rerun(world: &World, dir: &std::path::Path) {
         world.forge.clone(),
         credentials,
         std::collections::BTreeMap::new(),
+        std::collections::BTreeMap::new(),
     );
     let second = world.engine.run(&plan).await;
     let after = runlog::read_events(dir).expect("events").len();

@@ -15,11 +15,13 @@ use bureau::state::{LeaseOwner, Store};
 
 use super::active::Active;
 use super::{ResolvedArgs, build};
+use crate::cli::prepare;
 
 struct Revision {
     config: Config,
     credentials: BTreeMap<String, Secret>,
     identities: BTreeMap<String, String>,
+    identity_forges: bureau::forge::identity::Authorizations,
     forges: BTreeMap<String, Arc<dyn Forge>>,
     label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     source: ConfigSource,
@@ -30,10 +32,12 @@ fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>)
     let credentials = build::credentials(&active.config, settings);
     let forges = build::forges(&active.config, &credentials);
     let label_forges = build::label_forges(&active.config, &credentials);
+    let identity_forges = prepare::authorizations(&active.config.repos, &credentials);
     Revision {
         config: active.config,
         credentials,
         identities: build::identities(settings),
+        identity_forges,
         forges,
         label_forges,
         source: ConfigSource {
@@ -97,6 +101,7 @@ impl Daemon {
             engine: self.engine.clone(),
             credentials: revision.credentials.clone(),
             identities: revision.identities.clone(),
+            identity_forges: revision.identity_forges.clone(),
             config_source: revision.source.clone(),
             direct_agents: revision.direct_agents.clone(),
         }
@@ -140,7 +145,8 @@ impl Daemon {
             Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
         };
         let identities = build::identities(self.settings.as_ref());
-        let mut plan = rehydrate(snapshot, forge, credentials, identities);
+        let identity_forges = prepare::authorizations(&snapshot.repos, &credentials);
+        let mut plan = rehydrate(snapshot, forge, credentials, identities, identity_forges);
         plan.lease = Some(owner);
         Ok(Some(bureau::reconcile::resume(
             self.engine.clone(),

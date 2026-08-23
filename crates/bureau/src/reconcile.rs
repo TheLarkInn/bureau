@@ -1,6 +1,7 @@
 //! The reconcile loop (DESIGN.md section 8) replaces the scheduler.
 
 mod observe;
+mod scope;
 mod start;
 mod wait;
 
@@ -130,6 +131,10 @@ pub struct Reconciler {
     /// Identity each credential must authenticate as, declared in local
     /// settings and checked once per run before anything spawns.
     pub identities: BTreeMap<String, String>,
+    /// The forge clients authorized to verify each credential: one per
+    /// host a registered repo naming it points at, so no run offers a
+    /// value to a host its own repos never named.
+    pub identity_forges: crate::forge::identity::Authorizations,
     /// Exact committed config revision for newly claimed runs.
     pub config_source: crate::runlog::ConfigSource,
     /// Pinned direct-agent bytes keyed by role name.
@@ -236,23 +241,17 @@ impl Reconciler {
     fn run_plan(&self, observed: &Observed<'_>, item: Item, run_id: &str) -> Result<RunPlan, ()> {
         let assignment = observed.assignment;
         let repos = self.registry_repos(assignment)?;
-        let credentials = repos
-            .values()
-            .filter_map(|repo| {
-                let secret = self.credentials.get(&repo.credential)?.clone();
-                Some((repo.credential.clone(), secret))
-            })
-            .collect();
         Ok(RunPlan {
             run_id: run_id.to_owned(),
             assignment: assignment.clone(),
             pipeline: self.config.pipelines[assignment.pipeline.as_str()].clone(),
             roles: self.config.roles.clone(),
-            repos,
             item,
             forge: observed.forge.clone(),
-            credentials,
+            credentials: scope::credentials(&repos, &self.credentials),
             identities: self.identities.clone(),
+            identity_forges: scope::identity_forges(&repos, &self.identity_forges),
+            repos,
             config_source: Some(self.config_source.clone()),
             plugin_sources: BTreeMap::new(),
             direct_agents: self.direct_agents.clone(),

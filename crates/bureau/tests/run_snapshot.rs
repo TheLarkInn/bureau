@@ -81,6 +81,7 @@ fn engine_discovers_and_rehydrates_unfinished_snapshot() {
         plan.forge.clone(),
         plan.credentials.clone(),
         BTreeMap::new(),
+        plan.identity_forges.clone(),
     );
     assert_eq!(
         (restored.run_id, restored.pipeline.name),
