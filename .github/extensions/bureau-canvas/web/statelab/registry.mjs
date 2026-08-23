@@ -372,6 +372,87 @@ function describeOp(op) {
   return op.op;
 }
 
+/**
+ * Why nothing reaches a state first.
+ *
+ * `EXCLUSIONS` records why a combination is not a state. Its counterpart was
+ * missing. A state that nothing arrives at is a claim about the product too,
+ * and the graph made every one of them the same claim — the bare words "a root
+ * of the DAG", which are true of the screen the canvas opens on and equally
+ * true of a tuple whose parent quietly failed to be a state. A reviewer could
+ * not tell those apart, and the second is the first's defect wearing its
+ * clothes.
+ *
+ * The count was worse than unattributed. It was carried in prose and asserted
+ * nowhere, so it drifted: the number claimed was 69 while the graph held 136.
+ * Deriving it here is what makes it capable of being wrong.
+ *
+ * Roots are taken over `ENTRY_TRANSITIONS`, not every edge. A return edge is
+ * the way back out of a screen this one opens, so arriving along it means the
+ * reader was already here — it is not a first arrival, and counting it as one
+ * made a landing's status depend on whether some child of it happened to
+ * appear in `REVERSIBLE`. Eleven states were hidden from the count that way:
+ * eight landings, the config and editor screens the canvas actually opens on,
+ * and three probes. `test/statelab.test.mjs` names that set and requires every
+ * one of them to be a root, so this paragraph cannot drift the way the count
+ * above it once did.
+ *
+ * The categories are ordered and the first match wins, so each state is named
+ * by the strongest fact about it: a saving field is intercepted *and* has a
+ * fixture its parent lacks, and "cannot be walked into" is the reason that
+ * matters. Three probes also satisfy `landing`, so the order is load-bearing
+ * rather than decorative, and `test/statelab.test.mjs` pins the resulting
+ * tally — a reordering that relabels those three fails there by name.
+ */
+export const ROOT_REASONS = [
+  {
+    id: "boot",
+    title: "a condition on the load itself",
+    why: "The whole content of this state is what happened to the page load — a payload held open, or a renderer module refused. There is no earlier screen for an edge to leave from, because the surface has not been drawn yet.",
+    holds: (state) => state.surface === "boot" || state.surface === "boot-editor",
+  },
+  {
+    id: "intercepted",
+    title: "reached by a route, not by a click",
+    why: "This state rides on a request interception installed before the page loads. A page already sitting on the parent screen cannot acquire that route, so an edge into it would name a transition the suite could not walk.",
+    holds: (state) => Boolean(state.intercept),
+  },
+  {
+    id: "probe",
+    title: "a hand-assembled crossing",
+    why: "A probe is written to cross two dimensions a scoping rule keeps apart, rather than enumerated from them, so its path is nobody's extension by construction.",
+    holds: (state) => state.kind === "probe",
+  },
+  {
+    id: "landing",
+    title: "where the reader arrives",
+    why: "Loading the page and publishing its fixture are the entire path. Nothing precedes it: this is the screen the canvas opens on for that config.",
+    holds: (state) => state.ops.filter(isAction).every((op) => op.op === "page" || op.op === "fixture"),
+  },
+  {
+    id: "fixture-differs",
+    title: "the screen above it publishes a different fixture",
+    why: "The clicks that reach this state are a real screen's clicks, but the fixture it needs is chosen by its deepest axis and the screen above it is enumerated with a different one. So the prefix names the route a reader really takes and still matches no state, and the suite walks the whole path from the load rather than claiming an edge it could not follow.",
+    holds: () => true,
+  },
+];
+
+/** The reason nothing reaches a state first. Ordered; the first match wins. */
+export function rootReason(state) {
+  return ROOT_REASONS.find((reason) => reason.holds(state));
+}
+
+const FIRST_ARRIVAL = new Set(ENTRY_TRANSITIONS.map((edge) => edge.to));
+
+/**
+ * Every state no entry edge reaches, each carrying the reason it has none.
+ * The counterpart to `EXCLUSIONS`, and reported the same way.
+ */
+export const ROOTS = STATES.filter((state) => !FIRST_ARRIVAL.has(state.id)).map((state) => ({
+  id: state.id,
+  reason: rootReason(state).id,
+}));
+
 /** What the PR body and the lab header both report. */
 export function summary() {
   return {
@@ -389,6 +470,7 @@ export function summary() {
     transitions: TRANSITIONS.length,
     entryTransitions: ENTRY_TRANSITIONS.length,
     returnTransitions: TRANSITIONS.length - ENTRY_TRANSITIONS.length,
+    roots: ROOTS.length,
   };
 }
 

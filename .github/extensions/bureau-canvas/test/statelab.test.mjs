@@ -23,7 +23,7 @@ import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -426,6 +426,105 @@ function hasCycle(edges) {
   };
   return [...next.keys()].some((node) => walk(node, new Set()));
 }
+
+/**
+ * `EXCLUSIONS` says why a combination is not a state. `ROOTS` says why nothing
+ * reaches one first — the same question asked of the graph rather than the
+ * product, and it went unasked for a while. The number it would have produced
+ * was carried in the PR body instead, where it was wrong and nothing could say
+ * so.
+ *
+ * The tally is pinned per category rather than merely totalled, because the
+ * categories overlap and their order is what resolves the overlap: three
+ * probes also satisfy `landing`, so listing `landing` first would relabel them
+ * "the screen the canvas opens on for that config", which is false of a
+ * hand-written crossing. A total alone survives that reordering unchanged —
+ * the three move between categories and the sum does not notice. Pinning the
+ * split is what makes the documented ordering load-bearing.
+ *
+ * Pinned numbers go stale by design: a new state that lands in a category has
+ * to be looked at, which is the review this registry exists to force.
+ *
+ * `RETURN_ONLY_ROOTS` is the other half, and it is the one that pins the
+ * *definition* rather than the arithmetic. These are the states a return edge
+ * arrives at and no entry edge does — eight landings and three probes. Under
+ * the all-edges definition this change replaced, every one of them was
+ * silently not a root. Asserting they are roots fails that revert by name;
+ * asserting merely that no root is entered does not, because the all-edges
+ * roots are a subset of these and so satisfy it too.
+ */
+const ROOT_TALLY = { boot: 4, intercepted: 72, probe: 22, landing: 30, "fixture-differs": 8 };
+const RETURN_ONLY_ROOTS = 11;
+
+test("every state nothing reaches first is attributed, and the books balance", () => {
+  const entered = new Set(ENTRY_TRANSITIONS.map((edge) => edge.to));
+  const roots = STATES.filter((state) => !entered.has(state.id));
+  const rootIds = new Set(ROOTS.map((root) => root.id));
+  const returnOnly = roots.filter((state) => TRANSITIONS.some((edge) => edge.to === state.id));
+  const tally = Object.fromEntries(
+    ROOT_REASONS.map((reason) => [reason.id, ROOTS.filter((root) => root.reason === reason.id).length]),
+  );
+
+  assert.deepStrictEqual(
+    {
+      tally,
+      countsAgree: ROOTS.length === roots.length && ROOTS.length === summary().roots,
+      returnOnly: returnOnly.length,
+      returnOnlyAreRoots: returnOnly.every((state) => rootIds.has(state.id)),
+      everyCategoryExplainsItself: ROOT_REASONS.every((reason) => Boolean(reason.title && reason.why)),
+    },
+    {
+      tally: ROOT_TALLY,
+      countsAgree: true,
+      returnOnly: RETURN_ONLY_ROOTS,
+      returnOnlyAreRoots: true,
+      everyCategoryExplainsItself: true,
+    },
+  );
+});
+
+/**
+ * The catch-all makes a specific claim — that the clicks reaching these states
+ * are some real screen's clicks, and only the published fixture differs — and
+ * a catch-all is where an untrue claim hides, because it absorbs whatever the
+ * named categories did not.
+ *
+ * So it is checked rather than trusted. Blinding the fixture's value alone is
+ * not enough to discriminate: 17 of the probe roots satisfy that too, and
+ * would be absorbed with a reason that is false of them, since a probe's
+ * fixture is hand-written rather than chosen by an axis. `kind === "matrix"`
+ * is the gate that does that work.
+ *
+ * The fixture comparison is kept for what it documents rather than what it
+ * decides: for a root it cannot change an outcome, because `blind` erases only
+ * the fixture op's *value*, so a blinded match with an equal fixture would be
+ * an exact match — which `nearestParent` would have found, giving the state an
+ * entry edge and disqualifying it as a root. It records the half of the claim
+ * that the state's own rootness already guarantees.
+ */
+test("the catch-all root category names a cause that really holds", () => {
+  const blind = (ops) => JSON.stringify(ops.map((op) => (op.op === "fixture" ? { op: "fixture" } : op)));
+  const byBlindPath = new Map(STATES.map((state) => [blind(state.ops.filter(isAction)), state]));
+  const fixtureOf = (state) => JSON.stringify([].concat(state.fixture ?? []));
+  const explains = (state) => {
+    const acting = state.ops.filter(isAction);
+    return acting.slice(1).some((_, index) => {
+      const ancestor = byBlindPath.get(blind(acting.slice(0, acting.length - 1 - index)));
+      return Boolean(ancestor) && fixtureOf(ancestor) !== fixtureOf(state);
+    });
+  };
+  const caught = ROOTS.map((root) => STATES.find((state) => state.id === root.id))
+    .filter((state) => rootReason(state).id === "fixture-differs");
+  const unexplained = caught.filter((state) => state.kind !== "matrix" || !explains(state));
+
+  // `caught` is asserted non-empty by name rather than against itself: a
+  // category that has stopped catching anything would make the second half
+  // vacuously true, which is the failure this whole test exists to refuse.
+  assert.deepStrictEqual(
+    { catchesSomething: caught.length > 0, unexplained: unexplained.map((state) => state.id) },
+    { catchesSomething: true, unexplained: [] },
+  );
+});
 
 test("every scoping rule is held to account by a crossing probe that really breaks it", () => {  const probes = STATES.filter((state) => state.kind === "probe");
   const crossings = probes.filter((state) => state.rule);
