@@ -12,7 +12,7 @@
 // recorded rather than silently dropped.
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, stepFor } from "./paths.mjs";
+import { FIELD_SAVE, RUN_END, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -904,14 +904,28 @@ const edit = {
      * cascading — leaving the sample's referrers pointing at a name no step has
      * — would have passed here. This is the same shape `delete-confirm` was
      * given one round earlier, for the same reason: one path, two screens.
+     *
+     * Neither half asserted *the rename*, though, and for a decision o
+     * concurrent step that left this state's whole expectation identical to
+     * `created`'s — dirty, unwired, Save offered — which is exactly the screen
+     * the path arrives from. The `created → renamed` edge could not fail: the
+     * commit is on the input's Enter handler, so deleting that handler leaves
+     * the name uncommitted and every one of those assertions still true.
+     *
+     * So the committed name is read off the graph, where a name only appears
+     * once the editor has taken it, and the name it was renamed *from* is
+     * asserted gone. An Enter that stops committing now fails by name, at both
+     * viewports, for all four step kinds.
      */
     {
       id: "renamed",
       summary: "a step renamed — cascading to its referrers when the fixture drew it, still unwired when it had to be added first",
       shows: [S.editorDiscard, offered(S.editorSave)],
-      derive: (combo) => (SAMPLE_STEPS[combo.pick]
-        ? { copy: [{ selector: S.editorStatus, text: "unsaved edits" }], hides: [S.editorIssues] }
-        : { shows: [S.editorIssues] }),
+      derive: (combo) => ({
+        shows: [editorCardFor(renamedStep(combo.pick)), ...(SAMPLE_STEPS[combo.pick] ? [] : [S.editorIssues])],
+        hides: [editorCardFor(stepFor(combo.pick)), ...(SAMPLE_STEPS[combo.pick] ? [S.editorIssues] : [])],
+        copy: SAMPLE_STEPS[combo.pick] ? [{ selector: S.editorStatus, text: "unsaved edits" }] : [],
+      }),
     },
     {
       id: "delete-confirm",

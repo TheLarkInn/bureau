@@ -356,8 +356,15 @@ function describeOp(op) {
   if (op.op === "click") {
     return `click ${op.selector}`;
   }
-  if (op.op === "fill" || op.op === "select") {
+  // `press` belongs here rather than in the fall-through it used to take: an
+  // edge labelled a bare "press" named neither the control nor the key, so
+  // "fill the name → press" described renaming a step without saying what
+  // committed it, or to what.
+  if (op.op === "fill" || op.op === "select" || op.op === "press") {
     return `${op.op} ${op.selector} = ${JSON.stringify(op.value)}`;
+  }
+  if (op.op === "drag") {
+    return `drag ${op.selector} by ${op.dx},${op.dy}`;
   }
   if (op.op === "fixture") {
     return `publish ${[].concat(op.value).join(" + ")}`;

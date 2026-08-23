@@ -373,10 +373,23 @@ export const FIELD_LIFECYCLE = Object.fromEntries(
   ]),
 );
 
+/**
+ * The name a rename commits.
+ *
+ * Shared by the path that types it and the expectation that reads it back off
+ * the graph, because those two drifting apart is the one way the rename
+ * assertion could go quiet: an expectation naming a card no path produces
+ * would fail always, and one naming the card the path started from would fail
+ * never.
+ */
+export function renamedStep(kind) {
+  return `${kind}-renamed`;
+}
+
 /** How the editor is driven into each mutation state, per selected step kind. */
 const renamedPath = (kind) => [
   ...selectStep(kind),
-  { op: "fill", selector: S.editorStepName, value: `${kind}-renamed` },
+  { op: "fill", selector: S.editorStepName, value: renamedStep(kind) },
   { op: "press", selector: S.editorStepName, value: "Enter" },
 ];
 

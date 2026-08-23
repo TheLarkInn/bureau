@@ -708,14 +708,39 @@ function describeOp(op) {
   if (op.op === "click") {
     return `click ${op.selector}`;
   }
-  if (op.op === "fill" || op.op === "select") {
+  if (op.op === "fill" || op.op === "select" || op.op === "press") {
     return `${op.op} ${op.selector} = ${JSON.stringify(op.value)}`;
+  }
+  if (op.op === "drag") {
+    return `drag ${op.selector} by ${op.dx},${op.dy}`;
   }
   if (op.op === "fixture") {
     return `publish ${[].concat(op.value).join(" + ")}`;
   }
   return op.op;
 }
+
+/**
+ * The label check above rebuilds the text with a copy of the registry's own
+ * formatter, so on the *format* half the two agree by construction: an op kind
+ * the formatter drops is dropped identically on both sides and nothing fails.
+ * That is not hypothetical — `press` fell through to a bare "press" for exactly
+ * this reason, and the copy here fell through with it, so "fill the name →
+ * press" passed while naming neither the key nor the control it went to.
+ *
+ * So this holds labels to the property the formatter exists to have, rather
+ * than to a second copy of the formatter: whatever an operation acts on, and
+ * whatever value it uses, the label says so. A new op kind added to the
+ * vocabulary and not to `describeOp` fails here on the day it is used, which is
+ * the case the duplicated version can never reach.
+ */
+test("every edge label names the selector each operation acts on and the value it uses", () => {
+  const lossy = TRANSITIONS.flatMap((edge) => edge.delta
+    .filter(isAction)
+    .filter((op) => [op.selector, ...[].concat(op.value ?? [])].some((part) => part && !edge.via.includes(part)))
+    .map((op) => `${edge.from} -> ${edge.to}: ${op.op} in ${JSON.stringify(edge.via)}`));
+  assert.deepStrictEqual(lossy, []);
+});
 
 /**
  * The registry addresses the replay timeline by the span of the run it is
