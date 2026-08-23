@@ -66,6 +66,16 @@ fn write(dir: &Path, name: &str, text: &str) {
     std::fs::write(path, text).expect("write fixture");
 }
 
+/// The committed pipeline's steps, in order.
+const COMMITTED_STEPS: [&str; 6] = [
+    "implement",
+    "verify",
+    "review",
+    "repair",
+    "reverify",
+    "rereview",
+];
+
 #[test]
 fn committed_config_json_contains_pipeline_steps_in_order() {
     let output = validate_json(&repo_root().join(".bureau"));
@@ -82,12 +92,7 @@ fn committed_config_json_contains_pipeline_steps_in_order() {
     );
     assert_eq!(
         got,
-        (
-            true,
-            String::new(),
-            Some(true),
-            vec!["implement", "verify", "review"]
-        )
+        (true, String::new(), Some(true), COMMITTED_STEPS.to_vec())
     );
 }
 

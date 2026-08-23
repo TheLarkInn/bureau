@@ -92,6 +92,15 @@ git. `settings.yaml` declares exactly where each reference resolves:
 - one exact file; or
 - one credential directory containing a file named after the reference.
 
+A credential may also declare the forge `identity` it must authenticate
+as. Before a run spawns anything, each credential its repos require is
+checked against the forge: a refused value fails the run as invalid or
+expired, and a value belonging to another account fails it as a wrong
+identity, naming the reference and both identities. Declaring no
+`identity` verifies the value and matches it against no name. The check
+runs once per run and its result is pinned in the run log, so a later
+change to the source cannot change a running run's identity.
+
 Values are scrubbed from everything written to the run log.
 
 ## Inspect and control runs

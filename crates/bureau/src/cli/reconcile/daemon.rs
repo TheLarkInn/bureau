@@ -19,6 +19,7 @@ use super::{ResolvedArgs, build};
 struct Revision {
     config: Config,
     credentials: BTreeMap<String, Secret>,
+    identities: BTreeMap<String, String>,
     forges: BTreeMap<String, Arc<dyn Forge>>,
     label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     source: ConfigSource,
@@ -32,6 +33,7 @@ fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>)
     Revision {
         config: active.config,
         credentials,
+        identities: build::identities(settings),
         forges,
         label_forges,
         source: ConfigSource {
@@ -94,6 +96,7 @@ impl Daemon {
             label_forges: revision.label_forges.clone(),
             engine: self.engine.clone(),
             credentials: revision.credentials.clone(),
+            identities: revision.identities.clone(),
             config_source: revision.source.clone(),
             direct_agents: revision.direct_agents.clone(),
         }
@@ -136,7 +139,8 @@ impl Daemon {
             Ok(forge) => forge,
             Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
         };
-        let mut plan = rehydrate(snapshot, forge, credentials);
+        let identities = build::identities(self.settings.as_ref());
+        let mut plan = rehydrate(snapshot, forge, credentials, identities);
         plan.lease = Some(owner);
         Ok(Some(bureau::reconcile::resume(
             self.engine.clone(),

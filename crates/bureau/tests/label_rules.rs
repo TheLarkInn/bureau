@@ -98,6 +98,7 @@ impl World {
             label_forges: BTreeMap::from([(rule_name, forge.clone() as Arc<dyn LabelForge>)]),
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::new(),
+            identities: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         };

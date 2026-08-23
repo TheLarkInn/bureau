@@ -1,6 +1,7 @@
 //! Production diagnostics backed only by local files and process metadata.
 
 mod config;
+mod identity;
 mod recovery;
 mod system;
 
@@ -12,6 +13,7 @@ use crate::home::{Environment, Layout};
 use crate::setup::{Settings, load_settings};
 
 use super::{Area, Effects, Observation};
+pub use identity::{CredentialIdentity, IdentityTarget};
 
 /// The executable search path from the process environment, read
 /// through the lifecycle crate's environment boundary.
@@ -40,13 +42,21 @@ pub(super) fn replay_run_read_only(
     recovery::replay_run_read_only(directory)
 }
 
+/// The process facts one doctor run observed: where executables are
+/// searched for, and which environment variables exist — names only,
+/// never values.
+pub(super) struct SystemFacts {
+    pub(super) search_path: Vec<PathBuf>,
+    pub(super) environment_names: BTreeSet<OsString>,
+}
+
 /// Read-only production doctor effects for one resolved local layout.
 pub struct LocalEffects {
     pub(super) layout: Layout,
     pub(super) settings: Result<Settings, String>,
-    pub(super) search_path: Vec<PathBuf>,
-    pub(super) environment_names: BTreeSet<OsString>,
+    pub(super) system: SystemFacts,
     pub(super) plugin_root: PathBuf,
+    pub(super) identities: Vec<CredentialIdentity>,
 }
 
 impl LocalEffects {
@@ -56,23 +66,34 @@ impl LocalEffects {
         Self {
             layout: layout.clone(),
             settings: load_settings(layout.settings()).map_err(|error| error.to_string()),
-            search_path: system_search_path(),
-            environment_names: environment_names(),
+            system: SystemFacts {
+                search_path: system_search_path(),
+                environment_names: environment_names(),
+            },
             plugin_root: bundled_plugin_root(),
+            identities: Vec::new(),
         }
+    }
+
+    /// Adopts credential identity results the caller verified. Nothing
+    /// injected means nothing was verified, which the report says.
+    #[must_use]
+    pub fn identities(mut self, results: Vec<CredentialIdentity>) -> Self {
+        self.identities = results;
+        self
     }
 
     /// Overrides executable search paths for a contained environment.
     #[must_use]
     pub fn search_path(mut self, value: &OsStr) -> Self {
-        self.search_path = std::env::split_paths(value).collect();
+        self.system.search_path = std::env::split_paths(value).collect();
         self
     }
 
     /// Overrides the captured environment-variable names without values.
     #[must_use]
     pub fn environment_names(mut self, names: impl IntoIterator<Item = OsString>) -> Self {
-        self.environment_names = names.into_iter().collect();
+        self.system.environment_names = names.into_iter().collect();
         self
     }
 
@@ -86,6 +107,13 @@ impl LocalEffects {
     pub(super) fn settings(&self) -> Result<&Settings, String> {
         self.settings.as_ref().map_err(Clone::clone)
     }
+
+    /// Loaded local settings, for a caller that must resolve credentials
+    /// before the read-only machine runs. Absent when they did not load.
+    #[must_use]
+    pub fn local_settings(&self) -> Option<&Settings> {
+        self.settings.as_ref().ok()
+    }
 }
 
 impl Effects for LocalEffects {
@@ -95,6 +123,7 @@ impl Effects for LocalEffects {
             Area::ConfigSource => self.inspect_config_source(),
             Area::Repositories => self.inspect_repositories(),
             Area::CredentialReferences => self.inspect_credentials(),
+            Area::CredentialIdentity => Ok(self.inspect_identity()),
             Area::Adapters => self.inspect_adapters(),
             Area::PluginsAndMcp => Ok(self.inspect_plugin()),
             Area::RecoveryState => self.inspect_recovery(),

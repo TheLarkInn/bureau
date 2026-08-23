@@ -104,6 +104,7 @@ credentials:
   github-main:
     source: environment        # read the value from one environment variable
     variable: GH_TOKEN
+    identity: bureau-bot       # optional: the account it must authenticate as
   ado-main:
     source: file               # read the value from one exact file
     path: /run/secrets/ado-pat
@@ -115,6 +116,26 @@ credentials:
 Values are injected into step environments scoped by the role's permissions
 and are scrubbed from everything written to the run log. A step missing a
 required credential fails *before* spawn, naming the reference.
+
+### Identity, verified before the first spawn
+
+Presence is not correctness. Before a run spawns anything, every credential
+its repos require is checked against the forge itself:
+
+- a value the forge refuses fails the run as **invalid or expired**;
+- a value that authenticates as another account fails it as a **wrong
+  identity**, naming the reference, the declared identity, and the observed
+  one — never the value;
+- a credential with no `identity` is verified as usable and matched against
+  no name, because omission stays permissive.
+
+The check runs once per run, not once per step, and the verified identity is
+recorded in `run_started` and pinned there: changing the underlying source
+mid-run cannot change the identity the run is already using. `bureau doctor`
+performs the same check read-only and reports one line per credential;
+`bureau validate` reports an `identity` declared for a credential no repo
+references. Under the `fake` forge nothing is verified unless a test opts in,
+so the offline suite stays offline.
 
 ### No token in git, no clicking
 

@@ -161,10 +161,9 @@ fn repo(url: &str) -> Repo {
 }
 
 fn config(url: &str, limits: Limits) -> Config {
-    let steps = vec![det_step("edit", "echo changed >> file.txt", Some("done"))];
     let pipeline = Pipeline {
         name: "fix".to_owned(),
-        steps,
+        steps: vec![det_step("edit", "echo changed >> file.txt", Some("done"))],
     };
     Config {
         repos: BTreeMap::from([("main".to_owned(), repo(url))]),
@@ -214,6 +213,7 @@ impl Rig {
             item: item("42"),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new(secret))]),
+            identities: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),
@@ -231,6 +231,7 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
         label_forges: BTreeMap::new(),
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+        identities: BTreeMap::new(),
         config_source: ConfigSource {
             remote: "fixture".to_owned(),
             reference: "main".to_owned(),
@@ -275,11 +276,8 @@ impl Daemons {
 
     /// How many live leases the shared file records.
     pub fn live_leases(&self) -> usize {
-        self.left
-            .state
-            .active(ASSIGNMENT)
-            .expect("active leases")
-            .len()
+        let leases = self.left.state.active(ASSIGNMENT);
+        leases.expect("active leases").len()
     }
 
     /// Open PRs the assignment's observation would see.

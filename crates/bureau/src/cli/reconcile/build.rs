@@ -111,6 +111,12 @@ pub(super) fn credentials(
         .collect()
 }
 
+/// The identity each declared credential must authenticate as. Without
+/// settings there is no declaration to enforce, so nothing is expected.
+pub(super) fn identities(settings: Option<&bureau::setup::Settings>) -> BTreeMap<String, String> {
+    settings.map_or_else(BTreeMap::new, bureau::setup::Settings::declared_identities)
+}
+
 pub(super) fn credentials_for_repos(
     repos: &BTreeMap<String, Repo>,
     settings: Option<&bureau::setup::Settings>,

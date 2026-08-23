@@ -2,10 +2,11 @@
 
 mod observe;
 mod start;
+mod wait;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use tokio::task::JoinHandle;
 
@@ -89,30 +90,6 @@ const fn forge_key(forge: ForgeKind) -> &'static str {
     }
 }
 
-/// The interval ± 25%, derived from the process clock's nanoseconds.
-/// The clock read is the boundary: bound once as a function pointer so
-/// this stays the single site naming the process clock.
-fn jittered(interval: Duration) -> Duration {
-    let now = SystemTime::now;
-    let nanos = now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |since| since.subsec_nanos());
-    let base = interval.as_nanos();
-    let spread = (base / 4).max(1);
-    let shifted = base.saturating_sub(spread) + u128::from(nanos) % (2 * spread + 1);
-    Duration::from_nanos(u64::try_from(shifted).unwrap_or(u64::MAX))
-}
-
-/// Sleeps a jittered interval, returning early on a wake; a closed channel degrades to plain sleeps.
-async fn wait(interval: Duration, wake: &mut tokio::sync::mpsc::Receiver<()>) {
-    let Ok(woken) = tokio::time::timeout(jittered(interval), wake.recv()).await else {
-        return; // the jittered interval elapsed
-    };
-    if woken.is_none() {
-        tokio::time::sleep(interval).await;
-    }
-}
-
 /// Restarts one already-owned durable plan through the standard run wrapper.
 #[must_use]
 pub fn resume(engine: Arc<Engine>, state: Arc<Store>, plan: RunPlan) -> Started {
@@ -150,6 +127,9 @@ pub struct Reconciler {
     /// Credentials keyed by registry credential name, resolved once at
     /// startup from the daemon's environment.
     pub credentials: BTreeMap<String, Secret>,
+    /// Identity each credential must authenticate as, declared in local
+    /// settings and checked once per run before anything spawns.
+    pub identities: BTreeMap<String, String>,
     /// Exact committed config revision for newly claimed runs.
     pub config_source: crate::runlog::ConfigSource,
     /// Pinned direct-agent bytes keyed by role name.
@@ -192,7 +172,7 @@ impl Reconciler {
     pub async fn run_loop(&self, interval: Duration, mut wake: tokio::sync::mpsc::Receiver<()>) {
         loop {
             let _pass = self.reconcile_once().await;
-            wait(interval, &mut wake).await;
+            wait::wait(interval, &mut wake).await;
         }
     }
 
@@ -272,6 +252,7 @@ impl Reconciler {
             item,
             forge: observed.forge.clone(),
             credentials,
+            identities: self.identities.clone(),
             config_source: Some(self.config_source.clone()),
             plugin_sources: BTreeMap::new(),
             direct_agents: self.direct_agents.clone(),

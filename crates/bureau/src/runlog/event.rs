@@ -1,5 +1,7 @@
 //! Run-log events and their typed payloads (DESIGN.md layer 3).
 
+use std::collections::BTreeMap;
+
 use super::{RunSnapshot, RunTerminal, TerminalDisposition};
 use crate::adapters::{Execution, Usage};
 use crate::contract::{StepOutcome, StepResult};
@@ -63,6 +65,10 @@ pub struct RunStartedData {
     /// Immutable plan snapshot for automatic restart.
     #[serde(default)]
     pub snapshot: Option<RunSnapshot>,
+    /// Forge identity per credential reference, verified before the run
+    /// spawned anything and pinned here for the run's life.
+    #[serde(default)]
+    pub identities: BTreeMap<String, String>,
 }
 /// Payload of an `output` event: one scrubbed chunk of a stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +164,7 @@ pub fn run_started(run_id: &str, assignment: &str) -> serde_json::Value {
         assignment: assignment.to_owned(),
         item: None,
         snapshot: None,
+        identities: BTreeMap::new(),
     })
 }
 
@@ -169,17 +176,23 @@ pub fn run_started_for_item(run_id: &str, assignment: &str, item: &str) -> serde
         assignment: assignment.to_owned(),
         item: Some(item.to_owned()),
         snapshot: None,
+        identities: BTreeMap::new(),
     })
 }
 
-/// Builds a `run_started` payload with the complete immutable plan.
+/// Builds a `run_started` payload with the complete immutable plan and
+/// the forge identities verified before the run spawned anything.
 #[must_use]
-pub fn run_started_snapshot(snapshot: &RunSnapshot) -> serde_json::Value {
+pub fn run_started_snapshot(
+    snapshot: &RunSnapshot,
+    identities: &BTreeMap<String, String>,
+) -> serde_json::Value {
     to_value(&RunStartedData {
         run_id: snapshot.run_id.clone(),
         assignment: snapshot.assignment.name.clone(),
         item: Some(snapshot.item.external_id.clone()),
         snapshot: Some(snapshot.clone()),
+        identities: identities.clone(),
     })
 }
 

@@ -6,10 +6,11 @@
 //! and not loading, which is also `deny_unknown_fields`, stem-must-equal-name,
 //! and a non-recursive `read_dir`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use bureau::ConfigError;
-use bureau::config::Config;
+use bureau::config::{Config, validate_identities};
 
 use super::out;
 
@@ -29,29 +30,50 @@ fn report_errors(errors: &[ConfigError]) -> i32 {
     1
 }
 
-fn human_report(dir: &Path) -> i32 {
+/// Identity declarations from this machine's settings, when it has any.
+/// `validate` also runs against a bare config checkout, so an absent or
+/// unreadable settings file simply declares nothing.
+fn declared_identities() -> BTreeMap<String, String> {
+    bureau::home::Home::discover()
+        .ok()
+        .and_then(|home| bureau::setup::load_settings(home.layout().settings()).ok())
+        .as_ref()
+        .map_or_else(BTreeMap::new, bureau::setup::Settings::declared_identities)
+}
+
+/// The loaded config and every error in one pass: the config repo's own
+/// rules, then the settings-side identity declarations it must support.
+fn loaded(dir: &Path) -> (Option<Config>, Vec<ConfigError>) {
     match Config::load(dir) {
         Ok(config) => {
-            out::line(format_args!(
-                "config ok: {} repos, {} roles, {} assignments",
-                config.repos.len(),
-                config.roles.len(),
-                config.assignments.len()
-            ));
-            0
+            let errors = validate_identities(&config, &declared_identities());
+            (Some(config), errors)
         }
-        Err(errors) => report_errors(&errors),
+        Err(errors) => (None, errors),
     }
 }
 
+fn human_report(dir: &Path) -> i32 {
+    let (config, errors) = loaded(dir);
+    let Some(config) = config.filter(|_| errors.is_empty()) else {
+        return report_errors(&errors);
+    };
+    out::line(format_args!(
+        "config ok: {} repos, {} roles, {} assignments",
+        config.repos.len(),
+        config.roles.len(),
+        config.assignments.len()
+    ));
+    0
+}
+
 fn json_report(dir: &Path) -> anyhow::Result<i32> {
-    let loaded = Config::load(dir);
-    let errors = loaded.as_ref().err().map_or(&[][..], Vec::as_slice);
+    let (config, errors) = loaded(dir);
     let document = Document {
         ok: errors.is_empty(),
         dir: dir.display().to_string(),
-        errors,
-        config: loaded.as_ref().ok(),
+        errors: &errors,
+        config: config.as_ref(),
     };
     out::line(format_args!("{}", serde_json::to_string(&document)?));
     Ok(i32::from(!errors.is_empty()))

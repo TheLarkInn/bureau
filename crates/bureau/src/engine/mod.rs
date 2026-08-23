@@ -36,7 +36,9 @@ mod edge;
 mod execute;
 mod finalize;
 mod gitcmd;
+mod identity;
 mod machine;
+mod open;
 mod panic;
 mod plugins;
 mod recovery;
@@ -79,6 +81,9 @@ pub struct RunPlan {
     pub forge: Arc<dyn Forge>,
     /// Credentials keyed by registry credential name, resolved pre-spawn.
     pub credentials: BTreeMap<String, Secret>,
+    /// Identity each credential must authenticate as, declared in local
+    /// settings. A reference absent here is verified as valid only.
+    pub identities: BTreeMap<String, String>,
     /// Exact committed config source for this run.
     pub config_source: Option<crate::runlog::ConfigSource>,
     /// Exact plugin snapshots keyed by plugin name.
@@ -113,6 +118,7 @@ pub fn rehydrate(
     snapshot: RunSnapshot,
     forge: Arc<dyn Forge>,
     credentials: BTreeMap<String, Secret>,
+    identities: BTreeMap<String, String>,
 ) -> RunPlan {
     RunPlan {
         run_id: snapshot.run_id,
@@ -123,6 +129,7 @@ pub fn rehydrate(
         item: snapshot.item,
         forge,
         credentials,
+        identities,
         config_source: snapshot.config_source,
         plugin_sources: snapshot.plugin_sources,
         direct_agents: snapshot.direct_agents,

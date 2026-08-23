@@ -12,6 +12,7 @@ mod source;
 mod source_tree;
 mod validate;
 mod validate_concurrent;
+mod validate_identity;
 mod validate_label_rule;
 mod validate_pipeline;
 
@@ -23,6 +24,7 @@ pub use label_rule::{LabelRule, LabelRuleCondition, LabelRuleLimits, LabelRuleWo
 pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
 pub use source::GitSource;
 pub use validate::{validate, validate_pipelines};
+pub use validate_identity::validate_identities;
 
 /// A validated, activated configuration source.
 pub type ActivatedConfig = source::Activated;

@@ -10,7 +10,8 @@ use bureau::git::CheckoutCache;
 use bureau::home::{Directory, Home, Layout};
 use bureau::runlog::{self, EventKind, RunLog};
 use bureau::setup::{
-    ConfigSource, CredentialSource, MigrationSettings, PluginSettings, Settings, save_settings,
+    ConfigSource, Credential, CredentialSource, MigrationSettings, PluginSettings, Settings,
+    save_settings,
 };
 use bureau::state::Store;
 
@@ -56,7 +57,7 @@ impl Fixture {
                 remote: "https://example.invalid/config.git".to_owned(),
                 reference: "main".to_owned(),
             },
-            credentials: BTreeMap::from([("work".to_owned(), credential)]),
+            credentials: BTreeMap::from([("work".to_owned(), Credential::new(credential))]),
             plugin: PluginSettings::default(),
             migration: MigrationSettings::default(),
         };

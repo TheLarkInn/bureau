@@ -189,17 +189,17 @@ impl World {
     /// A world whose pipeline runs `run` and whose budget is `limits`.
     pub fn new(ids: &[&str], run: &str, limits: Limits) -> Self {
         let dir = TestDir::new();
-        let repo = repo(&dir.0);
         let items = ids.iter().map(|id| item(id)).collect();
         let forge = Arc::new(FakeForge::new(items));
         let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
         let reconciler = Arc::new(Reconciler {
-            config: config(repo, run, limits),
+            config: config(repo(&dir.0), run, limits),
             state: store.clone(),
             forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
             label_forges: BTreeMap::new(),
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            identities: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });

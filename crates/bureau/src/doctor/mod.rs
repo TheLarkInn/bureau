@@ -6,7 +6,7 @@ pub(crate) mod state_db;
 pub use bureau_lifecycle::doctor::{
     Area, Diagnostic, Effects, Error, Machine, Observation, Report, Status, run,
 };
-pub use local::LocalEffects;
+pub use local::{CredentialIdentity, IdentityTarget, LocalEffects};
 pub use state_db::active_lease_count;
 
 /// A read-only inspection of local durable state failed.

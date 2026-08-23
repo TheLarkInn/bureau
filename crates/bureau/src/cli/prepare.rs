@@ -90,6 +90,18 @@ pub fn work_forge(
     })
 }
 
+/// The client for one registered repo, signed with `token`: the same
+/// forge the repo lives on, at the API root its URL implies.
+///
+/// # Errors
+/// Returns an error when the repo URL is not a supported reference.
+pub fn repo_forge(repo: &Repo, token: Secret) -> anyhow::Result<Arc<dyn Forge>> {
+    Ok(match repo.forge {
+        ForgeKind::Github => Arc::new(GitHubForge::for_repo(token, &repo.url)?),
+        ForgeKind::Ado => Arc::new(AdoForge::new(ado_base_url(&repo.url), token)),
+    })
+}
+
 /// Whether an external id names `query`: exactly (a `retry` reuses the
 /// recorded id), or by `#<id>` / `/<id>` suffix — the id's repo context
 /// is embedded (`owner/repo#42`, `project/42`).

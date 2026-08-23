@@ -485,6 +485,12 @@ Requirements, all testable with `/bin/sh` and no model:
   setting a sentinel var in the test process and asserting the child cannot see it.
 - A missing required credential fails **before spawn**, with the credential name in
   the error.
+- **A resolved forge credential is verified before spawn**, once per run: the forge
+  reports who the value authenticates as, a refused value fails as "invalid or
+  expired", and an account other than the one the credential's optional `identity`
+  declares fails as a wrong identity, naming the reference and both identities. The
+  verified identity is recorded in `run_started` and pinned for the run. No credential
+  value appears in any of those messages.
 - **Timeout hard-kills the process group**, so orphaned children die too. Use
   `std::os::unix::process::CommandExt::process_group(0)` at spawn, then signal the
   negated pgid on timeout. Killing only the direct child leaves grandchildren alive —
@@ -1159,8 +1165,15 @@ fixed or AI-authored first pipeline. It previews and validates config, creates
 a config PR, waits for merge, validates the merged commit, runs one reconcile
 pass, and waits for its outcomes. It never runs unmerged config.
 
-`doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
-and recovery state. `repair` may restore directories/permissions, disposable
+Each credential in `settings.yaml` may also declare the forge `identity` it
+must authenticate as; omitting it verifies the value and matches it against no
+name. `bureau validate` reports an `identity` declared for a credential no repo
+references.
+
+`doctor` checks local state, config, repos, credentials, credential identity,
+adapters, plugins/MCP, and recovery state. Its identity check is the same
+read-only verification a run performs before spawn, reported per credential.
+`repair` may restore directories/permissions, disposable
 caches, the same plugin version, stale activation, expired ownership, orphan
 worktrees, and derived state. It never changes reviewed policy, credentials,
 plugin versions, live work, or durable history.

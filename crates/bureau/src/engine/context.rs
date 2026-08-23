@@ -55,6 +55,9 @@ pub(super) struct RunCtx {
     pub(super) start: edge::Route,
     /// Whether the immutable run snapshot is already durable.
     pub(super) started: bool,
+    /// Forge identity per credential, verified once before the first
+    /// spawn and pinned into `run_started`.
+    pub(super) verified: BTreeMap<String, String>,
 }
 
 impl RunCtx {
@@ -125,6 +128,7 @@ pub(super) fn run_ctx(
         deadline,
         start: history.start,
         started: history.started,
+        verified: BTreeMap::new(),
     }
 }
 

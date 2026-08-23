@@ -118,7 +118,8 @@ impl LocalEffects {
     }
 
     pub(super) fn binary_available(&self, binary: &str) -> bool {
-        self.search_path
+        self.system
+            .search_path
             .iter()
             .map(|directory| directory.join(binary))
             .any(|path| executable(&path))

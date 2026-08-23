@@ -52,6 +52,7 @@ impl World {
                 dir.path().join("cache"),
             )),
             credentials: credentials(),
+            identities: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });
@@ -153,6 +154,7 @@ impl EngineRig {
             item: fixtures::item("42"),
             forge: self.forge.clone(),
             credentials,
+            identities: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),

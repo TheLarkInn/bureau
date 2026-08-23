@@ -6,7 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 
-use bureau::doctor::{self, Area, LocalEffects, Status};
+use bureau::doctor::{self, Area, CredentialIdentity, LocalEffects, Status};
 use bureau::setup::CredentialSource;
 
 use local_effects_support::{Fixture, SECRET_TEXT};
@@ -14,7 +14,9 @@ use local_effects_support::{Fixture, SECRET_TEXT};
 #[test]
 fn local_doctor_inspects_all_areas_without_exposing_credentials() {
     let fixture = healthy_fixture("doctor-healthy");
-    let effects = LocalEffects::new(fixture.layout()).search_path(fixture.bin.as_os_str());
+    let effects = LocalEffects::new(fixture.layout())
+        .search_path(fixture.bin.as_os_str())
+        .identities(vec![CredentialIdentity::verified("work", "bureau-bot")]);
     let report = doctor::run(&effects);
     let statuses: Vec<_> = report
         .diagnostics()
@@ -25,6 +27,35 @@ fn local_doctor_inspects_all_areas_without_exposing_credentials() {
     assert_eq!(
         (statuses, output.contains(SECRET_TEXT)),
         (Area::ALL.map(|area| (area, Status::Ok)).to_vec(), false)
+    );
+}
+
+/// Identity verification is the caller's read-only job: with nothing
+/// injected the area says so, and injected results are reported per
+/// credential, wrong-identity detail included.
+#[test]
+fn credential_identity_reports_injected_results_per_reference() {
+    let fixture = healthy_fixture("doctor-identity");
+    let unverified = LocalEffects::new(fixture.layout()).search_path(fixture.bin.as_os_str());
+    let mismatched = LocalEffects::new(fixture.layout())
+        .search_path(fixture.bin.as_os_str())
+        .identities(vec![
+            CredentialIdentity::verified("work", "bureau-bot"),
+            CredentialIdentity::failed("other", "authenticates as `someone-else`"),
+        ]);
+    let silent = diagnostic(&doctor::run(&unverified), Area::CredentialIdentity).clone();
+    let report = doctor::run(&mismatched);
+    let reported = diagnostic(&report, Area::CredentialIdentity);
+    assert_eq!(
+        (
+            silent.status,
+            reported.status,
+            reported
+                .message
+                .contains("work: authenticates as `bureau-bot`"),
+            reported.message.contains("someone-else")
+        ),
+        (Status::Warning, Status::Error, true, true)
     );
 }
 

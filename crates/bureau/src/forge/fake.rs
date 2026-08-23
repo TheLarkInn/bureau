@@ -11,7 +11,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 
-use super::{Dependency, Error, Forge, Item, LabelForge, Pr, PrRequest, PrStatus};
+use super::{Dependency, Error, Forge, Identity, Item, LabelForge, Pr, PrRequest, PrStatus};
+use crate::process::Secret;
 
 /// Lock that survives a poisoned mutex: a panicking test must not cascade
 /// into misleading secondary failures.
@@ -50,6 +51,7 @@ pub struct FakeForge {
     labels: Mutex<BTreeMap<String, Vec<String>>>,
     dependencies: Mutex<BTreeMap<String, Vec<Dependency>>>,
     label_failure: Mutex<Option<String>>,
+    identity: Mutex<Option<Result<Identity, String>>>,
     rate_limit_once: AtomicBool,
     next_pr_number: AtomicU64,
 }
@@ -105,10 +107,37 @@ impl FakeForge {
     pub fn rate_limit_next_label_update(&self) {
         self.rate_limit_once.store(true, Ordering::Relaxed);
     }
+
+    /// Opts this fake into identity verification, answering with
+    /// `account`. Without this call the fake reports no identity, so
+    /// the offline suite never verifies one (DESIGN.md section 12).
+    pub fn verify_identity_as(&self, account: &str) {
+        *lock(&self.identity) = Some(Ok(Identity::new(account)));
+    }
+
+    /// Opts in with a rejection instead: the forge refuses the value,
+    /// as it does for an invalid or expired credential.
+    pub fn reject_identity(&self, message: &str) {
+        *lock(&self.identity) = Some(Err(message.to_owned()));
+    }
 }
 
 #[async_trait]
 impl Forge for FakeForge {
+    /// Offline by default: `None` until a test opts in, so no run and no
+    /// `doctor` pass verifies an identity against this forge.
+    async fn identity(&self, _credential: &Secret) -> Result<Option<Identity>, Error> {
+        let configured = lock(&self.identity).clone();
+        match configured {
+            None => Ok(None),
+            Some(Ok(identity)) => Ok(Some(identity)),
+            Some(Err(message)) => Err(Error::Api {
+                status: 401,
+                message,
+            }),
+        }
+    }
+
     async fn query(&self, _source: &str, _filter: &str) -> Result<Vec<Item>, Error> {
         Ok(lock(&self.items).clone())
     }

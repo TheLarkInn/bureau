@@ -1,15 +1,13 @@
-//! Run setup: open or resume the log, cut the worktree, hand the run to
-//! the machine, and settle the outcome.
+//! Run setup: verify the run's credentials, cut the worktree, hand the
+//! run to the machine, and settle the outcome.
 
 use std::path::{Path, PathBuf};
 
 use super::context::{self, RunCtx, WtCtx};
 use super::machine::{Stop, primary_repo, run_loop};
-use super::{RunOutcome, RunPlan, finalize, gitcmd, plugins, resume, settle, stream};
+use super::{RunOutcome, RunPlan, finalize, gitcmd, identity, open, plugins, settle, stream};
 use crate::contract::StepOutcome;
 use crate::git::{CheckoutCache, Worktree, credential_for};
-use crate::process::Secret;
-use crate::runlog::RunLog;
 use crate::runlog::{self, EventKind, RunTerminal};
 
 /// The run branch: `<branch_prefix><pipeline>/<run_id>`.
@@ -96,7 +94,7 @@ fn append_started(ctx: &mut RunCtx) -> Result<(), String> {
     if let Some(reason) = context::ownership_reason(ctx) {
         return Err(reason);
     }
-    let data = runlog::run_started_snapshot(&ctx.plan.snapshot());
+    let data = runlog::run_started_snapshot(&ctx.plan.snapshot(), &ctx.verified);
     stream::lock(&ctx.log)
         .append(EventKind::RunStarted, data)
         .map_err(|e| format!("appending run_started: {e}"))?;
@@ -195,93 +193,37 @@ async fn finish_worktree(ctx: RunCtx, result: Result<WtCtx, String>) -> RunOutco
 }
 
 /// Runs the worktree phase, the machine loop, and the settle phase.
-async fn run_to_terminal(cache: &CheckoutCache, ctx: RunCtx) -> RunOutcome {
+async fn run_verified(cache: &CheckoutCache, ctx: RunCtx) -> RunOutcome {
     let result = worktree_phase(cache, &ctx).await;
     finish_worktree(ctx, result).await
 }
 
-/// The open phase's verdict.
-enum Open {
-    /// The log holds a finished run; return its outcome untouched.
-    Finished(RunOutcome),
-    /// The machine runs from the replayed state.
-    Running(Box<RunCtx>),
-}
-
-/// Creates a run's log and records `run_started` first.
-fn fresh_open(runs_dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
-    let log = RunLog::create(runs_dir, &plan.run_id, secrets)
-        .map_err(|e| format!("creating run log: {e}"))?;
-    let history = resume::fresh(resume::entry(&plan.pipeline), false);
-    Ok(Open::Running(Box::new(context::run_ctx(
-        plan, log, history,
-    ))))
-}
-
-fn pinned_plan(events: &[runlog::Event], fallback: &RunPlan) -> RunPlan {
-    let snapshot = events
-        .iter()
-        .find(|event| event.kind == EventKind::RunStarted)
-        .and_then(|event| serde_json::from_value::<runlog::RunStartedData>(event.data.clone()).ok())
-        .and_then(|started| started.snapshot);
-    let Some(snapshot) = snapshot else {
-        return fallback.clone();
-    };
-    if fallback.config_source.is_some() {
-        let mut plan = super::rehydrate(
-            snapshot,
-            fallback.forge.clone(),
-            fallback.credentials.clone(),
-        );
-        plan.lease.clone_from(&fallback.lease);
-        return plan;
-    }
-    let mut plan = fallback.clone();
-    plan.plugin_sources = snapshot.plugin_sources;
-    plan
-}
-
-/// Opens a log for appending and assembles the resume context.
-fn resume_ctx(
-    dir: &Path,
-    plan: &RunPlan,
-    secrets: &[Secret],
-    history: resume::History,
-) -> Result<Open, String> {
-    let log = RunLog::resume(dir, secrets).map_err(|e| format!("opening run log: {e}"))?;
-    Ok(Open::Running(Box::new(context::run_ctx(
-        plan, log, history,
-    ))))
-}
-
-/// Replays an existing run's log into a finished outcome or a resume.
-fn resume_open(dir: &Path, plan: &RunPlan, secrets: &[Secret]) -> Result<Open, String> {
-    let events = runlog::read_events(dir).map_err(|e| format!("reading run log: {e}"))?;
-    let pinned = pinned_plan(&events, plan);
-    match resume::replay(events, &pinned.pipeline) {
-        resume::Replay::Finished(data) => {
-            Ok(Open::Finished(RunOutcome::finished(&pinned.run_id, data)))
-        }
-        resume::Replay::Resume(history) => resume_ctx(dir, &pinned, secrets, history),
+/// Runs the verified run, or settles the failed check as a setup abort.
+async fn finish_checked(
+    cache: &CheckoutCache,
+    ctx: RunCtx,
+    checked: Result<(), String>,
+) -> RunOutcome {
+    match checked {
+        Ok(()) => Box::pin(run_verified(cache, ctx)).await,
+        Err(message) => setup_failure(ctx, message).await,
     }
 }
 
-/// Opens the run fresh or resumes it from its event log.
-fn open(dir: &Path, runs_dir: &Path, plan: &RunPlan) -> Result<Open, String> {
-    let secrets: Vec<Secret> = plan.credentials.values().cloned().collect();
-    if dir.join(runlog::EVENTS_FILE).exists() {
-        resume_open(dir, plan, &secrets)
-    } else {
-        fresh_open(runs_dir, plan, &secrets)
-    }
+/// The identity check comes first: a credential the forge rejects, or
+/// one that is a different account than the settings declare, aborts the
+/// run before anything spawns.
+async fn run_to_terminal(cache: &CheckoutCache, mut ctx: RunCtx) -> RunOutcome {
+    let checked = identity::verify(&mut ctx).await;
+    Box::pin(finish_checked(cache, ctx, checked)).await
 }
 
 /// Runs a pipeline to a terminal, creating or resuming the run's log.
 pub(super) async fn run(runs_dir: &Path, cache: &CheckoutCache, plan: &RunPlan) -> RunOutcome {
     let dir = runlog::run_dir(runs_dir, &plan.run_id);
-    match open(&dir, runs_dir, plan) {
-        Ok(Open::Finished(outcome)) => outcome,
-        Ok(Open::Running(ctx)) => Box::pin(run_to_terminal(cache, *ctx)).await,
+    match open::open(&dir, runs_dir, plan) {
+        Ok(open::Open::Finished(outcome)) => outcome,
+        Ok(open::Open::Running(ctx)) => Box::pin(run_to_terminal(cache, *ctx)).await,
         Err(message) => RunOutcome::bare(&plan.run_id, StepOutcome::Failure, message),
     }
 }
