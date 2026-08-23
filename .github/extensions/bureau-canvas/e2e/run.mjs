@@ -149,12 +149,19 @@ async function main() {
 }
 
 async function skipReason() {
-  if (!existsSync(EDGE_EXE)) {
-    return `Microsoft Edge not found at ${EDGE_EXE}`;
-  }
+  // The cross-OS pairing is read from the *shape* of the two paths, so it does
+  // not need the executable to exist — and it has to be asked first. On WSL a
+  // Windows Edge is installed and perfectly real, but `C:\...` is not a path
+  // this host can stat, so the existence check below would blame a missing
+  // browser for a pairing this harness already knows how to name. Naming the
+  // pairing is the whole point; getting there only when Edge happens to be
+  // absent for a second reason defeats it.
   const crossOs = crossOsReason();
   if (crossOs) {
     return crossOs;
+  }
+  if (!existsSync(EDGE_EXE)) {
+    return `Microsoft Edge not found at ${EDGE_EXE}`;
   }
   if (typeof WebSocket !== "function") {
     return "Node global WebSocket is unavailable; run with Node 24 or newer";
