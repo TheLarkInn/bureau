@@ -157,6 +157,20 @@ async fn dangling_config_directory_symlink_is_rejected() {
     assert!(matches!(error, SourceError::UnsafeConfig(_)));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn committed_label_rule_directory_symlink_is_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let repo = Repo::new();
+    let outside = repo.home.join("label-rules");
+    std::fs::create_dir(&outside).expect("outside rules");
+    symlink(&outside, repo.root.join(".bureau/label_rules")).expect("symlink");
+    commit(&repo.root, "label rule symlink");
+    let error = repo.source(".bureau").load().await.err().expect("unsafe");
+    assert!(matches!(error, SourceError::UnsafeConfig(_)));
+}
+
 fn write_valid(root: &Path) {
     let config = root.join(".bureau");
     std::fs::create_dir_all(config.join("roles")).expect("roles");

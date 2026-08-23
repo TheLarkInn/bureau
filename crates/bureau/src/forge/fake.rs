@@ -6,12 +6,12 @@
 //! at construction.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 
-use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
+use super::{Dependency, Error, Forge, Item, LabelForge, Pr, PrRequest, PrStatus};
 
 /// Lock that survives a poisoned mutex: a panicking test must not cascade
 /// into misleading secondary failures.
@@ -48,6 +48,9 @@ pub struct FakeForge {
     prs: Mutex<Vec<Pr>>,
     comments: Mutex<Vec<(String, String)>>,
     labels: Mutex<BTreeMap<String, Vec<String>>>,
+    dependencies: Mutex<BTreeMap<String, Vec<Dependency>>>,
+    label_failure: Mutex<Option<String>>,
+    rate_limit_once: AtomicBool,
     next_pr_number: AtomicU64,
 }
 
@@ -86,6 +89,21 @@ impl FakeForge {
     /// Removes an item, as the forge would when it is closed.
     pub fn remove_item(&self, external_id: &str) {
         lock(&self.items).retain(|i| i.external_id != external_id);
+    }
+
+    /// Replaces the blocking dependencies returned for one item.
+    pub fn set_dependencies(&self, item_id: &str, dependencies: Vec<Dependency>) {
+        lock(&self.dependencies).insert(item_id.to_owned(), dependencies);
+    }
+
+    /// Makes subsequent label updates fail with `message`.
+    pub fn fail_label_updates(&self, message: &str) {
+        *lock(&self.label_failure) = Some(message.to_owned());
+    }
+
+    /// Makes the next label update report a rate limit.
+    pub fn rate_limit_next_label_update(&self) {
+        self.rate_limit_once.store(true, Ordering::Relaxed);
     }
 }
 
@@ -142,11 +160,52 @@ impl Forge for FakeForge {
         add: &[String],
         remove: &[String],
     ) -> Result<(), Error> {
+        if self.rate_limit_once.swap(false, Ordering::Relaxed) {
+            return Err(Error::RateLimited {
+                retry_after_secs: Some(60),
+                message: "fake rate limit".to_owned(),
+            });
+        }
+        let failure = lock(&self.label_failure).clone();
+        if let Some(message) = failure {
+            return Err(Error::Parse(message));
+        }
         let labels = {
             let mut items = lock(&self.items);
             updated_labels(&mut items, item_id, add, remove)
         };
         lock(&self.labels).insert(item_id.to_owned(), labels);
         Ok(())
+    }
+}
+
+#[async_trait]
+impl LabelForge for FakeForge {
+    async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error> {
+        <Self as Forge>::query(self, source, filter).await
+    }
+
+    async fn item(&self, item_id: &str) -> Result<Item, Error> {
+        lock(&self.items)
+            .iter()
+            .find(|item| item.external_id == item_id)
+            .cloned()
+            .ok_or_else(|| Error::Parse(format!("work item `{item_id}` not found")))
+    }
+
+    async fn blocking_dependencies(&self, item_id: &str) -> Result<Vec<Dependency>, Error> {
+        Ok(lock(&self.dependencies)
+            .get(item_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error> {
+        <Self as Forge>::update_labels(self, item_id, add, remove).await
     }
 }

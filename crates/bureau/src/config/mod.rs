@@ -6,17 +6,20 @@
 //! `Vec`.
 
 mod files;
+mod label_rule;
 mod pipeline;
 mod source;
 mod source_tree;
 mod validate;
 mod validate_concurrent;
+mod validate_label_rule;
 mod validate_pipeline;
 
 pub use crate::forge::ForgeKind;
 pub use files::{
     Access, AdapterKind, Assignment, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };
+pub use label_rule::{LabelRule, LabelRuleCondition, LabelRuleLimits, LabelRuleWork};
 pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
 pub use source::GitSource;
 pub use validate::{validate, validate_pipelines};
@@ -172,6 +175,9 @@ pub struct Config {
     pub roles: BTreeMap<String, Role>,
     /// Standing arrangements by name.
     pub assignments: BTreeMap<String, Assignment>,
+    /// Repeated forge-label rules by name.
+    #[serde(default)]
+    pub label_rules: BTreeMap<String, LabelRule>,
     /// Step state machines by name.
     pub pipelines: BTreeMap<String, Pipeline>,
 }
@@ -189,6 +195,7 @@ impl Config {
         let repos = load_repos(dir, &mut errors);
         let roles = load_named::<Role>(dir, "roles", &mut errors);
         let assignments = load_named::<Assignment>(dir, "assignments", &mut errors);
+        let label_rules = load_named::<LabelRule>(dir, "label_rules", &mut errors);
         let pipelines = load_named::<Pipeline>(dir, "pipelines", &mut errors);
         if !errors.is_empty() {
             return Err(errors);
@@ -197,6 +204,7 @@ impl Config {
             repos,
             roles,
             assignments,
+            label_rules,
             pipelines,
         };
         let errors = validate(&config);

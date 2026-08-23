@@ -5,7 +5,7 @@ use std::path::Path;
 
 use super::{AdapterKind, Role, SourceError};
 
-const NAMED_DIRS: [&str; 3] = ["roles", "assignments", "pipelines"];
+const NAMED_DIRS: [&str; 4] = ["roles", "assignments", "label_rules", "pipelines"];
 
 fn unsafe_path(path: &Path) -> SourceError {
     SourceError::UnsafeConfig(path.display().to_string())

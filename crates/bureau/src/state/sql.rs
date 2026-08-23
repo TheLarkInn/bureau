@@ -1,7 +1,4 @@
-//! `SQL` statements and row mapping for the state store, kept apart from
-//! `state.rs` so the public surface stays readable. Times are integer
-//! milliseconds since the Unix epoch; `SQLite` has no unsigned 64-bit
-//! integer, so values cross the boundary as `i64`.
+//! SQL statements and row mapping for the state store.
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, Row};
 
@@ -29,6 +26,31 @@ CREATE TABLE IF NOT EXISTS dedup (
     disposition TEXT NOT NULL,
     at_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS label_rule_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempt_id TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    source TEXT NOT NULL,
+    item TEXT NOT NULL,
+    event TEXT NOT NULL,
+    message TEXT NOT NULL,
+    add_labels TEXT NOT NULL,
+    remove_labels TEXT NOT NULL,
+    dependency_count INTEGER NOT NULL,
+    closed_dependency_count INTEGER NOT NULL,
+    occurred_at_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS label_rule_events_by_rule_time
+ON label_rule_events (rule, event, occurred_at_ms);
+CREATE INDEX IF NOT EXISTS label_rule_events_by_attempt
+ON label_rule_events (attempt_id, event);
+CREATE UNIQUE INDEX IF NOT EXISTS label_rule_events_unique_phase
+ON label_rule_events (attempt_id, event);
+CREATE UNIQUE INDEX IF NOT EXISTS label_rule_events_one_terminal
+ON label_rule_events (attempt_id)
+WHERE event IN ('update_applied', 'update_abandoned');
+CREATE INDEX IF NOT EXISTS label_rule_events_latest_item
+ON label_rule_events (rule, event, item, id);
 ";
 
 /// Drops the key's lease only when it has already expired.
@@ -86,6 +108,55 @@ pub(super) const RECORD_RUN: &str = "
 INSERT INTO runs (run_id, assignment, started_at_ms, cost_usd)
 VALUES (?1, ?2, ?3, ?4)
 ON CONFLICT(run_id) DO NOTHING";
+
+pub(super) const LABEL_RULE_UPDATES_SINCE: &str = "
+SELECT COUNT(*) FROM label_rule_events
+WHERE rule = ?1 AND event = 'update_started' AND occurred_at_ms > ?2";
+
+pub(super) const INSERT_LABEL_RULE_EVENT: &str = "
+INSERT INTO label_rule_events (
+    attempt_id, rule, source, item, event, message, add_labels, remove_labels,
+    dependency_count, closed_dependency_count, occurred_at_ms
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
+
+pub(super) const LABEL_RULE_EVENTS: &str = "
+SELECT attempt_id, rule, source, item, event, message, add_labels, remove_labels,
+       dependency_count, closed_dependency_count, occurred_at_ms
+FROM label_rule_events WHERE rule = ?1 ORDER BY id";
+
+pub(super) const PENDING_LABEL_RULE_UPDATES: &str = "
+SELECT started.attempt_id, started.rule, started.source, started.item,
+       started.add_labels, started.remove_labels,
+       started.dependency_count, started.closed_dependency_count
+FROM label_rule_events AS started
+WHERE started.rule = ?1 AND started.event = 'update_started'
+  AND NOT EXISTS (
+    SELECT 1 FROM label_rule_events AS newer
+    WHERE newer.rule = started.rule AND newer.item = started.item
+      AND newer.event = 'update_started' AND newer.id > started.id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM label_rule_events AS terminal
+    WHERE terminal.attempt_id = started.attempt_id
+      AND terminal.event IN ('update_applied', 'update_abandoned')
+  )
+ORDER BY started.id";
+
+pub(super) const LABEL_RULE_UPDATE_PENDING: &str = "
+SELECT EXISTS(
+  SELECT 1 FROM label_rule_events AS started
+  WHERE started.attempt_id = ?1 AND started.event = 'update_started'
+    AND NOT EXISTS (
+      SELECT 1 FROM label_rule_events AS newer
+      WHERE newer.rule = started.rule AND newer.item = started.item
+        AND newer.event = 'update_started' AND newer.id > started.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM label_rule_events AS terminal
+      WHERE terminal.attempt_id = started.attempt_id
+        AND terminal.event IN ('update_applied', 'update_abandoned')
+    )
+)";
 
 const MIGRATE_RUNS: &str = "
 BEGIN;

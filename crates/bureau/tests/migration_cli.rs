@@ -56,6 +56,7 @@ fn imported_state_is_valid(home: &Path) -> bool {
         .mode();
     let saved = load_settings(&home.join("settings.yaml")).expect("saved settings");
     row_count(&state, "runs") == 1
+        && row_count(&state, "label_rule_events") == 1
         && home.join("runs/old-run/events.jsonl").is_file()
         && !home.join("runs/old-run/wt").exists()
         && !home
@@ -158,6 +159,7 @@ fn seed_source(source: &Path) {
     store
         .record_run("old-run", "assignment", 1.5)
         .expect("record run");
+    seed_label_audit(&store);
     drop(store);
     let mut log =
         bureau::runlog::RunLog::create(&source.join("runs"), "old-run", &[]).expect("run log");
@@ -168,6 +170,26 @@ fn seed_source(source: &Path) {
     .expect("start");
     let run = log.dir().to_path_buf();
     log.close().expect("close");
+    seed_disposable_run_files(&run);
+}
+
+fn seed_label_audit(store: &bureau::state::Store) {
+    let audit = bureau::state::LabelRuleAudit {
+        attempt_id: "attempt-1".to_owned(),
+        rule: "graduate-unblocked".to_owned(),
+        source: "owner/repo".to_owned(),
+        item: "owner/repo#42".to_owned(),
+        add_labels: vec!["agent-eligible".to_owned()],
+        remove_labels: vec!["agent-blocked".to_owned()],
+        dependency_count: 1,
+        closed_dependency_count: 1,
+    };
+    store
+        .begin_label_rule_update(&audit, 20, "graduating")
+        .expect("record label audit");
+}
+
+fn seed_disposable_run_files(run: &Path) {
     std::fs::create_dir_all(run.join("wt")).expect("worktree");
     std::fs::write(run.join("wt/disposable"), "discard").expect("worktree file");
     std::fs::create_dir(run.join("activations")).expect("activations");

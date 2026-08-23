@@ -1,10 +1,4 @@
 //! The reconcile loop (DESIGN.md section 8) replaces the scheduler.
-//!
-//! It is level-triggered: every pass asks "does reality match intent?",
-//! never "what just happened?". Pending work is a query, not stored
-//! state: `pending = query(source, filter) − open PRs − live leases`.
-//! A webhook or `bureau reconcile --now` only shortens the interval;
-//! the loop is fully correct with every webhook unplugged.
 
 mod observe;
 mod start;
@@ -17,7 +11,7 @@ use tokio::task::JoinHandle;
 
 use crate::config::{Assignment, Config, ForgeKind, Repo};
 use crate::engine::{Engine, RunOutcome, RunPlan, new_run_id};
-use crate::forge::{Forge, Item};
+use crate::forge::{Forge, Item, LabelForge};
 use crate::process::Secret;
 use crate::state::{LeaseOwner, Store};
 
@@ -35,6 +29,19 @@ pub enum Error {
     /// Run identity generation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Label-rule observation, claim, audit, or mutation failure.
+    #[error(transparent)]
+    LabelRule(#[from] crate::label_reconcile::Error),
+}
+
+impl Error {
+    const fn is_rate_limited(&self) -> bool {
+        match self {
+            Self::Forge(error) => error.is_rate_limited(),
+            Self::LabelRule(error) => error.is_rate_limited(),
+            Self::State(_) | Self::Io(_) => false,
+        }
+    }
 }
 
 /// A claimed, started run.
@@ -48,14 +55,20 @@ pub struct Started {
 }
 
 /// The pass result: the started runs, or the first failure when nothing started.
-fn settle(failed: Vec<Error>, started: Vec<Started>) -> Result<Vec<Started>, Error> {
-    match (failed.into_iter().next(), started.is_empty()) {
+fn settle(
+    failed: Vec<Error>,
+    started: Vec<Started>,
+    labels_applied: usize,
+) -> Result<Vec<Started>, Error> {
+    match (
+        failed.into_iter().next(),
+        started.is_empty() && labels_applied == 0,
+    ) {
         (Some(first), true) => Err(first),
         _ => Ok(started),
     }
 }
 
-/// Desired items with no open PR and no live lease (section 8).
 fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
     let prs = &observed.open_prs;
     let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
@@ -130,6 +143,8 @@ pub struct Reconciler {
     pub state: Arc<Store>,
     /// Forge client per assignment; credentials and ADO organizations differ.
     pub forges: BTreeMap<String, Arc<dyn Forge>>,
+    /// GitHub issue clients per deterministic label rule.
+    pub label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     /// The pipeline engine.
     pub engine: Arc<Engine>,
     /// Credentials keyed by registry credential name, resolved once at
@@ -148,12 +163,25 @@ impl Reconciler {
     /// # Errors
     /// The first assignment's failure, but only when the pass started nothing.
     pub async fn reconcile_once(&self) -> Result<Vec<Started>, Error> {
-        let (observed, mut failed) = self.observe_all().await;
+        let labels =
+            crate::label_reconcile::reconcile(&self.config, self.state.clone(), &self.label_forges)
+                .await;
+        if labels.rate_limited {
+            let failed = labels.errors.into_iter().map(Error::LabelRule).collect();
+            return settle(failed, Vec::new(), labels.applied);
+        }
+        let (observed, assignment_errors) = self.observe_all().await;
+        let mut failed: Vec<Error> = labels.errors.into_iter().map(Error::LabelRule).collect();
+        let assignments_limited = assignment_errors.iter().any(Error::is_rate_limited);
+        failed.extend(assignment_errors);
+        if assignments_limited {
+            return settle(failed, Vec::new(), labels.applied);
+        }
         let mut started = Vec::new();
         for assignment in &observed {
             self.claim_pending(assignment, &mut started, &mut failed);
         }
-        settle(failed, started)
+        settle(failed, started, labels.applied)
     }
 
     /// The daemon loop: reconcile, then sleep a jittered interval or

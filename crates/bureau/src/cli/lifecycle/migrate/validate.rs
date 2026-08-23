@@ -109,6 +109,20 @@ const LEASE_COLUMNS: &[&str] = &[
 ];
 const RUN_COLUMNS: &[&str] = &["run_id", "assignment", "started_at_ms", "cost_usd"];
 const DEDUP_COLUMNS: &[&str] = &["content_hash", "disposition", "at_ms"];
+const LABEL_RULE_EVENT_COLUMNS: &[&str] = &[
+    "id",
+    "attempt_id",
+    "rule",
+    "source",
+    "item",
+    "event",
+    "message",
+    "add_labels",
+    "remove_labels",
+    "dependency_count",
+    "closed_dependency_count",
+    "occurred_at_ms",
+];
 
 fn table_names(connection: &Connection) -> anyhow::Result<BTreeSet<String>> {
     let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'";
@@ -122,6 +136,7 @@ fn required_columns(table: &str, columns: &BTreeSet<String>) -> anyhow::Result<(
         "leases" => &["assignment", "forge", "external_id", "expires_at_ms"],
         "runs" => &["assignment", "started_at_ms", "cost_usd"],
         "dedup" => &["content_hash", "disposition", "at_ms"],
+        "label_rule_events" => LABEL_RULE_EVENT_COLUMNS,
         _ => anyhow::bail!("unknown migration table `{table}`"),
     };
     let missing = required.iter().find(|name| !columns.contains(**name));
@@ -169,7 +184,12 @@ fn validate_database(path: &Path) -> anyhow::Result<()> {
         "migration database integrity check failed"
     );
     let tables = table_names(&connection)?;
-    let allowed = BTreeSet::from(["dedup".to_owned(), "leases".to_owned(), "runs".to_owned()]);
+    let allowed = BTreeSet::from([
+        "dedup".to_owned(),
+        "label_rule_events".to_owned(),
+        "leases".to_owned(),
+        "runs".to_owned(),
+    ]);
     anyhow::ensure!(
         tables.is_subset(&allowed),
         "migration database is from a newer schema"
@@ -177,7 +197,8 @@ fn validate_database(path: &Path) -> anyhow::Result<()> {
     reject_active_leases(&connection, &tables)?;
     validate_columns(&connection, "leases", LEASE_COLUMNS)?;
     validate_columns(&connection, "runs", RUN_COLUMNS)?;
-    validate_columns(&connection, "dedup", DEDUP_COLUMNS)
+    validate_columns(&connection, "dedup", DEDUP_COLUMNS)?;
+    validate_columns(&connection, "label_rule_events", LABEL_RULE_EVENT_COLUMNS)
 }
 
 pub(super) fn source(layout: &bureau::home::Layout, source: &Path) -> anyhow::Result<Source> {

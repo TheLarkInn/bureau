@@ -165,6 +165,7 @@ pub fn config(url: &str, run: &str, limits: Limits) -> Config {
         repos: BTreeMap::from([("main".to_owned(), repo(url))]),
         roles: BTreeMap::new(),
         assignments: BTreeMap::from([(ASSIGNMENT.to_owned(), assignment(limits))]),
+        label_rules: BTreeMap::new(),
         pipelines: BTreeMap::from([("fix".to_owned(), pipeline)]),
     }
 }

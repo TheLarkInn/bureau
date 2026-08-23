@@ -155,6 +155,7 @@ mod tests {
             ]),
             roles: BTreeMap::new(),
             assignments: BTreeMap::new(),
+            label_rules: BTreeMap::new(),
             pipelines: BTreeMap::new(),
         }
     }

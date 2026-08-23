@@ -209,14 +209,14 @@ Pending work is a **query**, not stored state:
 pending = query(work_source, filter) − has_open_pr − has_active_lease
 ```
 
-Do not build queue storage, requeue logic, visibility timeouts, or ordering. You
-store exactly two things:
+Do not build queue storage, requeue logic, visibility timeouts, or ordering.
+Scheduler state stores exactly two things:
 
 - **leases** — closes the race between observing and acting. Requires
   compare-and-swap. Observation narrows the race window; only CAS closes it.
 - **budget counters** — must be checkable cheaply before spawning anything.
 
-Plus the run log, which is a record, not scheduler state.
+Plus run logs and label-rule audit events, which are records, not scheduler state.
 
 ---
 
@@ -237,12 +237,14 @@ runner-config/                    # multi-repository mode
   repos.yaml                       # registry: every repo, with an access level
   roles/implementer.yaml
   assignments/fix-flaky-tests.yaml
+  label_rules/graduate-unblocked.yaml
   pipelines/fix-failing-test.yaml
 
 work-repo/.bureau/                # single-repository mode, same schema
   repos.yaml
   roles/implementer.yaml
   assignments/fix-flaky-tests.yaml
+  label_rules/graduate-unblocked.yaml
   pipelines/fix-failing-test.yaml
 ```
 
@@ -253,10 +255,11 @@ work-repo/.bureau/                # single-repository mode, same schema
 
 | In git (desired state) | Never in git |
 |---|---|
-| roles, pipelines, assignments | leases |
+| roles, pipelines, assignments, label rules | leases |
 | repo registry + access levels | budget counters |
 | filters, budget *limits* | run history and logs |
 | credential *references* | dedup markers |
+| | label-rule audit events |
 | | credential *values* |
 
 Git holds human-written, low-frequency, reviewed intent. Machine-written
@@ -388,6 +391,39 @@ system default of 24 hours; an explicit positive value may raise or lower it.
 trust. Recheck it at every step boundary and before publication. Removing it
 blocks the active run and requires explicit retry. An ADO assignment with a
 reachable agent step requiring more than `Untrusted` trust must configure it.
+
+### label_rules/&lt;name&gt;.yaml — bounded label reconciliation
+
+```yaml
+name: graduate-unblocked
+work:
+  forge: github
+  source: TheLarkInn/bureau
+  filter: "is:issue is:open label:agent-blocked"
+when: dependencies_closed
+add_labels: [agent-eligible]
+remove_labels: [agent-blocked]
+limits:
+  max_updates_per_hour: 20
+```
+
+A label rule is not a pipeline. It creates no worktree or PR, invokes no model,
+and writes no content-dedup marker. On every pass it evaluates matching work
+items through the forge's dependency API. `dependencies_closed` applies when
+every blocking issue is closed, including the empty set. Bureau then adds and
+removes only the configured labels, preserving unrelated labels.
+
+The source must match a GitHub repo in `repos.yaml`; that registry entry supplies
+the credential. A lease prevents two reconcilers from mutating the same item.
+`max_updates_per_hour` is required and counts attempted mutations, including
+failures. Each attempt durably records `update_started` followed by
+`update_applied` or `update_failed`, with a human-readable explanation, the
+labels, rule, item, and observed dependency counts. Open dependencies are a
+no-op and are reconsidered on later passes. Failed and interrupted deltas remain
+recoverable by item identity even after the item leaves the filter; recovery
+records `update_abandoned` only when the forge reports the item permanently
+missing. All rules share one label-reconcile lease scope, so overlapping rules
+cannot mutate the same forge item concurrently.
 
 ---
 
@@ -602,7 +638,7 @@ inputs are namespaced by group and member.
 
 ### Layer 5 — durable state (SQLite)
 
-Two tables. There is no queue table (§4).
+There is no queue table (§4). Scheduler state has two concerns:
 
 - **leases** — `(assignment, forge, external_id)` unique, with expiry. Expiry-based
   and renewable so a crashed run releases automatically. Enforce single-claim with a
@@ -614,6 +650,10 @@ Two tables. There is no queue table (§4).
 **Dedup lives here.** Content-hash the proposed output; if an identical proposal is
 already open or was previously rejected, exit `NoWork`. Without this, a scheduled
 pipeline re-proposes the same change forever.
+
+Label-rule events are append-only audit records, not scheduler state. An
+`update_started` record also supplies the rolling-hour attempt count used to
+enforce `max_updates_per_hour` atomically before a forge mutation.
 
 ### Layer 6 — git
 
@@ -641,6 +681,25 @@ pub trait Forge: Send + Sync {
     async fn create_pr(&self, req: PrRequest) -> Result<Pr>;
     async fn comment(&self, item_id: &str, body: &str) -> Result<()>;
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<()>;
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()>;
+}
+
+#[async_trait]
+pub trait LabelForge: Send + Sync {
+    async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>>;
+    async fn item(&self, item_id: &str) -> Result<Item>;
+    async fn blocking_dependencies(&self, item_id: &str) -> Result<Vec<Dependency>>;
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<()>;
 }
 ```
 

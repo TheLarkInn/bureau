@@ -63,6 +63,7 @@ retries resume or roll back safely after interruption.
      repos.yaml                        # every repo, with an access level
      roles/implementer.yaml            # agent reference + adapter + permissions + min_trust
      assignments/fix-flaky-tests.yaml  # work source + repos + pipeline + role + limits
+     label_rules/graduate-unblocked.yaml # bounded dependency-driven label updates
      pipelines/fix-failing-test.yaml   # the step state machine
    ```
 

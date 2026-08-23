@@ -1,6 +1,8 @@
 //! GitHub REST forge; registry arguments accept URLs or bare `owner/name`.
 
+mod dependencies;
 mod labels;
+mod rate;
 mod status;
 
 use async_trait::async_trait;
@@ -12,25 +14,15 @@ use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
 use crate::contract::Trust;
 use crate::process::Secret;
 
-/// `rel="next"` page limit per list call (no unbounded loops).
-const MAX_PAGES: u32 = 3;
+const MAX_PAGES: u32 = 10;
 
-/// [`Error::Api`] from a status and body, truncated to 300 chars.
-fn api_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
-    let message: String = String::from_utf8_lossy(bytes).chars().take(300).collect();
-    Error::Api {
-        status: status.as_u16(),
-        message,
-    }
-}
+pub(super) use rate::response_error;
 
-/// Reads a JSON body; a non-2xx status becomes [`Error::Api`].
 async fn json_body<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Error> {
-    let status = resp.status();
-    let bytes = resp.bytes().await?;
-    if !status.is_success() {
-        return Err(api_error(status, &bytes));
+    if !resp.status().is_success() {
+        return Err(response_error(resp).await?);
     }
+    let bytes = resp.bytes().await?;
     serde_json::from_slice(&bytes).map_err(|e| Error::Parse(e.to_string()))
 }
 
@@ -39,7 +31,7 @@ async fn ensure_ok(resp: reqwest::Response) -> Result<(), Error> {
     if resp.status().is_success() {
         return Ok(());
     }
-    Err(api_error(resp.status(), &resp.bytes().await?))
+    Err(response_error(resp).await?)
 }
 
 /// The `rel="next"` URL from a `Link` header, when present.
@@ -53,19 +45,14 @@ fn next_page(resp: &reqwest::Response) -> Option<String> {
     })
 }
 
-/// `owner/name` parsed from a registry URL or a bare `owner/name`.
 fn repo_name(source: &str) -> Result<String, Error> {
-    let trimmed = source.trim_end_matches('/').trim_end_matches(".git");
-    let mut segments = trimmed.rsplit('/');
-    let (name, owner) = (segments.next(), segments.next());
-    match (owner, name) {
-        (Some(owner), Some(name)) if !owner.is_empty() && !name.is_empty() => {
-            Ok(format!("{owner}/{name}"))
-        }
-        _ => Err(Error::Parse(format!(
-            "expected a registry URL or owner/name, got {source:?}"
-        ))),
-    }
+    crate::forge::repository::parse(source)
+        .map(|location| location.name())
+        .ok_or_else(|| {
+            Error::Parse(format!(
+                "expected a registry URL or owner/name, got {source:?}"
+            ))
+        })
 }
 
 fn trust(association: &str) -> Trust {
@@ -75,7 +62,6 @@ fn trust(association: &str) -> Trust {
     }
 }
 
-/// The work item a PR body closes: the first `Closes #N` (any case).
 fn closes_item(body: Option<&str>, repo: &str) -> Option<String> {
     let body = body?.to_lowercase();
     let start = body.find("closes #")? + "closes #".len();
@@ -90,7 +76,6 @@ fn issue_number(item_id: &str) -> &str {
     item_id.rsplit('#').next().unwrap_or(item_id)
 }
 
-/// `owner/name#number` split into its halves.
 fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
     let parsed = || {
         let (repo, number) = item_id.rsplit_once('#')?;
@@ -107,6 +92,7 @@ struct Label {
 #[derive(Deserialize)]
 struct Issue {
     number: u64,
+    repository_url: String,
     title: String,
     body: Option<String>,
     html_url: String,
@@ -115,15 +101,19 @@ struct Issue {
 }
 
 impl Issue {
-    fn into_item(self, repo: &str) -> Item {
-        Item {
+    fn into_item(self, expected_repo: &str) -> Option<Item> {
+        let repo = repo_name(&self.repository_url).ok()?;
+        if !repo.eq_ignore_ascii_case(expected_repo) {
+            return None;
+        }
+        Some(Item {
             external_id: format!("{repo}#{}", self.number),
             title: self.title,
             body: self.body.unwrap_or_default(),
             url: self.html_url,
             labels: self.labels.into_iter().map(|label| label.name).collect(),
             trust: trust(&self.author_association),
-        }
+        })
     }
 }
 
@@ -160,7 +150,6 @@ impl Pull {
     }
 }
 
-/// GitHub API client; see module docs for the argument forms.
 pub struct GitHubForge {
     /// API root: `https://api.github.com`, or a local server in tests.
     pub base_url: String,
@@ -179,6 +168,16 @@ impl GitHubForge {
         }
     }
 
+    /// A client using the API root implied by a repository reference.
+    ///
+    /// # Errors
+    /// Returns a parse error when `repo` is not a supported repository reference.
+    pub fn for_repo(token: Secret, repo: &str) -> Result<Self, Error> {
+        let location = crate::forge::repository::parse(repo)
+            .ok_or_else(|| Error::Parse(format!("bad GitHub repository reference: {repo}")))?;
+        Ok(Self::new(token).with_base_url(location.api_url()))
+    }
+
     /// Points the client at another API root (tests, GitHub Enterprise).
     #[must_use]
     pub fn with_base_url(mut self, base_url: String) -> Self {
@@ -192,7 +191,7 @@ impl GitHubForge {
             .request(method, url)
             .bearer_auth(self.token.expose())
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("X-GitHub-Api-Version", "2026-03-10")
             .header("User-Agent", "bureau")
     }
 
@@ -226,7 +225,7 @@ impl Forge for GitHubForge {
         self.get_pages(first, |page: SearchPage| {
             page.items
                 .into_iter()
-                .map(|issue| issue.into_item(&repo))
+                .filter_map(|issue| issue.into_item(&repo))
                 .collect()
         })
         .await

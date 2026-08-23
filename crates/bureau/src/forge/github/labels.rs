@@ -2,7 +2,7 @@
 
 use reqwest::{Method, StatusCode, Url};
 
-use super::{Error, GitHubForge, api_error, ensure_ok, split_item_id};
+use super::{Error, GitHubForge, ensure_ok, response_error, split_item_id};
 
 fn labels_url(forge: &GitHubForge, item_id: &str) -> Result<String, Error> {
     let (repo, number) = split_item_id(item_id)?;
@@ -48,7 +48,7 @@ async fn create(forge: &GitHubForge, item_id: &str, label: &str) -> Result<(), E
     if response.status().is_success() || response.status() == StatusCode::UNPROCESSABLE_ENTITY {
         return Ok(());
     }
-    Err(api_error(response.status(), &response.bytes().await?))
+    Err(response_error(response).await?)
 }
 
 async fn provision(forge: &GitHubForge, item_id: &str, labels: &[String]) -> Result<(), Error> {
@@ -105,7 +105,7 @@ async fn remove(forge: &GitHubForge, url: &str, label: &str) -> Result<(), Error
     if response.status().is_success() || response.status() == StatusCode::NOT_FOUND {
         return Ok(());
     }
-    Err(api_error(response.status(), &response.bytes().await?))
+    Err(response_error(response).await?)
 }
 
 pub(super) async fn update(

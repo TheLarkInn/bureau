@@ -137,12 +137,14 @@ fn only_request(server: TestServer) -> (String, String) {
     (request, lower)
 }
 
-/// Two issues: an OWNER with labels and a NONE outsider with null body.
+/// Two in-repo issues plus one cross-repo result a malicious filter exposed.
 const QUERY_BODY: &str = concat!(
-    r#"{"items":[{"number":1,"title":"Fix bug","body":"details","#,
+    r#"{"items":[{"number":1,"repository_url":"https://api.github.com/repos/o/r","title":"Fix bug","body":"details","#,
     r#""html_url":"https://x/1","labels":[{"name":"bug"}],"author_association":"OWNER"},"#,
-    r#"{"number":2,"title":"Idea","body":null,"html_url":"https://x/2","#,
-    r#""labels":[],"author_association":"NONE"}]}"#,
+    r#"{"number":2,"repository_url":"https://api.github.com/repos/o/r","title":"Idea","body":null,"html_url":"https://x/2","#,
+    r#""labels":[],"author_association":"NONE"},"#,
+    r#"{"number":1,"repository_url":"https://api.github.com/repos/other/repo","title":"Wrong repo","#,
+    r#""body":null,"html_url":"https://x/3","labels":[],"author_association":"OWNER"}]}"#,
 );
 
 #[tokio::test]
@@ -186,7 +188,7 @@ fn assert_query_request(server: TestServer) {
         decoded_target(&request)
             == "/search/issues?q=is:issue label:agent-ready repo:o/r&per_page=100",
         lower.contains("authorization: bearer test-token"),
-        lower.contains("x-github-api-version: 2022-11-28"),
+        lower.contains("x-github-api-version: 2026-03-10"),
     );
     assert_eq!(got, (true, true, true));
 }
@@ -246,8 +248,8 @@ async fn malformed_json_becomes_error_parse() {
 
 #[tokio::test]
 async fn query_follows_next_links() {
-    let page1 = r#"{"items":[{"number":1,"title":"A","body":null,"html_url":"https://x/1","labels":[],"author_association":"NONE"}]}"#;
-    let page2 = r#"{"items":[{"number":2,"title":"B","body":null,"html_url":"https://x/2","labels":[],"author_association":"OWNER"}]}"#;
+    let page1 = r#"{"items":[{"number":1,"repository_url":"https://api.github.com/repos/o/r","title":"A","body":null,"html_url":"https://x/1","labels":[],"author_association":"NONE"}]}"#;
+    let page2 = r#"{"items":[{"number":2,"repository_url":"https://api.github.com/repos/o/r","title":"B","body":null,"html_url":"https://x/2","labels":[],"author_association":"OWNER"}]}"#;
     let server = TestServer::start(|addr| {
         vec![
             ok_json_linked(page1, &format!("http://{addr}/page2")),

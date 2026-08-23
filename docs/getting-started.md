@@ -45,15 +45,16 @@ Local state lives in `~/.bureau` (set `BUREAU_HOME` to move it):
   config-cache/      # disposable cache of the committed config
 ```
 
-## The four config concepts
+## The five config concepts
 
-All reviewed configuration is four small YAML shapes:
+All reviewed configuration is five small YAML shapes:
 
 | File | What it declares |
 |---|---|
 | `repos.yaml` | The repo registry: every repository bureau may touch, with a per-repo access level (`read`/`pr`/`push`) and a credential *reference*. |
 | `roles/<name>.yaml` | An agent reference (`/bureau:implementer` or a path to an agent `.md`), the adapter that runs it (`copilot`/`claude`/`fake`), credential-grant permissions, and a minimum input trust. |
 | `assignments/<name>.yaml` | The standing arrangement: which work source to watch, which repos to touch, which pipeline and role to use, the `verify` command, the branch prefix, and budget limits. |
+| `label_rules/<name>.yaml` | A bounded rule that updates forge labels when every blocking GitHub issue is closed. |
 | `pipelines/<name>.yaml` | The step state machine: `deterministic` steps run shell, `agent` steps run an adapter, `decision` steps branch on an earlier step's outcome. |
 
 Where these files live depends on your layout — that is the next decision.
@@ -75,12 +76,14 @@ my-repo/.bureau/                 # single-repository mode
   roles/implementer.yaml
   roles/reviewer.yaml
   assignments/fix-flaky-tests.yaml
+  label_rules/graduate-unblocked.yaml
   pipelines/fix-failing-test.yaml
 
 runner-config/                   # separate-repository mode, same schema at the root
   repos.yaml
   roles/...
   assignments/...
+  label_rules/...
   pipelines/...
 ```
 
@@ -243,6 +246,36 @@ work:
   `maintainer`; everyone else's grade `untrusted`. Roles that write code
   require `maintainer` or better, so outside-contributor items are skipped
   by data-flow control, not by a blocklist.
+
+### Dependency-driven labels
+
+Label rules are deterministic reconcile work, not pipelines: they create no
+worktree or pull request and do not invoke a model. The source must match a
+GitHub repo in `repos.yaml` so Bureau can resolve its credential.
+
+```yaml
+# label_rules/graduate-unblocked.yaml
+name: graduate-unblocked
+work:
+  forge: github
+  source: TheLarkInn/bureau
+  filter: "is:issue is:open label:agent-blocked"
+
+when: dependencies_closed
+add_labels: [agent-eligible]
+remove_labels: [agent-blocked]
+
+limits:
+  max_updates_per_hour: 20
+```
+
+Each attempted update records durable `update_started` and
+`update_applied`/`update_failed` audit events. The hourly limit counts attempts,
+including failures. Items whose dependencies remain open are reconsidered on
+the next pass without consuming update headroom. Failed or interrupted partial
+updates are verified and retried by item identity even when removing a label
+makes the item leave the original filter. A deleted item records
+`update_abandoned` without blocking the rest of its rule.
 
 ### Azure DevOps
 

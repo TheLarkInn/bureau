@@ -226,6 +226,7 @@ fn check_assignment(errors: &mut Vec<ConfigError>, config: &Config, name: &str, 
             format!("assignment `{name}` references unknown role `{}`", a.role),
         );
     }
+
     check_limits(errors, name, &a.limits, &path);
     check_text(errors, name, a, &path);
     check_approval_label(errors, name, a, &path);
@@ -266,6 +267,7 @@ pub fn validate(config: &Config) -> Vec<ConfigError> {
     for (name, assignment) in &config.assignments {
         check_assignment(&mut errors, config, name, assignment);
     }
+    super::validate_label_rule::check_all(&mut errors, config);
     errors.extend(validate_pipelines(config));
     errors
 }
