@@ -210,9 +210,11 @@ export const SAVE_INTERCEPTS = { saving: "stall-intent", discarding: "stall-inte
  * editor's save, a refused run control and a refused create — excluded by rules
  * that still gave the pre-interception reason: "the matrix may not write to the
  * host". That reason had stopped being true. `matrix-fixtures.mjs` holds every
- * intent except the two known reads, so none of those clicks reaches the host
- * whether a rule excludes them or not, and the rules were excluding screens
- * that the harness could by then render perfectly safely.
+ * intent that writes, under every state and not only the ones that ask for a
+ * route, so none of those clicks reaches the host whether a rule excludes them
+ * or not, and the rules were excluding screens that the harness could by then
+ * render perfectly safely. The single exception is the delete preflight, which
+ * writes nothing and is named as an exception by the harness rule that owns it.
  *
  * That is the failure mode this registry exists to prevent, so it is worth
  * naming exactly: a `structural` rule claims a screen *cannot be rendered*, and

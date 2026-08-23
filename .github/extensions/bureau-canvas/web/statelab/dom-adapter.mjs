@@ -9,6 +9,14 @@
 
 const MOUNT_TIMEOUT = 8000;
 const POLL_MS = 25;
+/**
+ * The one channel outcome that also means the *intercept* is missing.
+ *
+ * `arm()` installs the SSE observer and this state's request condition inside
+ * the same window, so they succeed or fail together. Shared here because `goto`
+ * has to refuse on it and `sseDelivered` is what reports it.
+ */
+const NEVER_ARMED = "the SSE observer never armed";
 
 import { assertAdapter, PUBLISH_EVENT } from "./driver.mjs";
 import { installIntercept, isPreSurface, servableInFrame } from "./intercept.mjs";
@@ -53,6 +61,17 @@ export function domAdapter(frame) {
       // before it arrives would be overwritten the moment it did.
       await waitFor(doc, page === "editor" ? ".editor-tabs" : ".app-header");
       Object.assign(channel, await sseDelivered(win));
+      // A missed arming window costs more than an unproved render when the
+      // state declared a condition: `installIntercept` rides in that same
+      // window, so "the observer never armed" means this state's writes are
+      // *not* being held. The ops still to come are the real Save, Discard,
+      // Create and Cancel buttons, and un-held they post to the contributor's
+      // own `.bureau/` — the config this lab exists to review. Rendering the
+      // wrong screen is a tolerable failure for a review tool; writing to the
+      // host it is reviewing is not, so this one refuses instead of carrying on.
+      if (kind && channel.reason === NEVER_ARMED) {
+        throw new Error(`the ${kind} condition never armed, so this state's controls would write to the host`);
+      }
     },
     publish(state) {
       win().dispatchEvent(new (win().CustomEvent)(PUBLISH_EVENT, { detail: state }));
@@ -155,9 +174,11 @@ function observe(win) {
 
 /**
  * Bounded on purpose: if a browser ever denies the frame early enough for the
- * observer to miss its window, the walk carries on and the verdict still
- * reports whatever actually rendered. A review tool that stalls tells a
- * reviewer less than one that shows the wrong thing and says what it checked.
+ * observer to miss its window, an *unintercepted* walk carries on and the
+ * verdict still reports whatever actually rendered. A review tool that stalls
+ * tells a reviewer less than one that shows the wrong thing and says what it
+ * checked. An intercepted walk is the exception, and `goto` refuses it: there
+ * the same missed window left this state's writes unheld.
  *
  * But it must not call that success. `undefined` means the observer never
  * armed, which is exactly the case where the race is still live — so it is
@@ -175,7 +196,7 @@ function sseDelivered(win) {
         return;
       }
       if (Date.now() > deadline) {
-        resolve({ observed: false, reason: flag === undefined ? "the SSE observer never armed" : "no state event arrived" });
+        resolve({ observed: false, reason: flag === undefined ? NEVER_ARMED : "no state event arrived" });
         return;
       }
       setTimeout(tick, POLL_MS);

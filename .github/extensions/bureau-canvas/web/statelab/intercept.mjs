@@ -19,6 +19,29 @@
 export const READ_INTENTS = new Set(["derive-work-source", "resolve-repo"]);
 
 /**
+ * What may reach the real host at all — the floor under the browser suite,
+ * which holds `./intent` whether or not a state declared an intercept.
+ *
+ * Wider than `READ_INTENTS` by exactly one entry, and the difference is not a
+ * drift. A save intercept holds writes so that a *saving* or *refused* screen
+ * can be rendered; the floor holds them so a state that declared no intercept
+ * cannot write to the contributor's own `.bureau/` by omission. The delete
+ * preflight belongs on the second list and not the first: `lib/crud.mjs`
+ * `remove()` answers an unconfirmed delete with the referrer report and writes
+ * nothing, so it is a read — and it is the one intent the matrix deliberately
+ * lets through, which is what `a-preflight-answers-with-the-hosts-own-config`
+ * is a `harness` rule about.
+ */
+export function reachesHost(body) {
+  return READ_INTENTS.has(body?.kind) || isPreflight(body);
+}
+
+/** An unconfirmed delete: `remove()` reports its referrers and writes nothing. */
+function isPreflight(body) {
+  return body?.kind === "delete" && !body?.input?.confirm;
+}
+
+/**
  * A refusal in the shape the host actually answers with.
  *
  * `extension.mjs` writes every intent answer through `sendJson`, which is

@@ -16,6 +16,7 @@ import {
   IN_FRAME,
   isPreSurface,
   READ_INTENTS,
+  reachesHost,
   refusalFor,
   servableInFrame,
 } from "../web/statelab/intercept.mjs";
@@ -86,6 +87,50 @@ test("a held save holds only writes, and lets the two reads through", async () =
     otherUrl: true,
     readsAreKnown: ["derive-work-source", "resolve-repo"],
   });
+});
+
+/**
+ * The floor's allowance, which is wider than a save intercept's by one entry.
+ *
+ * `matrix-fixtures.mjs` denies `./intent` under *every* state now, so this
+ * predicate is the only thing standing between a path nobody modelled and the
+ * contributor's own config. The delete preflight has to be on it — `remove()`
+ * answers an unconfirmed delete with its referrer report and writes nothing,
+ * and the matrix reaches the host for exactly that one screen — and the
+ * confirmed delete beside it must not be, which is the pair worth pinning:
+ * they differ only by a nested `confirm`, so a predicate that read the `kind`
+ * alone would wave a real deletion through.
+ */
+test("the floor lets a read and the delete preflight through, and nothing else", () => {
+  const verdicts = [
+    ["derive-work-source", { kind: "derive-work-source", url: "https://example.com" }],
+    ["resolve-repo", { kind: "resolve-repo", url: "https://example.com" }],
+    ["delete preflight", { kind: "delete", input: { kind: "role", name: "implementer" } }],
+    ["delete confirmed", { kind: "delete", input: { kind: "role", name: "implementer", confirm: true } }],
+    ["save-plan", { kind: "save-plan" }],
+    ["save-pipeline", { kind: "save-pipeline" }],
+    ["discard-plan", { kind: "discard-plan" }],
+    ["create", { kind: "create", input: { kind: "role", name: "new" } }],
+    ["set-limits", { kind: "set-limits" }],
+    ["cancel-run", { kind: "cancel-run" }],
+    ["an unparseable body", null],
+    ["an intent added later", { kind: "some-intent-invented-after-this-test" }],
+  ].map(([name, body]) => `${name}: ${reachesHost(body) ? "reaches the host" : "held"}`);
+
+  assert.deepEqual(verdicts, [
+    "derive-work-source: reaches the host",
+    "resolve-repo: reaches the host",
+    "delete preflight: reaches the host",
+    "delete confirmed: held",
+    "save-plan: held",
+    "save-pipeline: held",
+    "discard-plan: held",
+    "create: held",
+    "set-limits: held",
+    "cancel-run: held",
+    "an unparseable body: held",
+    "an intent added later: held",
+  ]);
 });
 
 test("a refused save answers 200 with the body the host would send", async () => {

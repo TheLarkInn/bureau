@@ -267,13 +267,23 @@ excluding every screen a write leads to. `./intent` is how the page writes *and*
 how it reads, so the route that answers it in the browser is named by the
 intent's `kind`: `derive-work-source` and `resolve-repo` are let through, and
 every other kind — `save-plan`, `discard-plan`, `save-pipeline`, the create
-intents — is held wherever a state installs the route. The one intent that
-still reaches the host is the delete **preflight**, which no state intercepts:
-`lib/crud.mjs` `remove()` answers an unconfirmed delete with the preflight and
-writes nothing, so the round trip is a read. It is not free, though — the host
-republishes its own state while answering, which is why the preflight cannot be
-reviewed over an injected config and why the rule that says so is a `harness`
-rule. `.bureau/` is untouched by the run.
+intents — is held. That route is installed under **every** state, not only the
+ones that ask for a condition. The distinction matters more than it sounds: a
+deny that only exists where a state opted into it makes "no write reaches the
+host" a fact about which paths happen to click what, and the next state to press
+a Save it never modelled would have rewritten the contributor's own `.bureau/`
+with every test still green. `holdWrites` is the floor, a state's own
+`stall-intent` or `fail-intent` layers over it, and a write that reaches the
+floor is recorded and fails the state that posted it by name.
+
+The one intent that still reaches the host is the delete **preflight**:
+`lib/crud.mjs` `remove()` answers an *unconfirmed* delete with its referrer
+report and writes nothing, so the round trip is a read, and `reachesHost` names
+it alongside the two derivations. The nested `confirm` is what separates it from
+a real deletion, so the predicate reads the body rather than the `kind`. It is
+not free even so — the host republishes its own state while answering, which is
+why the preflight cannot be reviewed over an injected config and why the rule
+that says so is a `harness` rule. `.bureau/` is untouched by the run.
 
 That route arrived for the field saves and was not extended to the other four
 families, which kept rules saying `save-plan` "calls `applyPlan` on the host's
@@ -284,6 +294,25 @@ not press this button" is not "this screen cannot be rendered."** A rule marked
 registry has — only `scoping` rules owe a crossing probe, so no test asks a
 `structural` rule for anything. Two of the six screens were consequently
 asserted nowhere in the repository at all.
+
+The same substitution had been made twice more in the editor family, and an
+independent review found it after the rest of this was written.
+`a-clean-editor-can-only-select-what-it-already-draws` and
+`a-move-needs-a-step-the-fixture-already-draws` both opened their reason with
+the *fixture* — the sample pipeline ships a deterministic and an agent step —
+and then claimed structural impossibility on the strength of it. `PipelineEditor`
+selects and drags any step it draws, so a user whose pipeline holds a decision
+step reaches both screens with no mutation at all; only this bundle cannot. Both
+are `harness` rules now, each naming its limit and the state that stands for it,
+and re-enumerating without either one keeps two further combinations, which is
+the `costless` check confirming they were hiding something.
+
+Kinding is a judgement, and the check that catches this one is narrower than the
+judgement: a rule whose verdict is computed from `SAMPLE_STEPS` is deciding from
+the fixture's inventory, which is a statement about the bundle and not about the
+product. `test/statelab.test.mjs` requires every such rule to be `harness`, and
+asserts that it matched at least one rule so the check cannot pass by vacuity if
+the constant is ever renamed.
 
 So the plan bar's save, the pipeline editor's save, a refused create and a
 refused run control are ordinary states now, each reached by pressing the real

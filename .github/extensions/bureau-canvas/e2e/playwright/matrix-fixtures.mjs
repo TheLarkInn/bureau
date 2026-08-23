@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { READ_INTENTS, refusalFor } from "../../web/statelab/intercept.mjs";
+import { READ_INTENTS, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -46,6 +46,9 @@ export const galleryDir = staging;
 
 /** Marks a page whose init script already clears the surface's session memory. */
 const FRESH = Symbol("fresh-session");
+
+/** Writes the floor had to hold because the state declared no intercept. */
+const UNGUARDED = Symbol("unguarded-writes");
 
 async function bootCanvas() {
   const child = spawn(process.execPath, [SERVE, "--dir", CONFIG], {
@@ -84,6 +87,21 @@ export const test = base.extend({
     },
     { scope: "worker" },
   ],
+
+  /**
+   * Every page in this suite sits on the write floor, before it is navigated
+   * and before any spec can add a route of its own.
+   *
+   * Here rather than in `pageAdapter` because the floor is a property of the
+   * *suite*, not of the driver: `specs/state-lab.spec.mjs` drives the lab
+   * through its own `page.goto` and never builds an adapter, so a floor that
+   * arrived with the adapter would have left the one spec that clicks through
+   * a UI the registry does not enumerate as the only one uncovered.
+   */
+  page: async ({ page }, use) => {
+    await holdWrites(page);
+    await use(page);
+  },
 
   /** A page that records every console error and page error it ever saw. */
   watched: async ({ page }, use) => {
@@ -150,17 +168,15 @@ async function settled(page, target) {
 export function pageAdapter(page, host) {
   return assertAdapter({
     async goto(target, op) {
-      if (op?.intercept) {
-        await intercept(page, op.intercept);
-      }
-      // Only a pre-surface intercept changes how the page is waited for. An
-      // intent route leaves the boot untouched, so the state still has to
-      // settle like every other one — skipping the barrier there would judge a
-      // half-rendered page and call the race a state.
-      const preSurface = PRE_SURFACE.has(op?.intercept);
       // The assignment stack remembers its expanded card in `sessionStorage`.
       // Every walk starts from a fresh session so a path means the same thing
       // however many times it has been walked in this page before.
+      //
+      // The write floor is already installed by the `page` fixture, which is
+      // what makes a state's own route safe to add here: Playwright offers a
+      // request to the most recently registered matching handler first, so a
+      // `stall-intent` or `fail-intent` added now answers its own writes and
+      // the floor only ever sees what nothing else claimed.
       if (!page[FRESH]) {
         await page.addInitScript(() => {
           try {
@@ -172,6 +188,14 @@ export function pageAdapter(page, host) {
         await armSseBarrier(page);
         page[FRESH] = true;
       }
+      if (op?.intercept) {
+        await intercept(page, op.intercept);
+      }
+      // Only a pre-surface intercept changes how the page is waited for. An
+      // intent route leaves the boot untouched, so the state still has to
+      // settle like every other one — skipping the barrier there would judge a
+      // half-rendered page and call the race a state.
+      const preSurface = PRE_SURFACE.has(op?.intercept);
       const path = target === "editor" ? "editor.html" : "index.html";
       await page.goto(new URL(path, host.url).href, { waitUntil: preSurface ? "commit" : "load" });
       if (!preSurface) {
@@ -231,13 +255,51 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * to the host — which is the contributor's own `.bureau/`, shared by every
  * state on that worker. Four constraints exist to keep those intents out of
  * the matrix, so nothing would have failed; the config would just have been
- * quietly rewritten underneath the run. An intent added later is now held by
+ * quietly rewritten underneath the run. An intent added later is held by
  * default, and a body that cannot be parsed is held too.
  *
- * `READ_INTENTS` and `refusalFor` come from `web/statelab/intercept.mjs`,
- * which the lab installs inside its frame. One definition, two applications:
- * the screen a reviewer browses is under the same condition CI asserts.
+ * Held *by whom* is the second half, and it was missing for a while. Default-
+ * deny is a property of this route, and this route was installed only for a
+ * state that asked for one — so "no write reaches the host" was a fact about
+ * which paths happened to click what, not a guarantee. `holdWrites` installs
+ * the same deny unconditionally now, under every state, so the next path to
+ * click a Save it never modelled is stopped and named instead of landing on
+ * disk.
+ *
+ * `READ_INTENTS`, `reachesHost` and `refusalFor` come from
+ * `web/statelab/intercept.mjs`, which the lab installs inside its frame. One
+ * definition, two applications: the screen a reviewer browses is under the same
+ * condition CI asserts.
  */
+
+/**
+ * The floor under every page in this suite: `./intent` is held unless it
+ * writes nothing.
+ *
+ * The default-deny above is a property of the *route*, and until now the route
+ * was only installed for states that asked for one — so "no intent reaches the
+ * host" held by coincidence of which paths happened to click what, not by
+ * construction. It happened to be true, and the next state to click a Save
+ * without declaring an intercept would have rewritten the contributor's own
+ * `.bureau/`, shared by every state on this worker, with nothing failing.
+ *
+ * So the deny is unconditional now, and a held write is recorded rather than
+ * merely blocked: aborting alone would surface as some unrelated control
+ * failing its checks, which is a bug report nobody can read. `judge` turns each
+ * recorded kind into a named failure against the state that provoked it.
+ */
+async function holdWrites(page) {
+  page[UNGUARDED] = [];
+  await page.route(/\/intent$/u, (route) => {
+    const body = intentBody(route);
+    if (reachesHost(body)) {
+      route.continue();
+      return;
+    }
+    page[UNGUARDED].push(body?.kind ?? "an unparseable intent");
+    route.abort("failed");
+  });
+}
 
 async function intercept(page, kind) {
   const routes = {
@@ -267,8 +329,12 @@ function writes(route) {
 }
 
 function intentKind(route) {
+  return intentBody(route)?.kind ?? null;
+}
+
+function intentBody(route) {
   try {
-    return JSON.parse(route.request().postData() ?? "{}").kind ?? null;
+    return JSON.parse(route.request().postData() ?? "{}");
   } catch {
     return null;
   }
@@ -349,7 +415,23 @@ async function sample(state, page) {
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
     { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST } },
   );
-  return { snapshot, failures: verdict(state, snapshot, { slack: 2 }) };
+  return { snapshot, failures: [...heldWrites(page), ...verdict(state, snapshot, { slack: 2 })] };
+}
+
+/**
+ * Writes the floor had to hold, reported against the state that posted them.
+ *
+ * This is not a render fault, so it is not `verdict`'s to find: it says the
+ * matrix tried to act on the host and only the floor stopped it. A state that
+ * wants one of these screens declares `stall-intent`, `fail-intent` or
+ * `abort-intent` and owns the outcome; one that does not is asking for a write
+ * it never modelled.
+ */
+function heldWrites(page) {
+  return (page[UNGUARDED] ?? []).map((kind) => ({
+    kind: "unguarded-write",
+    detail: `\`${kind}\` was posted to ./intent with no intercept declared for it, so this path would have written to the host`,
+  }));
 }
 
 export { expect } from "@playwright/test";

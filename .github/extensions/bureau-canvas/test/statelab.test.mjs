@@ -468,6 +468,35 @@ test("every harness rule names its limit, stands on a rendered screen, and reall
   );
 });
 
+/**
+ * The blind spot the check above leaves, closed from the other side.
+ *
+ * `costless` only ever asks rules that are already kinded `harness`, and
+ * `mislabelled` only catches the reverse mistake — so a harness limit wearing a
+ * `structural` label is asked for nothing at all, which is how two of them sat
+ * here unnoticed. There is no general test for "does this screen exist in the
+ * product?", but there is an exact one for the way it goes wrong: a rule whose
+ * verdict is computed from the *fixture's* step inventory is a statement about
+ * this bundle, not about the product. The screens it removes are ordinary ones
+ * that a user with a richer pipeline reaches, which is the definition of a
+ * harness limit.
+ *
+ * `none` is asserted alongside so the check keeps its teeth: if `SAMPLE_STEPS`
+ * is ever renamed or inlined, this test starts matching nothing and would
+ * otherwise pass by vacuity for the rest of its life.
+ */
+test("a rule that decides from the fixture's step inventory is kinded as the harness limit it is", () => {
+  const readsFixture = CONSTRAINTS.filter((rule) => rule.holds.toString().includes("SAMPLE_STEPS"));
+
+  assert.deepStrictEqual(
+    {
+      none: readsFixture.length === 0,
+      mislabelled: readsFixture.filter((rule) => rule.kind !== "harness").map((rule) => rule.id),
+    },
+    { none: false, mislabelled: [] },
+  );
+});
+
 /** Axes a crossing left unset, or set to a value its axis does not declare. */
 function malformed(state) {
   return ORDER.flatMap((key) => {

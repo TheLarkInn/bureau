@@ -46,6 +46,15 @@
 //            somewhere; an offline test requires the state to exist, and
 //            requires every harness rule to actually hide a renderable
 //            combination, re-enumerating without it to prove the cost is real.
+//
+// Those checks all start from the label, though, so a harness limit kinded
+// `structural` is asked for none of them — and that is where the error recurs,
+// twice more in the editor family than the paragraph above admits. There is no
+// general test for "does this screen exist in the product?", but there is an
+// exact one for the way the mistake is made here: a rule that computes its
+// verdict from `SAMPLE_STEPS` is deciding from the *fixture's* step inventory,
+// and what a bundled fixture happens to contain is never a fact about the
+// canvas. `test/statelab.test.mjs` requires every such rule to be `harness`.
 
 import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
 import { PAIRABLE_FIELDS } from "./dimensions.mjs";
@@ -355,19 +364,43 @@ export const CONSTRAINTS = [
     holds: (combo) => !NEEDS_SELECTION.includes(combo.edit) || !["n/a", "none"].includes(combo.pick),
   },
   {
+    /*
+     * A fixture limit, not a product one. `PipelineEditor` selects whatever
+     * step it draws, whatever the kind — open a pipeline that already holds a
+     * decision step, click it, edit nothing, and this is an ordinary screen.
+     * What cannot produce it is *this bundle*: `SAMPLE_STEPS` is the sample
+     * pipeline's inventory, so reaching the other two kinds here means adding
+     * one, and adding is a mutation.
+     *
+     * Kinded `harness` for exactly that reason. Filing it `structural` claimed
+     * the screen could not be rendered at all, and that claim waives the limit
+     * and the standing state below — the substitution this registry exists to
+     * stop, made here on a rule whose own `why` named the fixture.
+     */
     id: "a-clean-editor-can-only-select-what-it-already-draws",
-    kind: "structural",
+    kind: "harness",
     reads: ["edit", "pick"],
     title: "Selecting a decision or a concurrent step means creating one",
-    why: "The fixture pipeline ships a deterministic and an agent step. Reaching a decision or concurrent selection requires adding one, and adding is a mutation — so those kinds cannot be selected while the editor is still clean.",
+    why: "`PipelineEditor` selects any step it draws regardless of kind, so a user whose pipeline already holds a decision or concurrent step selects one with the editor still clean. The bundled sample ships a deterministic and an agent step only, so reaching those kinds here requires adding one — and adding is a mutation, which makes the editor dirty.",
+    limit: "`web/statelab/paths.mjs` `SAMPLE_STEPS` is the sample pipeline's step inventory, and `selectStep` can only click a card the fixture already draws; for the other two kinds it adds one, so `edit` cannot still be `rest`.",
+    stands: "surface:editor+tab:pipeline+pick:decision+edit:created",
     holds: (combo) => combo.edit !== "rest" || ["n/a", "none", ...Object.keys(SAMPLE_STEPS)].includes(combo.pick),
   },
   {
+    /*
+     * The same fixture limit one step further on. Dragging is the editor's own
+     * layout gesture and is indifferent to a step's kind, so what the exclusion
+     * costs is not the move — that is rendered on both kinds the fixture draws
+     * — but the pairing of a move with a decision or concurrent card, which
+     * here can only be reached by adding one first.
+     */
     id: "a-move-needs-a-step-the-fixture-already-draws",
-    kind: "structural",
+    kind: "harness",
     reads: ["edit", "pick"],
-    title: "Only an existing step can be moved and nothing else",
-    why: "`layout-moved` is the one edit that changes nothing but a position, which is why its status may read a clean `unsaved edits`. A decision or concurrent step has to be *added* before it can be dragged, so the state there would be `created` and then moved — a different thing, already enumerated, and one whose new step is unwired and reports an issue.",
+    title: "Only a step the fixture already draws can be moved and nothing else",
+    why: "`layout-moved` is the one edit that changes nothing but a position, which is why its status may read a clean `unsaved edits`. A user drags a decision step the same way as any other; this fixture draws none, so one has to be *added* before it can be dragged, and the state there is `created` and then moved — a different thing, already enumerated, and one whose new step is unwired and reports an issue.",
+    limit: "`web/statelab/paths.mjs` `SAMPLE_STEPS` is the sample pipeline's step inventory, and `EDIT_PATHS['layout-moved']` drags the card `selectStep` clicked — for a kind the fixture does not draw there is no card to drag until one has been added.",
+    stands: "surface:editor+tab:pipeline+pick:deterministic+edit:layout-moved",
     holds: (combo) => combo.edit !== "layout-moved" || Boolean(SAMPLE_STEPS[combo.pick]),
   },
   {
