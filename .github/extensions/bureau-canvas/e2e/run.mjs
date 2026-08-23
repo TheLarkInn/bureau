@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
-const EDGE_EXE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+// `BUREAU_CANVAS_EDGE` overrides the lookup. The default is where the Windows
+// installer puts it; the override is for an install that is somewhere else, or
+// for a non-Windows Edge. It is not a way to drive a Windows Edge from another
+// OS — see `crossOsReason`.
+const EDGE_EXE = process.env.BUREAU_CANVAS_EDGE
+  ?? "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const E2E_DIR = fileURLToPath(new URL("./", import.meta.url));
 const SCREENSHOT_DIR = join(E2E_DIR, "screenshots");
 const PROFILE_DIR = join(E2E_DIR, ".edge-profiles");
@@ -114,7 +119,7 @@ class CdpSession {
 }
 
 async function main() {
-  const skip = await skipReason();
+  const skip = skipReason();
   if (skip) {
     console.log(`bureau-canvas e2e skipped: ${skip}`);
     return;
@@ -143,22 +148,50 @@ async function main() {
   }
 }
 
-async function skipReason() {
+function skipReason() {
+  // The cross-OS pairing is read from the *shape* of the two paths, so it does
+  // not need the executable to exist — and it has to be asked first. On WSL a
+  // Windows Edge is installed and perfectly real, but `C:\...` is not a path
+  // this host can stat, so the existence check below would blame a missing
+  // browser for a pairing this harness already knows how to name. Naming the
+  // pairing is the whole point; getting there only when Edge happens to be
+  // absent for a second reason defeats it.
+  const crossOs = crossOsReason();
+  if (crossOs) {
+    return crossOs;
+  }
   if (!existsSync(EDGE_EXE)) {
     return `Microsoft Edge not found at ${EDGE_EXE}`;
   }
   if (typeof WebSocket !== "function") {
     return "Node global WebSocket is unavailable; run with Node 24 or newer";
   }
-  try {
-    const response = await fetch("https://esm.sh/react@18.3.1", { signal: AbortSignal.timeout(7_000) });
-    if (!response.ok) {
-      return `network preflight to esm.sh returned HTTP ${response.status}`;
-    }
-  } catch (error) {
-    return `network preflight to esm.sh failed (${error.message})`;
-  }
+  // There is deliberately no network preflight. One used to stand here, from
+  // when the pages loaded React from esm.sh; `d9556b1` vendored the renderer an
+  // hour later and `render.test.mjs` now asserts the page carries no remote
+  // reference at all. Left in place it gated a fully offline harness on the
+  // CDN it had stopped using — so an offline machine skipped every assertion
+  // below and still exited 0. A harness may name a pairing it cannot run,
+  // which is what `crossOsReason` does; it may not pass by running nothing.
   return null;
+}
+
+/**
+ * A Windows Edge cannot be driven from a POSIX host. It reads
+ * `--user-data-dir=/home/...` as a Windows path, so `DevToolsActivePort` is
+ * written somewhere this process cannot see and the browser exits with an
+ * empty stderr — twenty seconds of waiting and nothing to go on. Under WSL's
+ * default NAT networking the CDP port would not be reachable either, since
+ * Edge binds Windows' loopback and not this one.
+ *
+ * Naming the pairing is the whole point: an unrunnable harness should say
+ * which two things cannot be paired, not fail blank.
+ */
+function crossOsReason() {
+  if (!EDGE_EXE.toLowerCase().endsWith(".exe") || !PROFILE_DIR.startsWith("/")) {
+    return null;
+  }
+  return `${EDGE_EXE} is a Windows browser but this is a POSIX host, so its profile would be ${PROFILE_DIR}, a path Windows cannot open; run this harness with the Windows node`;
 }
 
 async function launchEdge() {

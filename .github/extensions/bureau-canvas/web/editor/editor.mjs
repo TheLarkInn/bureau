@@ -6,7 +6,7 @@
 // server's `save-pipeline` intent, which owns validation and the revert.
 // Node positions ride along as the layout sidecar (Q10).
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BaseEdge,
@@ -20,6 +20,7 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 
+import { MeasurementGuard } from "../graph-measure.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -43,6 +44,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const [layoutDirty, setLayoutDirty] = useState(false);
   const [selected, setSelected] = useState(null);
   const [saveResult, setSaveResult] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [flowApi, setFlowApi] = useState(null);
 
   const view = useMemo(() => draft ?? editableView(pipeline?.view), [draft, pipeline]);
@@ -79,6 +81,18 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
   }, [flowApi]);
+  // A step added at a new layer can land outside the visible canvas, which
+  // reads as "nothing happened". Refit when the graph *gains* a node — not on
+  // mount, where React Flow's own `fitView` already ran and a second animated
+  // one would only keep the nodes moving.
+  const stepCount = view.steps.length;
+  const lastCount = useRef(stepCount);
+  useEffect(() => {
+    if (stepCount > lastCount.current) {
+      flowApi?.fitView({ padding: 0.22, duration: 200 });
+    }
+    lastCount.current = stepCount;
+  }, [flowApi, stepCount]);
   const focusStep = (step) => {
     setSelected(step);
     const node = flow.nodes.find((candidate) => candidate.id === step);
@@ -93,15 +107,19 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
     setSaveResult(null);
     setSelected(null);
   };
-  const saveCurrent = () => save({
-    setSaveResult,
-    setDraft,
-    setLayoutDirty,
-    onSaved,
-    name,
-    view,
-    positions,
-  });
+  /*
+   * A save in flight has to withhold its own button. `save-pipeline` writes the
+   * pipeline file, re-validates and reverts, so a second click while the first
+   * is outstanding is a second write racing the revert of the first. The button
+   * used to stay live for the whole round trip, and nothing caught it because
+   * the in-flight screen was an excluded state — the registry asserted the
+   * button was withheld and the matrix never rendered it to find out.
+   */
+  const saveCurrent = () => {
+    setSaving(true);
+    return save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions })
+      .finally(() => setSaving(false));
+  };
 
   return h(
     "section",
@@ -113,6 +131,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       hints,
       saveResult,
       invalidNumbers,
+      saving,
       onSave: saveCurrent,
       onDiscard: discard,
       onAdd: (kind) => addStep(name, view, kind, edit, setSelected),
@@ -158,6 +177,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
           h(Background, { gap: 24, size: 1.5 }),
           h(Controls),
           h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
+          h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
         ),
       ),
       h(SidePanel, {
@@ -477,7 +497,7 @@ function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
 
 // --- toolbar + side panel ---
 
-function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDiscard, onAdd }) {
+function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSave, onDiscard, onAdd }) {
   const [kind, setKind] = useState("deterministic");
   return h(
     "div",
@@ -496,22 +516,39 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDis
         },
         STEP_KINDS.map((option) => h("option", { key: option, value: option }, option)),
       ),
-      h("button", { type: "button", className: "btn", onClick: () => onAdd(kind) }, "+ Add step"),
+      h("button", { type: "button", className: "btn", "data-testid": "editor-add-step", onClick: () => onAdd(kind) }, "+ Add step"),
     ),
-    h("span", { className: `editor-status${hints.length ? " editor-status--hints" : ""}` }, statusText(dirty, hints, saveResult)),
+    h("span", { className: `editor-status${statusTone(hints, saveResult)}` }, statusText(dirty, hints, saveResult)),
     h("span", { className: "editor-legend", "aria-label": "Edge legend" },
       h("span", { className: "legend-swatch legend-swatch--success" }, "success"),
       h("span", { className: "legend-swatch legend-swatch--failure" }, "failure"),
       h("span", { className: "legend-swatch legend-swatch--blocked" }, "blocked"),
       h("span", { className: "legend-swatch legend-swatch--data" }, "data")),
-    dirty ? h("button", { type: "button", className: "btn", onClick: onDiscard }, "Discard changes") : null,
-    h("button", { type: "button", className: "btn btn--primary", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
+    // Discard and Save are one control group, not two toolbar cells. As
+    // separate grid items the compact toolbar wrapped between them and left
+    // Save alone on a row, aligned to the end of the *first* column — a primary
+    // action floating in the middle of the bar, away from the choice it belongs
+    // to.
+    h(
+      "span",
+      { className: "editor-toolbar-actions" },
+      dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", disabled: saving, onClick: onDiscard }, "Discard changes") : null,
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers || saving, onClick: onSave }, saving ? "Saving…" : "Save changes"),
+    ),
   );
 }
 
+/*
+ * "see findings" was a redirect to a place the reader could not see. The list
+ * it pointed at is drawn at the bottom of a side panel that scrolls its own
+ * content, below a step form long enough to push it off-screen on both
+ * viewports — and when the transport died there were no findings at all, only
+ * an error string, so the redirect was also untrue. The panel now opens with
+ * the refusal, so the toolbar reports the event and stops directing traffic.
+ */
 function statusText(dirty, hints, saveResult) {
   if (saveResult && !saveResult.ok) {
-    return "save reverted — see findings";
+    return "save reverted";
   }
   if (hints.length) {
     return `${hints.length} issue${hints.length === 1 ? "" : "s"}`;
@@ -519,10 +556,30 @@ function statusText(dirty, hints, saveResult) {
   return dirty ? "unsaved edits" : "saved";
 }
 
+/** A refusal outranks a hint: one already happened, the other is advice. */
+function statusTone(hints, saveResult) {
+  if (saveResult && !saveResult.ok) {
+    return " editor-status--error";
+  }
+  return hints.length ? " editor-status--hints" : "";
+}
+
+/*
+ * The refusal is drawn first, above the step form, because it is the answer to
+ * the click the reader just made. Appended last it landed below a form tall
+ * enough to push it out of a panel that scrolls its own content — so on the one
+ * state where the reader needs a reason, the reason was the part they could not
+ * see, and the toolbar sent them to it by name.
+ */
 function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, onDelete, onIssue, onRename }) {
   return h(
     "aside",
     { className: "editor-panel" },
+    saveResult && !saveResult.ok
+      ? h("section", { className: "panel-section editor-save-reverted", "data-testid": "editor-save-reverted" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
+          (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
+            .map((finding, index) => h("li", { key: index }, finding.message))))
+      : null,
     step
       ? h(StepEditor, { view, step, roles, onChange, onClose, onDelete, onRename })
       : h(
@@ -536,11 +593,6 @@ function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, on
       ? h("section", { className: "panel-section" }, h("h3", {}, `Issues (${hints.length})`), h("ul", { className: "editor-issues" }, hints.map((hint) =>
           h("li", { key: `${hint.step}:${hint.message}` },
             h("button", { type: "button", onClick: () => onIssue(hint.step) }, `${hint.step}: ${hint.message}`)))))
-      : null,
-    saveResult && !saveResult.ok
-      ? h("section", { className: "panel-section" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
-          (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
-            .map((finding, index) => h("li", { key: index }, finding.message))))
       : null,
   );
 }
@@ -564,10 +616,11 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
     "section",
     { className: "panel-section editor-step" },
     h("div", { className: "editor-step-head" },
-      h("div", {}, h("h3", {}, step.name), h("span", { className: "kind-label" }, step.kind)),
+      h("div", {}, h("h3", {}, step.name), h("span", { className: `kind-label kind-label--${step.kind}` }, step.kind)),
       h("button", { type: "button", className: "btn btn--small", onClick: onClose }, "Close")),
     h("label", {}, "name", h("input", {
       className: `form-control form-control--mono${nameProblem ? " form-control--invalid" : ""}`,
+      "data-testid": "editor-step-name",
       value: name,
       onChange: (event) => setName(event.target.value),
       onBlur: commitName,
@@ -585,6 +638,7 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
       type: "number",
       min: 1,
       className: `form-control form-control--mono${positiveInteger(step.fields.maxAttempts) ? "" : " form-control--invalid"}`,
+      "data-testid": "editor-max-attempts",
       value: step.fields.maxAttempts ?? "",
       onChange: (event) => set("maxAttempts", numberInput(event.target.value)),
     })),
@@ -595,12 +649,13 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
           { className: "editor-danger-zone" },
           h("p", {}, `Delete \`${step.name}\` and every edge connected to it?`),
           h("div", { className: "editor-danger-actions" },
-            h("button", { type: "button", className: "btn btn--danger", onClick: onDelete }, "Delete step"),
+            h("button", { type: "button", className: "btn btn--danger", "data-testid": "editor-delete-confirm", onClick: onDelete }, "Delete step"),
             h("button", { type: "button", className: "btn", onClick: () => setConfirmDelete(false) }, "Keep step")),
         )
       : h("button", {
           type: "button",
           className: "btn btn--danger",
+          "data-testid": "editor-delete-step",
           onClick: () => setConfirmDelete(true),
         }, "Delete step"),
   );
@@ -883,6 +938,23 @@ function serializableView(view) {
   };
 }
 
+/*
+ * The panel already draws `saveResult.error`; this is the branch that fills it.
+ * A rejected `fetch` used to skip every `.then` here, so `saveResult` stayed as
+ * it was and the toolbar fell back to "unsaved edits" — the same words it showed
+ * before the click. A write that failed and a write never dispatched read
+ * identically, which is the one thing a draft surface may not do.
+ *
+ * What it says is this surface's own sentence rather than the rejection's
+ * message. `String(error.message)` put "Failed to fetch" in the panel: the
+ * running browser's private wording for a dead socket, which Firefox words
+ * differently, which names no pipeline, which promises nothing about the draft
+ * it just failed to write, and which no state could assert for that reason.
+ * Every sibling save on the config surface already answers a dead transport
+ * with a product sentence, because `postIntent` swallows the rejection and each
+ * caller supplies its own words. This was the one write that reached for the
+ * transport's words instead.
+ */
 function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, positions }) {
   return fetch("./intent", {
     method: "POST",
@@ -898,5 +970,9 @@ function save({ setSaveResult, setDraft, setLayoutDirty, onSaved, name, view, po
         onSaved?.(result.state);
       }
       return result;
+    })
+    .catch(() => {
+      setSaveResult({ ok: false, findings: [], error: "could not save this pipeline — nothing was written" });
+      return null;
     });
 }

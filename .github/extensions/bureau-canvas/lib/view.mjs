@@ -24,9 +24,12 @@ export function configView(payload) {
 
 /**
  * The config relation graph (Q16): assignment → pipeline/repos, then each
- * pipeline → the roles its agent steps actually use. Assignment `role` is a
- * scaffold-era field the engine never reads, so showing that edge would make
- * a non-operational declaration look like runtime behavior.
+ * pipeline → the roles its steps name, whatever kind of step names them —
+ * `addPipelineUses` and `lib/preflight.mjs` read it the same way, and a graph
+ * that read it differently would draw a role the strip called referenced with
+ * no edge at all. Assignment `role` is a scaffold-era field the engine never
+ * reads, so showing that edge would make a non-operational declaration look
+ * like runtime behavior.
  */
 export function relationView(payload) {
   const config = configOf(payload);
@@ -61,10 +64,11 @@ function assignmentRelations(name, assignment) {
   ];
 }
 
+/** Reads `step.role` exactly as `addPipelineUses` does — see the note there. */
 function pipelineRelations(name, pipeline) {
   const roles = [];
   for (const step of pipeline.steps ?? []) {
-    if (step.type === "agent" && step.role && !roles.includes(step.role)) {
+    if (step.role && !roles.includes(step.role)) {
       roles.push(step.role);
     }
   }
@@ -153,11 +157,25 @@ function addAssignmentUses(used, name, assignment) {
   addUse(used.pipelines, assignment.pipeline, ref);
 }
 
+/**
+ * A role a step names is a role in use, whatever kind of step names it.
+ *
+ * This filtered on `type === "agent"` and `lib/preflight.mjs` did not, so the
+ * two disagreed about the same config: a `role` on a deterministic step — which
+ * `bureau validate` rejects, and which the canvas still has to draw, because
+ * showing an invalid config is what the findings are for — left the role listed
+ * as Unreferenced while deleting it was blocked by the very step the strip said
+ * did not exist. Whether the reference is legal is `validate`'s judgement to
+ * make; whether one exists is not.
+ *
+ * `pipelineRelations` is the third projection of the same question, and it has
+ * to answer it the same way or the contradiction only moves: a filtered graph
+ * would draw that role as an edgeless card — the graph's own way of saying
+ * "unreferenced" — beside a strip that had just stopped saying it.
+ */
 function addPipelineUses(roles, name, pipeline) {
   for (const step of pipeline.steps ?? []) {
-    if (step.type === "agent") {
-      addUse(roles, step.role, `pipeline:${name}/${step.name}`);
-    }
+    addUse(roles, step.role, `pipeline:${name}/${step.name}`);
   }
 }
 

@@ -1,0 +1,134 @@
+{
+  "_comment": "A minimal config whose pipeline holds a concurrent group, so the run viewer's group card — its member rows and its fold control — has a pipeline to draw on. Kept small on purpose: the sample pipeline is what every other state renders, and this one exists only for the group family. `test/statelab.test.mjs` regenerates the served state from this file and fails if the committed fixture drifts from what the host would build.",
+  "ok": true,
+  "dir": "/repo/.bureau",
+  "errors": [],
+  "config": {
+    "repos": {
+      "bureau": {
+        "name": "bureau",
+        "url": "https://github.com/TheLarkInn/bureau",
+        "access": "push",
+        "credential": "GH_TOKEN"
+      }
+    },
+    "roles": {
+      "reviewer": {
+        "name": "reviewer",
+        "agent": "reviewer",
+        "permissions": ["repo:read", "model:invoke"]
+      }
+    },
+    "assignments": {
+      "review-queue": {
+        "name": "review-queue",
+        "work": {
+          "forge": "github",
+          "source": "https://github.com/TheLarkInn/bureau/issues",
+          "filter": "is:issue is:open label:review",
+          "approval_label": null,
+          "abort_label": "bureau:stop",
+          "escalate_label": "bureau:needs-human"
+        },
+        "repos": ["bureau"],
+        "pipeline": "review-queue-pipeline",
+        "branch_prefix": "bureau/",
+        "limits": {
+          "max_concurrent": 1,
+          "max_runs_per_hour": null,
+          "max_runs_per_day": null,
+          "max_open_prs": null,
+          "max_cost_per_day_usd": null,
+          "max_run_hours": null
+        }
+      }
+    },
+    "pipelines": {
+      "review-queue-pipeline": {
+        "name": "review-queue-pipeline",
+        "steps": [
+          {
+            "name": "claim",
+            "type": "deterministic",
+            "run": "bureau claim",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": "run-checks",
+            "on_failure": "escalate",
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "run-checks",
+            "type": "concurrent",
+            "run": null,
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": ["read-diff", "read-tests"],
+            "completion": "all",
+            "max_concurrent": 2,
+            "next": "done",
+            "on_failure": "escalate",
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": ["claim"],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "read-diff",
+            "type": "agent",
+            "run": null,
+            "role": "reviewer",
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          },
+          {
+            "name": "read-tests",
+            "type": "deterministic",
+            "run": "cargo test --offline",
+            "role": null,
+            "fixture": null,
+            "trust": null,
+            "over": null,
+            "on": {},
+            "steps": [],
+            "completion": null,
+            "max_concurrent": null,
+            "next": null,
+            "on_failure": null,
+            "on_blocked": null,
+            "on_no_work": null,
+            "inputs_from": [],
+            "max_attempts": 1,
+            "timeout_secs": null
+          }
+        ]
+      }
+    }
+  }
+}

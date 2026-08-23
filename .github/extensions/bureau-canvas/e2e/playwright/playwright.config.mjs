@@ -5,9 +5,17 @@ import { defineConfig, devices } from "@playwright/test";
  * URL here: the `canvas` fixture boots one host per worker on an ephemeral
  * port and hands the spec its address. Offline like every other suite —
  * no network, no `bureau` binary, no Copilot SDK.
+ *
+ * `globalSetup` opens a staging directory for this run's renders and
+ * `globalTeardown` publishes it over the gallery — but only when the run put
+ * something there, so the artefact a reviewer browses is exactly the states the
+ * last matrix run produced, and a run that renders none of them leaves it
+ * alone.
  */
 export default defineConfig({
   testDir: "./specs",
+  globalSetup: "./global-setup.mjs",
+  globalTeardown: "./global-teardown.mjs",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
@@ -19,6 +27,10 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     viewport: { width: 1280, height: 900 },
+    colorScheme: "light",
+    locale: "en-US",
+    reducedMotion: "reduce",
+    timezoneId: "UTC",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

@@ -30,6 +30,44 @@ export const EVENTS = {
   runFinished: "run_finished",
 };
 
+/**
+ * Which run controls a status can still act on.
+ *
+ * A run that has reached a terminal cannot be paused, resumed or cancelled —
+ * there is nothing left to act on — so the buttons go and the status stays.
+ * `RunPicker` lists only live runs, so this is not a screen the picker can
+ * open: it is the one a reader is left with after watching a run they picked
+ * while it was running reach its end. Branching on `paused` alone offered
+ * Pause on a finished run, which is a control that could only fail.
+ *
+ * Here rather than in `live.js` because it is a pure fact about a status, and
+ * this is the module the offline suite can hold without a browser.
+ */
+export function runActions(status) {
+  if (status === "finished") {
+    return { transport: null, cancel: false };
+  }
+  return { transport: status === "paused" ? "resume" : "pause", cancel: true };
+}
+
+/**
+ * Which runs a picker offers, given its filter and the run being watched.
+ *
+ * The live tab lists live runs, and a run is live exactly while its log holds
+ * no `run_finished` event — so a run that ends under the reader leaves the list
+ * on the next poll. A `<select>` whose `value` matches no `<option>` reports
+ * `selectedIndex === -1` and draws blank, while the overlay it belongs to is
+ * still on screen: a picker claiming no run beside a run being shown. So the
+ * watched run is always offered, whatever the filter says, and its label is
+ * then the one place the chrome reports that it finished.
+ *
+ * Here beside `runActions` for the same reason: it is a pure fact about a
+ * listing, and this is the module the offline suite can hold without a browser.
+ */
+export function runsOffered(runs, { liveOnly, watching }) {
+  return (runs ?? []).filter((run) => !liveOnly || run.live || run.run_id === watching);
+}
+
 export function emptyOverlay() {
   return {
     runId: null,
@@ -282,6 +320,7 @@ export function resolveOverlay(pipeline, overlay, options = {}) {
     nodes,
     animatedEdges: animated,
     expandedGroups: expanded,
+    foldableGroups: foldableGroups(overlay),
     overlayGroups: overlay.groups,
     remapEdge: remap,
     onToggleGroup: options.onToggleGroup ?? null,
@@ -356,4 +395,17 @@ function groupHidden(overlay, collapsed, groupName) {
     return true;
   }
   return group.state === "finished" && collapsed.has(groupName);
+}
+
+/**
+ * The groups whose members can actually be folded away.
+ *
+ * `groupHidden` only honours `collapsed` once a group has finished, so a
+ * running group's toggle was a control that reported nothing back: the click
+ * landed, the set grew, and the members stayed exactly where they were. The
+ * card asks this before drawing the control, so the only groups offering one
+ * are the ones it moves.
+ */
+function foldableGroups(overlay) {
+  return new Set(Object.keys(overlay.groups).filter((name) => overlay.groups[name].state === "finished"));
 }

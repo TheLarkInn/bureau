@@ -1,9 +1,12 @@
 // The config relation graph (Q16): assignments point at pipelines and repos;
-// pipelines point at the roles their agent steps actually use. Editing
-// happens in the pipeline editor and the existing forms.
+// pipelines point at the roles their steps name, whatever the step's kind —
+// the same reference `lib/preflight.mjs` counts. Editing happens in the
+// pipeline editor and the existing forms.
 
 import React from "react";
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";
+
+import { MeasurementGuard } from "../graph-measure.mjs";
 
 const h = React.createElement;
 const NODE_WIDTH = 240;
@@ -34,6 +37,7 @@ export function RelationGraph({ relation }) {
       h(Background, { gap: 24, size: 1.5 }),
       h(Controls),
       h(MiniMap, { pannable: true, zoomable: true }),
+      h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
     ),
   );
 }

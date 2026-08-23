@@ -97,15 +97,25 @@
       .editor-view[hidden] { display: none; }
       .editor-toolbar {
         display: grid;
-        grid-template-columns: minmax(8rem, 1fr) auto auto auto auto auto;
+        grid-template-columns: minmax(8rem, 1fr) auto auto auto auto;
         gap: var(--space-3);
         align-items: center;
         padding: var(--space-3) var(--space-5);
         border-bottom: 1px solid var(--border-color-default, #d0d7de);
       }
       .editor-toolbar-add { display: flex; align-items: center; gap: var(--space-2); }
+      .editor-toolbar-actions { display: flex; align-items: center; gap: var(--space-3); justify-self: end; }
       .editor-status { color: var(--text-color-muted, #656d76); white-space: nowrap; }
       .editor-status--hints { color: var(--outcome-blocked); }
+      /*
+       * A refused write is not a status. Muted grey put "save reverted" in the
+       * same treatment as "saved" and "unsaved edits", so the one word in the
+       * toolbar that reports a failure read like the two that report calm.
+       * Every other refusal in the canvas — the draft bar, all five field
+       * editors, the run controls — is drawn in the failure colour, and this is
+       * the same event.
+       */
+      .editor-status--error { color: var(--outcome-failure); font-weight: 600; }
       .editor-main {
         display: grid;
         grid-template-columns: minmax(0, 1fr) 20rem;
@@ -182,13 +192,23 @@
         justify-self: start;
         padding: 2px 10px;
         border-radius: 999px;
-        background: var(--accent);
+        /*
+         * `--accent` is set by the node card a kind badge usually sits in.
+         * The side panel is not a node card, so the badge there rendered
+         * white-on-white until it carried its own kind modifier; the fallback
+         * keeps any future placement legible rather than invisible.
+         */
+        background: var(--accent, var(--text-color-muted, #656d76));
         color: var(--color-white, #ffffff);
         font-size: var(--text-code-inline, 12px);
         font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
+      .kind-label--deterministic { --accent: var(--kind-deterministic); }
+      .kind-label--agent { --accent: var(--kind-agent); }
+      .kind-label--decision { --accent: var(--kind-decision); }
+      .kind-label--concurrent { --accent: var(--kind-concurrent); }
       .editor-card--deterministic { --accent: var(--kind-deterministic); }
       .editor-card--agent { --accent: var(--kind-agent); }
       .editor-card--decision { --accent: var(--kind-decision); border-style: dashed; border-width: 2px; }
@@ -238,6 +258,13 @@
         color: var(--outcome-blocked);
         font-size: var(--text-code-inline, 12px);
       }
+      /*
+       * The reverted list is a refusal, not advice. It shares `.editor-issues`
+       * with the hint list, which is drawn in the blocked colour because a hint
+       * is something to consider; a write the host turned away is something
+       * that happened, and it reads in the failure colour like every other one.
+       */
+      .editor-save-reverted .editor-issues { color: var(--outcome-failure); }
       .editor-step label, .editor-edges label {
         display: flex;
         flex-direction: column;
@@ -283,31 +310,167 @@
       }
       .is-highlighted { outline: 2px solid var(--kind-deterministic); outline-offset: 2px; }
       @media (max-width: 56rem) {
-        .editor-main { grid-template-columns: minmax(0, 1fr) 17rem; }
-        .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; }
+        /*
+         * Below the breakpoint the side panel stops being a column and
+         * becomes a row under the graph. Keeping two columns here left the
+         * drawing about 30rem wide — a strip too narrow to read a pipeline
+         * in, which is the one thing this surface exists for. The panel row
+         * takes the remaining height with `minmax(0, 1fr)` so its own
+         * `overflow-y: auto` still applies inside the 100vh shell.
+         */
+        .editor-main {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: 26rem minmax(0, 1fr);
+        }
+        .editor-panel { border-left: 0; border-top: 1px solid var(--border-color-default, #d0d7de); }
+        .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; justify-items: start; }
       }
+
+      /*
+       * The same recovery surface index.html draws, because it is the same
+       * failure: the renderer modules did not load. Rendering the matrix side
+       * by side showed the editor answering that with a bare stack trace on a
+       * blank page — no title, no cause, and no way back to the landing this
+       * surface was opened from. A sub-surface that can strand you is worse
+       * than the one that cannot, so both now fail the same way.
+       */
+      .fallback-shell {
+        display: grid;
+        gap: var(--space-4);
+        max-width: 52rem;
+        margin: var(--space-5);
+        padding: var(--space-5);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+
+      .fallback-error {
+        white-space: pre-wrap;
+        color: var(--outcome-failure);
+      }
+
+      .fallback-state {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--space-2) var(--space-3);
+      }
+
+      .fallback-state dt { color: var(--text-color-muted, #656d76); }
+      .fallback-state dd { margin: 0; }
+      .fallback-actions { display: flex; gap: var(--space-2); }
     </style>
   </head>
   <body>
     <div id="editor-root"></div>
     <script type="module">
       const root = document.querySelector("#editor-root");
+      let rendered = false;
       window.addEventListener("error", (event) => {
-        root.replaceChildren(fallback(event.error ?? event.message));
+        void showFallback(event.error ?? event.message);
       });
       try {
         await import("./editor/index.mjs");
       } catch (error) {
-        root.replaceChildren(fallback(error));
+        await showFallback(error);
       }
-      function fallback(error) {
+
+      /*
+       * editor.html is a sub-surface: it is always opened from the assignment
+       * landing. So its boot failure owes the reader the same three things the
+       * landing's does — what broke, what is still known, and the way back —
+       * and the way back matters more here, because this page has no other
+       * navigation once the renderer is gone.
+       */
+      async function showFallback(error) {
+        if (rendered || window.__bureauEditorMounted) {
+          return;
+        }
+        rendered = true;
+        root.replaceChildren(fallbackView(error, await loadState()));
+      }
+
+      async function loadState() {
+        try {
+          const response = await fetch("./state", { cache: "no-store" });
+          return response.ok ? await response.json() : { status: `State request failed: ${response.status}` };
+        } catch (stateError) {
+          return { status: "State unavailable", validation: { message: String(stateError) } };
+        }
+      }
+
+      function fallbackView(error, state) {
         const shell = document.createElement("main");
-        shell.className = "app-shell";
-        const message = document.createElement("p");
-        message.className = "status";
-        message.textContent = `Editor could not start: ${error?.stack || error?.message || String(error)}`;
-        shell.append(message);
+        shell.className = "fallback-shell";
+        shell.append(heading(), errorText(error), stateList(state), actions());
         return shell;
+      }
+
+      function heading() {
+        const block = document.createElement("div");
+        const title = document.createElement("h1");
+        const copy = document.createElement("p");
+        title.textContent = "Pipeline editor could not start";
+        copy.className = "muted";
+        copy.textContent = "The pipeline is unchanged on disk. Check whether the CDN, proxy, or import map blocked the renderer modules.";
+        block.append(title, copy);
+        return block;
+      }
+
+      function errorText(error) {
+        const message = document.createElement("p");
+        message.className = "fallback-error";
+        message.textContent = error?.stack || error?.message || String(error);
+        return message;
+      }
+
+      function stateList(state) {
+        const list = document.createElement("dl");
+        list.className = "fallback-state";
+        addPair(list, "Status", state.status ?? state.validation?.state ?? "unknown");
+        addPair(list, "Pipeline", state.selectedPipeline?.name ?? "none selected");
+        addPair(list, "Config dir", state.validation?.dir ?? state.dir ?? "unknown");
+        return list;
+      }
+
+      function addPair(list, label, value) {
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        list.append(term, detail);
+      }
+
+      /*
+       * The same escape the working header offers, under the same test id,
+       * because it is the same control. Nothing is unsaved here — the editor
+       * never mounted — so it leaves without asking, and it navigates even when
+       * telling the host went wrong: a broken page must not also be a trap.
+       */
+      function actions() {
+        const row = document.createElement("div");
+        const back = document.createElement("button");
+        row.className = "fallback-actions";
+        back.type = "button";
+        back.className = "btn btn--small";
+        back.dataset.testid = "editor-back";
+        back.textContent = "← Assignments";
+        back.addEventListener("click", () => void backToAssignments());
+        row.append(back);
+        return row;
+      }
+
+      async function backToAssignments() {
+        try {
+          await fetch("./intent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "back-to-config" }),
+          });
+        } catch {
+          // The host may be why this page is broken; leaving still has to work.
+        }
+        window.location.assign("./");
       }
     </script>
   </body>

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bureau Canvas State Lab</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1f2328;
+        --muted: #656d76;
+        --bg: #ffffff;
+        --subtle: #f6f8fa;
+        --hover: #eaeef2;
+        --border: #d0d7de;
+        --accent: #0969da;
+        --err: #cf222e;
+        --ok: #1a7f37;
+        --warn: #9a6700;
+        --radius: 0.625rem;
+        --space-1: 0.25rem;
+        --space-2: 0.5rem;
+        --space-3: 0.75rem;
+        --space-4: 1rem;
+        --space-5: 1.5rem;
+        /*
+         * Three steps at a 1.25 ratio, and no more. The lab used six sizes
+         * between 11px and 20px, four of which were within a pixel of each
+         * other, so nothing read as ranked. Headings separate from body by
+         * weight, not by a fourth size.
+         */
+        --text-lg: 1.25rem;
+        --text-md: 1rem;
+        --text-sm: 0.8rem;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font: var(--text-md)/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+      }
+
+      code, pre { font: var(--text-sm)/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+      header.lab-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--space-4);
+        flex-wrap: wrap;
+        padding: var(--space-4) var(--space-5);
+        border-bottom: 1px solid var(--border);
+      }
+
+      header.lab-header h1 { font-size: var(--text-lg); line-height: 1.2; margin: 0; }
+      header.lab-header p { margin: var(--space-1) 0 0; color: var(--muted); }
+
+      #summary { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+      .metric { display: flex; gap: var(--space-1); align-items: baseline; }
+      .metric span { color: var(--muted); font-size: var(--text-sm); }
+
+      main { display: grid; grid-template-columns: 20rem minmax(0, 1fr) 24rem; min-height: calc(100vh - 5rem); }
+
+      nav.rail, aside.detail-rail { border-right: 1px solid var(--border); overflow: auto; max-height: calc(100vh - 5rem); }
+      aside.detail-rail { border-right: 0; border-left: 1px solid var(--border); }
+
+      nav.rail { padding: var(--space-3); }
+      #search { width: 100%; padding: var(--space-2); border: 1px solid var(--border); border-radius: 6px; font: inherit; margin-bottom: var(--space-3); }
+
+      h3.group {
+        font-size: var(--text-sm);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin: var(--space-4) 0 var(--space-2);
+      }
+
+      .state-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100%;
+        text-align: left;
+        padding: var(--space-2);
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: none;
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      .state-item:hover { background: var(--hover); }
+      .state-item.is-active { background: var(--subtle); border-color: var(--border); }
+      .state-id { font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--text-sm); overflow-wrap: anywhere; }
+      .state-note { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+      .tag { align-self: flex-start; border-radius: 999px; padding: 0 8px; font-size: var(--text-sm); color: #fff; }
+      .tag--probe { background: var(--warn); }
+      .tag--intercept { background: var(--muted); }
+
+      section.stage-wrap { padding: var(--space-4); overflow: auto; }
+      .stage-controls { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); flex-wrap: wrap; }
+      .stage-controls button {
+        font: inherit;
+        padding: var(--space-1) var(--space-3);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        cursor: pointer;
+      }
+      .stage-controls button.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+      #viewport-note { color: var(--muted); }
+
+      #stage { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; resize: both; }
+      #stage-frame { width: 100%; height: 100%; border: 0; display: block; background: var(--bg); }
+
+      aside.detail-rail { padding: var(--space-3); }
+      aside.detail-rail h2 { font-size: var(--text-md); font-family: "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; margin: 0 0 var(--space-1); }
+      .panel { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); margin-bottom: var(--space-3); }
+      .panel h3 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
+      .panel summary { cursor: pointer; font-weight: 700; }
+
+      dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px var(--space-3); margin: 0; }
+      dl.kv dt { color: var(--muted); font-size: var(--text-sm); }
+      dl.kv dd { margin: 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+      ol.ops, ul.expectations, ul.edges, ul.values { margin: 0; padding-left: var(--space-4); }
+      ol.ops li, ul.values li { font-size: var(--text-sm); overflow-wrap: anywhere; }
+      ul.expectations, ul.edges { list-style: none; padding-left: 0; }
+      ul.expectations li, ul.edges li { display: flex; gap: var(--space-2); align-items: baseline; overflow-wrap: anywhere; }
+      .verdict { font-weight: 700; }
+      li.ok .verdict { color: var(--ok); }
+      li.bad .verdict { color: var(--err); }
+      li.bad code { color: var(--err); }
+
+      .muted { color: var(--muted); }
+      .note { color: var(--muted); font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+
+      .picker-row { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: var(--space-2); align-items: center; margin-bottom: var(--space-1); }
+      .picker-key { color: var(--muted); font-size: var(--text-sm); }
+      .picker-row select { width: 100%; min-width: 0; font: inherit; font-size: var(--text-sm); padding: var(--space-1); border: 1px solid var(--border); border-radius: 6px; }
+      #picker-verdict { margin-top: var(--space-3); }
+      #picker-verdict[data-verdict="reachable"] { border-left: 3px solid #1a7f37; }
+      #picker-verdict[data-verdict="excluded"] { border-left: 3px solid #9a6700; }
+      .picker-headline { margin: 0 0 var(--space-2); }
+      #picker-verdict details { font-size: var(--text-sm); }
+      #picker-verdict summary { font-family: "SFMono-Regular", Consolas, monospace; cursor: pointer; }
+      .note--err { color: var(--err); }
+      .note--warn { color: var(--warn); }
+      .linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: left; }
+      pre.example { background: var(--subtle); padding: var(--space-2); border-radius: 6px; overflow: auto; }
+
+      @media (max-width: 80rem) {
+        main { grid-template-columns: 1fr; }
+        nav.rail, aside.detail-rail { max-height: none; border: 0; border-bottom: 1px solid var(--border); }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="lab-header">
+      <div>
+        <h1>Bureau Canvas State Lab</h1>
+        <p>Every reachable state, rendered by the production page and checked against the registry.</p>
+      </div>
+      <div id="summary"></div>
+    </header>
+    <p id="base-note" class="note note--warn" hidden></p>
+    <main>
+      <nav class="rail" aria-label="States">
+        <input id="search" type="search" placeholder="Filter states…" aria-label="Filter states" />
+        <div id="states"></div>
+        <h3 class="group">Dimensions</h3>
+        <div id="dimensions"></div>
+        <h3 class="group">Is this a state?</h3>
+        <div id="picker"></div>
+        <div id="picker-verdict" class="panel" role="status" aria-live="polite"></div>
+        <h3 class="group">Constraint rules</h3>
+        <div id="constraints"></div>
+      </nav>
+      <section class="stage-wrap">
+        <div class="stage-controls">
+          <button type="button" data-viewport="desktop" class="is-active">Desktop</button>
+          <button type="button" data-viewport="compact">Compact</button>
+          <button type="button" id="reload">Re-run entry path</button>
+          <span id="viewport-note"></span>
+        </div>
+        <div id="stage">
+          <iframe id="stage-frame" title="Bureau Canvas under review"></iframe>
+        </div>
+      </section>
+      <aside class="detail-rail" id="detail" aria-label="State detail"></aside>
+    </main>
+    <script type="module" src="./statelab/lab.mjs"></script>
+  </body>
+</html>

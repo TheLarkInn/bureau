@@ -42,7 +42,7 @@ canvas_browser_tests() {
         echo "skipping canvas browser tests: run 'npm ci && npx playwright install --with-deps chromium' in $dir" >&2
         return 0
     fi
-    (cd "$dir" && npx playwright test)
+    (cd "$dir" && npm run test:pr)
 }
 
 node_tests "canvas tests" .github/extensions/bureau-canvas/test/*.test.mjs

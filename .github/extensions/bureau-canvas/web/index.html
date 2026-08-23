@@ -20,6 +20,14 @@
       }
     </script>
     <style>
+      /*
+       * editor.html has always declared this; index.html had not, so every
+       * padded grid child here measured wider than its track and the pipeline
+       * side panel hung a few pixels off the right edge. One design system,
+       * one box model.
+       */
+      * { box-sizing: border-box; }
+
       .limit-key {
         color: var(--text-color-muted, #656d76);
         font-size: var(--text-code-inline, 12px);
@@ -169,6 +177,19 @@
       .finding--validation { background: var(--finding-validation); }
       .finding--advisory { background: var(--finding-advisory); }
 
+      /*
+       * A chip carries a name and clips to an ellipsis; a finding carries a
+       * whole sentence quoted verbatim from `bureau validate`. Clipping one
+       * would hide a message this canvas is not allowed to rewrite, and
+       * refusing to wrap pushed the side panel past the viewport — so findings
+       * wrap, and break inside a long quoted identifier if they must.
+       */
+      .finding {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        min-width: 0;
+      }
+
       .view-shell {
         display: grid;
         gap: var(--space-4);
@@ -180,8 +201,7 @@
       /* The graph column must be allowed to shrink. A 50rem floor plus the
          19rem side panel needs 1104px, so in the app's side panel the shell
          overflowed and the panel covered the toolbar's right-hand controls. */
-      .view-shell--pipeline {
-        grid-template-columns: minmax(0, 1fr) 19rem;
+      .view-shell--pipeline {        grid-template-columns: minmax(0, 1fr) 19rem;
         min-height: 0;
       }
 
@@ -985,6 +1005,12 @@
       .side-panel {
         display: grid;
         align-content: start;
+        /*
+         * A grid column defaults to max-content, so one long validation
+         * message — a path or a backticked identifier that cannot wrap —
+         * stretched this panel past the viewport. Pin the track to the box.
+         */
+        grid-template-columns: minmax(0, 1fr);
         gap: var(--space-4);
         padding: var(--space-4);
         border: 1px solid var(--border-color-default, #d0d7de);
@@ -994,6 +1020,9 @@
 
       .panel-section {
         display: grid;
+        /* Same reason as `.side-panel`: an unbreakable identifier in a
+         * finding must not widen the panel it is reported in. */
+        grid-template-columns: minmax(0, 1fr);
         gap: var(--space-2);
       }
 
@@ -1126,7 +1155,8 @@
       .member-row--failure { color: var(--outcome-failure); }
       .member-row--blocked { color: var(--outcome-blocked); }
       .member-row--running { color: var(--color-focus-outline, #0969da); }
-      .member-collapse { border: 0; padding: 0; background: none; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); cursor: pointer; text-align: left; }
+      .member-collapse { justify-self: start; border: 0; padding: var(--space-1, 4px) 0 0; background: none; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); cursor: pointer; text-align: left; }
+      .member-collapse:focus-visible { outline: 2px solid var(--color-focus-outline, #0969da); outline-offset: 2px; }
       .react-flow__edge.animated .react-flow__edge-path { stroke-dasharray: 8 6; animation: overlay-edge-flow 0.8s linear infinite; }
       @keyframes overlay-edge-flow { to { stroke-dashoffset: -14; } }
 

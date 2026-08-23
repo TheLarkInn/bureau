@@ -1,0 +1,10 @@
+{"kind":"run_started","seq":0,"at_ms":1740000300000,"data":{"run_id":"run-group","assignment":"review-queue","pipeline":"review-queue-pipeline"}}
+{"kind":"step_started","seq":1,"at_ms":1740000301000,"data":{"run_id":"run-group","step":"claim"}}
+{"kind":"step_finished","seq":2,"at_ms":1740000302000,"data":{"run_id":"run-group","step":"claim","outcome":"success"}}
+{"kind":"step_started","seq":3,"at_ms":1740000303000,"data":{"run_id":"run-group","step":"run-checks"}}
+{"kind":"group_started","seq":4,"at_ms":1740000303000,"data":{"run_id":"run-group","group":"run-checks","members":["read-diff","read-tests"],"completion":"all","max_concurrent":2,"snapshot":"a1b2c3"}}
+{"kind":"group_member_started","seq":5,"at_ms":1740000304000,"data":{"run_id":"run-group","group":"run-checks","member":"read-diff","attempt":1}}
+{"kind":"group_member_started","seq":6,"at_ms":1740000304000,"data":{"run_id":"run-group","group":"run-checks","member":"read-tests","attempt":1}}
+{"kind":"group_member_finished","seq":7,"at_ms":1740000308000,"data":{"run_id":"run-group","group":"run-checks","member":"read-diff","result":{"outcome":"success"},"usage":{},"halted":false}}
+{"kind":"group_member_finished","seq":8,"at_ms":1740000311000,"data":{"run_id":"run-group","group":"run-checks","member":"read-tests","result":{"outcome":"failure"},"usage":{},"halted":false}}
+{"kind":"group_finished","seq":9,"at_ms":1740000312000,"data":{"run_id":"run-group","group":"run-checks","result":{"outcome":"failure"},"usage":{},"halted":false}}
