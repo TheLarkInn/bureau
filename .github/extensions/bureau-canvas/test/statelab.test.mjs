@@ -20,7 +20,7 @@ import { CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
-import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP } from "../web/statelab/paths.mjs";
+import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
@@ -389,8 +389,7 @@ function hasCycle(edges) {
   return [...next.keys()].some((node) => walk(node, new Set()));
 }
 
-test("every scoping rule is held to account by a crossing probe that really breaks it", () => {
-  const probes = STATES.filter((state) => state.kind === "probe");
+test("every scoping rule is held to account by a crossing probe that really breaks it", () => {  const probes = STATES.filter((state) => state.kind === "probe");
   const crossings = probes.filter((state) => state.rule);
   const probed = new Set(crossings.map((state) => state.rule));
   assert.deepStrictEqual(
@@ -815,4 +814,25 @@ test("every contrast selector names small text coloured from a kind hue", () => 
   // screenshots would not show, so the ratio is asserted rather than eyeballed.
   assert.ok(CONTRAST.includes(".kind-label"));
   assert.deepStrictEqual(CONTRAST.filter((selector) => !selector.startsWith(".")), []);
+});
+
+/**
+ * One page gets one route, which `interceptOp` assumes by taking the first of
+ * whatever `interceptFor` returns. Five axes can now ask for one, and two
+ * asking for different routes would be silent and expensive: `draft: saving`
+ * (stall) crossed with `run: refused` (fail) would install the stall, the
+ * cancel would never be answered, and the state would spend its whole timeout
+ * waiting for an error the harness had arranged never to produce.
+ *
+ * The invariant holds by construction today — the surface and orthogonality
+ * rules keep those axes apart — which is exactly why it needs asserting: a
+ * later rule relaxation would drop it without a word.
+ */
+test("no state asks for two different request routes at once", () => {
+  const conflicted = STATES
+    .filter((state) => state.dimensions)
+    .map((state) => ({ id: state.id, routes: interceptFor(state.dimensions) }))
+    .filter((entry) => entry.routes.length > 1);
+
+  assert.deepStrictEqual(conflicted, []);
 });

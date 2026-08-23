@@ -24,9 +24,12 @@ export function configView(payload) {
 
 /**
  * The config relation graph (Q16): assignment → pipeline/repos, then each
- * pipeline → the roles its agent steps actually use. Assignment `role` is a
- * scaffold-era field the engine never reads, so showing that edge would make
- * a non-operational declaration look like runtime behavior.
+ * pipeline → the roles its steps name, whatever kind of step names them —
+ * `addPipelineUses` and `lib/preflight.mjs` read it the same way, and a graph
+ * that read it differently would draw a role the strip called referenced with
+ * no edge at all. Assignment `role` is a scaffold-era field the engine never
+ * reads, so showing that edge would make a non-operational declaration look
+ * like runtime behavior.
  */
 export function relationView(payload) {
   const config = configOf(payload);

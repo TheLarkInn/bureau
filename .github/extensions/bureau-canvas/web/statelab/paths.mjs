@@ -233,7 +233,8 @@ export function interceptFor(combo) {
   ].filter(Boolean);
   // One page gets one route. Two axes wanting different ones would mean a
   // state whose render depends on which was installed, so it is a registry
-  // error rather than a preference — `test/statelab.test.mjs` fails on it.
+  // error rather than a preference — `test/statelab.test.mjs` asserts that no
+  // state asks for two, and `registry.mjs` takes the first of these.
   return [...new Set(wanted)];
 }
 

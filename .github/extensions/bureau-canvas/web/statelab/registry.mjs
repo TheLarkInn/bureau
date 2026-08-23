@@ -125,19 +125,6 @@ function editorOps(combo) {
  * That is also why these states have no incoming edge. A page already loaded
  * without the route in place cannot acquire it, so claiming an edge into them
  * would be claiming a transition the suite could not walk.
- */
-/**
- * The request interception a state needs in place before its page loads.
- *
- * A save state is not something a user navigates *into* from the state next to
- * it — it is the same screen under a host that is slow or refusing, which is a
- * condition of the environment rather than a click. So it rides on the `page`
- * op the way the two pre-surface states do, and for the same reason: what is
- * being varied is the network, not the path.
- *
- * That is also why these states have no incoming edge. A page already loaded
- * without the route in place cannot acquire it, so claiming an edge into them
- * would be claiming a transition the suite could not walk.
  *
  * `paths.mjs` owns which axes ask for a route; this only places it.
  */

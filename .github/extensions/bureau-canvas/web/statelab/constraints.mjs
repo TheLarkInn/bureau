@@ -244,6 +244,34 @@ export const CONSTRAINTS = [
   },
   {
     /*
+     * Playing is the one state whose assertion has a deadline. `useReplayOverlay`
+     * stops itself at `range.end` and flips the button back to Play, so the
+     * label this state pins is true only for as long as the run has left to
+     * play — measured at 2.0s for the live log, 5.0s for the paused one and
+     * 10.0s for the finished one, all at speed 1.
+     *
+     * `judge()` re-samples for up to `SETTLE_MS` (5s) while anything disagrees,
+     * so on the first two the assertion's own lifetime is at or below the
+     * retry budget: a transient disagreement — likely, because the graph is
+     * still re-decorating over exactly that window — would be converted into a
+     * hard failure instead of being retried away. The finished run is the only
+     * span with real margin, so it is the one this state is reviewed on.
+     *
+     * This is narrower than the rule it replaces. `playing-advances-on-a-timer`
+     * excluded the screen outright for a nearby but different reason — the
+     * *position* is clock-dependent — which is true and is why nothing here
+     * asserts a position. What is left is the label flip, and it needs a run
+     * long enough to still be flipped when the render is measured.
+     */
+    id: "playing-outlasts-only-the-longest-run",
+    kind: "structural",
+    reads: ["run", "transport"],
+    title: "Only the finished run plays for longer than the render is judged",
+    why: "`useReplayOverlay` sets `playing` false on reaching `range.end`, and the button's label and aria name go back to Play with it. The live and paused logs span 2.0s and 5.0s at speed 1, which is at or under the 5s window `judge()` re-samples a disagreeing render for; the finished log spans 10.0s. So the label this state asserts is reviewed on the only run that still holds it when the verdict is taken.",
+    holds: (combo) => combo.transport !== "playing" || combo.run === "finished",
+  },
+  {
+    /*
      * The blocking preflight is a real answer of `lib/preflight.mjs` that this
      * surface has no way to ask for: both places `DeleteControl` mounts are
      * places nothing refers to.

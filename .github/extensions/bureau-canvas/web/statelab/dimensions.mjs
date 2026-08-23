@@ -672,7 +672,7 @@ function overlay(combo, runValue) {
 const transport = {
   id: "transport",
   title: "Replay transport",
-  why: "replay's controls have to move the run; a timeline that only draws is the defect they hide — and Play is excluded rather than omitted, because a timer decides its position",
+  why: "replay's controls have to move the run; a timeline that only draws is the defect they hide — and Play asserts its label rather than its position, because a timer decides the second and not the first",
   values: [
     {
       id: "rest",

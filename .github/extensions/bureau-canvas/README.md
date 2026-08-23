@@ -140,7 +140,7 @@ reasoning that exhaustive rendering is discovery work rather than PR feedback.
 That reasoning does not survive the arithmetic: `schedule` fires only on the
 default branch, so until the workflow merged it had never run at all, and
 `scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
-would have merged green and gone unattributed. All 511 assertions take about
+would have merged green and gone unattributed. All 505 assertions take about
 as long as a fraction of the Rust job, so they gate like anything else:
 
 ```sh
@@ -290,7 +290,7 @@ nothing else, so it stayed live for the whole round trip and a second click
 raced a second write against the first one's revert. The registry asserted the
 truth; the exclusion is what meant nobody ever rendered it to find out.
 
-`transport: playing` came back on the same reasoning, with the opposite
+`transport: playing` came back on the same reasoning, with a narrower
 resolution. Its *position* really is a function of the clock, but the matrix
 gallery is a browsable render rather than a pinned baseline — only the ten
 `@visual` screens are compared — so a scrubber a frame further on costs nothing.
@@ -298,15 +298,28 @@ The state asserts the label and aria name flipping to Pause and leaves the
 position alone. What it replaces is a Play button the timeline shipped and no
 state ever pressed.
 
-Two exclusions in this family remain, and they are narrower. `a-refused-control-
-is-a-live-control` is structural in the strict sense: `web/replay/replay.js`
-draws a picker and a timeline, and its transport moves the reader's own position
-without posting anything, so there is no control there whose refusal could be
-shown. Crossing it with replay produced three ids for one render, which the
-distinguishability gate caught by name. The successful write paths still belong
-to `specs/editor.spec.mjs` and `specs/controls.spec.mjs`, each against its own
-scratch config, and what a finished run's controls should show is pinned by
-`runActions` in `test/overlay.test.mjs`.
+The label has a deadline, though, and that is what `playing-outlasts-only-the-
+longest-run` is for. `useReplayOverlay` stops itself at `range.end` and puts the
+button back to Play, so the assertion is true only while the run has time left:
+2.0s for the live log, 5.0s for the paused one, 10.0s for the finished one, all
+at speed 1. `judge()` re-samples a disagreeing render for up to five seconds, so
+on the first two the assertion's lifetime is at or below the retry budget — a
+transient disagreement, which is likely while the graph is still re-decorating,
+would be converted into a hard failure rather than retried away. The finished
+run is the only span with margin, so it is the one the label is reviewed on.
+
+Two further exclusions in this family remain, and they are narrower still.
+`a-refused-control-is-a-live-control` is structural in the strict sense:
+`web/replay/replay.js` draws a picker and a timeline, and its transport moves
+the reader's own position without posting anything, so there is no control there
+whose refusal could be shown. Crossing it with replay produced three ids for one
+render, which the distinguishability gate caught by name. And
+`mutations-need-a-selected-step` now covers the editor saves, whose path is a
+rename plus a click — an editor with nothing selected has nothing to rename, and
+without the rule the click would silently never happen. The successful write
+paths still belong to `specs/editor.spec.mjs` and `specs/controls.spec.mjs`,
+each against its own scratch config, and what a finished run's controls should
+show is pinned by `runActions` in `test/overlay.test.mjs`.
 
 The transition graph has two kinds of edge, for the same reason. An `enter`
 edge is a prefix relation — the child's path is the parent's plus one
