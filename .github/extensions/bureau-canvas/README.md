@@ -400,10 +400,13 @@ walks every edge of the transition DAG, and writes a browsable gallery to
 `specs/state-lab.spec.mjs` holds the lab itself to the registry, because a lab
 that has drifted is worse than none.
 
-The gallery is pruned by the run that filled it and by no other. A matrix run
-removes the renders it did not write, so a state the registry has since dropped
-cannot sit there inviting a reviewer to sign off on a surface that no longer
-exists; a run that renders nothing — `test:pr`, `test:visual` — leaves the
-gallery alone. That distinction cannot be read off the command line, because
-Playwright reports `grep` as `/.*/` whatever was passed, so it is decided by
-whether anything was actually written.
+The gallery is replaced by the run that filled it and by no other. A run
+renders into a staging directory, and the teardown publishes it over
+`e2e/gallery/` only if something was written there — so a state the registry
+has since dropped cannot sit in the gallery inviting a reviewer to sign off on
+a surface that no longer exists, and a run that renders nothing (`test:pr`,
+`test:visual`) leaves the gallery alone. That distinction cannot be read off
+the command line, because Playwright reports `grep` as `/.*/` whatever was
+passed; and it deliberately does not consult a clock, because a filesystem that
+records mtime more coarsely than `Date.now()` reports it dates a shot written
+after the run began as older than it. A directory is empty or it is not.

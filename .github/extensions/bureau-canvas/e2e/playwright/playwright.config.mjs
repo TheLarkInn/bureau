@@ -6,10 +6,11 @@ import { defineConfig, devices } from "@playwright/test";
  * port and hands the spec its address. Offline like every other suite —
  * no network, no `bureau` binary, no Copilot SDK.
  *
- * `globalSetup` opens the render gallery and `globalTeardown` prunes the
- * states it did not render, so the artefact a reviewer browses is exactly the
- * states the last matrix run produced — and a run that renders none of them
- * leaves it alone.
+ * `globalSetup` opens a staging directory for this run's renders and
+ * `globalTeardown` publishes it over the gallery — but only when the run put
+ * something there, so the artefact a reviewer browses is exactly the states the
+ * last matrix run produced, and a run that renders none of them leaves it
+ * alone.
  */
 export default defineConfig({
   testDir: "./specs",
