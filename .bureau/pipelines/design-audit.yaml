@@ -1,0 +1,99 @@
+name: design-audit
+steps:
+- name: record-source
+  type: deterministic
+  run: node scripts/record-design-source.mjs
+  next: review-code
+  on_failure: escalate
+  timeout_secs: 120
+- name: review-code
+  type: agent
+  role: code-design-reviewer
+  next: detect-ui
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: detect-ui
+  timeout_secs: 1800
+- name: detect-ui
+  type: deterministic
+  run: node scripts/run-design-detector.mjs
+  next: playwright
+  on_failure: escalate
+  timeout_secs: 300
+- name: playwright
+  type: deterministic
+  run: node scripts/run-design-playwright.mjs
+  next: critique
+  on_failure: critique
+  timeout_secs: 1800
+- name: critique
+  type: agent
+  role: impeccable-reviewer
+  inputs_from:
+  - detect-ui
+  - playwright
+  - record-source
+  next: verify-clean
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: verify-clean
+  timeout_secs: 1800
+- name: verify-clean
+  type: deterministic
+  run: node scripts/verify-design-clean.mjs
+  inputs_from:
+  - record-source
+  next: draft-issue
+  on_failure: escalate
+  timeout_secs: 120
+- name: draft-issue
+  type: agent
+  role: issue-drafter
+  inputs_from:
+  - review-code
+  - detect-ui
+  - playwright
+  - critique
+  - record-source
+  next: verify-draft
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: verify-source-cleared
+  timeout_secs: 900
+- name: verify-draft
+  type: deterministic
+  run: node scripts/verify-design-publication.mjs
+  inputs_from:
+  - draft-issue
+  - record-source
+  next: handoff
+  on_failure: escalate
+  timeout_secs: 120
+- name: handoff
+  type: agent
+  role: issue-handoff
+  inputs_from:
+  - draft-issue
+  - record-source
+  next: verify-handoff
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 300
+- name: verify-handoff
+  type: deterministic
+  run: node scripts/verify-design-publication.mjs --require-handoff
+  inputs_from:
+  - handoff
+  - draft-issue
+  - record-source
+  next: done
+  on_failure: escalate
+  timeout_secs: 120
+- name: verify-source-cleared
+  type: deterministic
+  run: node scripts/verify-design-source.mjs
+  inputs_from:
+  - record-source
+  next: done
+  on_failure: escalate
+  timeout_secs: 120

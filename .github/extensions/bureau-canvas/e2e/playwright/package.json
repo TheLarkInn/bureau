@@ -5,6 +5,7 @@
   "description": "Browser tests for the Bureau Canvas assignment card controls. Kept in a leaf directory so no package.json sits on the module-resolution path of the extension or its vendored web modules.",
   "scripts": {
     "test": "playwright test",
+    "capture-review": "playwright test --config=playwright.review.config.mjs && playwright test",
     "install-browsers": "playwright install chromium"
   },
   "devDependencies": {

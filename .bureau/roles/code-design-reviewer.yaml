@@ -1,0 +1,7 @@
+name: code-design-reviewer
+agent: agents/bureau-code-design-review.agent.md
+adapter: copilot
+permissions:
+- repo:read
+- model:invoke
+min_trust: maintainer

@@ -1,0 +1,22 @@
+name: design-audit
+work:
+  forge: github
+  source: TheLarkInn/bureau
+  filter: is:open is:issue label:bureau:design-scan
+  approval_label: null
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos:
+- bureau
+pipeline: design-audit
+role: impeccable-reviewer
+verify: "true"
+branch_prefix: bureau/design-audit/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 2
+  max_runs_per_day: 4
+  max_open_prs: null
+  # Copilot usage is not measurable yet, so a cost cap would block the run.
+  max_cost_per_day_usd: null
+  max_run_hours: 2
