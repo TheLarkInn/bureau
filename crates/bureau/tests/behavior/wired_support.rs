@@ -215,6 +215,7 @@ impl World {
                 "fix-failing-test".to_owned(),
                 forge.clone() as Arc<dyn Forge>,
             )]),
+            label_forges: BTreeMap::new(),
             engine: engine.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
             config_source: config_source(),

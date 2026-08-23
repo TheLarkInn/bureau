@@ -19,7 +19,6 @@ use bureau::reconcile::{Reconciler, Started};
 use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 
-/// The one assignment every fixture uses.
 pub const ASSIGNMENT: &str = "fix-tests";
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
@@ -76,7 +75,6 @@ fn make_repo(parent: &Path) -> String {
     dir.to_string_lossy().into_owned()
 }
 
-/// A work item with id-derived content.
 pub fn item(id: &str) -> Item {
     Item {
         external_id: id.to_owned(),
@@ -155,6 +153,7 @@ fn config(repo: Repo, run: &str, limits: Limits) -> Config {
         repos: BTreeMap::from([("main".to_owned(), repo)]),
         roles: BTreeMap::new(),
         assignments: BTreeMap::from([(ASSIGNMENT.to_owned(), assignment(limits))]),
+        label_rules: BTreeMap::new(),
         pipelines: BTreeMap::from([("fix".to_owned(), pipeline)]),
     }
 }
@@ -177,16 +176,20 @@ fn config_source() -> ConfigSource {
     }
 }
 
+fn repo(dir: &Path) -> Repo {
+    Repo {
+        url: make_repo(dir),
+        forge: ForgeKind::Github,
+        access: Access::Push,
+        credential: "git-main".to_owned(),
+    }
+}
+
 impl World {
     /// A world whose pipeline runs `run` and whose budget is `limits`.
     pub fn new(ids: &[&str], run: &str, limits: Limits) -> Self {
         let dir = TestDir::new();
-        let repo = Repo {
-            url: make_repo(&dir.0),
-            forge: ForgeKind::Github,
-            access: Access::Push,
-            credential: "git-main".to_owned(),
-        };
+        let repo = repo(&dir.0);
         let items = ids.iter().map(|id| item(id)).collect();
         let forge = Arc::new(FakeForge::new(items));
         let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
@@ -194,6 +197,7 @@ impl World {
             config: config(repo, run, limits),
             state: store.clone(),
             forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
+            label_forges: BTreeMap::new(),
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
             config_source: config_source(),

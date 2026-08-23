@@ -160,7 +160,6 @@ fn repo(url: &str) -> Repo {
     }
 }
 
-/// The daemon config: one repo, no roles (deterministic steps only).
 fn config(url: &str, limits: Limits) -> Config {
     let steps = vec![det_step("edit", "echo changed >> file.txt", Some("done"))];
     let pipeline = Pipeline {
@@ -171,6 +170,7 @@ fn config(url: &str, limits: Limits) -> Config {
         repos: BTreeMap::from([("main".to_owned(), repo(url))]),
         roles: BTreeMap::new(),
         assignments: BTreeMap::from([(ASSIGNMENT.to_owned(), assignment(limits))]),
+        label_rules: BTreeMap::new(),
         pipelines: BTreeMap::from([("fix".to_owned(), pipeline)]),
     }
 }
@@ -228,6 +228,7 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
         config: config.clone(),
         state: Arc::new(Store::open(db).expect("store opens")),
         forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
+        label_forges: BTreeMap::new(),
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
         config_source: ConfigSource {
@@ -291,7 +292,6 @@ impl Daemons {
             .len()
     }
 
-    /// Joins every started run; the task wrapper releases its lease.
     pub async fn join_runs(left: Vec<Started>, right: Vec<Started>) {
         for run in left.into_iter().chain(right) {
             run.handle.await.expect("run joins");

@@ -18,6 +18,7 @@ exhaustive = true
 "bureau:process" = ["identity"]
 "bureau:forge" = ["contract", "process"]
 "bureau:git" = ["forge", "process"]
+"bureau:label_reconcile" = ["config", "forge", "identity", "state"]
 "bureau:credential" = ["process"]
 "bureau:mcp" = ["contract"]
 "bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
@@ -41,6 +42,7 @@ exhaustive = true
     "contract",
     "engine",
     "forge",
+    "label_reconcile",
     "process",
     "runlog",
     "state",

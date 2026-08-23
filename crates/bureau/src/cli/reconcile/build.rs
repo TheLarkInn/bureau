@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use bureau::config::{Assignment, Config, ForgeKind, Repo};
-use bureau::forge::Forge;
+use bureau::config::{Assignment, Config, ForgeKind, LabelRule, Repo};
 use bureau::forge::ado::AdoForge;
 use bureau::forge::github::GitHubForge;
+use bureau::forge::{Forge, LabelForge};
 use bureau::git::{Credential, credential_for};
 use bureau::process::{Secret, resolve};
 
@@ -64,6 +64,24 @@ pub(super) fn forge(
     })
 }
 
+fn label_forge(
+    rule: &LabelRule,
+    repos: &BTreeMap<String, Repo>,
+    credentials: &BTreeMap<String, Secret>,
+) -> anyhow::Result<Arc<dyn LabelForge>> {
+    let repo = rule
+        .source_repo(repos)
+        .context("label rule source has no registered repo")?;
+    let token = credentials
+        .get(&repo.credential)
+        .cloned()
+        .context("label rule repo credential was not resolved")?;
+    match rule.work.forge {
+        ForgeKind::Github => Ok(Arc::new(GitHubForge::for_repo(token, &repo.url)?)),
+        ForgeKind::Ado => anyhow::bail!("label rules currently require GitHub"),
+    }
+}
+
 pub(super) fn config_credential(
     reference: Option<&str>,
     forge: ForgeArg,
@@ -115,7 +133,7 @@ pub(super) fn forges(
     config: &Config,
     credentials: &BTreeMap<String, Secret>,
 ) -> BTreeMap<String, Arc<dyn Forge>> {
-    config
+    let forges: BTreeMap<String, Arc<dyn Forge>> = config
         .assignments
         .iter()
         .filter_map(|(name, assignment)| {
@@ -124,6 +142,27 @@ pub(super) fn forges(
                 .map_err(|error| {
                     out::error(format_args!(
                         "assignment `{name}` forge is unavailable: {error}"
+                    ));
+                })
+                .ok()
+        })
+        .collect();
+    forges
+}
+
+pub(super) fn label_forges(
+    config: &Config,
+    credentials: &BTreeMap<String, Secret>,
+) -> BTreeMap<String, Arc<dyn LabelForge>> {
+    config
+        .label_rules
+        .iter()
+        .filter_map(|(name, rule)| {
+            label_forge(rule, &config.repos, credentials)
+                .map(|forge| (name.clone(), forge))
+                .map_err(|error| {
+                    out::error(format_args!(
+                        "label rule `{name}` forge is unavailable: {error}"
                     ));
                 })
                 .ok()

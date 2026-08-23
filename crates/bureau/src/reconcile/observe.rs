@@ -21,13 +21,29 @@ fn bad_assignment(name: &str, reason: &str) -> Error {
     Error::Forge(parse)
 }
 
+fn collect<'a>(
+    result: Result<Observed<'a>, Error>,
+    observed: &mut Vec<Observed<'a>>,
+    failed: &mut Vec<Error>,
+) -> bool {
+    match result {
+        Ok(assignment) => observed.push(assignment),
+        Err(error) => {
+            let limited = error.is_rate_limited();
+            failed.push(error);
+            return limited;
+        }
+    }
+    false
+}
+
 impl Reconciler {
     pub(super) async fn observe_all(&self) -> (Vec<Observed<'_>>, Vec<Error>) {
         let (mut observed, mut failed) = (Vec::new(), Vec::new());
         for (name, assignment) in &self.config.assignments {
-            match self.observe(name, assignment).await {
-                Ok(assignment) => observed.push(assignment),
-                Err(error) => failed.push(error),
+            let result = self.observe(name, assignment).await;
+            if collect(result, &mut observed, &mut failed) {
+                break;
             }
         }
         (observed, failed)

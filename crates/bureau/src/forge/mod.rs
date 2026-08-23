@@ -8,6 +8,7 @@
 pub mod ado;
 pub mod fake;
 pub mod github;
+pub(crate) mod repository;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,15 @@ impl Item {
         self.body.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
     }
+}
+
+/// One work item that blocks another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dependency {
+    /// Forge identity of the blocking item.
+    pub external_id: String,
+    /// Whether the blocking item is closed.
+    pub closed: bool,
 }
 
 impl From<&Item> for crate::contract::WorkItem {
@@ -134,6 +144,10 @@ pub enum PrStatus {
     },
 }
 
+fn retry_suffix(seconds: Option<u64>) -> String {
+    seconds.map_or_else(String::new, |value| format!("; retry after {value}s"))
+}
+
 /// A forge operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -151,6 +165,22 @@ pub enum Error {
     /// The response did not match the expected shape.
     #[error("unexpected forge response: {0}")]
     Parse(String),
+    /// The forge rate limit is exhausted.
+    #[error("forge rate limit exhausted{retry}: {message}", retry = retry_suffix(*retry_after_secs))]
+    RateLimited {
+        /// Seconds until the forge says requests may resume.
+        retry_after_secs: Option<u64>,
+        /// Truncated forge response.
+        message: String,
+    },
+}
+
+impl Error {
+    /// Whether another request with the same credential should wait.
+    #[must_use]
+    pub const fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::RateLimited { .. })
+    }
 }
 
 /// The forge interface. `query` passes `filter` through verbatim — the
@@ -176,6 +206,27 @@ pub trait Forge: Send + Sync {
     async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error>;
 
     /// Adds and removes named labels without changing unrelated labels.
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error>;
+}
+
+/// Issue operations needed by deterministic label rules.
+#[async_trait]
+pub trait LabelForge: Send + Sync {
+    /// Work items matching the forge-native filter.
+    async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error>;
+
+    /// Reads one current work item without applying a work-source filter.
+    async fn item(&self, item_id: &str) -> Result<Item, Error>;
+
+    /// Work items that the forge reports as blocking `item_id`.
+    async fn blocking_dependencies(&self, item_id: &str) -> Result<Vec<Dependency>, Error>;
+
+    /// Adds and removes labels without changing unrelated labels.
     async fn update_labels(
         &self,
         item_id: &str,

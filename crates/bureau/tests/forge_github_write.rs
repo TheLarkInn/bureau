@@ -1,5 +1,8 @@
 //! Offline tests for GitHub forge writes and error mapping (DESIGN.md layer 7).
 
+#[path = "forge_github_write/rate.rs"]
+mod rate;
+
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -176,6 +179,32 @@ async fn comment_posts_to_the_issues_path() {
         request.contains(r#"{"body":"hi there"}"#),
     );
     assert_eq!(got, (true, true));
+}
+
+#[tokio::test]
+async fn blocking_dependencies_report_open_and_closed_issues() {
+    let body = concat!(
+        r#"[{"number":2,"repository_url":"https://api.github.com/repos/o/r","#,
+        r#""state":"open"},{"number":3,"repository_url":"https://api.github.com/repos/o/r","#,
+        r#""state":"closed"}]"#,
+    );
+    let server = TestServer::start(|_| vec![response(200, body)]);
+    let dependencies = bureau::forge::LabelForge::blocking_dependencies(&server.forge(), "o/r#4")
+        .await
+        .expect("dependencies");
+    let request = only_request(server);
+    let observed = (
+        dependencies
+            .iter()
+            .map(|dependency| (dependency.external_id.as_str(), dependency.closed))
+            .collect::<Vec<_>>(),
+        request.starts_with("GET /repos/o/r/issues/4/dependencies/blocked_by?per_page=100 "),
+        request.contains("x-github-api-version: 2026-03-10"),
+    );
+    assert_eq!(
+        observed,
+        (vec![("o/r#2", false), ("o/r#3", true)], true, true)
+    );
 }
 
 #[tokio::test]
