@@ -97,13 +97,14 @@
       .editor-view[hidden] { display: none; }
       .editor-toolbar {
         display: grid;
-        grid-template-columns: minmax(8rem, 1fr) auto auto auto auto auto;
+        grid-template-columns: minmax(8rem, 1fr) auto auto auto auto;
         gap: var(--space-3);
         align-items: center;
         padding: var(--space-3) var(--space-5);
         border-bottom: 1px solid var(--border-color-default, #d0d7de);
       }
       .editor-toolbar-add { display: flex; align-items: center; gap: var(--space-2); }
+      .editor-toolbar-actions { display: flex; align-items: center; gap: var(--space-3); justify-self: end; }
       .editor-status { color: var(--text-color-muted, #656d76); white-space: nowrap; }
       .editor-status--hints { color: var(--outcome-blocked); }
       .editor-main {
@@ -307,7 +308,6 @@
         }
         .editor-panel { border-left: 0; border-top: 1px solid var(--border-color-default, #d0d7de); }
         .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; justify-items: start; }
-        .editor-toolbar .btn { justify-self: end; }
       }
     </style>
   </head>

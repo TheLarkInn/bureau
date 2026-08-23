@@ -140,7 +140,7 @@ reasoning that exhaustive rendering is discovery work rather than PR feedback.
 That reasoning does not survive the arithmetic: `schedule` fires only on the
 default branch, so until the workflow merged it had never run at all, and
 `scripts/lint.sh` excludes `@matrix` — a change breaking two hundred states
-would have merged green and gone unattributed. All 436 assertions take about
+would have merged green and gone unattributed. All 442 assertions take about
 as long as a fraction of the Rust job, so they gate like anything else:
 
 ```sh
@@ -297,6 +297,16 @@ child, applies only that undo, and then holds the render to the **parent's**
 expectations. Acyclicity is asserted over the entry subset alone: a return edge
 is a cycle by definition, which is what "the way back" means.
 
+That declaration has to be worth something, so an offline test holds every
+`REVERSIBLE` entry to at least one edge. It was not free: because an entry edge
+is a prefix over the whole path, *including which fixture the state publishes*,
+a field whose resting lifecycle entry named its own payload diverged from the
+resting card before the click and produced no edge at all. The forge-signals
+disclosure was in that position — declared reversible, walked never, on the one
+control this work had changed from open-only to a toggle. A resting field now
+opens on whatever the card already holds, and only a draft that must differ
+from the committed value brings a fixture of its own.
+
 
 ## Rules worth knowing before changing it
 
@@ -389,3 +399,11 @@ walks every edge of the transition DAG, and writes a browsable gallery to
 `web/statelab/` is rendered and asserted the moment it exists.
 `specs/state-lab.spec.mjs` holds the lab itself to the registry, because a lab
 that has drifted is worse than none.
+
+The gallery is pruned by the run that filled it and by no other. A matrix run
+removes the renders it did not write, so a state the registry has since dropped
+cannot sit there inviting a reviewer to sign off on a surface that no longer
+exists; a run that renders nothing — `test:pr`, `test:visual` — leaves the
+gallery alone. That distinction cannot be read off the command line, because
+Playwright reports `grep` as `/.*/` whatever was passed, so it is decided by
+whether anything was actually written.

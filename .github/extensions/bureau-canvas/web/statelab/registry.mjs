@@ -200,7 +200,7 @@ export const STATES = [...matrixStates, ...PROBES];
  * way out of the Relations tab is the Pipeline tab, and the way out of a create
  * bar is Cancel. Both are the real control a user would reach for.
  */
-const REVERSIBLE = [
+export const REVERSIBLE = [
   { via: S.assignmentHead, undo: S.assignmentHead, gone: S.assignmentDetail },
   { via: S.createOpen, undo: S.createCancel, gone: S.createBar },
   { via: S.relationSummary, undo: S.relationSummary, gone: S.relationOpen },

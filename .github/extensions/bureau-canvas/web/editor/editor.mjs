@@ -518,8 +518,17 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, onSave, onDis
       h("span", { className: "legend-swatch legend-swatch--failure" }, "failure"),
       h("span", { className: "legend-swatch legend-swatch--blocked" }, "blocked"),
       h("span", { className: "legend-swatch legend-swatch--data" }, "data")),
-    dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", onClick: onDiscard }, "Discard changes") : null,
-    h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
+    // Discard and Save are one control group, not two toolbar cells. As
+    // separate grid items the compact toolbar wrapped between them and left
+    // Save alone on a row, aligned to the end of the *first* column — a primary
+    // action floating in the middle of the bar, away from the choice it belongs
+    // to.
+    h(
+      "span",
+      { className: "editor-toolbar-actions" },
+      dirty ? h("button", { type: "button", className: "btn", "data-testid": "editor-discard", onClick: onDiscard }, "Discard changes") : null,
+      h("button", { type: "button", className: "btn btn--primary", "data-testid": "editor-save", disabled: !dirty || invalidNumbers, onClick: onSave }, "Save changes"),
+    ),
   );
 }
 

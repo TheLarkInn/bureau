@@ -1,16 +1,16 @@
-// Clears the render gallery once, before any worker starts.
+// Opens the render gallery, before any worker starts.
 //
-// The gallery is a browsable artefact, so a screenshot of a state the registry
-// no longer holds is worse than no screenshot: it invites a reviewer to sign
-// off on a surface that does not exist. Emptying the directory once per run
-// keeps the gallery exactly the current matrix and nothing else.
+// It creates the directory and records when this run began; the pruning of
+// anything older happens in `global-teardown.mjs`, once the run has shown
+// whether it rendered any state at all. See `gallery.mjs` for why the decision
+// is made that way round.
 
-import { mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+
+import { openGallery } from "./gallery.mjs";
 
 const GALLERY = fileURLToPath(new URL("../gallery/", import.meta.url));
 
 export default async function globalSetup() {
-  await rm(GALLERY, { recursive: true, force: true });
-  await mkdir(GALLERY, { recursive: true });
+  process.env.BUREAU_GALLERY_RUN_AT = String(await openGallery(GALLERY));
 }

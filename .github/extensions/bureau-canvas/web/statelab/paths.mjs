@@ -87,7 +87,14 @@ const FIELD_DRAFTS = {
     invalid: { ops: [{ op: "fill", selector: BRANCH, value: "" }], copy: ["Filter and branch prefix cannot be empty."] },
   },
   "forge-signals": {
-    rest: { fixture: "no-signals" },
+    // Rest carries no fixture, and that is load-bearing rather than incidental.
+    // A lifecycle entry's fixture is part of the state's entry path, so a
+    // `rest` that publishes its own payload diverges from the resting card
+    // *before* the click — and the prefix relation that builds the transition
+    // DAG never forms, taking this disclosure's open and close edges with it.
+    // Opening and closing the signals editor does not need unset labels; only
+    // a draft that must differ from what the payload already holds does.
+    rest: {},
     dirty: {
       fixture: "no-signals",
       ops: [{ op: "fill", selector: ABORT, value: "bureau:failed" }, { op: "fill", selector: ESCALATE, value: "bureau:needs-human" }],
@@ -99,7 +106,10 @@ const FIELD_DRAFTS = {
     },
   },
   repos: {
-    rest: { fixture: "multi-repo" },
+    // As above: the ranked list opens and closes on whatever the config holds,
+    // so rest stays on the resting card's payload and keeps its edges. The
+    // reorder that `dirty` performs is what needs a second repo.
+    rest: {},
     dirty: {
       fixture: "multi-repo",
       ops: [{ op: "click", selector: '[aria-label="Move bureau-docs up"]' }],
@@ -114,7 +124,7 @@ const FIELD_DRAFTS = {
       copy: ["is read-only, so no branch can land there"],
     },
   },
-  "repos-add": { "n/a": { fixture: "multi-repo" } },
+  "repos-add": { "n/a": {} },
   limits: {
     rest: {},
     dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }], shows: [S.limitsDirty], copy: ["unsaved changes"] },

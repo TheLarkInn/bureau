@@ -21,7 +21,7 @@ import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 
@@ -518,6 +518,24 @@ test("every return edge mirrors an entry edge and undoes exactly one control", (
     },
     { unmirrored: [], misshapen: [], unlabelled: [], none: false },
   );
+});
+
+/**
+ * The other direction of the same claim, and the one the test above cannot
+ * make: that every control declared reversible actually has an edge.
+ *
+ * `returnEdge` only fires for a control that ends an entry edge, and an entry
+ * edge is a prefix relation over the whole op list — the fixture included. So a
+ * declared undo whose state publishes a payload its parent does not simply
+ * produces nothing, silently, and the suite walks eleven toggles minus however
+ * many were quietly dead. The forge-signals disclosure was exactly that: named
+ * in `REVERSIBLE`, asserted nowhere, on the very control this work changed from
+ * open-only to a toggle.
+ */
+test("every reversible control declares an undo the suite actually walks", () => {
+  const undone = new Set(TRANSITIONS.filter((edge) => edge.kind === "return").map((edge) => edge.via));
+  const dead = REVERSIBLE.filter((toggle) => !undone.has(`click ${toggle.undo}`)).map((toggle) => toggle.via);
+  assert.deepStrictEqual({ dead, declared: REVERSIBLE.length === 0 }, { dead: [], declared: false });
 });
 
 /** The child's ops from its (skip + 1)-th acting operation onwards. */
