@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { readStepRequest } from "./read-step-request.mjs";
+
 const ISSUE_URL = /^https:\/\/github\.com\/TheLarkInn\/bureau\/issues\/([1-9]\d*)$/u;
 const API = "https://api.github.com/repos/TheLarkInn/bureau/issues";
 const HEADERS = {
@@ -106,7 +108,7 @@ function workspace() {
 }
 
 async function main() {
-  const request = JSON.parse(await readFile(0, "utf8"));
+  const request = await readStepRequest();
   const receiptPath = request.artifacts?.["publication.json"];
   const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
   const requireHandoff = process.argv.includes("--require-handoff");
