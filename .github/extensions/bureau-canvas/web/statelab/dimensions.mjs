@@ -11,8 +11,8 @@
 // surface takes `n/a`, and a constraint rule says why — so an absent axis is
 // recorded rather than silently dropped.
 
-import { SELECTORS as S, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, RUN_STEP, SAMPLE_STEPS } from "./paths.mjs";
+import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
+import { FIELD_SAVE, RUN_END, RUN_STEP, SAMPLE_STEPS, stepFor } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -163,24 +163,37 @@ const draft = {
       id: "saving",
       summary: "save-plan in flight, so neither button takes a second click",
       shows: [S.draftBar, withheld(S.draftSave), withheld(S.draftDiscard)],
-      copy: ["Working…"],
+      copy: ["Saving…"],
+    },
+    /*
+     * Discarding is not saving, and used to be drawn as if it were.
+     *
+     * `act()` shared one `busy` flag, and only the Save button read it — so
+     * pressing Discard put "Working…" on *Save* and left Discard reading
+     * "Discard". The registry called that one equivalence class with `saving`,
+     * which was true of the pixels and was exactly the problem: a bar that says
+     * a save is in flight while a discard is in flight is the one sentence a
+     * draft surface may not get wrong. Now each button carries its own verb,
+     * the two are genuinely two screens, and this is the value that says so.
+     */
+    {
+      id: "discarding",
+      summary: "discard-plan in flight, named on the button that was pressed",
+      shows: [S.draftBar, withheld(S.draftSave), withheld(S.draftDiscard)],
+      copy: ["Discarding…"],
+      hides: [],
     },
     {
       id: "save-error",
       summary: "the plan came back refused and is still there to retry",
       shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
       copy: ["could not save changes"],
-      // The 500 is the state, not a defect in it — the same declaration
-      // `fieldState: save-error` makes, for the same reason.
-      allowErrors: ["status of 500"],
     },
     /*
      * Discard is the other half of the bar and it fails on its own sentence.
-     * `act()` shares `busy` and `error` between the two buttons, so a discard
-     * *in flight* is the same screen `saving` already draws — one equivalence
-     * class, not a sixth value — but the refusal is not: the fallback names the
-     * verb, so a bar that reported a failed discard as a failed save would read
-     * as work still pending when it is the discard that did not happen.
+     * The fallback names the verb, so a bar that reported a failed discard as a
+     * failed save would read as work still pending when it is the discard that
+     * did not happen.
      *
      * It was the last write family on these surfaces with neither a value nor a
      * rule, which is the one thing this registry may not do.
@@ -190,7 +203,6 @@ const draft = {
       summary: "the discard came back refused, and says so in its own words",
       shows: [S.draftBar, S.draftRefused, offered(S.draftSave), offered(S.draftDiscard)],
       copy: ["could not discard changes"],
-      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -351,7 +363,6 @@ const disclosure = {
       shows: [S.createBar, S.createRefused, offered(S.createSubmit)],
       hides: [S.relationOpen],
       copy: ["could not create pipeline"],
-      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -489,18 +500,16 @@ const fieldState = {
      * rendered", and a save in flight and a save refused are two of the most
      * ordinary screens this UI has.
      *
-     * `save-error` allows the 500 the browser itself logs. That is the state,
-     * not a defect in it: the refusal is the thing under review, and the
-     * console line is how a refusal sounds. Declaring it here keeps the
-     * registry the only place that says which failures are a state and which
-     * are a bug.
+     * A refusal reaches the page as `{ ok: false }` in an HTTP 200 body —
+     * `extension.mjs` answers every intent through `sendJson`, which writes 200
+     * unconditionally — so nothing about being refused is logged to the
+     * console. A console line on one of these states is a defect in it.
      */
     { id: "saving", summary: "the save is in flight; the button says so and refuses a second click", derive: (combo) => save(combo, withheld), copy: ["Saving…"] },
     {
       id: "save-error",
       summary: "the save came back refused and the draft is still there to retry",
       derive: (combo) => save(combo, offered),
-      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -651,7 +660,6 @@ const run = {
       summary: "a cancel the host refused, with the transport still offered",
       shows: [S.runControlError, S.overlayRunning, S.runPause, S.runCancel, S.runStatus],
       copy: ["intent failed"],
-      allowErrors: ["status of 500"],
     },
   ],
 };
@@ -836,6 +844,33 @@ const edit = {
       copy: ["unsaved edits"],
       hides: [S.editorIssues],
     },
+    {
+      id: "deleted",
+      summary: "the delete confirmed: the step and its edges are gone and nothing is selected",
+      /*
+       * The screen the confirmation leads to, which nothing rendered.
+       *
+       * `delete-confirm` stopped at the question. Answering it is one click,
+       * `onDelete` drops the step and its edges and calls `setSelected(null)`,
+       * and the result is a different screen in three ways at once: the card is
+       * gone from the graph, the panel falls back to its empty prompt, and the
+       * draft is dirty whichever step was chosen — including the fixture steps,
+       * whose confirmation left it clean. No rule excluded it and no value
+       * described it, which is the one thing this registry may not do.
+       */
+      derive: (combo) => ({ hides: [editorCardFor(stepFor(combo.pick))] }),
+      shows: [S.editorEmpty, S.editorDiscard, offered(S.editorSave)],
+      copy: ["Select a step to edit its fields and outcomes."],
+      /*
+       * `pick` describes the *selected* step's editor — the run field of a
+       * deterministic step, the outcome map of a decision. Deleting the step
+       * clears the selection, so none of that is on screen any more and the
+       * axis has nothing left to assert. The axis still carries which step was
+       * chosen, which is what the `hides` above is derived from, so the choice
+       * is recorded rather than dropped.
+       */
+      suppress: ["pick"],
+    },
     // The one edit Save itself refuses: an attempt count the editor cannot
     // render. That refusal is the whole difference from `created`.
     { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
@@ -856,9 +891,11 @@ const edit = {
     {
       id: "save-error",
       summary: "the write was refused, and the draft is still there to retry",
-      shows: [S.editorSaveReverted, S.editorDiscard, offered(S.editorSave)],
-      copy: ["save reverted — see findings"],
-      allowErrors: ["status of 500"],
+      shows: [S.editorSaveReverted, S.editorStatusError, S.editorDiscard, offered(S.editorSave)],
+      // The findings are the point of this state: a refused `save-pipeline`
+      // always carries the reasons the write was reverted, so a panel that
+      // announced the refusal without printing them would be the whole defect.
+      copy: ["save reverted", "no step in this pipeline is called `implement`"],
     },
   ],
 };

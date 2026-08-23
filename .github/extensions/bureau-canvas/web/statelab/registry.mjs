@@ -8,6 +8,7 @@
 
 import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
+import { isAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
 import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runOps, runRefusalOps, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
@@ -244,13 +245,13 @@ function buildTransitions() {
   const byPath = new Map(STATES.map((state) => [signature(state.ops), state.id]));
   const edges = [];
   for (const state of STATES) {
-    const acting = state.ops.filter((op) => op.op !== "wait");
+    const acting = state.ops.filter(isAction);
     if (acting.length < 2) {
       continue;
     }
     const parent = byPath.get(JSON.stringify(acting.slice(0, -1)));
     if (parent && parent !== state.id) {
-      edges.push({ kind: "enter", from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaFrom(state.ops, acting.length - 1) });
+      edges.push({ kind: "enter", from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaAfter(state.ops, acting.length - 1) });
     }
   }
   return [...edges, ...edges.map(returnEdge).filter(Boolean)];
@@ -258,7 +259,7 @@ function buildTransitions() {
 
 /** The way back out of `edge`, when the control it used declares an undo. */
 function returnEdge(edge) {
-  const last = edge.delta.filter((op) => op.op !== "wait").at(-1);
+  const last = edge.delta.filter(isAction).at(-1);
   const toggle = last?.op === "click" && REVERSIBLE.find((item) => item.via === last.selector);
   if (!toggle) {
     return null;
@@ -272,15 +273,23 @@ function returnEdge(edge) {
   };
 }
 
-/** The tail of `ops` beginning at the (skip + 1)-th acting operation. */
-function deltaFrom(ops, skip) {
+/**
+ * Everything the child's path does after the parent's last action.
+ *
+ * Not "from the child's own new action": the waits in between belong to the
+ * step being taken, not to the ground the parent already covered. `run:
+ * running` waits for its run to be listed before selecting it, and a delta that
+ * began at the select left that wait in the parent's half of the path — where
+ * the parent has never done it, because the parent has no run to wait for.
+ */
+function deltaAfter(ops, actions) {
   let seen = 0;
-  const start = ops.findIndex((op) => op.op !== "wait" && seen++ === skip);
-  return ops.slice(start);
+  const last = ops.findIndex((op) => isAction(op) && ++seen === actions);
+  return ops.slice(last + 1);
 }
 
 function signature(ops) {
-  return JSON.stringify(ops.filter((op) => op.op !== "wait"));
+  return JSON.stringify(ops.filter(isAction));
 }
 
 function describe(op) {

@@ -518,7 +518,7 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSav
       ),
       h("button", { type: "button", className: "btn", "data-testid": "editor-add-step", onClick: () => onAdd(kind) }, "+ Add step"),
     ),
-    h("span", { className: `editor-status${hints.length ? " editor-status--hints" : ""}` }, statusText(dirty, hints, saveResult)),
+    h("span", { className: `editor-status${statusTone(hints, saveResult)}` }, statusText(dirty, hints, saveResult)),
     h("span", { className: "editor-legend", "aria-label": "Edge legend" },
       h("span", { className: "legend-swatch legend-swatch--success" }, "success"),
       h("span", { className: "legend-swatch legend-swatch--failure" }, "failure"),
@@ -538,9 +538,17 @@ function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSav
   );
 }
 
+/*
+ * "see findings" was a redirect to a place the reader could not see. The list
+ * it pointed at is drawn at the bottom of a side panel that scrolls its own
+ * content, below a step form long enough to push it off-screen on both
+ * viewports — and when the transport died there were no findings at all, only
+ * an error string, so the redirect was also untrue. The panel now opens with
+ * the refusal, so the toolbar reports the event and stops directing traffic.
+ */
 function statusText(dirty, hints, saveResult) {
   if (saveResult && !saveResult.ok) {
-    return "save reverted — see findings";
+    return "save reverted";
   }
   if (hints.length) {
     return `${hints.length} issue${hints.length === 1 ? "" : "s"}`;
@@ -548,10 +556,30 @@ function statusText(dirty, hints, saveResult) {
   return dirty ? "unsaved edits" : "saved";
 }
 
+/** A refusal outranks a hint: one already happened, the other is advice. */
+function statusTone(hints, saveResult) {
+  if (saveResult && !saveResult.ok) {
+    return " editor-status--error";
+  }
+  return hints.length ? " editor-status--hints" : "";
+}
+
+/*
+ * The refusal is drawn first, above the step form, because it is the answer to
+ * the click the reader just made. Appended last it landed below a form tall
+ * enough to push it out of a panel that scrolls its own content — so on the one
+ * state where the reader needs a reason, the reason was the part they could not
+ * see, and the toolbar sent them to it by name.
+ */
 function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, onDelete, onIssue, onRename }) {
   return h(
     "aside",
     { className: "editor-panel" },
+    saveResult && !saveResult.ok
+      ? h("section", { className: "panel-section editor-save-reverted", "data-testid": "editor-save-reverted" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
+          (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
+            .map((finding, index) => h("li", { key: index }, finding.message))))
+      : null,
     step
       ? h(StepEditor, { view, step, roles, onChange, onClose, onDelete, onRename })
       : h(
@@ -565,11 +593,6 @@ function SidePanel({ view, step, roles, hints, saveResult, onChange, onClose, on
       ? h("section", { className: "panel-section" }, h("h3", {}, `Issues (${hints.length})`), h("ul", { className: "editor-issues" }, hints.map((hint) =>
           h("li", { key: `${hint.step}:${hint.message}` },
             h("button", { type: "button", onClick: () => onIssue(hint.step) }, `${hint.step}: ${hint.message}`)))))
-      : null,
-    saveResult && !saveResult.ok
-      ? h("section", { className: "panel-section", "data-testid": "editor-save-reverted" }, h("h3", {}, "Save reverted"), h("ul", { className: "editor-issues" },
-          (saveResult.findings?.length ? saveResult.findings : [{ message: saveResult.error ?? "save failed" }])
-            .map((finding, index) => h("li", { key: index }, finding.message))))
       : null,
   );
 }

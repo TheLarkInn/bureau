@@ -199,7 +199,7 @@ const FIELD_ERROR = {
  * pins `busy` on, and a refusal returns no `ok`, which is precisely the branch
  * that renders the editor's fallback sentence.
  */
-export const SAVE_INTERCEPTS = { saving: "stall-intent", "save-error": "fail-intent", "discard-error": "fail-intent" };
+export const SAVE_INTERCEPTS = { saving: "stall-intent", discarding: "stall-intent", "save-error": "fail-intent", "discard-error": "fail-intent" };
 
 /**
  * Every axis whose values are answered by a routed `./intent`, and the one
@@ -292,6 +292,15 @@ export const EDIT_PATHS = {
   ],
   renamed: renamedPath,
   "delete-confirm": (kind) => [...selectStep(kind), { op: "click", selector: S.editorDeleteStep }],
+  // Answering the confirmation. The wait is on the card going away rather than
+  // on the panel, because the card is the thing the click was about — a panel
+  // that cleared its selection without removing the step would pass a wait on
+  // the empty prompt.
+  deleted: (kind) => [
+    ...EDIT_PATHS["delete-confirm"](kind),
+    { op: "click", selector: S.editorDeleteConfirm },
+    { op: "waitGone", selector: editorCardFor(stepFor(kind)) },
+  ],
   "layout-moved": (kind) => [...selectStep(kind), { op: "drag", selector: editorCardFor(stepFor(kind)), dx: 80, dy: 60 }],
   invalid: (kind) => [...selectStep(kind), { op: "fill", selector: S.editorMaxAttempts, value: "0" }],
   /*
@@ -431,10 +440,10 @@ function contentLayer(combo) {
 }
 
 function planLayer(combo) {
-  // The two save screens need a plan to be saving, and it is the same plan
-  // `pending` publishes — a save state that invented its own plan would be
-  // asserting a bar no user reaches from the bar next to it.
-  return { pending: "draft-pending", "pending-one": "draft-single", saving: "draft-pending", "save-error": "draft-pending", "discard-error": "draft-pending" }[combo.draft] ?? null;
+  // The in-flight and refused screens need a plan to be acting on, and it is
+  // the same plan `pending` publishes — a save state that invented its own plan
+  // would be asserting a bar no user reaches from the bar next to it.
+  return { pending: "draft-pending", "pending-one": "draft-single", saving: "draft-pending", discarding: "draft-pending", "save-error": "draft-pending", "discard-error": "draft-pending" }[combo.draft] ?? null;
 }
 
 /**
@@ -448,11 +457,12 @@ export function draftOps(draftValue) {
   if (!SAVE_INTERCEPTS[draftValue]) {
     return [];
   }
-  if (draftValue === "saving") {
-    return [{ op: "click", selector: S.draftSave }, { op: "wait", selector: withheld(S.draftSave) }];
+  // Each in-flight and each refusal is pressed on the button whose verb it
+  // names, so the sentence under review is the one that button owns.
+  if (draftValue === "saving" || draftValue === "discarding") {
+    const button = draftValue === "saving" ? S.draftSave : S.draftDiscard;
+    return [{ op: "click", selector: button }, { op: "wait", selector: withheld(button) }];
   }
-  // Each refusal is pressed on the button whose verb it names, so the sentence
-  // under review is the one that button owns.
   const selector = draftValue === "discard-error" ? S.draftDiscard : S.draftSave;
   return [{ op: "click", selector }, { op: "wait", selector: S.draftRefused }];
 }

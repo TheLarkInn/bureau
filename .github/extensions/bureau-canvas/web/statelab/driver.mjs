@@ -55,6 +55,24 @@ const HANDLERS = {
  */
 export const ADAPTER_VERBS = ["goto", "publish", "click", "fill", "select", "press", "drag", "wait", "present", "waitGone"];
 
+/**
+ * The verbs that wait for the page rather than advancing the path.
+ *
+ * The DAG is built by comparing paths one *action* at a time, so it needs to
+ * know which operations are not actions — and this is the module that owns the
+ * vocabulary, so it is the one that can answer without guessing. It was guessed
+ * for a while, as `op.op !== "wait"`, which silently promoted `present` and
+ * `waitGone` to actions: a state whose path ends on "wait for this to go away"
+ * looked for a parent one operation short of the real one, found none, and
+ * joined the graph with no incoming edge at all.
+ */
+export const WAIT_VERBS = ["wait", "present", "waitGone"];
+
+/** Whether an operation advances the path, as opposed to waiting for it. */
+export function isAction(op) {
+  return !WAIT_VERBS.includes(op.op);
+}
+
 export function assertAdapter(adapter) {
   const missing = ADAPTER_VERBS.filter((verb) => typeof adapter?.[verb] !== "function");
   if (missing.length) {

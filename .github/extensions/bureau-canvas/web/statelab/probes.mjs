@@ -398,7 +398,7 @@ export const PROBES = [
       { op: "wait", selector: S.editorSaveReverted },
     ],
     expect: {
-      shows: [S.editorSaveReverted, offered(S.editorSave), S.editorDiscard],
+      shows: [S.editorSaveReverted, S.editorStatusError, offered(S.editorSave), S.editorDiscard],
       hides: [],
       copy: ["Save reverted"],
       allowErrors: ["Failed to fetch", "net::ERR_FAILED", "/intent"],

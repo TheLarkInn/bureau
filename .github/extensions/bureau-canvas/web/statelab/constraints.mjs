@@ -91,7 +91,7 @@ function na(combo, dimensions) {
  * — an editor with nothing selected has nothing to rename, so a save there
  * would be a save of a draft the path never made.
  */
-const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "invalid", "layout-moved", "saving", "save-error"];
+const NEEDS_SELECTION = ["created", "renamed", "delete-confirm", "deleted", "invalid", "layout-moved", "saving", "save-error"];
 
 export const CONSTRAINTS = [
   {

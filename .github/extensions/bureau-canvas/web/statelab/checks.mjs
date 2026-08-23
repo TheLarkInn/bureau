@@ -129,10 +129,26 @@ export function collect(doc, request) {
       contrast.push({ selector, text: node.textContent.trim().slice(0, 40), ratio: Number(ratio.toFixed(2)) });
     }
   }
+  // Every `label[for]` beside the control it names, as two boxes. Gathered
+  // here rather than derived from `boxes` because the pairing is the point: a
+  // label and its control are one thing to a reader, and the only way to tell
+  // that they have come apart is to measure them together.
+  const rectOf = (node) => {
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  };
+  const labels = [];
+  for (const label of doc.querySelectorAll("label[for]")) {
+    const named = doc.getElementById(label.getAttribute("for"));
+    if (named && visible(label) && visible(named)) {
+      labels.push({ text: label.textContent.trim().slice(0, 40), label: rectOf(label), control: rectOf(named) });
+    }
+  }
   return {
     counts,
     boxes,
     contrast,
+    labels,
     text: doc.body ? doc.body.innerText : "",
     overflowX: root.scrollWidth - root.clientWidth,
     viewport: { width: root.clientWidth, height: root.clientHeight },
@@ -213,9 +229,45 @@ export function verdict(state, snapshot, options = {}) {
     ...absentCopy(state, snapshot),
     ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
+    ...strandedLabels(snapshot),
     ...overlaps(snapshot),
     ...clipping(snapshot, options),
   ];
+}
+
+/**
+ * A label has to sit beside or above the control it names.
+ *
+ * The create bar drew its refusal as an extra child of a four-column field
+ * grid, so "could not create pipeline" took the cell the Name *label* was meant
+ * for and pushed the label and its input into different rows and columns. Every
+ * other check passed: nothing was clipped, nothing overlapped, both controls
+ * were present and the copy was right. The form was simply telling the reader
+ * that the box below "Kind" was called "Name", at the moment it was asking them
+ * to try again.
+ *
+ * Adjacency is deliberately generous — sharing a horizontal band (beside) or a
+ * vertical one (above) both count — because the two viewports lay these pairs
+ * out differently and only one arrangement is wrong: the one where the label
+ * shares neither, and so points at nothing.
+ */
+function strandedLabels(snapshot) {
+  return (snapshot.labels ?? [])
+    .filter((pair) => !adjacent(pair.label, pair.control))
+    .map((pair) => ({
+      kind: "stranded-label",
+      detail: `"${pair.text}" sits neither beside nor above the control it names`,
+    }));
+}
+
+function adjacent(label, control) {
+  return span(label.y, label.height, control.y, control.height)
+    || span(label.x, label.width, control.x, control.width);
+}
+
+/** Whether two one-dimensional extents share any of the same line. */
+function span(start, size, otherStart, otherSize) {
+  return Math.min(start + size, otherStart + otherSize) - Math.max(start, otherStart) > 0;
 }
 
 /**

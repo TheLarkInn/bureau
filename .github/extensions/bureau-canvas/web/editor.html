@@ -107,6 +107,15 @@
       .editor-toolbar-actions { display: flex; align-items: center; gap: var(--space-3); justify-self: end; }
       .editor-status { color: var(--text-color-muted, #656d76); white-space: nowrap; }
       .editor-status--hints { color: var(--outcome-blocked); }
+      /*
+       * A refused write is not a status. Muted grey put "save reverted" in the
+       * same treatment as "saved" and "unsaved edits", so the one word in the
+       * toolbar that reports a failure read like the two that report calm.
+       * Every other refusal in the canvas — the draft bar, all five field
+       * editors, the run controls — is drawn in the failure colour, and this is
+       * the same event.
+       */
+      .editor-status--error { color: var(--outcome-failure); font-weight: 600; }
       .editor-main {
         display: grid;
         grid-template-columns: minmax(0, 1fr) 20rem;
@@ -249,6 +258,13 @@
         color: var(--outcome-blocked);
         font-size: var(--text-code-inline, 12px);
       }
+      /*
+       * The reverted list is a refusal, not advice. It shares `.editor-issues`
+       * with the hint list, which is drawn in the blocked colour because a hint
+       * is something to consider; a write the host turned away is something
+       * that happened, and it reads in the failure colour like every other one.
+       */
+      .editor-save-reverted .editor-issues { color: var(--outcome-failure); }
       .editor-step label, .editor-edges label {
         display: flex;
         flex-direction: column;

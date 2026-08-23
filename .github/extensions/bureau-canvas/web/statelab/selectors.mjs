@@ -140,6 +140,11 @@ export const SELECTORS = {
   editorTabRelations: '[data-testid="editor-tab-relations"]',
   editorToolbar: ".editor-toolbar",
   editorStatus: ".editor-status",
+  // The failure treatment specifically. Without it a refusal drawn in the same
+  // muted grey as "saved" satisfies every `shows` this state has, which is how
+  // it went unremarked: the words were right and the weight said nothing
+  // happened.
+  editorStatusError: ".editor-status--error",
   editorPanel: ".editor-panel",
   editorEmpty: ".editor-empty",
   editorAddKind: '[aria-label="New step kind"]',

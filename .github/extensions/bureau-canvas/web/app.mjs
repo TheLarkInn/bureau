@@ -123,18 +123,28 @@ function Header({ state }) {
  * everything always was; a pending create, rename or delete must read
  * differently and be discardable.
  */
+/*
+ * The bar tracks *which* action is in flight, not merely that one is.
+ *
+ * A single `busy` flag put "Working…" on the Save button whichever button was
+ * pressed, so a discard in flight was drawn as a save in flight — on the one
+ * surface whose whole job is to tell a reader what is about to happen to their
+ * unsaved work. The two were one screen in the registry for exactly that
+ * reason, and being one screen was the defect rather than the economy.
+ */
 function DraftBar({ plan }) {
   const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
   if (!plan) {
     return null;
   }
   const pending = plan.writes.length + plan.removals.length;
+  const busy = pendingAction !== null;
   const act = (kind) => {
-    setBusy(true);
+    setPendingAction(kind);
     setError(null);
     postIntent({ kind }).then((result) => {
-      setBusy(false);
+      setPendingAction(null);
       if (result?.ok) {
         publishLocalState(result);
       } else {
@@ -153,8 +163,8 @@ function DraftBar({ plan }) {
     h(
       "div",
       { className: "draft-actions" },
-      h("button", { type: "button", className: "btn btn--small btn--primary", "data-testid": "draft-save", disabled: busy, onClick: () => act("save-plan") }, busy ? "Working…" : "Save"),
-      h("button", { type: "button", className: "btn btn--small", "data-testid": "draft-discard", disabled: busy, onClick: () => act("discard-plan") }, "Discard"),
+      h("button", { type: "button", className: "btn btn--small btn--primary", "data-testid": "draft-save", disabled: busy, onClick: () => act("save-plan") }, pendingAction === "save-plan" ? "Saving…" : "Save"),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "draft-discard", disabled: busy, onClick: () => act("discard-plan") }, pendingAction === "discard-plan" ? "Discarding…" : "Discard"),
     ),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
@@ -243,7 +253,6 @@ function CreateBar({ dir }) {
         ["pipeline", "role"].map((option) =>
           h("option", { key: option, value: option }, option)),
       ),
-      error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
       h("label", { className: "detail-label", htmlFor: "create-name" }, "Name"),
       h("input", {
         id: "create-name",
@@ -254,6 +263,17 @@ function CreateBar({ dir }) {
         autoFocus: true,
       }),
     ),
+    /*
+     * The refusal is its own row, not a cell in the field grid.
+     *
+     * Emitted between the kind select and the name label it took the next grid
+     * cell — a 4rem label column — so "could not create pipeline" wrapped to
+     * three lines and pushed Name and its input one cell along. The label ended
+     * up beside the wrong control on both viewports and the input dropped to a
+     * row of its own, which is the layout a reader met at the exact moment they
+     * were being told to try again.
+     */
+    error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
     h(
       "div",
       { className: "actions" },

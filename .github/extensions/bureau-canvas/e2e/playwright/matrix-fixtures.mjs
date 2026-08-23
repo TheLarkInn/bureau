@@ -242,7 +242,7 @@ async function intercept(page, kind) {
     "stall-state": () => page.route(/\/(state|events)$/u, () => {}),
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
-      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ ok: false }) })
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusal(route)) })
       : route.continue()),
     // The third end of a save, and the one that used to have no screen: the
     // request never reaches a responder at all, so `fetch` rejects rather than
@@ -262,6 +262,45 @@ function writes(route) {
     return !READ_INTENTS.has(JSON.parse(route.request().postData() ?? "{}").kind);
   } catch {
     return true;
+  }
+}
+
+/**
+ * A refusal in the shape the host actually answers with.
+ *
+ * `extension.mjs` writes every intent answer through `sendJson`, which is
+ * hard-coded to HTTP 200 — a refusal is `{ ok: false }` in a 200 body, never a
+ * 500. Answering with a 500 was therefore not "the host refused" but "the host
+ * broke", and the two are read by different code: `postIntent` and the editor's
+ * `save` both map a non-`ok` *response* to `null` and never see the body.
+ *
+ * For the draft bar, the field editors, the create bar and the run controls
+ * that made no visible difference — each falls back to its own copy either way.
+ * For the pipeline editor it did: a refused `save-pipeline` always carries the
+ * findings that say why the write was reverted (`lib/pipeline.mjs` reverts only
+ * when `roundTrip` returns some), and dropping the body left the panel with
+ * nothing to draw but the words "save failed". So the one state whose whole
+ * subject is *why a save was refused* was rendering the one refusal that gives
+ * no reason, and the screen a user actually gets was rendered nowhere.
+ */
+function refusal(route) {
+  const kind = intentKind(route);
+  if (kind !== "save-pipeline") {
+    return { ok: false };
+  }
+  return {
+    ok: false,
+    findings: [{
+      message: "step `verify` names `implement` in `on.success`, and no step in this pipeline is called `implement`.",
+    }],
+  };
+}
+
+function intentKind(route) {
+  try {
+    return JSON.parse(route.request().postData() ?? "{}").kind;
+  } catch {
+    return null;
   }
 }
 

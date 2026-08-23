@@ -16,8 +16,8 @@ import { test } from "node:test";
 import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
-import { ADAPTER_VERBS } from "../web/statelab/driver.mjs";
+import { collect, CONTRAST, measureFor, verdict } from "../web/statelab/checks.mjs";
+import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
@@ -511,7 +511,7 @@ function isSubsequence(needles, haystack) {
 test("every edge's delta is the child's path minus the parent's, and says so", () => {
   const byId = new Map(STATES.map((state) => [state.id, state]));
   const broken = ENTRY_TRANSITIONS.filter((edge) => {
-    const parentActing = byId.get(edge.from).ops.filter((op) => op.op !== "wait").length;
+    const parentActing = byId.get(edge.from).ops.filter(isAction).length;
     const rebuilt = tailAfter(byId.get(edge.to).ops, parentActing);
     return JSON.stringify(rebuilt) !== JSON.stringify(edge.delta) || label(rebuilt) !== edge.via;
   });
@@ -599,15 +599,15 @@ test("every reversible control opens the region its undo waits to lose", () => {
 });
 
 /** The child's ops from its (skip + 1)-th acting operation onwards. */
-function tailAfter(ops, skip) {
+function tailAfter(ops, actions) {
   let seen = 0;
-  const start = ops.findIndex((op) => op.op !== "wait" && seen++ === skip);
-  return start === -1 ? [] : ops.slice(start);
+  const last = ops.findIndex((op) => isAction(op) && ++seen === actions);
+  return last === -1 ? [] : ops.slice(last + 1);
 }
 
 /** The edge label, rebuilt from the delta rather than read off the edge. */
 function label(delta) {
-  const acting = delta.filter((op) => op.op !== "wait");
+  const acting = delta.filter(isAction);
   return acting.map((op) => describeOp(op)).join(" → ");
 }
 
@@ -834,6 +834,66 @@ test("the verdict refuses copy that reserves a region instead of drawing it", ()
   assert.deepStrictEqual(verdict(state, snapshot), [
     { kind: "placeholder-copy", detail: 'the render says "reserved for" instead of drawing it' },
   ]);
+});
+
+/**
+ * The create bar drew its refusal as an extra child of a four-column field
+ * grid, so the Name *label* was pushed into the next cell and its input onto
+ * the row below. Nothing was clipped, nothing overlapped, both controls were
+ * present and the copy was right — the form simply named the wrong box. This is
+ * the check that can fail for it, and the three arrangements below are the ones
+ * the two viewports actually produce.
+ */
+test("the verdict catches a label that names a control it does not sit beside", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const at = (labels) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes: [], labels });
+  const label = { x: 500, y: 200, width: 42, height: 20 };
+
+  assert.deepStrictEqual(
+    {
+      beside: verdict(state, at([{ text: "Name", label, control: { x: 560, y: 198, width: 200, height: 30 } }])),
+      above: verdict(state, at([{ text: "Name", label, control: { x: 500, y: 226, width: 200, height: 30 } }])),
+      stranded: verdict(state, at([{ text: "Name", label, control: { x: 180, y: 255, width: 64, height: 30 } }])),
+    },
+    {
+      beside: [],
+      above: [],
+      stranded: [{ kind: "stranded-label", detail: '"Name" sits neither beside nor above the control it names' }],
+    },
+  );
+});
+
+/**
+ * `collect` is shipped to the page as source — `new Function` around its
+ * `toString()`, in the browser suite and in the lab alike — so it may not
+ * reference anything outside itself. Nothing enforced that, and the way it
+ * fails is maximally unhelpful: a helper lifted to module scope leaves a
+ * `ReferenceError` inside every single `page.evaluate`, so all 440 renders and
+ * every transition go red at once and none of them names the cause.
+ *
+ * Rebuilding it the way the hosts do and running it over a minimal document
+ * catches that offline, in milliseconds, and points at this line.
+ */
+test("collect survives being rebuilt from its own source, as both hosts run it", () => {
+  const style = { visibility: "visible", overflowX: "visible", overflowY: "visible", backgroundColor: "rgb(255, 255, 255)", color: "rgb(0, 0, 0)", position: "static" };
+  const doc = {
+    defaultView: { getComputedStyle: () => style },
+    documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
+    body: { innerText: "" },
+    querySelectorAll: () => [],
+    getElementById: () => null,
+  };
+  const rebuilt = new Function(`return (${collect.toString()})`)();
+
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
+    counts: { ".a": 0 },
+    boxes: [],
+    contrast: [],
+    labels: [],
+    text: "",
+    overflowX: 0,
+    viewport: { width: 1280, height: 900 },
+  });
 });
 
 test("every contrast selector names small text coloured from a kind hue", () => {
