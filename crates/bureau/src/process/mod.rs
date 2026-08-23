@@ -8,6 +8,7 @@ mod credential;
 mod scrub;
 mod secret;
 mod spawn;
+mod utf8;
 mod wait;
 
 pub use credential::{CredentialError, DIR_VAR, ENV_PREFIX, resolve, resolve_file};

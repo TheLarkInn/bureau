@@ -94,7 +94,7 @@ export function useReplayOverlay() {
     setPlaying(false);
   }
 
-  return { runId, setRunId, decoration, controls };
+  return { runId, setRunId, decoration, controls, events, until: position };
 }
 
 function Timeline({ range, position, playing, speed, onScrub, onPlay, onSpeed, onStep }) {

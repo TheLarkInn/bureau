@@ -102,6 +102,7 @@ export function wslBridged(command, platform = process.platform) {
   return {
     command: "wsl.exe",
     args: ["-d", share.distro, "--", share.path],
+    distro: share.distro,
     translate: (path) => wslShare(path)?.path ?? path,
   };
 }
@@ -112,6 +113,17 @@ export function wslShare(path) {
     return null;
   }
   return { distro: match[1], path: `/${match[2].replaceAll("\\", "/")}` };
+}
+
+/**
+ * The inverse of `wslShare`: how this host addresses a distro-local path.
+ * `translate` turns the result back into `linuxPath` when it is handed to a
+ * bridged binary, so a share path is safe to use as both a filesystem path
+ * here and a CLI argument there.
+ */
+export function wslSharePath(distro, linuxPath) {
+  const relative = String(linuxPath).replace(/^\/+/u, "").replaceAll("/", "\\");
+  return `\\\\wsl.localhost\\${distro}\\${relative}`;
 }
 
 async function findOnPath(name, env) {
