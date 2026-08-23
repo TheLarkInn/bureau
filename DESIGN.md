@@ -1164,7 +1164,6 @@ outside the window.
 | Short-lived credential issuing service | Refuse. It limits credential exposure across many disposable containers, a topology refused by sections 1 and 3. Sections 5 and 10 instead require credentials scoped per repository and resolved at process spawn. |
 | Merge review and merge arbitration | Refuse. Section 1 assigns pull requests, reviews, and merge queues to the forge; section 3 says to use the forge's merge queue. |
 | Learning system for causal credit, "Thompson sampling" selection, statistical drift detection ("SPC/CUSUM"), graph analysis, path simulation, and "Tutor" training episodes | Refuse. Section 3 targets fewer than 15,000 lines for the complete system. **New judgment:** this system needs a multi-run corpus that one developer does not generate; upstream defers efficacy evaluation and its feedback loop depends on a quarantined component, so the reviewed implementation provides no shipped evidence of better outcomes. |
-| Nested agent delegation and permission ceilings | Refuse for now. **New judgment:** bureau does not spawn sub-agents, so delegation limits are premature until a step delegates work. This does not judge the quality of upstream's implementation. |
 | A second execution engine for orchestration | Refuse. Section 3 requires one engine. |
 
 ### 16.1 Selective adoptions
@@ -1177,9 +1176,12 @@ platform surface to copy:
 - [#73](https://github.com/TheLarkInn/bureau/issues/73) keeps security and
   request-delivery behavior consistent across adapters;
 - [#74](https://github.com/TheLarkInn/bureau/issues/74) verifies that a
-  resolved credential has the intended identity; and
+  resolved credential has the intended identity;
 - [#86](https://github.com/TheLarkInn/bureau/issues/86) implements the
-  different-role retry already promised by section 1.
+  different-role retry already promised by section 1; and
+- [#90](https://github.com/TheLarkInn/bureau/issues/90) adds bounded child-agent
+  spawning with reviewed roles, inherited permissions, durable provenance,
+  budget accounting, cancellation, and offline tests.
 
 Upstream's distributed problems are real for upstream. Its design principle,
 "make the thing addressable by identity, make the write idempotent, and the
