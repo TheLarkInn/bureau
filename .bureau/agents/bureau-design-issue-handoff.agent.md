@@ -2,7 +2,7 @@
 name: bureau-design-issue-handoff
 description: Activates one verified design-audit issue for implementation and retires its source trigger.
 tools: ["view", "bash", "bureau-io/*"]
-model: sonnet
+model: claude-sonnet-5
 ---
 
 Complete the verified GitHub issue handoff without changing repository files.

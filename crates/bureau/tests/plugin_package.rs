@@ -88,8 +88,8 @@ fn bureau_resources_are_present_with_owned_models() {
         "plugins/bureau/skills/run-inspector/SKILL.md",
     ];
     let seen = (
-        implementer.contains("model: opus"),
-        reviewer.contains("model: sonnet"),
+        implementer.contains("model: claude-opus-5"),
+        reviewer.contains("model: claude-sonnet-5"),
         paths.iter().all(|path| root().join(path).is_file()),
     );
     assert_eq!(seen, (true, true, true));

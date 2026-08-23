@@ -11,5 +11,36 @@
     "bureau@bureau": true,
     "rust-design-patterns@bureau": true,
     "language-behaviors@bureau": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "addCurrentWorkingDirectory": true,
+    "allowDevToolAccess": true,
+    "allowBypass": false,
+    "auth": {
+      "git": false,
+      "gh": true
+    },
+    "sandboxMcpServers": true,
+    "sandboxLspServers": true,
+    "userPolicy": {
+      "filesystem": {
+        "deniedPaths": [
+          "~/.aws",
+          "~/.azure",
+          "~/.copilot",
+          "~/.config/gh",
+          "~/.git-credentials",
+          "~/.gnupg",
+          "~/.kube",
+          "~/.netrc",
+          "~/.ssh"
+        ]
+      },
+      "network": {
+        "allowOutbound": true,
+        "allowLocalNetwork": false
+      }
+    }
   }
 }

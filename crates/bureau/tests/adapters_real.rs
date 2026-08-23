@@ -108,9 +108,7 @@ fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
     &argv[at + 1]
 }
 
-/// Asserts copilot's argv carries the JSON prompt and selected agent.
-/// This grant-less role also gets the deny-by-default flag, so argv has
-/// 9 elements including the bureau-io grant and its server definition.
+/// Asserts the prompt, agent, sandbox, bureau-io, and deny-by-default argv.
 fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
     let parts = (
         req.argv.first().map(String::as_str),
@@ -118,7 +116,7 @@ fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
         value_after(&req.argv, "--agent"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", 9);
+    let expected = (Some(copilot::BINARY), json, "analyzer", 11);
     assert_eq!(parts, expected);
 }
 
@@ -237,31 +235,6 @@ fn claude_carries_the_request_on_stdin_only() {
 }
 
 #[test]
-fn copilot_mirrors_the_push_boundary_and_denies_by_default() {
-    let edit = "--allow-tool=write\u{1f}--allow-tool=shell\u{1f}--allow-all-paths";
-    let cases: [(&[Permission], String); 4] = [
-        (
-            &[Permission::RepoWrite],
-            format!("{edit}\u{1f}--deny-tool=shell(git push)"),
-        ),
-        (&[Permission::RepoPush], edit.to_owned()),
-        (&[Permission::RepoRead], "--deny-tool=shell(*)".to_owned()),
-        (&[], "--deny-tool=shell(*)".to_owned()),
-    ];
-    for (permissions, flags) in cases {
-        let dir = TestDir::new("copilot-flags");
-        let role = role("/p:a", AdapterKind::Copilot, permissions);
-        let req = copilot_request(&role, &step(None), dir.path());
-        let at = req
-            .argv
-            .iter()
-            .position(|a| a == "--additional-mcp-config")
-            .expect("mcp config present");
-        assert_eq!(req.argv[at + 2..].join(SEP), flags);
-    }
-}
-
-#[test]
 fn claude_mirrors_the_push_boundary_and_denies_by_default() {
     let edit = "--allowedTools\u{1f}Edit,Write,Bash";
     let cases: [(&[Permission], String); 4] = [
@@ -286,3 +259,5 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
 
 #[path = "adapters_real/env.rs"]
 mod env;
+#[path = "adapters_real/permissions.rs"]
+mod permissions;
