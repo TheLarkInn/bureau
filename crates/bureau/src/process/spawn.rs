@@ -166,16 +166,32 @@ where
     )
 }
 
-fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize) {
-    if buf.len() <= *forwarded {
+/// How much of `available` may be handed to the sink now.
+///
+/// `last` is EOF for this stream: nothing can finish a trailing character, so
+/// it goes out and decodes lossily. Before then an unfinished character waits
+/// for the next read, so the sink never decodes half of one.
+const fn emittable(available: &[u8], last: bool) -> usize {
+    if last {
+        available.len()
+    } else {
+        super::utf8::complete_prefix(available)
+    }
+}
+
+/// Forwards newly scrubbed bytes to the run-log sink.
+fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize, last: bool) {
+    let available = &buf[(*forwarded).min(buf.len())..];
+    let take = emittable(available, last);
+    if take == 0 {
         return;
     }
     if let Some(sink) = log {
         if let Ok(mut w) = sink.lock() {
-            let _ = w.write_all(&buf[*forwarded..]);
+            let _ = w.write_all(&available[..take]);
         }
     }
-    *forwarded = buf.len();
+    *forwarded += take;
 }
 
 /// Reads a stream to EOF, scrubbing each chunk as it arrives and
@@ -190,12 +206,12 @@ async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>
             Ok(0) | Err(_) => break, // a read error still leaves partial output usable
             Ok(n) => {
                 let _ = scrubber.write_all(&chunk[..n]);
-                forward(log.as_ref(), scrubber.get_ref(), &mut forwarded);
+                forward(log.as_ref(), scrubber.get_ref(), &mut forwarded, false);
             }
         }
     }
     let captured = scrubber.finish().unwrap_or_default();
-    forward(log.as_ref(), &captured, &mut forwarded);
+    forward(log.as_ref(), &captured, &mut forwarded, true);
     captured
 }
 

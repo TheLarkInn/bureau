@@ -11,6 +11,7 @@ import { test } from "node:test";
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
+const { resolveRunsDir, runsDir } = await import("../lib/runs.mjs");
 
 const RUN_STARTED = { seq: 0, at_ms: 1700000000000, kind: "run_started", data: { run_id: "run-live", assignment: "triage" } };
 const STEP_STARTED = { seq: 1, at_ms: 1700000001000, kind: "step_started", data: { step: "implement" } };
@@ -168,4 +169,45 @@ test("rejects a control intent without a run id", async (t) => {
   } finally {
     await canvas.closeBureauCanvas({ instanceId: "bureau-run-control-400-test" });
   }
+});
+
+// A canvas host on Windows watching a workspace inside WSL must read the
+// distro's bureau home, not its own user profile — otherwise `GET /runs` is
+// always empty and the live and replay pickers have nothing to select.
+const SHARE = String.raw`\\wsl.localhost\Ubuntu-26.04\home\me\src\bureau\.bureau`;
+const SHARE_RUNS = String.raw`\\wsl.localhost\Ubuntu-26.04\home\me\.bureau\runs`;
+
+test("resolves the runs root where bureau actually keeps it", async () => {
+  const probed = [];
+  const probe = (distro) => {
+    probed.push(distro);
+    return "/home/me/.bureau\n";
+  };
+  // An explicit binary that cannot exist keeps the lookup hermetic: no PATH
+  // scan, no stray `target/debug/bureau` from whatever checkout runs this.
+  const noBinary = { binary: join(tmpdir(), "absent-bureau-binary") };
+  const cases = [
+    // A workspace on a WSL share: the distro's home, addressed through it.
+    [{ anchor: SHARE, env: {}, probe }, SHARE_RUNS],
+    // Nothing bridged anywhere: the host's own home, as before.
+    [{ anchor: "/plain/workspace", env: {}, probe, ...noBinary }, runsDir({})],
+    // Explicit overrides win outright, and never spawn a probe.
+    [{ anchor: SHARE, env: { BUREAU_CANVAS_RUNS: join(tmpdir(), "explicit") }, probe }, join(tmpdir(), "explicit")],
+    [{ anchor: SHARE, env: { BUREAU_HOME: join(tmpdir(), "home") }, probe }, join(tmpdir(), "home", "runs")],
+  ];
+
+  const actual = [];
+  for (const [options] of cases) {
+    actual.push(await resolveRunsDir(options));
+  }
+  assert.deepStrictEqual([actual, probed], [cases.map(([, expected]) => expected), ["Ubuntu-26.04"]]);
+});
+
+test("falls back to the host home when the distro cannot answer", async () => {
+  const answers = [null, "", "   "];
+  const resolved = [];
+  for (const answer of answers) {
+    resolved.push(await resolveRunsDir({ anchor: SHARE, env: {}, probe: () => answer }));
+  }
+  assert.deepStrictEqual(resolved, answers.map(() => runsDir({})));
 });
