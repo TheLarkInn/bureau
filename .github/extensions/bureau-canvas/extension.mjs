@@ -9,7 +9,7 @@ import { applyPlan, create, crudActions, emptyPlan, remove as removeEntity, rena
 import { findings } from "./lib/findings.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
 import { arrangementFor, readLayout, savePipeline } from "./lib/pipeline.mjs";
-import { createRunTail, listRuns, parseEvents, readRunEvents, runBureau, runsDir } from "./lib/runs.mjs";
+import { createRunTail, listRuns, parseEvents, readRunEvents, resolveRunsDir, runBureau, runsDir } from "./lib/runs.mjs";
 import { configView, pipelineView, relationView } from "./lib/view.mjs";
 import { deriveWorkSource } from "./lib/worksource.mjs";
 import { resolveRepoUrl } from "./lib/repourl.mjs";
@@ -401,8 +401,11 @@ async function startServer(state, options = {}) {
     });
 
     entry.server = server;
+    // One resolution per server: the tail and every request must observe the
+    // same root, and the WSL probe behind it should not run per request.
+    entry.runsDir = options.runsDir ?? (await resolveRunsDir({ ...options, anchor: state.dir }));
     entry.runTail = createRunTail({
-        dir: options.runsDir ?? runsDir(),
+        dir: entry.runsDir,
         publish: (payload) => publishRunEvent(entry, payload),
         ...(typeof options.runTailIntervalMs === "number" ? { intervalMs: options.runTailIntervalMs } : {}),
     });
@@ -463,7 +466,7 @@ async function handleRequest(entry, request, response) {
 
 /** The runs root this server observes; overridable for tests. */
 function runsRoot(entry) {
-    return entry.options?.runsDir ?? runsDir();
+    return entry.options?.runsDir ?? entry.runsDir ?? runsDir();
 }
 
 /** One run's full event log: the CLI's replay when a binary is on hand, the raw log otherwise. */

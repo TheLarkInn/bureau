@@ -44,8 +44,14 @@ Alongside the config view, the same server exposes the run log
 | `GET /events` | the SSE channel; live runs forward each appended event as `event: run-event` with `{ run_id, event }`, and stop when the run's `run_finished` arrives |
 | `POST /intent` | `pause-run`, `resume-run`, `cancel-run` with `{ run_id }`, shelled out to `bureau pause/resume/cancel` — the canvas never writes run markers itself |
 
-The runs root is `BUREAU_CANVAS_RUNS` when set, else `runs/` under the bureau
-home (`BUREAU_HOME`, default `~/.bureau`) — the same default the CLI uses.
+The runs root is `BUREAU_CANVAS_RUNS` when set, then `BUREAU_HOME`. Otherwise
+it follows bureau rather than this process: when the workspace (or the resolved
+binary) lives inside a WSL distro, the bureau home lives there too, so the root
+is that distro's `~/.bureau/runs` addressed through its `\\wsl.localhost\` share
+— a canvas hosted on Windows would otherwise look in `C:\Users\...\.bureau` and
+find no runs at all. Share paths translate back to Linux paths when passed as
+`--runs`, so replay and run control reach the same root. Failing all that it is
+`runs/` under the host's own bureau home, the same default the CLI uses.
 Liveness is pure filesystem: a run is live while its `events.jsonl` holds no
 `run_finished` event; no daemon is consulted. Tailing polls rather than
 `fs.watch`, because the log is appended by another process and can sit on a

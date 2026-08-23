@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { bureauCandidates } from "./findings.mjs";
+import { bureauCandidates, wslShare, wslSharePath } from "./findings.mjs";
 
 const EVENTS_FILE = "events.jsonl";
 const RUN_STARTED = "run_started";
@@ -20,15 +20,77 @@ const STEP_STARTED = "step_started";
 const STEP_FINISHED = "step_finished";
 
 /**
- * The directory holding run directories: `BUREAU_CANVAS_RUNS` when set, else
- * `runs/` under the bureau home (`BUREAU_HOME`, default `~/.bureau`) — the
- * same default the CLI's `home.layout().runs()` resolves to.
+ * The bureau home's `runs/` as *this process's host* resolves it:
+ * `BUREAU_CANVAS_RUNS` when set, else `runs/` under the bureau home
+ * (`BUREAU_HOME`, default `~/.bureau`) — the same default the CLI's
+ * `home.layout().runs()` resolves to. Callers that serve a canvas want
+ * `resolveRunsDir()` instead, which also handles bureau living in a WSL
+ * distro while the canvas host does not.
  */
 export function runsDir(env = process.env) {
   if (env.BUREAU_CANVAS_RUNS) {
     return resolve(env.BUREAU_CANVAS_RUNS);
   }
   return join(env.BUREAU_HOME ?? join(homedir(), ".bureau"), "runs");
+}
+
+/** `sh` inside the distro, so a `BUREAU_HOME` set there is honored too. */
+const HOME_PROBE = 'printf %s "${BUREAU_HOME:-$HOME/.bureau}"';
+const PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * The runs root for one canvas server, resolved once at startup.
+ *
+ * `runsDir()` answers for the host process, which is only correct when bureau
+ * runs on that host. In the usual Windows setup it does not: the workspace and
+ * the binary live inside a WSL distro, so the bureau home — and every run
+ * directory under it — sits on the distro's filesystem while this process asks
+ * about `C:\Users\...\.bureau\runs` and finds nothing. An empty answer here is
+ * what makes the live and replay run pickers permanently empty.
+ *
+ * So when the canvas is looking at a distro, ask that distro where its home is
+ * and address it through the share. `wslBridged`'s `translate` turns the share
+ * path back into a Linux path when it is passed as `--runs`, so run replay and
+ * pause/resume/cancel keep working against the same root.
+ */
+export async function resolveRunsDir(options = {}) {
+  const env = options.env ?? process.env;
+  if (env.BUREAU_CANVAS_RUNS || env.BUREAU_HOME) {
+    return runsDir(env);
+  }
+  const distro = await bureauDistro(options);
+  const home = distro ? await distroHome(distro, options) : null;
+  return home ? wslSharePath(distro, `${home}/runs`) : runsDir(env);
+}
+
+/**
+ * The distro bureau lives in. The canvas's own anchor answers without spawning
+ * anything and works even when no binary is built yet; the resolved binary is
+ * the fallback for a workspace that sits outside the distro.
+ */
+async function bureauDistro(options) {
+  const anchored = wslShare(options.anchor ?? "")?.distro;
+  if (anchored) {
+    return anchored;
+  }
+  const [candidate] = await bureauCandidates(options);
+  return candidate?.distro ?? null;
+}
+
+async function distroHome(distro, options) {
+  const probe = options.probe ?? wslProbe;
+  const home = await probe(distro, HOME_PROBE);
+  return home?.trim() ? home.trim() : null;
+}
+
+/** Bounded: a wedged `wsl.exe` must not keep the canvas from opening. */
+function wslProbe(distro, script) {
+  const child = spawn("wsl.exe", ["-d", distro, "--", "sh", "-c", script], { windowsHide: true });
+  const timer = setTimeout(() => child.kill(), PROBE_TIMEOUT_MS);
+  return collect(child).then((run) => {
+    clearTimeout(timer);
+    return run?.code === 0 ? run.stdout : null;
+  });
 }
 
 /**
