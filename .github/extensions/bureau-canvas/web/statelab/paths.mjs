@@ -21,7 +21,7 @@
 // `driver.mjs` implements exactly this set, and an offline test fails if a
 // path uses a verb that is not on it.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, withheld } from "./selectors.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, withheld } from "./selectors.mjs";
 const FILTER = '[data-testid="wr-filter"]';
 const BRANCH = '[data-testid="wr-branch"]';
 const ABORT = '[data-testid="sig-abort"]';
@@ -169,7 +169,36 @@ const FIELD_DRAFTS = {
     dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }] },
     invalid: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "0" }], copy: ["need whole numbers of at least 1"] },
   },
-  delete: { "n/a": {} },
+  /*
+   * Delete is not a draft editor — it has nothing typed and no save of its own
+   * — but the confirmation it *does* have is a write with two ends, and they
+   * were modelled nowhere. So it borrows the two lifecycle names the saving
+   * fields use, on the button that is actually pressed: `saving` is the removal
+   * in flight, `save-error` is the removal refused.
+   *
+   * Both ends are asserted on the pair of controls rather than on the verb
+   * alone, because the pair is the contract. A confirmed delete cannot be taken
+   * back, so while it is in flight Confirm must not accept a second press and
+   * Cancel must not offer a way out it no longer has; and when it is refused
+   * both must come back, or the reader is left holding a dead prompt over an
+   * assignment that is still there.
+   */
+  delete: {
+    "n/a": {},
+    saving: {
+      ops: [{ op: "click", selector: S.deleteConfirm }, { op: "wait", selector: withheld(S.deleteConfirm) }],
+      shows: [withheld(S.deleteConfirm), withheld(S.deleteCancel)],
+      copy: ["Deleting…"],
+    },
+    // The refusal as a treatment as well as a sentence, and inside the prompt
+    // it belongs to: an error drawn in the ordinary note class, or outside the
+    // preflight, would read as advice about a delete that had not failed.
+    "save-error": {
+      ops: [{ op: "click", selector: S.deleteConfirm }, { op: "wait", selector: S.deleteRefused }],
+      shows: [S.deleteRefused, offered(S.deleteConfirm), offered(S.deleteCancel)],
+      copy: ["could not delete"],
+    },
+  },
 };
 
 /**

@@ -88,7 +88,11 @@ export const SELECTORS = {
 
   deleteStart: '[data-testid="delete-start"]',
   deleteConfirm: '[data-testid="delete-confirm"]',
+  deleteCancel: '[data-testid="delete-cancel"]',
   preflight: '[data-testid="preflight"]',
+  // The refusal a confirmed delete comes back with, scoped to the preflight so
+  // it cannot be satisfied by an unrelated note elsewhere on the card.
+  deleteRefused: '[data-testid="preflight"] .note--err',
 
   orphanStrip: ".orphan-strip",
   relationSection: ".relation-section",

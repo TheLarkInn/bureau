@@ -7,6 +7,7 @@
 
 import { STATES } from "../../../web/statelab/registry.mjs";
 import { servableInFrame } from "../../../web/statelab/intercept.mjs";
+import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { expect, test } from "../matrix-fixtures.mjs";
 
 /** A state the lab can drive itself, interception included. */
@@ -75,10 +76,19 @@ test("a replay state with a run selected passes its checks in the lab too", asyn
 test("the compact control resizes the stage and re-runs the entry path", async ({ page, host }) => {
   const errors = await openLab(page, host);
   const target = DRIVABLE.find((state) => state.id.endsWith("card:expanded"));
+  const stage = page.locator("#stage");
 
   await page.locator(".state-item", { hasText: target.id }).first().click();
+  await expect(stage).toHaveJSProperty("offsetWidth", VIEWPORTS.desktop.width);
+
   await page.locator('[data-viewport="compact"]').click();
-  await expect(page.locator("#viewport-note")).toContainText("760");
+  // The stage's own width, not the note beside it. The note is a label this
+  // control writes; asserting it would have held with the two lines that
+  // actually resize the stage deleted, which is the whole of what the button
+  // does — and the render underneath would have stayed desktop-wide while the
+  // lab claimed a compact viewport.
+  await expect(stage).toHaveJSProperty("offsetWidth", VIEWPORTS.compact.width);
+  await expect(page.locator("#viewport-note")).toContainText(`${VIEWPORTS.compact.width}`);
   await page.locator("#detail .expectations").waitFor();
   await expect(page.frameLocator("#stage-frame").locator(".assignment-detail")).toBeVisible();
   expect(errors).toEqual([]);

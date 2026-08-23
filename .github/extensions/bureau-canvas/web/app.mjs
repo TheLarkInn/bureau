@@ -303,10 +303,14 @@ function DeleteControl({ dir, kind, name }) {
   const [preflight, setPreflight] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const ask = () => {
     setBusy(true);
     setError(null);
     postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (response?.ok) {
         setPreflight(response.result);
@@ -315,14 +319,31 @@ function DeleteControl({ dir, kind, name }) {
       }
     });
   };
-  const confirm = () => postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
-    if (result?.ok) {
-      setPreflight(null);
-      publishLocalState(result);
-    } else {
-      setError(result?.error ?? `could not delete ${name}`);
-    }
-  });
+  /*
+   * The same two tickets every field editor's save carries, on the one request
+   * here that cannot be taken back. `busy` holds both answers still for the
+   * round trip: a Confirm that stayed live would let a second click race a
+   * second removal against the first, and a Cancel that stayed live would let a
+   * reader believe they had stopped a delete that was already on its way. And
+   * after unmount the answer is nobody's — this card is removed by its own
+   * success, so the reply lands on a component that has gone.
+   */
+  const confirm = () => {
+    setBusy(true);
+    setError(null);
+    postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
+      setBusy(false);
+      if (result?.ok) {
+        setPreflight(null);
+        publishLocalState(result);
+      } else {
+        setError(result?.error ?? `could not delete ${name}`);
+      }
+    });
+  };
   if (!preflight) {
     return h(React.Fragment, null,
       h("button", { type: "button", className: "btn btn--small btn--danger card-action", "data-testid": "delete-start", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
@@ -337,8 +358,8 @@ function DeleteControl({ dir, kind, name }) {
       ? h("p", { className: "note note--err" }, "Repoint these references before deleting this item.")
       : null,
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking, onClick: confirm }, "Confirm delete"),
-      h("button", { type: "button", className: "btn btn--small", onClick: () => setPreflight(null) }, "Cancel")),
+      h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking || busy, onClick: confirm }, busy ? "Deleting…" : "Confirm delete"),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "delete-cancel", disabled: busy, onClick: () => setPreflight(null) }, "Cancel")),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
 }

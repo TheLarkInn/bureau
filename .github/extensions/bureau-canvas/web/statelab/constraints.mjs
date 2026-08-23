@@ -197,7 +197,7 @@ export const CONSTRAINTS = [
     reads: ["field", "section"],
     title: "The delete preflight cannot be reviewed over an injected config",
     why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by calling `refreshState`, which republishes the host's own state over the SSE channel and replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. The screen itself is ordinary — a user with two assignments reaches it — which is why this is a harness rule and not a structural one. It stays an exclusion rather than a suppressed axis because suppressing would let the host's one-card screen pass under the name `two-cards`.",
-    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and `paths.mjs` `interceptFor` asks for no route on the delete family, so the preflight is the one intent in the matrix that reaches the host.",
+    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and the preflight is the one intent in the matrix that reaches the host — `reachesHost` names it a read, so even the two states that route `./intent` to stall or refuse the *confirmed* removal let the unconfirmed one through to be answered.",
     stands: "surface:config+data:validated+section:stack+card:expanded+field:delete",
     holds: (combo) => combo.field !== "delete" || combo.section !== "two-cards",
   },

@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { READ_INTENTS, offeredAsLive, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
+import { offeredAsLive, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -267,10 +267,11 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * disk. `installFloor` does the same job inside the lab's frame, where it
  * matters more still: that host is pointed at a contributor's own `.bureau/`.
  *
- * `READ_INTENTS`, `reachesHost` and `refusalFor` come from
- * `web/statelab/intercept.mjs`, which the lab installs inside its frame. One
- * definition, two applications: the screen a reviewer browses is under the same
- * condition CI asserts.
+ * `reachesHost` and `refusalFor` come from `web/statelab/intercept.mjs`, which
+ * the lab installs inside its frame. One definition, two applications: the
+ * screen a reviewer browses is under the same condition CI asserts — and one
+ * predicate for what writes, so the floor and the save intercepts cannot
+ * disagree about a request the way they once did about the delete preflight.
  */
 
 /**
@@ -332,10 +333,9 @@ async function intercept(page, kind) {
   await routes[kind]();
 }
 
-/** Whether this intent is anything other than one of the two known reads. */
+/** Whether this intent would write: anything the floor would not let through. */
 function writes(route) {
-  const kind = intentKind(route);
-  return kind === null || !READ_INTENTS.has(kind);
+  return !reachesHost(intentBody(route));
 }
 
 function intentKind(route) {

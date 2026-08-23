@@ -442,7 +442,13 @@ const field = {
       // The point of a preflight is the answer it gives, and the answer is the
       // state of the confirm button. Asserting only that a preflight appeared
       // left the one control it exists to gate unasserted.
-      shows: [S.preflight, offered(S.deleteConfirm)],
+      //
+      // Offered is the *resting* answer, so it is derived rather than fixed:
+      // the two ends of the confirmation own that button too, and a fixed
+      // `offered` here would have demanded a live Confirm from the very state
+      // whose contract is that it is held.
+      shows: [S.preflight],
+      derive: (combo) => (combo.fieldState === "n/a" ? { shows: [offered(S.deleteConfirm)] } : {}),
       copy: ["Nothing references this"],
       /*
        * The preflight is a real intent, and `runCrudIntent` answers even a
@@ -505,7 +511,15 @@ const fieldState = {
      * unconditionally — so nothing about being refused is logged to the
      * console. A console line on one of these states is a defect in it.
      */
-    { id: "saving", summary: "the save is in flight; the button says so and refuses a second click", derive: (combo) => save(combo, withheld), copy: ["Saving…"] },
+    /*
+     * The in-flight verb belongs to the control that is in flight, so it is
+     * derived rather than fixed. Every field editor's Save says "Saving…"; the
+     * delete confirmation borrows this lifecycle for the same two ends but is
+     * removing something, and says "Deleting…" — which its own lifecycle entry
+     * in `paths.mjs` asserts. A fixed word here would have demanded the wrong
+     * one from that screen.
+     */
+    { id: "saving", summary: "the write is in flight; the button says so and refuses a second click", derive: (combo) => ({ ...save(combo, withheld), copy: FIELD_SAVE[combo.field] ? ["Saving…"] : [] }) },
     {
       id: "save-error",
       summary: "the save came back refused and the draft is still there to retry",

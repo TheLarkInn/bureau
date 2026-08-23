@@ -20,17 +20,23 @@ export const READ_INTENTS = new Set(["derive-work-source", "resolve-repo"]);
 
 /**
  * What may reach the real host at all — the floor under the browser suite,
- * which holds `./intent` whether or not a state declared an intercept.
+ * which holds `./intent` whether or not a state declared an intercept, and now
+ * also the one definition of "this request writes" that the save intercepts
+ * read.
  *
  * Wider than `READ_INTENTS` by exactly one entry, and the difference is not a
- * drift. A save intercept holds writes so that a *saving* or *refused* screen
- * can be rendered; the floor holds them so a state that declared no intercept
- * cannot write to the contributor's own `.bureau/` by omission. The delete
- * preflight belongs on the second list and not the first: `lib/crud.mjs`
- * `remove()` answers an unconfirmed delete with the referrer report and writes
- * nothing, so it is a read — and it is the one intent the matrix deliberately
- * lets through, which is what `a-preflight-answers-with-the-hosts-own-config`
- * is a `harness` rule about.
+ * drift: the delete preflight belongs on this list and not that one, because
+ * `lib/crud.mjs` `remove()` answers an unconfirmed delete with the referrer
+ * report and writes nothing. It is a read that only looks like a write, which
+ * is what `a-preflight-answers-with-the-hosts-own-config` is a `harness` rule
+ * about.
+ *
+ * There used to be a second, narrower predicate beside this one, reading
+ * `READ_INTENTS` directly, and the gap between them was exactly that entry. It
+ * meant a `stall-intent` held the preflight as well as the removal — so the
+ * screen the confirmation is reached *through* never answered, and neither end
+ * of a delete could be rendered. One definition holds both ends now: the
+ * unconfirmed delete is answered, the confirmed one is held.
  */
 export function reachesHost(body) {
   return READ_INTENTS.has(body?.kind) || isPreflight(body);
@@ -245,8 +251,17 @@ function bodyOf(init) {
   }
 }
 
-/** Anything other than one of the two known reads, unparseable bodies included. */
+/**
+ * Anything the floor would not let through — unparseable bodies included.
+ *
+ * The same predicate `reachesHost` uses, rather than a second one that agreed
+ * with it about everything but the delete preflight. That disagreement had a
+ * cost: a `stall-intent` held the *unconfirmed* delete too, so the preflight
+ * that the confirmation is reached through never answered, and the two ends of
+ * a delete could not be rendered at all. Reading the floor's own definition
+ * holds exactly the writes and answers exactly the reads, which is what lets
+ * `field: delete` carry a lifecycle like every other field.
+ */
 function isWrite(init) {
-  const kind = kindOf(init);
-  return kind === null || !READ_INTENTS.has(kind);
+  return !reachesHost(bodyOf(init));
 }
