@@ -35,15 +35,17 @@ const surface = {
       /*
        * editor.html boots on its own: it fetches its own `/state` and installs
        * its own fallback, so "the renderer never started" and "the payload
-       * never arrived" are reachable there too, and look nothing like the
-       * index fallback — a `.status` line in an ordinary shell rather than the
-       * dedicated fallback shell.
+       * never arrived" are reachable there too. The fallback is the same
+       * recovery shell index.html draws — same regions, same treatment — and
+       * names this surface rather than the renderer as a whole. It also carries
+       * the escape, which is the part that matters: editor.html is entered from
+       * the landing and has no other navigation once the renderer is gone.
        */
       id: "boot-editor",
       summary: "editor.html before the editor exists",
       page: "editor",
       derive: (combo) => (combo.data === "render-error"
-        ? { shows: [S.loading], copy: ["Editor could not start"], allowErrors: ["index.mjs", "Failed to load resource"] }
+        ? { shows: [S.fallback, S.fallbackState, S.editorBack], copy: ["Pipeline editor could not start"], allowErrors: ["index.mjs", "Failed to load resource"] }
         : {}),
     },
     {

@@ -70,8 +70,9 @@ function expectations(combo) {
  * lab blanks its stage and names the reason rather than leaving the previous
  * state's render on screen. The suite is where they are rendered and captured.
  *
- * Each page boots itself, so each has both: index.html swaps in its dedicated
- * fallback shell, editor.html replaces its root with a plain status line.
+ * Each page boots itself, so each has both, and both now answer a blocked
+ * renderer with the same fallback shell — index.html for the config it still
+ * holds, editor.html for the pipeline it was opening plus the way back.
  */
 function bootOps(combo) {
   const page = pageFor(combo);
@@ -79,7 +80,7 @@ function bootOps(combo) {
     return [{ op: "page", value: page, intercept: "stall-state" }, { op: "wait", selector: S.loading }];
   }
   const intercept = page === "editor" ? "block-editor-renderer" : "block-renderer";
-  return [{ op: "page", value: page, intercept }, { op: "wait", selector: page === "editor" ? S.loading : S.fallback }];
+  return [{ op: "page", value: page, intercept }, { op: "wait", selector: S.fallback }];
 }
 
 function configOps(combo) {

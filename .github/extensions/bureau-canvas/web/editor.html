@@ -309,28 +309,152 @@
         .editor-panel { border-left: 0; border-top: 1px solid var(--border-color-default, #d0d7de); }
         .editor-toolbar { grid-template-columns: minmax(10rem, 1fr) auto; justify-items: start; }
       }
+
+      /*
+       * The same recovery surface index.html draws, because it is the same
+       * failure: the renderer modules did not load. Rendering the matrix side
+       * by side showed the editor answering that with a bare stack trace on a
+       * blank page — no title, no cause, and no way back to the landing this
+       * surface was opened from. A sub-surface that can strand you is worse
+       * than the one that cannot, so both now fail the same way.
+       */
+      .fallback-shell {
+        display: grid;
+        gap: var(--space-4);
+        max-width: 52rem;
+        margin: var(--space-5);
+        padding: var(--space-5);
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+
+      .fallback-error {
+        white-space: pre-wrap;
+        color: var(--outcome-failure);
+      }
+
+      .fallback-state {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--space-2) var(--space-3);
+      }
+
+      .fallback-state dt { color: var(--text-color-muted, #656d76); }
+      .fallback-state dd { margin: 0; }
+      .fallback-actions { display: flex; gap: var(--space-2); }
     </style>
   </head>
   <body>
     <div id="editor-root"></div>
     <script type="module">
       const root = document.querySelector("#editor-root");
+      let rendered = false;
       window.addEventListener("error", (event) => {
-        root.replaceChildren(fallback(event.error ?? event.message));
+        void showFallback(event.error ?? event.message);
       });
       try {
         await import("./editor/index.mjs");
       } catch (error) {
-        root.replaceChildren(fallback(error));
+        await showFallback(error);
       }
-      function fallback(error) {
+
+      /*
+       * editor.html is a sub-surface: it is always opened from the assignment
+       * landing. So its boot failure owes the reader the same three things the
+       * landing's does — what broke, what is still known, and the way back —
+       * and the way back matters more here, because this page has no other
+       * navigation once the renderer is gone.
+       */
+      async function showFallback(error) {
+        if (rendered || window.__bureauEditorMounted) {
+          return;
+        }
+        rendered = true;
+        root.replaceChildren(fallbackView(error, await loadState()));
+      }
+
+      async function loadState() {
+        try {
+          const response = await fetch("./state", { cache: "no-store" });
+          return response.ok ? await response.json() : { status: `State request failed: ${response.status}` };
+        } catch (stateError) {
+          return { status: "State unavailable", validation: { message: String(stateError) } };
+        }
+      }
+
+      function fallbackView(error, state) {
         const shell = document.createElement("main");
-        shell.className = "app-shell";
-        const message = document.createElement("p");
-        message.className = "status";
-        message.textContent = `Editor could not start: ${error?.stack || error?.message || String(error)}`;
-        shell.append(message);
+        shell.className = "fallback-shell";
+        shell.append(heading(), errorText(error), stateList(state), actions());
         return shell;
+      }
+
+      function heading() {
+        const block = document.createElement("div");
+        const title = document.createElement("h1");
+        const copy = document.createElement("p");
+        title.textContent = "Pipeline editor could not start";
+        copy.className = "muted";
+        copy.textContent = "The pipeline is unchanged on disk. Check whether the CDN, proxy, or import map blocked the renderer modules.";
+        block.append(title, copy);
+        return block;
+      }
+
+      function errorText(error) {
+        const message = document.createElement("p");
+        message.className = "fallback-error";
+        message.textContent = error?.stack || error?.message || String(error);
+        return message;
+      }
+
+      function stateList(state) {
+        const list = document.createElement("dl");
+        list.className = "fallback-state";
+        addPair(list, "Status", state.status ?? state.validation?.state ?? "unknown");
+        addPair(list, "Pipeline", state.selectedPipeline?.name ?? "none selected");
+        addPair(list, "Config dir", state.validation?.dir ?? state.dir ?? "unknown");
+        return list;
+      }
+
+      function addPair(list, label, value) {
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        term.textContent = label;
+        detail.textContent = value;
+        list.append(term, detail);
+      }
+
+      /*
+       * The same escape the working header offers, under the same test id,
+       * because it is the same control. Nothing is unsaved here — the editor
+       * never mounted — so it leaves without asking, and it navigates even when
+       * telling the host went wrong: a broken page must not also be a trap.
+       */
+      function actions() {
+        const row = document.createElement("div");
+        const back = document.createElement("button");
+        row.className = "fallback-actions";
+        back.type = "button";
+        back.className = "btn btn--small";
+        back.dataset.testid = "editor-back";
+        back.textContent = "← Assignments";
+        back.addEventListener("click", () => void backToAssignments());
+        row.append(back);
+        return row;
+      }
+
+      async function backToAssignments() {
+        try {
+          await fetch("./intent", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "back-to-config" }),
+          });
+        } catch {
+          // The host may be why this page is broken; leaving still has to work.
+        }
+        window.location.assign("./");
       }
     </script>
   </body>
