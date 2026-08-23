@@ -87,16 +87,26 @@ export function publicationProblem(request, receipt, issues, workspace, requireH
 async function allIssues() {
   const issues = [];
   for (let page = 1; ; page += 1) {
-    const response = await fetch(`${API}?state=all&per_page=100&page=${page}`, {
-      headers: HEADERS,
-    });
-    if (!response.ok) {
-      throw new Error(`listing repository issues returned HTTP ${response.status}`);
-    }
-    const batch = await response.json();
+    const batch = await issuePage(page);
     issues.push(...batch);
     if (batch.length < 100) return issues;
   }
+}
+
+async function issuePage(page) {
+  let status = 0;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const response = await fetch(`${API}?state=all&per_page=100&page=${page}`, {
+      headers: HEADERS,
+    });
+    if (response.ok) return response.json();
+    status = response.status;
+    if (status !== 429 && status < 500) break;
+    const retryAfter = Number(response.headers.get("retry-after")) * 1000;
+    await new Promise((resolveDelay) =>
+      setTimeout(resolveDelay, retryAfter || attempt * 1000));
+  }
+  throw new Error(`listing repository issues returned HTTP ${status}`);
 }
 
 function workspace() {
