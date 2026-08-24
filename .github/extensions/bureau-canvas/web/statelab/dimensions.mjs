@@ -918,7 +918,16 @@ const tab = {
       // edge class per outcome and per relation, and the terminals the steps
       // route into. Both were named by the design system and asserted nowhere,
       // so an editor that drew every edge alike passed all 21 of these states.
-      shows: [S.editorToolbar, S.editorPanel, S.editorTerminal, S.editorCard, ...EDITOR_EDGES],
+      //
+      // `S.editorShell` is the pipeline the editor was opened *on*, and it
+      // belongs on the tab rather than on the surface: Relations replaces the
+      // shell rather than sitting inside it, and putting it one level up failed
+      // four renders that were right — the same lesson `replayScrubber` taught,
+      // and the gate working. Before this, the only states naming the shell
+      // were the two that assert it *absent* (a pipeline that is gone, and none
+      // selected), so an editor drawing its tabs over an empty stage satisfied
+      // every render in the matrix.
+      shows: [S.editorShell, S.editorToolbar, S.editorPanel, S.editorTerminal, S.editorCard, ...EDITOR_EDGES],
       /*
        * `EditorApp` keeps both panes mounted and separates them with `hidden`
        * alone. The leak was pinned in one direction only — the two Relations

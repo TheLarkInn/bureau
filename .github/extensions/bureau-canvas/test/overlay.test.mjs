@@ -482,6 +482,49 @@ test("a seq-less frame keeps its place, and a redelivered tail frame is not a se
 });
 
 /*
+ * The order has to be an order, and that is a separate claim from any single
+ * pair being right.
+ *
+ * Falling back to arrival whenever *either* side lacked a `seq` made
+ * `compare(a, b)` depend on which pair was asked rather than on the two events,
+ * so it was intransitive: with `[seq 5, no seq, seq 1]` every adjacent pair
+ * reads as already sorted and the two sequenced events keep the wrong order.
+ * The run replays backwards again — for some lengths, on some engines, which is
+ * worse than the bug it replaced because it is not reproducible.
+ *
+ * A seq-less event inherits the sequence of the event ahead of it, so this is a
+ * total order and the assertion is the whole list rather than a pair: `finished`
+ * cannot precede `started` whatever route the sort took to get there. The
+ * leading case is asserted too, because a seq-less event with nothing ahead of
+ * it keys on `-Infinity`, and `-Infinity - -Infinity` is `NaN` — a comparator
+ * that returns `NaN` leaves the array exactly as it found it and says nothing.
+ */
+test("a mixed sequenced and legacy log is put in one order, whatever order it arrives in", () => {
+  const ended = { seq: 5, at_ms: 1500, kind: "run_finished", data: { outcome: "success" } };
+  const legacy = { at_ms: 1600, kind: "output", data: { step: "propose", text: "tail" } };
+  const started = { seq: 1, at_ms: 1000, kind: "run_started", data: { run_id: "r1", assignment: "fix" } };
+  // The shape the old comparator could not sort: a seq-less event wedged
+  // between two sequenced ones that are themselves the wrong way round.
+  const wedged = mergeRunEvents([ended, legacy, started], []);
+  // Nothing ahead of it to inherit from, which is the `-Infinity` key.
+  const leading = mergeRunEvents([legacy, started, ended], []);
+
+  assert.deepEqual(
+    {
+      wedged: wedged.map((event) => event.kind),
+      status: applyEvents(wedged).status,
+      leading: leading.map((event) => event.kind),
+    },
+    {
+      // The legacy frame keeps the event it followed, which is `run_finished`.
+      wedged: ["run_started", "run_finished", "output"],
+      status: "finished",
+      leading: ["output", "run_started", "run_finished"],
+    },
+  );
+});
+
+/*
  * The backfill race, reduced to a fact about two lists.
  *
  * Live subscribes to the tail in the same tick as it asks for the history, so

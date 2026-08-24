@@ -99,6 +99,12 @@ const FIELD_DRAFTS = {
     rest: {},
     dirty: {
       ops: [{ op: "fill", selector: S.workSourceUrl, value: BOARD_URL }, { op: "wait", selector: S.workSourceDerived }],
+      // The treatment, not only the sentence. `probe--work-source-inferred-filter`
+      // asserts this note *absent* for a derivation Bureau had to guess at, and
+      // that half only means something if some state requires it present — an
+      // exact derivation quietly downgraded to the warn class would otherwise
+      // have satisfied both, since the copy phrase below is not scoped to it.
+      shows: [S.workSourceExact],
       copy: ["derived exactly from the URL"],
     },
     // A URL the deriver refuses. The preview must be *gone*, not stale: the

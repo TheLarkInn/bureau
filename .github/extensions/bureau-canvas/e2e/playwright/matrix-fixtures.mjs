@@ -14,9 +14,9 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
+import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -342,6 +342,16 @@ async function intercept(page, kind) {
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
       : route.continue()),
+    // The one refusal `fail-intent` cannot stage, because the request it is
+    // about is deliberately not a write. `reachesHost` lets the unconfirmed
+    // delete through to the host so the confirmation prompt has referrers to
+    // draw — which also means the *failure* of that read was unrenderable, and
+    // `DeleteControl`'s `!preflight` branch draws a note there that no state
+    // ever showed. Scoped to the preflight alone so everything else on the page
+    // still answers normally: the state is one refused read, not a dead host.
+    "refuse-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false }) })
+      : route.continue()),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.
@@ -499,19 +509,25 @@ const SETTLE_REPEATS = 3;
  * "Stops changing" needed a wider window than one poll, which `SETTLE_REPEATS`
  * above explains and measures.
  *
- * The last sample is not what is returned, though, and that is the second half.
- * The loop exits on `failures === 0` *and* agreement, so a render that passes
- * immediately but keeps drifting goes on polling — and returning the final
- * sample would let a state that was observed correct be failed by the frame the
- * deadline happened to land on. A settled pass is preferred to a late one, so
- * the first failure-free sample is kept and handed back if the deadline
- * arrives; a state that never passed still reports its last look, which is the
- * one carrying the failures worth reading.
+ * What answers when the window runs out is `deadlineVerdict`, and the rule is
+ * there rather than here so the offline suite can hold it. The short version:
+ * a failure that flickers is the harness and a failure that stays is the
+ * product, so an observed clean look wins only while the failures are not yet
+ * sustained.
+ *
+ * The *snapshot* is always the last look, whichever sample supplied the
+ * verdict, and those two being allowed to disagree is deliberate. The verdict
+ * answers "was this state ever correct inside its settle window"; the snapshot
+ * describes what is on the page now — which is the frame `state-matrix.spec.mjs`
+ * screenshots a moment later and files a signature for. Handing back an earlier
+ * snapshot filed a signature for a frame the gallery does not show, so the twin
+ * audit compared descriptions of renders nobody could look at.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
   let result = await sample(state, page);
-  let passed = result.failures.length ? null : result;
+  let clean = result.failures.length ? null : result;
+  let sustained = result.failures.length ? 1 : 0;
   let agreed = 0;
   let previous = null;
   while (Date.now() < deadline) {
@@ -522,9 +538,14 @@ async function judge(state, page) {
     previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
     result = await sample(state, page);
-    passed ??= result.failures.length ? null : result;
+    sustained = result.failures.length ? sustained + 1 : 0;
+    clean ??= result.failures.length ? null : result;
   }
-  return result.failures.length ? (passed ?? result) : result;
+  const source = deadlineVerdict(
+    { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
+    SETTLE_REPEATS,
+  );
+  return source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
 }
 
 function isSettled(result, agreed) {

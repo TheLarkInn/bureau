@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -153,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 627056639793,
       matrixStates: 207,
-      probes: 43,
-      states: 250,
+      probes: 44,
+      states: 251,
       transitions: 136,
       entryTransitions: 100,
       returnTransitions: 36,
-      roots: 150,
-      renders: 500,
+      roots: 151,
+      renders: 502,
     },
   );
 });
@@ -312,12 +312,25 @@ test("every fixture changes the payload, and no two fixtures agree", async () =>
  * sentence that reads like a decision — so the ids are held to the registry and
  * the reason is required to be a sentence rather than a placeholder.
  */
+/**
+ * A twin declares that two states draw one screen on purpose. Declared against
+ * an id no state has, it suppresses nothing and asserts nothing — an inert
+ * sentence that reads like a decision — so the ids are held to the registry and
+ * the reason is required to be a sentence rather than a placeholder.
+ *
+ * An empty `viewports` is the same inert sentence one level down, and it read
+ * as clean: `keysFor` maps over the list, so a twin naming no viewport
+ * generates no pair, suppresses no `undeclared-twin` finding and produces no
+ * `unchecked-twin` either. The declaration would sit in the file looking like a
+ * reviewed decision while the audit had never been told about it.
+ */
 test("every declared render twin names two real states, at real viewports, with a reason", () => {
   const ids = new Set(STATES.map((state) => state.id));
   const viewports = new Set(Object.values(VIEWPORTS).map((viewport) => viewport.id));
   const faults = RENDER_TWINS.flatMap((twin) => [
     ...[twin.a, twin.b].filter((id) => !ids.has(id)).map((id) => `no state ${id}`),
-    ...twin.viewports.filter((id) => !viewports.has(id)).map((id) => `no viewport ${id}`),
+    ...((twin.viewports ?? []).length ? [] : [`${twin.a} declares no viewport`]),
+    ...(twin.viewports ?? []).filter((id) => !viewports.has(id)).map((id) => `no viewport ${id}`),
     ...(twin.a === twin.b ? [`${twin.a} is declared a twin of itself`] : []),
     ...((twin.why ?? "").length > 20 ? [] : [`${twin.a} declares no reason`]),
   ]);
@@ -556,7 +569,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 89, probe: 19, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 90, probe: 19, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1221,8 +1234,6 @@ test("a state's selector list covers the elements its copy names", () => {
  * intended resting state — every control the vocabulary names is promised by
  * some render.
  */
-const UNPROMISED = {};
-
 /**
  * Every selector in the vocabulary is claimed by some state, or exempt by name.
  *
@@ -1236,14 +1247,21 @@ const UNPROMISED = {};
  * test, which is the point: the previous four were fixed by hand and nothing
  * was added that would notice the next one.
  *
- * A claim is `shows`, `hides`, a scoped `copy` selector, or an operation in an
- * entry path or a transition delta — any of which makes some render fail when
- * the control goes away.
+ * A claim has to be a *positive* one: `shows`, a scoped `copy` selector, or an
+ * operation in an entry path or a transition delta. `hides` deliberately does
+ * not count, and that is the sixth telling of the same defect. An absence is
+ * satisfied by deleting the control everywhere — a selector only ever named in
+ * `hides` is one the product could stop drawing entirely with every render
+ * staying green, which is precisely the blindness this test exists to refuse.
+ * It found four: `editorShell`, `workSourceExact`, `liveCountZero` and
+ * `deleteRefusedResting`, each of which had a state asserting it absent and
+ * none asserting it present, so all four denials held against nothing.
  */
+const UNPROMISED = {};
+
 test("every selector the vocabulary defines is promised by a state, or exempt by name", () => {
   const claimed = new Set(STATES.flatMap((state) => [
     ...(state.expect.shows ?? []),
-    ...(state.expect.hides ?? []),
     ...(state.expect.copy ?? []).filter((phrase) => typeof phrase === "object").map((phrase) => phrase.selector),
     ...selectorsOf(state.ops),
   ]).concat(TRANSITIONS.flatMap((edge) => selectorsOf(edge.delta))));
@@ -1259,6 +1277,35 @@ test("every selector the vocabulary defines is promised by a state, or exempt by
 function selectorsOf(ops) {
   return (ops ?? []).map((op) => op.selector).filter(Boolean);
 }
+
+/**
+ * Which look answers when the settle window runs out.
+ *
+ * Table-driven because the rule is a decision over three booleans, and each row
+ * is a real render the matrix produced. The two that matter are the last pair:
+ * a failure that flickers is the contended worker and an observed clean look
+ * should win, while a failure that has lasted as long as agreement itself
+ * requires is the product and must be reported — that second row is the one
+ * that was green before, and it is how a control disappearing after first paint
+ * used to pass all 500 renders.
+ */
+test("a render that never settled is answered by the look that is telling the truth", () => {
+  const cases = [
+    // Nothing wrong at the deadline: the last look answers, clean.
+    [{ lastFailed: false, sustained: 0, sawClean: true }, "last"],
+    // Never once clean: the last look is the one carrying the failures to read.
+    [{ lastFailed: true, sustained: 9, sawClean: false }, "last"],
+    // Failing for as long as agreement needs. Sustained, so the product.
+    [{ lastFailed: true, sustained: 3, sawClean: true }, "last"],
+    // Failing on the last look only. Flickering, so the clean look answers.
+    [{ lastFailed: true, sustained: 1, sawClean: true }, "clean"],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([observation]) => deadlineVerdict(observation, 3)),
+    cases.map(([, expected]) => expected),
+  );
+});
 
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
@@ -1774,6 +1821,7 @@ const PROBE_ROUTES = {
   "probe--create-saving": "stall-intent",
   "probe--create-refusal-dismissed": "fail-intent",
   "probe--delete-refusal-dismissed": "fail-intent",
+  "probe--delete-preflight-refused": "refuse-preflight",
   "probe--reconcile-now-reported": "pass-intent",
   "probe--reconcile-now-started-a-run": "pass-starts-run",
   "probe--replay-opened-from-a-pass": "pass-starts-run",
@@ -1820,6 +1868,6 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 94 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 95 },
   );
 });

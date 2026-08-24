@@ -370,6 +370,37 @@ export const CONTRAST = [".kind-label", ".access"];
  */
 const MIN_CONTRAST = 4.5;
 
+/**
+ * Which look answers for a render whose settle window ran out.
+ *
+ * `judge` exits early on a clean, agreeing render, so reaching the deadline
+ * means the page never settled. Both obvious answers are wrong there:
+ *
+ * - The *last* look fails a state that was observed correct, because the
+ *   deadline lands on whatever frame a contended worker happened to be drawing.
+ *   That is the flake this preference was introduced to remove.
+ * - The *first clean* look passes a state that was correct once and is not any
+ *   more — a control that disappears after first paint, an error that arrives
+ *   late. That is the one failure a review surface may not have, and it is what
+ *   the preference introduced in its place: nothing could contradict a green
+ *   frame, however many red ones came after it.
+ *
+ * A failure that comes and goes is the harness; a failure that arrives and
+ * stays is the product. So the tie-break is how long the failures have lasted:
+ * once as many consecutive looks have failed as agreement itself requires, the
+ * render is failing rather than flickering and the last look answers. Below
+ * that, an observed clean look wins.
+ *
+ * Pure and boolean, so the offline suite can hold the rule without a browser
+ * and without a clock.
+ */
+export function deadlineVerdict({ lastFailed, sustained, sawClean }, repeats) {
+  if (!lastFailed || sustained >= repeats || !sawClean) {
+    return "last";
+  }
+  return "clean";
+}
+
 export function verdict(state, snapshot, options = {}) {
   return [
     ...missing(state, snapshot),

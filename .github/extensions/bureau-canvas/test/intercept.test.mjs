@@ -53,6 +53,47 @@ async function settles(promise) {
 
 const post = (kind) => ["./intent", { method: "POST", body: JSON.stringify({ kind }) }];
 
+const del = (confirm) => ["./intent", { method: "POST", body: JSON.stringify({ kind: "delete", input: { name: "reviewer", confirm } }) }];
+
+/**
+ * The preflight refusal is scoped to the preflight, and that scoping is the
+ * whole claim.
+ *
+ * A shim that refused every `delete` would stage two screens at once — the read
+ * that could not answer, and a removal that was declined — and the probe would
+ * be asserting whichever the page happened to draw first. So all three answers
+ * are read in one pass, and by *outcome* rather than by whether they settle:
+ * the unconfirmed delete is answered in-frame with a refusal, the confirmed one
+ * is left to the floor (which rejects it, because it writes), and an unrelated
+ * read still reaches the host.
+ */
+test("a refused preflight refuses the read and leaves every other intent alone", async () => {
+  const win = windowStub();
+  installIntercept(win, "refuse-preflight");
+
+  const answered = async (promise) => {
+    const value = await promise.catch(() => null);
+    return value === null ? "rejected" : (value.native ? "reached the host" : await value.json());
+  };
+
+  assert.deepEqual(
+    {
+      preflight: await answered(win.fetch(...del(false))),
+      confirmed: await answered(win.fetch(...del(true))),
+      read: await answered(win.fetch(...post("resolve-repo"))),
+    },
+    {
+      // `postIntent` turns a non-`ok` answer into `null`, which is the branch
+      // that renders `DeleteControl`'s own "could not inspect" sentence.
+      preflight: { ok: false },
+      // Refused by the floor and not by this shim: a confirmed delete writes,
+      // so it may not reach the host and may not be answered `ok` either.
+      confirmed: "rejected",
+      read: "reached the host",
+    },
+  );
+});
+
 test("every intercept the registry asks for is one this module names", () => {
   const asked = [...new Set(STATES.map((state) => state.intercept).filter(Boolean))].sort();
   const unservable = asked.filter((kind) => !servableInFrame(kind)).sort();
@@ -63,7 +104,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "stall-intent", "stall-runs", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
