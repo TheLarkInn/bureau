@@ -1419,6 +1419,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
 
 const BASE_STYLE = {
   visibility: "visible",
+  opacity: "1",
   overflowX: "visible",
   overflowY: "visible",
   backgroundColor: "rgb(255, 255, 255)",
@@ -1473,6 +1474,18 @@ function pageStub() {
   // asserting the page's private state rather than its screen.
   const shown = element({}, { innerText: "saved" });
   const unpainted = element({ visibility: "hidden" }, { innerText: "unsaved edits" });
+  // The other way a control measures perfectly and paints nothing. Two of
+  // them, because they fail apart: the node's own `opacity: 0`, and a node
+  // left fully opaque under a transparent parent — which is the case reading
+  // the node alone cannot see, since opacity does not inherit into the
+  // computed value the way `visibility` does. Both carry words, so a predicate
+  // that misses either reports a count and a copy for a control the reader is
+  // looking straight through.
+  const transparent = element({ opacity: "0" }, { innerText: "invisible save" });
+  const behindTransparent = element({}, {
+    innerText: "invisible discard",
+    parentElement: element({ opacity: "0" }),
+  });
 
   // Transparent over white, so `backdrop` must walk up and `opaque` answers
   // false then true before `luminance` runs on what it settles on.
@@ -1491,7 +1504,7 @@ function pageStub() {
   });
 
   const matches = {
-    ".a": [shown, unpainted],
+    ".a": [shown, unpainted, transparent, behindTransparent],
     ".b": [inside, past, collapsed],
     ".c": [wording, wordless],
     "label[for]": [label],

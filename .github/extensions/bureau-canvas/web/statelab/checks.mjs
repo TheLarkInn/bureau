@@ -16,8 +16,27 @@ export function collect(doc, request) {
   // reports rects, and that is precisely how a React Flow node looks before it
   // has been measured — the blank graph `graph-measure.mjs` exists to repair.
   // Counting one would let an unpainted graph satisfy a `shows`.
+  //
+  // Opacity is the other way a promised control measures perfectly and paints
+  // nothing, and it needs a different walk: `visibility` inherits, so the
+  // node's own computed value already answers for its ancestors, but opacity
+  // does not — a fully transparent parent leaves the child's computed opacity
+  // at 1. Reading the node alone therefore let `opacity: 0` satisfy every
+  // `shows` and every scoped `copy` in this registry, which is the one failure
+  // a review surface may not have: the gallery would show the control gone and
+  // the matrix would call the state correct.
+  const painted = (node) => {
+    for (let item = node; item; item = item.parentElement) {
+      if (Number.parseFloat(view.getComputedStyle(item).opacity) === 0) {
+        return false;
+      }
+    }
+    return true;
+  };
   const visible = (node) =>
-    node.getClientRects().length > 0 && view.getComputedStyle(node).visibility !== "hidden";
+    node.getClientRects().length > 0
+    && view.getComputedStyle(node).visibility !== "hidden"
+    && painted(node);
   const counts = {};
   const texts = {};
   for (const selector of request.selectors) {

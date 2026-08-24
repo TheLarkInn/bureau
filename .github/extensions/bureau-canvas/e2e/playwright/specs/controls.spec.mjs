@@ -357,7 +357,7 @@ test.describe("leaving an open field editor", () => {
    * Held until after Cancel and after the next editor is open, so both are
    * genuinely in the past when the reply lands.
    */
-  test("a create reply that lands after Cancel installs nothing and takes no focus", async ({ card }) => {
+  test("a create reply that lands after Cancel takes no focus, and leaves only a discardable draft", async ({ card }) => {
     let release = () => {};
     const held = new Promise((resolve) => { release = resolve; });
     await card.page.route("**/intent", async (route) => {
@@ -389,6 +389,22 @@ test.describe("leaving an open field editor", () => {
     expect(await card.page.evaluate(() => window.__published)).toBe(0);
     await expect(url).toBeFocused();
     await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
+    // And what Cancel does *not* undo, recorded rather than left invisible.
+    //
+    // The generation ticket makes the answer nobody's on the client, which is
+    // what the three assertions above hold. It cannot un-send the request: by
+    // the time Cancel is pressed the create is already on its way, so the host
+    // runs it and republishes over SSE — a channel `window.__published` cannot
+    // see, because `bureau-state` is the *local* publish alone and the server's
+    // own `state` frame is a second one (`web/app.mjs` listens to both).
+    //
+    // The result is a staged write rather than a disk change, so the reader can
+    // still throw it away with Discard; but they are shown an unsaved change
+    // they abandoned, which is not nothing. Asserting it is what turns a gap
+    // nothing could see into a fact that fails the day it changes — including
+    // the day someone implements real cancellation, which is when this
+    // expectation should be inverted rather than quietly deleted.
+    await expect(card.page.locator(".draft-bar")).toContainText("abandoned-pipeline");
   });
 });
 

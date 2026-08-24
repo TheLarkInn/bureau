@@ -158,6 +158,39 @@ export function applyEvents(events) {
   return (events ?? []).reduce(applyEvent, emptyOverlay());
 }
 
+/**
+ * A run's history, plus whatever the tail delivered while it was in flight.
+ *
+ * Live opens its subscription in the same tick as the backfill, so a run
+ * writing right now can deliver a frame *before* the history answers. Folding
+ * the history in on top of that frame replays the run backwards — `run_started`
+ * puts a run that has just finished back to `running` — and replacing the raw
+ * list drops the frame outright. Neither is recoverable: the tail begins at
+ * end-of-file and nothing replays it, so a `run_finished` that lost this race
+ * left a finished run drawn as running for the rest of the visit.
+ *
+ * `seq` is the run log's own order, so it decides both questions. A frame the
+ * history already carries is the same event rather than a second one, and the
+ * result is ordered by it so the reducer sees the run in the order it happened.
+ * An event without a `seq` keeps its position: the sort is stable, so a log
+ * that predates sequencing replays exactly as it did before.
+ *
+ * Here beside the other pure facts about a run, so the offline suite can hold
+ * it without a browser and without a clock.
+ */
+export function mergeRunEvents(history, tailed) {
+  const carried = new Set((history ?? []).map(seqOf).filter((seq) => seq !== null));
+  const missed = (tailed ?? []).filter((event) => {
+    const seq = seqOf(event);
+    return seq === null || !carried.has(seq);
+  });
+  return [...(history ?? []), ...missed].sort((left, right) => (seqOf(left) ?? 0) - (seqOf(right) ?? 0));
+}
+
+function seqOf(event) {
+  return typeof event?.seq === "number" ? event.seq : null;
+}
+
 /** Replay position T: every event with at_ms <= T applied in log order. */
 export function stateUpTo(events, atMs) {
   return applyEvents((events ?? []).filter((event) => eventMs(event) <= atMs));

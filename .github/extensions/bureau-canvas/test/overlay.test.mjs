@@ -9,6 +9,7 @@ import {
   applyEvent,
   applyEvents,
   emptyOverlay,
+  mergeRunEvents,
   newRunSince,
   reconcileReason,
   resolveOverlay,
@@ -440,5 +441,50 @@ test("step start retains configured and resolved agent identity", () => {
   assert.deepEqual(
     [record.role, record.configuredAgent, record.resolvedAgent],
     ["implementer", "/bureau:implementer", "bureau:implementer"],
+  );
+});
+
+/*
+ * The backfill race, reduced to a fact about two lists.
+ *
+ * Live subscribes to the tail in the same tick as it asks for the history, so
+ * a run writing right now can deliver its frame first. Keeping only the
+ * history drops that frame for good — the tail began at end-of-file and
+ * nothing replays it — and appending the history after it replays the run
+ * backwards, because `run_started` puts a run that has just finished back to
+ * `running`.
+ *
+ * Asserted through the reducer rather than on the array, because the array is
+ * not what a reader sees: a merge that keeps the frame but leaves it out of
+ * order still ends the run as `running`, and only replaying it says so.
+ */
+test("a tail frame that beat the history is kept, ordered, and never applied twice", () => {
+  const started = { seq: 0, at_ms: 1000, kind: "run_started", data: { run_id: "r1", assignment: "fix" } };
+  const stepped = { seq: 1, at_ms: 1100, kind: "step_started", data: { step: "propose" } };
+  const ended = { seq: 2, at_ms: 1200, kind: "run_finished", data: { outcome: "success" } };
+  // What really happens: the ending arrived first, and the history that
+  // answered afterwards carried an event the tail had already delivered.
+  const merged = mergeRunEvents([started, stepped], [ended, stepped]);
+  // The defensive half: a frame belonging *inside* the history still lands in
+  // log order, so the reducer is never handed a run running backwards.
+  const gapped = mergeRunEvents([started, ended], [stepped]);
+  // A log written before events carried a sequence replays exactly as it did.
+  const unsequenced = [{ kind: "run_started", data: { run_id: "r0" } }, { kind: "step_started", data: { step: "propose" } }];
+
+  assert.deepEqual(
+    {
+      order: merged.map((event) => event.kind),
+      status: applyEvents(merged).status,
+      repeated: mergeRunEvents(merged, [ended]).length,
+      gapped: gapped.map((event) => event.kind),
+      legacy: mergeRunEvents(unsequenced, []).map((event) => event.kind),
+    },
+    {
+      order: ["run_started", "step_started", "run_finished"],
+      status: "finished",
+      repeated: merged.length,
+      gapped: ["run_started", "step_started", "run_finished"],
+      legacy: ["run_started", "step_started"],
+    },
   );
 });
