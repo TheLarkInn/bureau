@@ -1479,8 +1479,17 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   // and the mode itself are owned.
   const live = useLiveOverlay(activity, (runId) => {
     replay.setRunId(runId);
-    setMode("replay");
+    leaveLive("replay");
   });
+  // Leaving Live ends what this visit said: its refusal and its pass report
+  // are statements about a request made here, and the hook that holds them
+  // outlives the surface.
+  const leaveLive = (next) => {
+    if (next !== "live") {
+      live.dismissControls();
+    }
+    setMode(next);
+  };
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
     () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
@@ -1503,7 +1512,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           { className: "pipeline-toolbar" },
           h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
           h("h2", {}, name),
-          h(ModeSwitcher, { mode, onMode: setMode, activity }),
+          h(ModeSwitcher, { mode, onMode: leaveLive, activity }),
           h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
           active?.controls ?? null,
         ),

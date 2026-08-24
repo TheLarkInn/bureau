@@ -69,13 +69,15 @@ export function useRunActivity(pipeline, assignments) {
   // publishing the older listing last. That is how a just-started run
   // disappears from the picker while its overlay is on screen, which is exactly
   // the blank-select defect `RunPicker` below is written to prevent.
-  const clock = useRef({ issued: 0, published: 0, alive: true });
+  const clock = useRef({ issued: 0, published: 0, alive: true, latest: { status: "loading", runs: [] } });
   const publish = (next, seq) => {
     if (!clock.current.alive || seq < clock.current.published) {
-      return;
+      return false;
     }
     clock.current.published = seq;
+    clock.current.latest = next;
     setSnapshot(next);
+    return true;
   };
   useEffect(() => {
     const state = clock.current;
@@ -105,8 +107,14 @@ export function useRunActivity(pipeline, assignments) {
   const refresh = async () => {
     const seq = ++clock.current.issued;
     const next = await readRuns();
-    publish(next, seq);
-    return { status: next.status, runs: runsForPipeline(next.runs, pipeline, assignments) };
+    // The listing the report reads has to be the one this component accepted.
+    // Returning `next` unconditionally handed `reportPass` a snapshot that
+    // `publish` had just refused as out of date — and if it predates the run
+    // the pass started, `newRunSince` finds nothing and the reader is told the
+    // pass "claimed no work for this pipeline" over a run that did start, with
+    // the Open in Replay hand-off withheld.
+    const listing = publish(next, seq) ? next : clock.current.latest;
+    return { status: listing.status, runs: runsForPipeline(listing.runs, pipeline, assignments) };
   };
   return {
     status: snapshot.status,

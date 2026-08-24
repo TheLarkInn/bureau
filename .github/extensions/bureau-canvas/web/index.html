@@ -453,6 +453,20 @@
       .config-heading-row .create-bar {
         flex: 1 1 auto;
       }
+      /* The open create panel asks for the whole width at compact
+         (`.create-bar { max-width: none }`), and sharing a flex row with the
+         heading silently refused it: the panel kept the row's leftover inches
+         and the heading floated to the middle of a form it only labels. At
+         this breakpoint the panel is a landing region rather than a toolbar,
+         so it takes the row instead of sharing it. Scoped to the open panel by
+         `:has()` — the resting toolbar button stays beside the heading, which
+         is what the approved compact overview shows. */
+      @media (max-width: 56rem) {
+        .config-heading-row:has(.create-bar) {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
       .assignment-stack {
         display: flex;
         flex-direction: column;

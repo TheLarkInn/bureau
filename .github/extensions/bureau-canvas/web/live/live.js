@@ -3,7 +3,7 @@
 // module only owns the subscription, the run-control intents, and the
 // collapsed-group toggle state.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
 import { RECONCILE_REFUSED, applyEvent, emptyOverlay, newRunSince, reconcileReason, runActions } from "./overlay.js";
 
@@ -66,17 +66,24 @@ export function useLiveOverlay(activity, onOpenReplay) {
   const [controlResult, setControlResult] = useState(null);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResult, setReconcileResult] = useState(null);
+  const controlTicket = useRef(0);
 
   useEffect(() => {
-    if (!runId) {
-      setOverlay(emptyOverlay());
-      setEvents([]);
-      return undefined;
-    }
+    // A refusal and a fold both belong to the run that was selected when they
+    // were raised, so they are withdrawn here rather than inside the branch
+    // that loads one. Clearing them only on the `runId` path left a red
+    // "could not pause this run" beside a picker naming no run, describing a
+    // request that no longer has a subject and that nothing can retry.
     setOverlay(emptyOverlay());
     setEvents([]);
     setCollapsed(new Set());
     setControlResult(null);
+    // Bumped on every change of selection, so a reply that was in flight when
+    // the reader moved on cannot install itself over the run they moved to.
+    controlTicket.current += 1;
+    if (!runId) {
+      return undefined;
+    }
     // Backfill the current log once, then append live: the tail starts at
     // end-of-file, so events that landed before subscription only exist here.
     let alive = true;
@@ -128,14 +135,21 @@ export function useLiveOverlay(activity, onOpenReplay) {
 
   const send = (kind) => {
     const refused = REFUSED[kind] ?? "could not act on this run";
+    const mine = controlTicket.current;
+    // A reply is only about the run that was selected when it was asked for.
+    const settle = (result) => {
+      if (mine === controlTicket.current) {
+        setControlResult(result);
+      }
+    };
     fetch("./intent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, run_id: runId }),
     })
       .then((response) => response.json())
-      .then((result) => setControlResult(result?.ok ? result : { ...result, error: result?.error || result?.output || refused }))
-      .catch(() => setControlResult({ ok: false, error: refused }));
+      .then((result) => settle(result?.ok ? result : { ...result, error: result?.error || result?.output || refused }))
+      .catch(() => settle({ ok: false, error: refused }));
   };
 
   /*
@@ -214,7 +228,21 @@ export function useLiveOverlay(activity, onOpenReplay) {
     }, "Open in Replay") : null,
   );
 
-  return { runId, setRunId, decoration, controls, events, until: Infinity };
+  /**
+   * Withdraws what this visit to Live said. The hook outlives the surface —
+   * it is owned by `PipelineView`, and leaving Live only stops rendering
+   * `controls` — so without this a refusal raised before a trip to Design is
+   * still on screen on the way back, describing a request this visit never
+   * made. The selected run is deliberately kept: returning to Live should
+   * return to the run you were watching.
+   */
+  const dismissControls = () => {
+    controlTicket.current += 1;
+    setControlResult(null);
+    setReconcileResult(null);
+  };
+
+  return { runId, setRunId, decoration, controls, events, dismissControls, until: Infinity };
 }
 
 /** The Live surface must distinguish idle, loading, and unavailable. */

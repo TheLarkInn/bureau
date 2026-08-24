@@ -929,6 +929,47 @@ export const PROBES = [
     },
   }),
   /*
+   * The run transport's refusal, walked back out.
+   *
+   * Every other modelled run refusal enters and stops, so the registry only
+   * ever asserted that the sentence is *present*. That made the transport the
+   * one refusal on this canvas with no exit: the create bar clears its error
+   * on Cancel and the delete prompt clears its own, each with a probe, and the
+   * run controls had neither. Deselecting the run withdrew the buttons and
+   * left the red sentence beside a picker naming no run — a failure attributed
+   * to a request that no longer has a subject, and that nothing can retry.
+   */
+  sample({
+    id: "probe--run-refusal-dismissed",
+    covers: "a refused run control whose run was then deselected — the refusal must leave with the run it was about",
+    summary: "the Live surface after a refused pause and a deselect: no run chosen, no transport, and nothing claiming to have failed",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "fail-intent",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      ...runOps("live", "running"),
+      { op: "click", selector: S.runPause },
+      { op: "wait", selector: S.runControlError },
+      { op: "select", selector: S.runPickerLive, value: "" },
+      { op: "waitGone", selector: S.runControlError },
+    ],
+    expect: {
+      // The refusal is `hides` because the bug leaves it present, not stale.
+      // The transport is asserted gone too: a Pause still drawn beside no
+      // selected run would be a second way to make the same claim.
+      shows: [S.runControls, S.runPickerLive, S.reconcileNow],
+      hides: [S.runControlError, S.runPause, S.runCancel, S.overlayRunning],
+      copy: [],
+      // Leaving a run closes its event stream, and the browser reports the
+      // `./events` request it aborted. That abort *is* this state — a deselect
+      // that left the stream open would be the defect — so it is declared here
+      // rather than read as an unrelated failure.
+      allowErrors: ["/events", "net::ERR_ABORTED"],
+    },
+  }),
+  /*
    * The one screen where this surface can contradict itself.
    *
    * A run is selected from a listing that answered; the listing then fails. The

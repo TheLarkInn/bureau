@@ -84,4 +84,43 @@ test.describe("assignment landing", () => {
 
     expect(card.errors).toEqual([]);
   });
+
+  /**
+   * `.create-bar` drops its `max-width` at the 56rem breakpoint, which is a
+   * request for the whole content column. Sharing a flex row with the heading
+   * silently refused it: the panel got the row's leftover inches and the
+   * heading floated to the vertical middle of a form it only labels. The
+   * stylesheet contradicted itself, and nothing read the result.
+   *
+   * The panel's edges are compared against the card stack below it because
+   * that is the content column the panel is asking to match — comparing it to
+   * a number would re-encode the padding this test is meant to check.
+   */
+  test("at compact the open create panel takes the content column, not the row's leftovers", async ({ page, canvas }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.goto(canvas.url);
+    await page.getByRole("button", { name: "+ New pipeline or role" }).click();
+    await expect(page.locator("[data-testid='create-bar']")).toBeVisible();
+
+    const panel = await page.locator("[data-testid='create-bar']").boundingBox();
+    const column = await page.locator(".assignment-card").first().boundingBox();
+
+    expect({ left: Math.round(panel.x), right: Math.round(panel.x + panel.width) })
+      .toEqual({ left: Math.round(column.x), right: Math.round(column.x + column.width) });
+  });
+
+  /**
+   * The counterweight to the rule above: it is scoped to the *open* panel, so
+   * the resting toolbar still shares the heading's row. Widen that rule to the
+   * whole row and the approved compact overview grows a stacked button.
+   */
+  test("at compact the resting create button still shares the heading's row", async ({ page, canvas }) => {
+    await page.setViewportSize({ width: 760, height: 900 });
+    await page.goto(canvas.url);
+
+    const heading = await page.locator(".config-heading").boundingBox();
+    const button = await page.getByRole("button", { name: "+ New pipeline or role" }).boundingBox();
+
+    expect(button.y < heading.y + heading.height && heading.y < button.y + button.height).toBe(true);
+  });
 });

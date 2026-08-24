@@ -153,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 470292479796,
       matrixStates: 204,
-      probes: 40,
-      states: 244,
+      probes: 41,
+      states: 245,
       transitions: 132,
       entryTransitions: 98,
       returnTransitions: 34,
-      roots: 146,
-      renders: 488,
+      roots: 147,
+      renders: 490,
     },
   );
 });
@@ -538,7 +538,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 84, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 85, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1599,6 +1599,7 @@ const PROBE_ROUTES = {
   "probe--run-activity-idle": "empty-runs",
   "probe--reconcile-now-running": "stall-intent",
   "probe--reconcile-now-refused": "fail-intent",
+  "probe--run-refusal-dismissed": "fail-intent",
   "probe--run-under-failed-listing": "fail-runs-later",
   "probe--run-activity-unavailable": "fail-runs",
 };
@@ -1613,20 +1614,28 @@ test("a state rides the route its own source decided, not merely the one its ops
   const misrouted = matrix
     .map((state) => ({ id: state.id, state: state.intercept ?? null, decided: interceptFor(state.dimensions)[0] ?? null }))
     .filter((entry) => entry.state !== entry.decided);
-  // The op is still compared, because it is the half a consumer cannot see: a
-  // state that names a route its page never installs would render unrouted.
-  const uninstalled = STATES
-    .map((state) => ({ id: state.id, op: state.ops.find((op) => op.intercept)?.intercept ?? null, state: state.intercept ?? null }))
-    .filter((entry) => entry.op !== entry.state);
+  // Placement, which is the half a consumer cannot see and the half that can
+  // actually be wrong. Comparing the op's route to `state.intercept` was a
+  // tautology in the same shape as the one above: `registry.mjs` *defines*
+  // `state.intercept` as `ops.find((op) => op.intercept)?.intercept`, and
+  // `probes.mjs` writes both from one parameter, so the two sides were one
+  // read of one value. What the route needs is not to exist somewhere in the
+  // ops but to be installed before the page it conditions is fetched — a
+  // route hung on any later op leaves the load unrouted and the condition
+  // never happens.
+  const unrouted = STATES
+    .filter((state) => state.intercept)
+    .map((state) => ({ id: state.id, carrier: state.ops.findIndex((op) => op.intercept), first: state.ops[0]?.op ?? null }))
+    .filter((entry) => entry.carrier !== 0 || entry.first !== "page");
 
   assert.deepStrictEqual(
     {
       misrouted,
-      uninstalled,
+      unrouted,
       boot: routesOf(STATES.filter((state) => state.surface.startsWith("boot"))),
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], uninstalled: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 88 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 89 },
   );
 });
