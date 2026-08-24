@@ -22,7 +22,17 @@ pub(super) enum Stop {
     Pause,
 }
 
-fn started_data(ctx: &RunCtx, worktree: &std::path::Path, step: &StepDef) -> serde_json::Value {
+/// The agent identity a step's `step_started` carries.
+///
+/// [`adapters::expected_agent`] is the *pure* form of the resolution: it
+/// computes the name and touches no filesystem. That matters here because this
+/// runs before `plugins::activate` has captured the worktree's originals, and
+/// the side-effecting [`adapters::resolved_agent`] would materialize the agent
+/// file into the worktree — the guard would then record it as an original and
+/// restore rather than delete it, leaving the copy to be committed. Logging is
+/// an observation; it may not write. The two agree for every config that
+/// validates, so the log still names what the adapter will invoke.
+fn started_data(ctx: &RunCtx, step: &StepDef) -> serde_json::Value {
     let Some((name, role)) = step
         .role
         .as_deref()
@@ -34,7 +44,7 @@ fn started_data(ctx: &RunCtx, worktree: &std::path::Path, step: &StepDef) -> ser
         &step.name,
         name,
         &role.agent,
-        &crate::adapters::resolved_agent(role, worktree),
+        &crate::adapters::expected_agent(role),
     )
 }
 
@@ -56,11 +66,7 @@ pub(super) async fn run_step(
     step: &StepDef,
     request: &StepRequest,
 ) -> Execution {
-    context::append(
-        ctx,
-        EventKind::StepStarted,
-        started_data(ctx, &request.worktree, step),
-    );
+    context::append(ctx, EventKind::StepStarted, started_data(ctx, step));
     ctx.begin_attempt(&step.name);
     let mut result = execute::execute(ctx, wt, step, request).await;
     if result.is_halted() || context::ownership_reason(ctx).is_some() {

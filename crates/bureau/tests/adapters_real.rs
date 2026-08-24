@@ -279,5 +279,7 @@ fn claude_mirrors_the_push_boundary_and_denies_by_default() {
 
 #[path = "adapters_real/env.rs"]
 mod env;
+#[path = "adapters_real/identity.rs"]
+mod identity;
 #[path = "adapters_real/permissions.rs"]
 mod permissions;
