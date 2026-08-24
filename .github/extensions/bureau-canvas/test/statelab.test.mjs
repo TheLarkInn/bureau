@@ -18,13 +18,13 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
-import { VIEWPORTS } from "../web/statelab/selectors.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { VIEWPORTS, SELECTORS } from "../web/statelab/selectors.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -153,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 627056639793,
       matrixStates: 207,
-      probes: 43,
-      states: 250,
+      probes: 44,
+      states: 251,
       transitions: 136,
       entryTransitions: 100,
       returnTransitions: 36,
-      roots: 150,
-      renders: 500,
+      roots: 151,
+      renders: 502,
     },
   );
 });
@@ -306,8 +306,39 @@ test("every fixture changes the payload, and no two fixtures agree", async () =>
   );
 });
 
-test("every entry path uses only verbs the driver implements", () => {
-  const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
+/**
+ * A twin declares that two states draw one screen on purpose. Declared against
+ * an id no state has, it suppresses nothing and asserts nothing — an inert
+ * sentence that reads like a decision — so the ids are held to the registry and
+ * the reason is required to be a sentence rather than a placeholder.
+ */
+/**
+ * A twin declares that two states draw one screen on purpose. Declared against
+ * an id no state has, it suppresses nothing and asserts nothing — an inert
+ * sentence that reads like a decision — so the ids are held to the registry and
+ * the reason is required to be a sentence rather than a placeholder.
+ *
+ * An empty `viewports` is the same inert sentence one level down, and it read
+ * as clean: `keysFor` maps over the list, so a twin naming no viewport
+ * generates no pair, suppresses no `undeclared-twin` finding and produces no
+ * `unchecked-twin` either. The declaration would sit in the file looking like a
+ * reviewed decision while the audit had never been told about it.
+ */
+test("every declared render twin names two real states, at real viewports, with a reason", () => {
+  const ids = new Set(STATES.map((state) => state.id));
+  const viewports = new Set(Object.values(VIEWPORTS).map((viewport) => viewport.id));
+  const faults = RENDER_TWINS.flatMap((twin) => [
+    ...[twin.a, twin.b].filter((id) => !ids.has(id)).map((id) => `no state ${id}`),
+    ...((twin.viewports ?? []).length ? [] : [`${twin.a} declares no viewport`]),
+    ...(twin.viewports ?? []).filter((id) => !viewports.has(id)).map((id) => `no viewport ${id}`),
+    ...(twin.a === twin.b ? [`${twin.a} is declared a twin of itself`] : []),
+    ...((twin.why ?? "").length > 20 ? [] : [`${twin.a} declares no reason`]),
+  ]);
+
+  assert.deepStrictEqual(faults, []);
+});
+
+test("every entry path uses only verbs the driver implements", () => {  const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
   const unknown = STATES.flatMap((state) => state.ops.filter((op) => !verbs.has(op.op)).map((op) => `${state.id}: ${op.op}`));
   assert.deepStrictEqual(unknown, []);
 });
@@ -538,7 +569,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 89, probe: 19, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 90, probe: 19, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1193,6 +1224,89 @@ test("a state's selector list covers the elements its copy names", () => {
   assert.deepStrictEqual([scoped.length > 0, uncovered], [true, []]);
 });
 
+/**
+ * Selectors the vocabulary defines but the registry deliberately does not
+ * promise, each with the reason it is exempt.
+ *
+ * An allow-list rather than silence, because the two are not the same claim: a
+ * name in here is a decision someone can disagree with, and a name that is
+ * merely absent is an accident nothing can see. It is empty, and that is the
+ * intended resting state — every control the vocabulary names is promised by
+ * some render.
+ */
+/**
+ * Every selector in the vocabulary is claimed by some state, or exempt by name.
+ *
+ * This exists because the defect it catches has now happened five times. A
+ * selector defined in `selectors.mjs` and read by no state is a control the
+ * whole matrix is blind to: `pipelineBack`, `pipelineEditLink` and `editorBack`
+ * were the doors out of the viewer and the editor, `pipelineRef` was the door
+ * in — the one control carrying the assignment-first mental model — and
+ * deleting any of them left all 500 renders green while the surface became a
+ * room with no door. `status` was the fifth, found by review rather than by a
+ * test, which is the point: the previous four were fixed by hand and nothing
+ * was added that would notice the next one.
+ *
+ * A claim has to be a *positive* one: `shows`, a scoped `copy` selector, or an
+ * operation in an entry path or a transition delta. `hides` deliberately does
+ * not count, and that is the sixth telling of the same defect. An absence is
+ * satisfied by deleting the control everywhere — a selector only ever named in
+ * `hides` is one the product could stop drawing entirely with every render
+ * staying green, which is precisely the blindness this test exists to refuse.
+ * It found four: `editorShell`, `workSourceExact`, `liveCountZero` and
+ * `deleteRefusedResting`, each of which had a state asserting it absent and
+ * none asserting it present, so all four denials held against nothing.
+ */
+const UNPROMISED = {};
+
+test("every selector the vocabulary defines is promised by a state, or exempt by name", () => {
+  const claimed = new Set(STATES.flatMap((state) => [
+    ...(state.expect.shows ?? []),
+    ...(state.expect.copy ?? []).filter((phrase) => typeof phrase === "object").map((phrase) => phrase.selector),
+    ...selectorsOf(state.ops),
+  ]).concat(TRANSITIONS.flatMap((edge) => selectorsOf(edge.delta))));
+
+  const unclaimed = Object.entries(SELECTORS)
+    .filter(([name, selector]) => !claimed.has(selector) && !(name in UNPROMISED))
+    .map(([name, selector]) => `${name} (${selector})`);
+  const staleExemption = Object.keys(UNPROMISED).filter((name) => !(name in SELECTORS) || claimed.has(SELECTORS[name]));
+
+  assert.deepStrictEqual({ unclaimed, staleExemption }, { unclaimed: [], staleExemption: [] });
+});
+
+function selectorsOf(ops) {
+  return (ops ?? []).map((op) => op.selector).filter(Boolean);
+}
+
+/**
+ * Which look answers when the settle window runs out.
+ *
+ * Table-driven because the rule is a decision over three booleans, and each row
+ * is a real render the matrix produced. The two that matter are the last pair:
+ * a failure that flickers is the contended worker and an observed clean look
+ * should win, while a failure that has lasted as long as agreement itself
+ * requires is the product and must be reported — that second row is the one
+ * that was green before, and it is how a control disappearing after first paint
+ * used to pass all 500 renders.
+ */
+test("a render that never settled is answered by the look that is telling the truth", () => {
+  const cases = [
+    // Nothing wrong at the deadline: the last look answers, clean.
+    [{ lastFailed: false, sustained: 0, sawClean: true }, "last"],
+    // Never once clean: the last look is the one carrying the failures to read.
+    [{ lastFailed: true, sustained: 9, sawClean: false }, "last"],
+    // Failing for as long as agreement needs. Sustained, so the product.
+    [{ lastFailed: true, sustained: 3, sawClean: true }, "last"],
+    // Failing on the last look only. Flickering, so the clean look answers.
+    [{ lastFailed: true, sustained: 1, sawClean: true }, "clean"],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([observation]) => deadlineVerdict(observation, 3)),
+    cases.map(([, expected]) => expected),
+  );
+});
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {
@@ -1399,11 +1513,12 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
   assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 1 },
-    texts: { ".a": "saved" },
+    counts: { ".a": 2 },
+    texts: { ".a": "saved wrapped" },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
       { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", within: [], flow: true, clipped: true, trimmed: 150 },
+      { selector: ".b", id: "node-2", x: 10, y: 60, width: 100, height: 80, parent: "parent-1", within: [], flow: true, clipped: false, trimmed: 40 },
     ],
     contrast: [{ selector: ".c", text: "Kind", ratio: 21 }],
     labels: [{
@@ -1411,6 +1526,14 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       label: { x: 0, y: 40, width: 60, height: 16 },
       control: { x: 70, y: 40, width: 120, height: 24 },
     }],
+    signature: [
+      "BUTTON|class=btn,data-testid=draft-save|Save||",
+      "DIV|class=draft-bar|||",
+      "INPUT|class=field,data-testid=create-name||release-pipeline|",
+      "INPUT|class=toggle,data-testid=limit-on||on|checked",
+      "DETAILS|class=relation-section,open=|||",
+      "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
+    ].join("\n"),
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1419,6 +1542,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
 
 const BASE_STYLE = {
   visibility: "visible",
+  opacity: "1",
   overflowX: "visible",
   overflowY: "visible",
   backgroundColor: "rgb(255, 255, 255)",
@@ -1426,9 +1550,41 @@ const BASE_STYLE = {
   position: "static",
 };
 
+/**
+ * The claim the fold actually makes: a state signs the same whichever port the
+ * harness happened to bind, and still signs differently when the words change.
+ *
+ * Asserted as two comparisons rather than against a literal, because the literal
+ * above already pins the shape. What was unfalsifiable before is the *pair* — a
+ * signature carrying `127.0.0.1:40091` is perfectly well-formed, so nothing that
+ * looked at one render alone could tell that the state could never match itself
+ * on the next run, and `surface:boot+data:render-error` was a standing
+ * broken-twin finding that no fix to the product would ever have cleared.
+ */
+test("a signature folds the harness's port away without folding the message away", () => {
+  const signatureFor = (text) => {
+    const doc = pageStub();
+    const held = doc.querySelectorAll("body *");
+    held[held.length - 1].textContent = text;
+    return new Function(`return (${collect.toString()})`)()(doc, { selectors: [], measure: [], contrast: [] }).signature;
+  };
+  const onPort = (port) => `failed to import http://127.0.0.1:${port}/app.mjs`;
+
+  assert.deepStrictEqual(
+    [
+      signatureFor(onPort(40091)) === signatureFor(onPort(35781)),
+      signatureFor(onPort(40091)) === signatureFor("failed to import http://127.0.0.1:40091/editor.mjs"),
+    ],
+    [true, false],
+  );
+});
+
 function boxOf(x, y, width, height) {
   return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height };
 }
+
+/** The rect list a node that occupies space reports. */
+const AREA = [{ width: 100, height: 20 }];
 
 /**
  * A document shaped so that each of `collect`'s inner helpers is called at
@@ -1440,7 +1596,7 @@ function pageStub() {
   const styles = new Map();
   const element = (style, own = {}) => {
     const node = {
-      getClientRects: () => [{}],
+      getClientRects: () => AREA,
       getBoundingClientRect: () => boxOf(0, 0, 0, 0),
       parentElement: null,
       textContent: "",
@@ -1466,6 +1622,15 @@ function pageStub() {
   // Zero-area, so the measure loop skips it and the ids stay contiguous.
   const collapsed = element({}, { parentElement: clip });
 
+  // The two axes clipped by different ancestors, which is the ordinary shape of
+  // a truncating label inside a lidded pane: the nearer wrapper hides overflow
+  // on x only, the outer box on y only. A walk that stops at the first ancestor
+  // clipping *either* axis reads this node's y overflow off the x-only wrapper,
+  // finds it visible, and reports a clean box for content cut off below the lid.
+  const lid = element({ overflowY: "hidden" }, { getBoundingClientRect: () => boxOf(0, 0, 200, 100) });
+  const ellipsis = element({ overflowX: "hidden" }, { parentElement: lid, getBoundingClientRect: () => boxOf(0, 0, 200, 400) });
+  const underLid = element({}, { parentElement: ellipsis, getBoundingClientRect: () => boxOf(10, 60, 100, 80) });
+
   // `visible` has to answer both ways over a node that still reports rects.
   // The painted one carries words and the unpainted one carries different
   // words, so the text gather is exercised *and* shown to skip what the reade
@@ -1473,6 +1638,27 @@ function pageStub() {
   // asserting the page's private state rather than its screen.
   const shown = element({}, { innerText: "saved" });
   const unpainted = element({ visibility: "hidden" }, { innerText: "unsaved edits" });
+  // The other way a control measures perfectly and paints nothing. Two of
+  // them, because they fail apart: the node's own `opacity: 0`, and a node
+  // left fully opaque under a transparent parent — which is the case reading
+  // the node alone cannot see, since opacity does not inherit into the
+  // computed value the way `visibility` does. Both carry words, so a predicate
+  // that misses either reports a count and a copy for a control the reader is
+  // looking straight through.
+  const transparent = element({ opacity: "0" }, { innerText: "invisible save" });
+  const behindTransparent = element({}, {
+    innerText: "invisible discard",
+    parentElement: element({ opacity: "0" }),
+  });
+  // The third way: a control collapsed to no area at all. It reports a rect,
+  // so counting rects called it shown; it covers no pixel, so a reader looking
+  // at the screen would say the control is gone.
+  const flattened = element({}, { innerText: "invisible cancel", getClientRects: () => [{ width: 0, height: 0 }] });
+  // And the case that keeps the fix from being "every rect must have area": an
+  // inline run broken across two lines reports an empty rect beside a real one,
+  // and it is on screen. Requiring area of *every* rect would report an
+  // ordinary wrapped label as missing.
+  const wrapped = element({}, { innerText: "wrapped", getClientRects: () => [{ width: 0, height: 0 }, { width: 80, height: 20 }] });
 
   // Transparent over white, so `backdrop` must walk up and `opaque` answers
   // false then true before `luminance` runs on what it settles on.
@@ -1490,11 +1676,54 @@ function pageStub() {
     getAttribute: (name) => (name === "for" ? "field-1" : null),
   });
 
+  // The signature walk, which reads different properties from the same nodes:
+  // what each element is, where it sits, and its own words when it has no
+  // children to carry them. A leaf, a parent, and one element with no area —
+  // the last because a signature that included collapsed nodes would report a
+  // difference between two screens that look the same.
+  const named = (tag, testid, className, box, own) => element({}, {
+    tagName: tag,
+    childElementCount: 0,
+    attributes: [
+      ...(testid ? [{ name: "data-testid", value: testid }] : []),
+      ...(className ? [{ name: "class", value: className }] : []),
+      // Computed geometry, which the signature must drop: React Flow writes a
+      // node's position into `style` on every layout, so keeping it would put
+      // the drift straight back that leaving boxes out took away.
+      { name: "style", value: "transform: translate(13px, 760px)" },
+    ],
+    getBoundingClientRect: () => box,
+    getAttribute: (attribute) => ({ "data-testid": testid, class: className })[attribute] ?? null,
+    ...own,
+  });
+  const leaf = named("BUTTON", "draft-save", "btn", boxOf(10, 20, 80, 24), { textContent: " Save " });
+  const parent = named("DIV", null, "draft-bar", boxOf(0, 0, 760, 44), { childElementCount: 1, textContent: "Save" });
+  const arealess = named("SPAN", null, "caret", boxOf(0, 0, 0, 0), { getClientRects: () => [{ width: 0, height: 0 }] });
+  // A form control carries its state in properties rather than in the text, so
+  // the walk has to read them or two forms holding different things are one
+  // screen. The disclosure carries its state in an attribute for the same
+  // reason: a `<details>` keeps its subtree mounted either way.
+  const typed = named("INPUT", "create-name", "field", boxOf(0, 60, 200, 28), { value: "release-pipeline", checked: false });
+  const ticked = named("INPUT", "limit-on", "toggle", boxOf(0, 100, 16, 16), { value: "on", checked: true });
+  const disclosure = named("DETAILS", null, "relation-section", boxOf(0, 140, 760, 300), {
+    attributes: [{ name: "class", value: "relation-section" }, { name: "open", value: "" }],
+    childElementCount: 2,
+  });
+  // Copy that quotes the harness's own address. The renderer-error fallback
+  // names the module it could not fetch, and `serve.mjs` binds an ephemeral
+  // port per worker — so without folding the origin this element alone made the
+  // state sign differently on every run and every worker, for a reason that
+  // says nothing about the product.
+  const quoting = named("P", null, "fallback-error", boxOf(0, 460, 760, 20), {
+    textContent: " TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:40091/app.mjs ",
+  });
+
   const matches = {
-    ".a": [shown, unpainted],
-    ".b": [inside, past, collapsed],
+    ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
+    ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
     "label[for]": [label],
+    "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
   };
   return {
     defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },
@@ -1592,6 +1821,7 @@ const PROBE_ROUTES = {
   "probe--create-saving": "stall-intent",
   "probe--create-refusal-dismissed": "fail-intent",
   "probe--delete-refusal-dismissed": "fail-intent",
+  "probe--delete-preflight-refused": "refuse-preflight",
   "probe--reconcile-now-reported": "pass-intent",
   "probe--reconcile-now-started-a-run": "pass-starts-run",
   "probe--replay-opened-from-a-pass": "pass-starts-run",
@@ -1638,6 +1868,6 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 94 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 95 },
   );
 });

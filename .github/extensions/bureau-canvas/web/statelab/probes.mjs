@@ -995,9 +995,51 @@ export const PROBES = [
       { op: "wait", selector: S.runActivityIdle },
     ],
     expect: {
-      shows: [S.reconcileNow, S.runPickerLiveDisabled, S.runActivityIdle],
+      // The badge at its honest zero. The two states that deny it —
+      // `probe--live-badge-pending` and `probe--live-listing-refused` — both
+      // assert `liveCountZero` absent, and neither meant anything while no
+      // state required it present: a badge hard-wired to "0" would have
+      // satisfied this screen and been caught only by the two that are about
+      // *not* being able to say zero.
+      shows: [S.reconcileNow, S.runPickerLiveDisabled, S.runActivityIdle, S.liveCountZero],
       hides: [S.runActivityAvailable, S.runActivityUnavailable],
       copy: [{ selector: S.runActivityTitle, text: "No runs in progress" }, "A reconcile loop is not itself a run."],
+    },
+  }),
+  /*
+   * The delete preflight refused, which is the read that has to fail before
+   * `DeleteControl` can draw a note beside an intact Delete.
+   *
+   * `probe--delete-refusal-dismissed` above asserts that note *gone* after a
+   * refused confirm is cancelled, and that was the only state in the registry
+   * naming it — so the assertion held against a control that had been deleted
+   * from the product entirely. This is the screen where it belongs: the host
+   * could not say what deleting would break, so nothing is removed, nothing is
+   * asked, and the card says so with the Delete still offered.
+   *
+   * It needs its own route because the preflight is deliberately not a write:
+   * `reachesHost` passes it through so the prompt has referrers to draw, which
+   * is exactly why `fail-intent` cannot refuse it.
+   */
+  sample({
+    id: "probe--delete-preflight-refused",
+    covers: "the delete preflight itself failing — the read that has to answer before a confirmation can be asked for",
+    summary: "the host could not report what deleting this assignment would break: nothing is asked, nothing is removed, and Delete is still offered",
+    fixture: "validated",
+    intercept: "refuse-preflight",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: S.deleteRefusedResting },
+    ],
+    expect: {
+      // The refusal sits with an intact Delete and no prompt. `preflight`
+      // absent is the half that matters: a card that drew the confirmation
+      // anyway would be offering to remove something on the strength of a
+      // referrer report that never arrived.
+      shows: [S.assignmentDetail, S.deleteRefusedResting, offered(S.deleteStart)],
+      hides: [S.preflight, S.deleteRefused],
+      copy: [{ selector: S.deleteRefusedResting, text: "could not inspect agent-eligible" }],
     },
   }),
   sample({

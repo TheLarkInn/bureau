@@ -205,6 +205,66 @@ function pick(source, keys) {
 export const STATES = [...matrixStates, ...PROBES];
 
 /**
+ * Pairs of states that draw the same screen on purpose, and why.
+ *
+ * Two states rendering identically is normally a defect this registry exists to
+ * catch — an entry operation that has quietly become a no-op, a control that
+ * stopped varying — and until the gallery was audited nothing could notice it.
+ * But a few of these identities are the very claim a probe is making: a refusal
+ * that leaves with the run it was about leaves the screen it found. Saying so
+ * here turns an unremarked coincidence into an assertion in both directions —
+ * `e2e/playwright/gallery-audit.mjs` reports a declared twin that stops
+ * matching exactly as loudly as an undeclared pair that starts.
+ *
+ * `viewports` is per-pair rather than assumed, because the two layouts are two
+ * screens: a claim that holds in one column may not hold in two.
+ */
+export const RENDER_TWINS = [
+  {
+    a: "probe--create-refusal-dismissed",
+    b: "surface:config+data:validated+section:stack+disclosure:create+card:collapsed",
+    viewports: ["desktop", "compact"],
+    why: "a dismissed create refusal must leave nothing behind, so reopening the form is the form",
+  },
+  {
+    a: "probe--run-refusal-dismissed",
+    b: "probe--step-log-idle",
+    viewports: ["desktop", "compact"],
+    why: "the refusal leaves with the run it was about, back to Live with nothing chosen",
+  },
+  {
+    a: "probe--selection-behind-relations-tab",
+    b: "surface:editor+tab:relations",
+    viewports: ["desktop", "compact"],
+    why: "a step selected on the Pipeline tab may not leak onto the relation graph",
+  },
+  {
+    a: "probe--dirty-editor-behind-relations-tab",
+    b: "surface:editor+tab:relations",
+    viewports: ["desktop", "compact"],
+    why: "an unsaved rename is held, not shown: the relation graph draws the config, not the draft",
+  },
+  {
+    a: "probe--dirty-editor-behind-relations-tab",
+    b: "probe--selection-behind-relations-tab",
+    viewports: ["desktop", "compact"],
+    why: "both hide what the Pipeline tab was holding, so behind Relations they are one screen",
+  },
+  {
+    a: "probe--draft-survives-a-tab-round-trip",
+    b: "surface:editor+tab:pipeline+pick:deterministic+edit:renamed",
+    viewports: ["desktop", "compact"],
+    why: "the round trip is the claim: coming back must land on the screen that was left",
+  },
+  {
+    a: "probe--draft-save-transport-lost",
+    b: "surface:config+data:fixture+draft:save-error+section:stack+card:collapsed",
+    viewports: ["desktop", "compact"],
+    why: "a host that refused and a host that vanished are one sentence to the reader — the save did not happen, both controls are back",
+  },
+];
+
+/**
  * The controls that really are toggles, and what undoes each one.
  *
  * A prefix DAG can only say how a state is *entered*: every edge points away

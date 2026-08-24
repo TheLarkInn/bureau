@@ -43,7 +43,7 @@ export function reachesHost(body) {
 }
 
 /** An unconfirmed delete: `remove()` reports its referrers and writes nothing. */
-function isPreflight(body) {
+export function isPreflight(body) {
   return body?.kind === "delete" && !body?.input?.confirm;
 }
 
@@ -135,7 +135,7 @@ export const PASS_STARTED = { ok: true, output: "started 1 run" };
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "refuse-preflight", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -183,9 +183,40 @@ export function installIntercept(win, kind) {
     passStartsRun(win);
     return;
   }
+  if (kind === "refuse-preflight") {
+    refusePreflight(win);
+    return;
+  }
   if (kind) {
     stallIntent(win, kind);
   }
+}
+
+/**
+ * The delete preflight refused.
+ *
+ * Every other refusal here goes through `stallIntent`, which only ever claims a
+ * request `isWrite` says is one — and the unconfirmed delete deliberately is
+ * not, because `reachesHost` lets it through so the confirmation prompt can
+ * draw the referrers the host reports. That made this the one refusal no
+ * condition could stage, and so the one note `DeleteControl` draws that no
+ * state ever rendered.
+ *
+ * Only the preflight is claimed. Everything else — including the confirmed
+ * delete — falls through to the floor, so this stages one failed read rather
+ * than a host that has stopped answering.
+ */
+function refusePreflight(win) {
+  const native = win.fetch.bind(win);
+  win.fetch = (input, init) => {
+    if (!/\/intent$/u.test(urlOf(input)) || !isPreflight(bodyOf(init))) {
+      return native(input, init);
+    }
+    // `Promise.resolve` rather than the bare response: `postIntent` calls
+    // `.then` on whatever this returns, so a shim answering with the response
+    // itself is a `TypeError` on the page rather than a refusal on the card.
+    return Promise.resolve(jsonIn(win, { ok: false }));
+  };
 }
 
 /**

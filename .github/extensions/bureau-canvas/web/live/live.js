@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
-import { RECONCILE_REFUSED, applyEvent, emptyOverlay, newRunSince, reconcileReason, runActions } from "./overlay.js";
+import { RECONCILE_REFUSED, applyEvent, applyEvents, emptyOverlay, mergeRunEvents, newRunSince, reconcileReason, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
@@ -129,23 +129,36 @@ export function useLiveOverlay(activity, onOpenReplay) {
     }
     // Backfill the current log once, then append live: the tail starts at
     // end-of-file, so events that landed before subscription only exist here.
+    //
+    // The subscription opens in the same tick as the fetch, so a frame can
+    // arrive before the history does. `mergeRunEvents` owns what that means;
+    // holding the tail until the history has answered is what gives it both
+    // halves to merge, and rebuilding through `applyEvents` is what makes the
+    // result independent of which arrived first.
     let alive = true;
     let overlayState = emptyOverlay();
+    let backfilled = false;
+    const early = [];
+    const settle = (history) => {
+      const merged = mergeRunEvents(history, early);
+      backfilled = true;
+      overlayState = applyEvents(merged);
+      setOverlay(overlayState);
+      // Kept raw as well: the step log renders the output events, which
+      // the overlay reducer deliberately does not retain.
+      setEvents(merged);
+    };
     fetch(`./runs/${encodeURIComponent(runId)}/events`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : { events: [] }))
       .then((payload) => {
         if (!alive) {
           return;
         }
-        for (const event of payload.events ?? []) {
-          overlayState = applyEvent(overlayState, event);
-        }
-        setOverlay(overlayState);
-        // Kept raw as well: the step log renders the output events, which
-        // the overlay reducer deliberately does not retain.
-        setEvents(payload.events ?? []);
+        settle(payload.events ?? []);
       })
-      .catch(() => {});
+      // A history that never arrives must not strand the tail in the buffer:
+      // without this, a failed backfill left a live run drawing nothing at all.
+      .catch(() => alive && settle([]));
     const source = new EventSource("./events");
     // A frame this cannot parse is dropped, not thrown. An exception raised
     // inside an `EventSource` listener escapes as an uncaught error on the
@@ -158,6 +171,16 @@ export function useLiveOverlay(activity, onOpenReplay) {
       }
       const { run_id, event } = frame;
       if (run_id !== runId) {
+        return;
+      }
+      if (!backfilled) {
+        early.push(event);
+        return;
+      }
+      // A frame delivered late enough to arrive after the merge can still be
+      // one the merge already folded in, and applying a `step_finished` twice
+      // is not harmless — so anything at or below the mark is a repeat.
+      if (typeof event?.seq === "number" && event.seq <= overlayState.lastSeq) {
         return;
       }
       overlayState = applyEvent(overlayState, event);

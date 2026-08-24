@@ -25,6 +25,11 @@ export const SELECTORS = {
   assignmentHead: ".assignment-head",
   assignmentDetail: ".assignment-detail",
   assignmentEmpty: ".view-shell--config > .muted",
+  // The door from an assignment into its pipeline. It is the one control that
+  // carries the assignment-first mental model — the graph is reached through a
+  // card, never from a nav — and it was promised by no state, so a card that
+  // stopped drawing it would have rendered green in all 500.
+  pipelineRef: ".pipeline-ref",
 
   createOpen: '[data-testid="create-open"]',
   createBar: '[data-testid="create-bar"]',

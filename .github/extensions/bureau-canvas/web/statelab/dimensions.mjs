@@ -61,7 +61,7 @@ const surface = {
       id: "config",
       summary: "the assignment-first landing",
       page: "index",
-      shows: [S.shell, S.header, S.configView, S.configHeading, S.relationSection],
+      shows: [S.shell, S.header, S.status, S.configView, S.configHeading, S.relationSection],
       copy: ["Assignments"],
     },
     {
@@ -73,14 +73,25 @@ const surface = {
       // design is reached without a click of its own, so the settle is waited
       // for here — once, on the surface all three modes are entered from.
       enter: [{ op: "wait", selector: S.liveCountSettled }],
-      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher],
+      /*
+       * The two ways off this surface are promised here, and they were promised
+       * nowhere: `S.pipelineBack` and `S.pipelineEditLink` were defined in
+       * `selectors.mjs` and read by no state, so deleting either control left
+       * every one of the 500 renders green while the viewer became a room with
+       * no door. They sit on the surface rather than on a mode because the
+       * toolbar draws them in all three, which is the claim being made.
+       */
+      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher, S.pipelineBack, S.pipelineEditLink, S.stepCard, S.sidePanel],
       hides: [S.configView],
     },
     {
       id: "editor",
       summary: "editor.html — the pipeline editor and the relation graph",
       page: "editor",
-      shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations],
+      // `S.editorBack` for the same reason as the viewer's pair: this page is
+      // entered from the landing and the header button is the only way back, so
+      // a state that does not require it cannot notice the way out going away.
+      shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations, S.editorBack],
       /*
        * The wrong render this page can actually produce. `.view-shell--config`
        * used to sit here, but that class is emitted only by `app.mjs`, which
@@ -392,7 +403,7 @@ const card = {
       id: "expanded",
       summary: "work source, work rules, signals, repos, pipeline and limits",
       enter: [{ op: "click", selector: S.assignmentHead }],
-      shows: [S.assignmentDetail, S.workSourceValue, S.workRulesValue, S.signalsValue, S.reposValue, S.limitsValue],
+      shows: [S.assignmentDetail, S.workSourceValue, S.workRulesValue, S.signalsValue, S.reposValue, S.limitsValue, S.pipelineRef],
       copy: ["work source", "work rules", "forge signals", "repos", "pipeline", "limits"],
     },
   ],
@@ -433,7 +444,7 @@ const field = {
       id: "repos",
       summary: "the ranked repo list",
       enter: [{ op: "click", selector: S.reposValue }],
-      shows: [S.reposEditor, S.reposSave, S.reposAdd],
+      shows: [S.reposEditor, S.reposSave, S.reposAdd, S.repoRow],
     },
     {
       id: "repos-add",
@@ -816,7 +827,7 @@ const run = {
  */
 function overlay(combo, runValue) {
   if (combo.mode === "replay") {
-    return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
+    return { shows: [S.replayTimeline, S.replayScrubber, replaySpanFor(RUN_END[runValue])] };
   }
   return runValue === "paused"
     ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: [{ selector: S.runStatus, text: "paused" }] }
@@ -907,7 +918,16 @@ const tab = {
       // edge class per outcome and per relation, and the terminals the steps
       // route into. Both were named by the design system and asserted nowhere,
       // so an editor that drew every edge alike passed all 21 of these states.
-      shows: [S.editorToolbar, S.editorPanel, S.editorTerminal, ...EDITOR_EDGES],
+      //
+      // `S.editorShell` is the pipeline the editor was opened *on*, and it
+      // belongs on the tab rather than on the surface: Relations replaces the
+      // shell rather than sitting inside it, and putting it one level up failed
+      // four renders that were right — the same lesson `replayScrubber` taught,
+      // and the gate working. Before this, the only states naming the shell
+      // were the two that assert it *absent* (a pipeline that is gone, and none
+      // selected), so an editor drawing its tabs over an empty stage satisfied
+      // every render in the matrix.
+      shows: [S.editorShell, S.editorToolbar, S.editorPanel, S.editorTerminal, S.editorCard, ...EDITOR_EDGES],
       /*
        * `EditorApp` keeps both panes mounted and separates them with `hidden`
        * alone. The leak was pinned in one direction only — the two Relations
@@ -1076,7 +1096,7 @@ const edit = {
     },
     // The one edit Save itself refuses: an attempt count the editor cannot
     // render. That refusal is the whole difference from `created`.
-    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
+    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorHints, S.editorDiscard, withheld(S.editorSave)] },
     /*
      * The two ends of a pipeline save, rendered with `./intent` routed in the
      * browser so nothing is written. `saving` is the state that was hiding a

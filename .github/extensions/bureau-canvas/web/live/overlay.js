@@ -158,6 +158,95 @@ export function applyEvents(events) {
   return (events ?? []).reduce(applyEvent, emptyOverlay());
 }
 
+/**
+ * A run's history, plus whatever the tail delivered while it was in flight.
+ *
+ * Live opens its subscription in the same tick as the backfill, so a run
+ * writing right now can deliver a frame *before* the history answers. Folding
+ * the history in on top of that frame replays the run backwards — `run_started`
+ * puts a run that has just finished back to `running` — and replacing the raw
+ * list drops the frame outright. Neither is recoverable: the tail begins at
+ * end-of-file and nothing replays it, so a `run_finished` that lost this race
+ * left a finished run drawn as running for the rest of the visit.
+ *
+ * `seq` is the run log's own order, so it decides both questions. A frame the
+ * history already carries is the same event rather than a second one, and the
+ * result is ordered by it so the reducer sees the run in the order it happened.
+ *
+ * An event without a `seq` keeps its position, and that took three attempts to
+ * mean. Sorting on `seqOf(event) ?? 0` gave every seq-less event the key `0`,
+ * which sorts it ahead of every real event — so a tail frame from a log that
+ * predates sequencing, chronologically the newest thing known, was replayed
+ * first and the run drew as whatever that frame said.
+ *
+ * Falling back to arrival order whenever *either* side lacked a `seq` fixed that
+ * case and introduced a worse one: it is not a total order. It made
+ * `compare(a, b)` depend on which pair was being asked rather than on the events
+ * alone, so with `[seq 5, no seq, seq 1]` every adjacent pair reads as already
+ * sorted and two sequenced events stay in the wrong order — a run replayed
+ * backwards again, this time only for some lengths and some sort implementations.
+ * An intransitive comparator has no defined answer, so the bug it hides is not
+ * reproducible either.
+ *
+ * So position is resolved into a key *before* anything is compared: a seq-less
+ * event inherits the sequence of the nearest sequenced event ahead of it, and
+ * ties break on arrival. That is a total order on one number plus a unique
+ * index, it says exactly what "keeps its position" always claimed — the frame
+ * stays with the event it followed — and a log with no sequencing at all
+ * degenerates to arrival order, which is the only order it has.
+ *
+ * The tail is also deduplicated against itself, not only against the history: a
+ * reconnect can redeliver a frame that never reached the history at all.
+ *
+ * Here beside the other pure facts about a run, so the offline suite can hold
+ * it without a browser and without a clock.
+ */
+export function mergeRunEvents(history, tailed) {
+  const carried = new Set((history ?? []).map(seqOf).filter((seq) => seq !== null));
+  const missed = [];
+  for (const event of tailed ?? []) {
+    const seq = seqOf(event);
+    if (seq === null || !carried.has(seq)) {
+      missed.push(event);
+      if (seq !== null) {
+        carried.add(seq);
+      }
+    }
+  }
+  return keyed([...(history ?? []), ...missed])
+    .sort(compareEvents)
+    .map((entry) => entry.event);
+}
+
+/**
+ * Each event with the sequence it sorts by: its own, or the last one seen ahead
+ * of it. `-Infinity` for a leading run of seq-less events, which sorts them
+ * before every sequenced event and among themselves by arrival.
+ */
+function keyed(events) {
+  let carried = -Infinity;
+  return events.map((event, index) => {
+    carried = seqOf(event) ?? carried;
+    return { event, index, key: carried };
+  });
+}
+
+/**
+ * A total order: key first, arrival second. Compared rather than subtracted
+ * because `-Infinity - -Infinity` is `NaN`, and a `NaN` comparator silently
+ * leaves an array in whatever order it was already in.
+ */
+function compareEvents(left, right) {
+  if (left.key !== right.key) {
+    return left.key < right.key ? -1 : 1;
+  }
+  return left.index - right.index;
+}
+
+function seqOf(event) {
+  return typeof event?.seq === "number" ? event.seq : null;
+}
+
 /** Replay position T: every event with at_ms <= T applied in log order. */
 export function stateUpTo(events, atMs) {
   return applyEvents((events ?? []).filter((event) => eventMs(event) <= atMs));

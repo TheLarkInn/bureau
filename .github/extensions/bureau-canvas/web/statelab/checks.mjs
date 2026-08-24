@@ -16,8 +16,36 @@ export function collect(doc, request) {
   // reports rects, and that is precisely how a React Flow node looks before it
   // has been measured — the blank graph `graph-measure.mjs` exists to repair.
   // Counting one would let an unpainted graph satisfy a `shows`.
+  //
+  // Opacity is the other way a promised control measures perfectly and paints
+  // nothing, and it needs a different walk: `visibility` inherits, so the
+  // node's own computed value already answers for its ancestors, but opacity
+  // does not — a fully transparent parent leaves the child's computed opacity
+  // at 1. Reading the node alone therefore let `opacity: 0` satisfy every
+  // `shows` and every scoped `copy` in this registry, which is the one failure
+  // a review surface may not have: the gallery would show the control gone and
+  // the matrix would call the state correct.
+  const painted = (node) => {
+    for (let item = node; item; item = item.parentElement) {
+      if (Number.parseFloat(view.getComputedStyle(item).opacity) === 0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  // Having boxes is not the same as covering pixels. `getClientRects` answers
+  // with a rect for a control collapsed to nothing — `width: 0`, a flex child
+  // squeezed to zero, `transform: scale(0)` — so counting rects rather than
+  // area let a control with no area on screen satisfy every `shows`, which is
+  // the same lie `opacity: 0` told and the same lie `visibility: hidden` told
+  // before it. An inline run wraps into several rects, so it is enough for one
+  // of them to have area; requiring all of them would fail an ordinary
+  // line-broken label.
+  const boxed = (node) => [...node.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
   const visible = (node) =>
-    node.getClientRects().length > 0 && view.getComputedStyle(node).visibility !== "hidden";
+    boxed(node)
+    && view.getComputedStyle(node).visibility !== "hidden"
+    && painted(node);
   const counts = {};
   const texts = {};
   for (const selector of request.selectors) {
@@ -62,17 +90,24 @@ export function collect(doc, request) {
   // its issue list as cut away on every editor state that had one. The axes
   // are tracked apart for the same reason: `overflow-x: hidden` with a
   // scrolling y is an ordinary vertical scroller, not a lid.
+  //
+  // Apart means apart all the way up, too. Stopping the search at the first
+  // ancestor that clips *either* axis read that one element's overflow on both
+  // axes and never looked again — so an ellipsis wrapper (`overflow-x: hidden`,
+  // y visible) nested inside a genuinely lidded box answered "nothing clips y"
+  // for its whole subtree, and a control cut away vertically reported a clean
+  // box. Each axis now keeps looking until it finds its own clipper.
   const clipper = (node) => {
-    let found = null;
+    let x = null;
+    let y = null;
     let pannable = false;
     for (let item = node.parentElement; item; item = item.parentElement) {
-      if (!found) {
-        const style = view.getComputedStyle(item);
-        const clipsX = /hidden|clip/u.test(style.overflowX);
-        const clipsY = /hidden|clip/u.test(style.overflowY);
-        if (clipsX || clipsY) {
-          found = { rect: item.getBoundingClientRect(), clipsX, clipsY };
-        }
+      const style = view.getComputedStyle(item);
+      if (!x && /hidden|clip/u.test(style.overflowX)) {
+        x = item.getBoundingClientRect();
+      }
+      if (!y && /hidden|clip/u.test(style.overflowY)) {
+        y = item.getBoundingClientRect();
       }
       // Graph content pans: a step card half out of frame is the surface
       // working, and the reader drags it back. Ordinary controls have no such
@@ -83,7 +118,7 @@ export function collect(doc, request) {
         pannable = true;
       }
     }
-    return found ? { ...found, pannable } : null;
+    return { x, y, pannable };
   };
   // Measured elements are collected before they are described, so each box can
   // name the measured boxes that *contain* it. `sameKind` compares boxes drawn
@@ -104,10 +139,10 @@ export function collect(doc, request) {
   for (const { node, selector, rect, id } of measured) {
     const position = view.getComputedStyle(node).position;
     const clip = clipper(node);
-    const outsideX = clip?.clipsX && (rect.x >= clip.rect.right || rect.x + rect.width <= clip.rect.left);
-    const outsideY = clip?.clipsY && (rect.y >= clip.rect.bottom || rect.y + rect.height <= clip.rect.top);
-    const trimX = clip?.clipsX ? Math.max(clip.rect.left - rect.x, rect.x + rect.width - clip.rect.right, 0) : 0;
-    const trimY = clip?.clipsY ? Math.max(clip.rect.top - rect.y, rect.y + rect.height - clip.rect.bottom, 0) : 0;
+    const outsideX = clip.x && (rect.x >= clip.x.right || rect.x + rect.width <= clip.x.left);
+    const outsideY = clip.y && (rect.y >= clip.y.bottom || rect.y + rect.height <= clip.y.top);
+    const trimX = clip.x ? Math.max(clip.x.left - rect.x, rect.x + rect.width - clip.x.right, 0) : 0;
+    const trimY = clip.y ? Math.max(clip.y.top - rect.y, rect.y + rect.height - clip.y.bottom, 0) : 0;
     boxes.push({
       selector,
       id,
@@ -123,7 +158,7 @@ export function collect(doc, request) {
       clipped: Boolean(outsideX || outsideY),
       // How far a clipping ancestor cuts into it, judged only off a
       // pannable surface, where nothing brings the rest into view.
-      trimmed: clip?.pannable ? 0 : Math.round(Math.max(trimX, trimY)),
+      trimmed: clip.pannable ? 0 : Math.round(Math.max(trimX, trimY)),
     });
   }
   const channels = (value) => (String(value).match(/[\d.]+/gu) ?? []).map(Number);
@@ -175,12 +210,75 @@ export function collect(doc, request) {
       labels.push({ text: label.textContent.trim().slice(0, 40), label: rectOf(label), control: rectOf(named) });
     }
   }
+  // What this render actually put on screen, as something two states can be
+  // compared by.
+  //
+  // Not pixels: two runs of one state differ by a handful of antialiased
+  // glyphs, so byte-identity of a screenshot answers "were these written by
+  // the same run" rather than "do these two states draw the same screen".
+  //
+  // Not geometry either, and that took measuring to learn. A signature carrying
+  // rounded boxes drifted on 66 of 500 renders across two runs of one tree:
+  // glyph advances and React Flow's own layout both move by a fraction, and a
+  // fraction is enough to round the other way. A check built on that is a flaky
+  // check, which is worse than no check. Geometry is not lost — `boxes` above
+  // measures it, and the clipping and overlap rules are where a layout fault is
+  // caught.
+  //
+  // What is left is every attribute that is not computed geometry, plus the
+  // words an element carries itself and what a form control holds. Attributes
+  // rather than a chosen few, because the chosen few were wrong: reading only
+  // `data-testid` and `class` could not see a `<details open>`, so opening the
+  // relation graph produced the identical signature to leaving it shut — on
+  // eight pairs of states at once — and the registry's own note says presence
+  // cannot tell those apart, which is why `relationOpen` reads the attribute.
+  //
+  // `boxed` rather than `visible`: this is a description, not a promise, taken
+  // over every element rather than the handful a state names. An element
+  // painted or not is still a difference between two screens.
+  //
+  // The harness's own address is not a property of the state, and leaving it in
+  // made two states permanently undiffable. `serve.mjs` binds an ephemeral port
+  // per worker, and the renderer-error fallback quotes the module it could not
+  // fetch — so `surface:boot+data:render-error` signed
+  // `…127.0.0.1:40091/app.mjs` on one run and `…:35781/app.mjs` on the next.
+  // That is not late content and no amount of settling reaches it: the state
+  // could never match itself between runs, nor a twin rendered by a different
+  // worker, so it was a standing finding that said nothing about the product.
+  // Loopback origins are folded to one name rather than the document's own,
+  // because the lab renders the page in an iframe under a second host.
+  const ORIGIN = /https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost):\d+/gu;
+  const stable = (value) => value.replace(ORIGIN, "http://canvas.invalid");
+  const GEOMETRY = new Set(["style", "transform", "d", "points", "viewBox", "x", "y", "cx", "cy", "r", "width", "height"]);
+  const signature = [];
+  for (const node of doc.querySelectorAll("body *")) {
+    if (!boxed(node)) {
+      continue;
+    }
+    signature.push([
+      node.tagName,
+      [...node.attributes]
+        .filter((attribute) => !GEOMETRY.has(attribute.name))
+        .map((attribute) => `${attribute.name}=${attribute.value}`)
+        .sort()
+        .join(","),
+      node.childElementCount ? "" : (node.textContent ?? "").trim(),
+      // What a form control holds is not in the document's text, and it is
+      // most of what a form state *is*. Without it a typed pipeline name and
+      // an empty Name box were one screen, and so were three different runs
+      // chosen in the replay picker — the registry said six states and the
+      // renders said two.
+      typeof node.value === "string" ? node.value : "",
+      node.checked === true ? "checked" : "",
+    ].join("|"));
+  }
   return {
     counts,
     texts,
     boxes,
     contrast,
     labels,
+    signature: stable(signature.join("\n")),
     text: doc.body ? doc.body.innerText : "",
     overflowX: root.scrollWidth - root.clientWidth,
     viewport: { width: root.clientWidth, height: root.clientHeight },
@@ -271,6 +369,37 @@ export const CONTRAST = [".kind-label", ".access"];
  * does not apply to them.
  */
 const MIN_CONTRAST = 4.5;
+
+/**
+ * Which look answers for a render whose settle window ran out.
+ *
+ * `judge` exits early on a clean, agreeing render, so reaching the deadline
+ * means the page never settled. Both obvious answers are wrong there:
+ *
+ * - The *last* look fails a state that was observed correct, because the
+ *   deadline lands on whatever frame a contended worker happened to be drawing.
+ *   That is the flake this preference was introduced to remove.
+ * - The *first clean* look passes a state that was correct once and is not any
+ *   more — a control that disappears after first paint, an error that arrives
+ *   late. That is the one failure a review surface may not have, and it is what
+ *   the preference introduced in its place: nothing could contradict a green
+ *   frame, however many red ones came after it.
+ *
+ * A failure that comes and goes is the harness; a failure that arrives and
+ * stays is the product. So the tie-break is how long the failures have lasted:
+ * once as many consecutive looks have failed as agreement itself requires, the
+ * render is failing rather than flickering and the last look answers. Below
+ * that, an observed clean look wins.
+ *
+ * Pure and boolean, so the offline suite can hold the rule without a browser
+ * and without a clock.
+ */
+export function deadlineVerdict({ lastFailed, sustained, sawClean }, repeats) {
+  if (!lastFailed || sustained >= repeats || !sawClean) {
+    return "last";
+  }
+  return "clean";
+}
 
 export function verdict(state, snapshot, options = {}) {
   return [

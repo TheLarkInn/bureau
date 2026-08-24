@@ -6,17 +6,31 @@
 // the list comes from `web/statelab/registry.mjs`, so a state added to the
 // registry is rendered and asserted the moment it exists.
 
-import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
+import { shotName } from "../gallery-audit.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
 
 function shot(state, viewport) {
-  return `${viewport.id}--${state.id.replace(/[^a-z0-9]+/giu, "_")}.png`;
+  return shotName(state.id, viewport.id);
+}
+
+/**
+ * The render's DOM signature, filed beside its screenshot for the teardown to
+ * audit. One small file per render rather than one shared file, because the
+ * renders are written by several workers at once and a shared file is a race.
+ * `global-teardown.mjs` collapses them into the gallery's `signatures.json`.
+ */
+async function fileSignature(name, signature) {
+  const dir = join(galleryDir(), "signatures");
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${name}.sha`), createHash("sha256").update(signature ?? "").digest("hex"), "utf8");
 }
 
 for (const viewport of VIEWPORT_LIST) {
@@ -27,6 +41,7 @@ for (const viewport of VIEWPORT_LIST) {
         const result = await enterState(state, watched.page, host);
 
         await watched.page.screenshot({ path: join(galleryDir(), shot(state, viewport)), fullPage: true });
+        await fileSignature(shot(state, viewport), result.snapshot?.signature);
         await testInfo.attach(`${viewport.id} ${state.id}`, {
           path: join(galleryDir(), shot(state, viewport)),
           contentType: "image/png",

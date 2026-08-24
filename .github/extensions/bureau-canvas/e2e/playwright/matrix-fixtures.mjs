@@ -14,9 +14,9 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
+import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -89,10 +89,10 @@ export const test = base.extend({
   ],
 
   /**
-   * Every page in this suite sits on the write floor, before it is navigated
-   * and before any spec can add a route of its own.
+   * Every page in this suite sits on the write floor and stands still, before
+   * it is navigated and before any spec can add a route of its own.
    *
-   * Here rather than in `pageAdapter` because the floor is a property of the
+   * Here rather than in `pageAdapter` because both are properties of the
    * *suite*, not of the driver: `specs/state-lab.spec.mjs` drives the lab
    * through its own `page.goto` and never builds an adapter, so a floor that
    * arrived with the adapter would have left the one spec that clicks through
@@ -100,6 +100,7 @@ export const test = base.extend({
    */
   page: async ({ page }, use) => {
     await holdWrites(page);
+    await freezeMotion(page);
     await use(page);
   },
 
@@ -341,6 +342,16 @@ async function intercept(page, kind) {
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
       : route.continue()),
+    // The one refusal `fail-intent` cannot stage, because the request it is
+    // about is deliberately not a write. `reachesHost` lets the unconfirmed
+    // delete through to the host so the confirmation prompt has referrers to
+    // draw — which also means the *failure* of that read was unrenderable, and
+    // `DeleteControl`'s `!preflight` branch draws a note there that no state
+    // ever showed. Scoped to the preflight alone so everything else on the page
+    // still answers normally: the state is one refused read, not a dead host.
+    "refuse-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false }) })
+      : route.continue()),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.
@@ -446,9 +457,29 @@ export async function applyOps(ops, state, page, host) {
 
 const SETTLE_MS = 5000;
 const SETTLE_POLL_MS = 100;
+/**
+ * How many consecutive samples must agree before a render is called finished.
+ *
+ * One was not enough. React Flow appends the relation graph's edges in a pass
+ * after it has measured the cards, and under a fully-parallel suite that pass
+ * lands wherever the scheduler puts it — so a single repeat caught the surface
+ * mid-draw and filed a graph of disconnected boxes. Measured on this tree, two
+ * runs of one matrix disagreed on 81 of 500 renders; widening the window to
+ * three agreeing samples took that to about 60.
+ *
+ * It is not zero, and the honest reason is that no wait can make it zero: the
+ * same states are stable at one worker and drift at four, so what is being
+ * waited out is CPU contention rather than a step the page takes. A
+ * MutationObserver gate was tried here instead of the poll — the document
+ * itself reporting it had stopped, rather than agreement across sampled
+ * instants — and measured 61 of 500, no better than the poll for an extra
+ * round trip per sample. So the poll stays, the residue is #116, and that is
+ * why the twin audit reports rather than gates.
+ */
+const SETTLE_REPEATS = 3;
 
 /**
- * Judges the render once it has settled.
+ * Judges the render once it has settled, and settles on the render itself.
  *
  * The verdict is a single `page.evaluate`, not a locator, so nothing about it
  * retries — it judges whichever frame it lands on. Most paths are settled by
@@ -461,15 +492,64 @@ const SETTLE_POLL_MS = 100;
  * and the way Playwright's own `expect` does. It reports whatever the last
  * look found, so a state that is genuinely wrong still fails — it just takes
  * the full budget to say so.
+ *
+ * Meeting the expectations is not the same as being finished, though, and that
+ * gap is what made the gallery undiffable. No state promises the relation
+ * graph's *edges* — the shared renderer draws them a frame after React Flow has
+ * measured the cards — so the loop stopped as soon as the cards were up and the
+ * capture landed on a graph of disconnected boxes about half the time. Sixty-
+ * seven of 250 renders came out differently on a second run of the same tree,
+ * and a reviewer diffing two galleries could not tell a change from a frame.
+ *
+ * The rule is therefore the render, not a list of what to wait for: a state is
+ * settled when its own signature stops changing. That needs no knowledge of
+ * which surfaces animate or which library measures late, and it cannot fall out
+ * of date the way a hand-kept list of selectors does.
+ *
+ * "Stops changing" needed a wider window than one poll, which `SETTLE_REPEATS`
+ * above explains and measures.
+ *
+ * What answers when the window runs out is `deadlineVerdict`, and the rule is
+ * there rather than here so the offline suite can hold it. The short version:
+ * a failure that flickers is the harness and a failure that stays is the
+ * product, so an observed clean look wins only while the failures are not yet
+ * sustained.
+ *
+ * The *snapshot* is always the last look, whichever sample supplied the
+ * verdict, and those two being allowed to disagree is deliberate. The verdict
+ * answers "was this state ever correct inside its settle window"; the snapshot
+ * describes what is on the page now — which is the frame `state-matrix.spec.mjs`
+ * screenshots a moment later and files a signature for. Handing back an earlier
+ * snapshot filed a signature for a frame the gallery does not show, so the twin
+ * audit compared descriptions of renders nobody could look at.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
   let result = await sample(state, page);
-  while (result.failures.length > 0 && Date.now() < deadline) {
+  let clean = result.failures.length ? null : result;
+  let sustained = result.failures.length ? 1 : 0;
+  let agreed = 0;
+  let previous = null;
+  while (Date.now() < deadline) {
+    agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
+    if (isSettled(result, agreed)) {
+      return result;
+    }
+    previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
     result = await sample(state, page);
+    sustained = result.failures.length ? sustained + 1 : 0;
+    clean ??= result.failures.length ? null : result;
   }
-  return result;
+  const source = deadlineVerdict(
+    { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
+    SETTLE_REPEATS,
+  );
+  return source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
+}
+
+function isSettled(result, agreed) {
+  return result.failures.length === 0 && agreed >= SETTLE_REPEATS;
 }
 
 async function sample(state, page) {
@@ -494,6 +574,44 @@ function heldWrites(page) {
     kind: "unguarded-write",
     detail: `\`${kind}\` was posted to ./intent with no intercept declared for it, so this path would have written to the host`,
   }));
+}
+
+/**
+ * Stops the surface moving, so a render is a state rather than a moment.
+ *
+ * The assignment caret rotates through 90° over 0.15s when a card opens, and
+ * both the screenshot and the measurement land somewhere inside that arc — so
+ * one state rendered twice gave two different boxes for it (`12×25` at x=849,
+ * `19×25` at x=845) and two different pictures. That was not a rare race: 242
+ * of 500 renders differed between two runs of the same tree, which makes a
+ * gallery undiffable and a render-distinctness check unusable, because
+ * "these two states draw the same screen" cannot be told from "these two files
+ * were written a frame apart".
+ *
+ * Motion is frozen rather than waited out. Waiting needs a list of every
+ * animated property on the surface, kept by hand and wrong the moment someone
+ * adds a transition; a matrix asserts settled states, and the settled state is
+ * exactly what a disabled transition leaves on screen. The caret is also why
+ * `caret-color` is here — a blinking text caret in an open field is the same
+ * defect with a shorter period.
+ *
+ * It rides on `addInitScript` so it is in place before the page's own modules
+ * run, and it reaches the lab's iframe too, which is what keeps the two hosts
+ * agreeing about what a state looks like.
+ */
+async function freezeMotion(page) {
+  await page.addInitScript(() => {
+    const install = () => {
+      const style = document.createElement("style");
+      style.textContent = "*, *::before, *::after { transition: none !important; animation: none !important; caret-color: transparent !important; }";
+      document.head.append(style);
+    };
+    if (document.head) {
+      install();
+    } else {
+      document.addEventListener("DOMContentLoaded", install, { once: true });
+    }
+  });
 }
 
 export { expect } from "@playwright/test";
