@@ -14,11 +14,34 @@ use bureau::config::Config;
 use super::out;
 
 #[derive(serde::Serialize)]
+struct AgentIdentity<'a> {
+    configured: &'a str,
+    resolved: String,
+}
+
+#[derive(serde::Serialize)]
 struct Document<'a> {
     ok: bool,
     dir: String,
     errors: &'a [ConfigError],
     config: Option<&'a Config>,
+    agents: std::collections::BTreeMap<&'a str, AgentIdentity<'a>>,
+}
+
+fn agents(config: Option<&Config>) -> std::collections::BTreeMap<&str, AgentIdentity<'_>> {
+    config
+        .into_iter()
+        .flat_map(|config| &config.roles)
+        .map(|(name, role)| {
+            (
+                name.as_str(),
+                AgentIdentity {
+                    configured: &role.agent,
+                    resolved: bureau::adapters::expected_agent(role),
+                },
+            )
+        })
+        .collect()
 }
 
 fn report_errors(errors: &[ConfigError]) -> i32 {
@@ -52,6 +75,7 @@ fn json_report(dir: &Path) -> anyhow::Result<i32> {
         dir: dir.display().to_string(),
         errors,
         config: loaded.as_ref().ok(),
+        agents: agents(loaded.as_ref().ok()),
     };
     out::line(format_args!("{}", serde_json::to_string(&document)?));
     Ok(i32::from(!errors.is_empty()))

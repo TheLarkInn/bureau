@@ -12,9 +12,9 @@ Rules:
 1. Call `bureau-io.get_step_context` before making a decision. Its `item`
    field is the work item — title, body, url, labels. That is your
    assignment; do not go looking for it anywhere else.
-2. When the step is `repair`, treat its `inputs` and artifacts as required
-   review findings. Fix those findings without discarding correct work already
-   present in the worktree.
+2. When the step is `repair` or `fix-lint`, treat its `inputs` and artifacts as
+   required findings. For `fix-lint`, correct every reported lint failure
+   without discarding correct work already present in the worktree.
 3. Read the repository and cited evidence. Do not guess about code you have
    not inspected.
 4. Make the smallest complete change that satisfies the work item.

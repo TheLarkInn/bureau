@@ -184,11 +184,8 @@ impl Reconciler {
         settle(failed, started, labels.applied)
     }
 
-    /// The daemon loop: reconcile, then sleep a jittered interval or
-    /// wake early. Never returns; a failed pass is dropped, not fatal —
-    /// the level-triggered loop retries it next pass. The failure stays
-    /// observable to direct callers of [`Self::reconcile_once`], which
-    /// the CLI daemon uses for its own reporting boundary.
+    /// Daemon loop: reconcile, then wait; failed passes are retried later.
+    /// Direct callers still observe errors from [`Self::reconcile_once`].
     pub async fn run_loop(&self, interval: Duration, mut wake: tokio::sync::mpsc::Receiver<()>) {
         loop {
             let _pass = self.reconcile_once().await;
@@ -203,7 +200,11 @@ impl Reconciler {
         started: &mut Vec<Started>,
         failed: &mut Vec<Error>,
     ) {
-        for item in pending(observed).take(observed.headroom) {
+        let target = started.len().saturating_add(observed.headroom);
+        for item in pending(observed) {
+            if started.len() >= target {
+                break;
+            }
             if let Err(error) = self.claim_one(observed, item, started) {
                 failed.push(error);
                 break;
@@ -251,8 +252,7 @@ impl Reconciler {
         Ok(())
     }
 
-    /// Assembles the run's plan; a dangling repo name skips the item (the caller releases its claim).
-    /// Unresolvable credentials are left out: the engine escalates at push time instead.
+    /// Builds a plan; dangling repos skip it, and missing credentials escalate at push time.
     fn run_plan(&self, observed: &Observed<'_>, item: Item, run_id: &str) -> Result<RunPlan, ()> {
         let assignment = observed.assignment;
         let repos = self.registry_repos(assignment)?;

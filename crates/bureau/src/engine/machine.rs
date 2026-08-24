@@ -22,6 +22,22 @@ pub(super) enum Stop {
     Pause,
 }
 
+fn started_data(ctx: &RunCtx, worktree: &std::path::Path, step: &StepDef) -> serde_json::Value {
+    let Some((name, role)) = step
+        .role
+        .as_deref()
+        .and_then(|name| ctx.plan.roles.get(name).map(|role| (name, role)))
+    else {
+        return runlog::step_started(&step.name);
+    };
+    runlog::step_started_agent(
+        &step.name,
+        name,
+        &role.agent,
+        &crate::adapters::resolved_agent(role, worktree),
+    )
+}
+
 /// The machine loop: route, check CANCEL, run steps, stop at terminals.
 pub(super) async fn run_loop(ctx: &mut RunCtx, wt: &WtCtx) -> Stop {
     let mut route = ctx.start.clone();
@@ -43,7 +59,7 @@ pub(super) async fn run_step(
     context::append(
         ctx,
         EventKind::StepStarted,
-        runlog::step_started(&step.name),
+        started_data(ctx, &request.worktree, step),
     );
     ctx.begin_attempt(&step.name);
     let mut result = execute::execute(ctx, wt, step, request).await;

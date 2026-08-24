@@ -184,6 +184,8 @@ export const SELECTORS = {
   // thing the head exists to say — which step this output belongs to — is the
   // one thing `.step-log-head` being present does not prove.
   stepLogTitle: ".step-log-title",
+  stepAgent: '[data-testid="step-agent"]',
+  stepAgentMismatch: '[data-testid="step-agent"][data-mismatch="true"]',
   stepLogEmpty: ".step-log-empty",
   legend: ".legend",
   stepCard: ".flow-card",

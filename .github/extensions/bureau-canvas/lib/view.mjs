@@ -15,7 +15,7 @@ export function configView(payload) {
   }
   const used = usedBy(config);
   view.repos = repoItems(config, used.repos);
-  view.roles = roleItems(config, used.roles);
+  view.roles = roleItems(config, used.roles, payload?.agents);
   view.assignments = assignmentItems(config);
   view.pipelines = pipelineItems(config, used.pipelines);
   view.orphans = orphanItems(view);
@@ -190,10 +190,11 @@ function repoItems(config, uses) {
   }));
 }
 
-function roleItems(config, uses) {
+function roleItems(config, uses, agents) {
   return entries(config.roles).map(([name, role]) => ({
     name,
     agent: role.agent,
+    resolvedAgent: agents?.[name]?.resolved ?? null,
     adapter: role.adapter,
     permissions: role.permissions ?? [],
     minTrust: role.min_trust,

@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 pub use error::Error;
 /// Metadata from a validated plugin package.
 pub use package::{InstallCommand, PackageInfo};
+pub use reference::{copilot_agent_name, plugin_agent_name};
 
 use reference::AgentReference;
 use settings::Settings;

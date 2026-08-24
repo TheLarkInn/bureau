@@ -66,12 +66,23 @@ test("config null yields empty views", () => {
     pipelines: [],
     orphans: [],
   });
+
   assert.deepEqual(pipelineView(payload, "missing"), {
     name: "missing",
     steps: [],
     terminals: [],
     edges: [],
   });
+});
+
+test("config roles carry the validator's resolved agent identity", async () => {
+  const payload = await fixture(committedUrl);
+  const role = configView(payload).roles.find((item) => item.name === "implementer");
+
+  assert.deepEqual(
+    [role.agent, role.resolvedAgent],
+    ["/bureau:implementer", "bureau:implementer"],
+  );
 });
 
 test("absent blocked outcome produces no control edge", async () => {

@@ -47,7 +47,7 @@ test("one edge rewire changes exactly one line", async () => {
   edge.target = "terminal:done";
   const rendered = render(view, parsed.doc, parsed.style);
 
-  assert.deepEqual(changedLines(text, rendered), [[33, "  on_failure: escalate", "  on_failure: done"]]);
+  assert.deepEqual(changedLines(text, rendered), [[72, "  on_failure: escalate", "  on_failure: done"]]);
 });
 
 test("comments and flow style survive", async () => {

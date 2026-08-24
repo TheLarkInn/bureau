@@ -1089,6 +1089,11 @@
       .step-log-head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
       .step-log-title { margin: 0; font-size: 1rem; font-weight: 700; line-height: 1.25rem; }
       .step-log-elapsed { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .step-agent { padding: 1px 7px; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; color: var(--text-color-muted, #656d76); font: var(--text-code-inline, 12px)/1.25 var(--font-mono, "SFMono-Regular", Consolas, monospace); }
+      .step-agent--mismatch { border-color: var(--outcome-failure, #cf222e); background: color-mix(in srgb, var(--outcome-failure, #cf222e) 8%, var(--background-color-default, #ffffff)); color: var(--outcome-failure, #cf222e); }
+      .agent-identities ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+      .agent-identities li { display: grid; gap: 2px; }
+      .agent-map { color: var(--text-color-muted, #656d76); overflow-wrap: anywhere; }
       .step-log-empty { margin: 0; color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
       .step-log-body { display: grid; gap: var(--space-2); max-height: 26rem; overflow: auto; }
 

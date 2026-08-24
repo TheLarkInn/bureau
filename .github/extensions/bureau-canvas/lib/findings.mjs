@@ -248,6 +248,7 @@ function validatedState(payload, fallbackDir, exitCode) {
     dir: payload.dir ?? fallbackDir,
     errors,
     config: payload.config ?? null,
+    agents: payload.agents ?? {},
     findings: errors.map(errorFinding),
     exitCode,
   };

@@ -48,6 +48,26 @@ async fn a_seen_item_is_released_without_a_run() {
 }
 
 #[tokio::test]
+async fn a_seen_item_does_not_consume_headroom() {
+    let limits = Limits {
+        max_concurrent: Some(1),
+        ..generous()
+    };
+    let world = World::new(&["1", "2"], "sleep 1", limits);
+    let hash = item("1").content_hash();
+    world
+        .store
+        .mark_seen(&hash, Disposition::Proposed)
+        .expect("mark_seen");
+    let started = world.pass().await;
+    let state = (started.len(), world.leased());
+    for run in started {
+        run.handle.await.expect("run joins");
+    }
+    assert_eq!(state, (1, vec!["2".to_owned()]));
+}
+
+#[tokio::test]
 async fn a_lost_cas_starts_nothing() {
     let world = World::new(&["1"], "true", generous());
     world.claim("1");

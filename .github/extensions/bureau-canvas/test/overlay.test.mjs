@@ -423,3 +423,22 @@ test("runs no pipeline can claim are counted, not discarded", () => {
     { owned: ["owned"], orphans: ["legacy"] },
   );
 });
+
+test("step start retains configured and resolved agent identity", () => {
+  const event = {
+    seq: 1,
+    at_ms: 1000,
+    kind: "step_started",
+    data: {
+      step: "implement",
+      role: "implementer",
+      configured_agent: "/bureau:implementer",
+      resolved_agent: "bureau:implementer",
+    },
+  };
+  const record = applyEvent(emptyOverlay(), event).steps.implement;
+  assert.deepEqual(
+    [record.role, record.configuredAgent, record.resolvedAgent],
+    ["implementer", "/bureau:implementer", "bureau:implementer"],
+  );
+});

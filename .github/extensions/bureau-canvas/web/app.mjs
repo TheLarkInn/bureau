@@ -1520,7 +1520,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
         }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
       ),
       // graph-overlays: a run's steps left output; design mode has no run.
-      active ? h(StepLog, stepLogProps(pipeline, active, selectedStep)) : null,
+      active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,
     ),
     h(SidePanel, { state, pipeline, name }),
   );
@@ -1546,14 +1546,16 @@ function MissingPipeline({ notice, name }) {
 }
 
 /** What the log panel needs: the focused step, its kind, record and output. */
-function stepLogProps(pipeline, active, selectedStep) {
+function stepLogProps(state, pipeline, active, selectedStep) {
   const overlay = active.decoration?.overlay ?? null;
   const step = focusStep(selectedStep, overlay);
   const layoutStep = (pipeline?.layout?.steps ?? []).find((item) => item.name === step);
+  const role = state.config?.view?.roles?.find((item) => item.name === overlay?.steps?.[step]?.role);
   return {
     step,
     kind: layoutStep?.kind ?? null,
     record: overlay?.steps?.[step] ?? null,
+    expectedAgent: role?.resolvedAgent ?? null,
     text: step ? stepOutput(active.events, step, active.until) : "",
   };
 }
@@ -1896,8 +1898,28 @@ function SidePanel({ state, pipeline, name }) {
     "aside",
     { className: "side-panel" },
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
+    h(AgentIdentities, { state, pipeline }),
     h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
+  );
+}
+
+function AgentIdentities({ state, pipeline }) {
+  const names = new Set((pipeline?.layout?.steps ?? []).map((step) => step.fields?.role).filter(Boolean));
+  const roles = (state.config?.view?.roles ?? []).filter((role) => names.has(role.name));
+  if (!roles.length) {
+    return null;
+  }
+  return h(
+    "section",
+    { className: "panel-section agent-identities" },
+    h("h3", {}, "Agent identities"),
+    h("ul", {}, roles.map((role) => h(
+      "li",
+      { key: role.name },
+      h("span", { className: "mono" }, role.name),
+      h("span", { className: "agent-map mono" }, `${role.agent} → ${role.resolvedAgent ?? "unresolved"}`),
+    ))),
   );
 }
 

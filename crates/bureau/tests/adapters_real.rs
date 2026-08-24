@@ -12,10 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use bureau::adapters::{AdapterKind, claude, copilot};
+use bureau::adapters::{AdapterKind, claude, copilot, result_from_spawn};
 use bureau::config::{Permission, Role, StepDef, StepKind};
 use bureau::contract::{SCHEMA_VERSION, StepRequest, Trust, WorkItem};
-use bureau::process::SpawnRequest;
+use bureau::process::{SpawnOutcome, SpawnRequest, SpawnResult};
 
 /// Joins argv for one-line comparisons (unit separator).
 const SEP: &str = "\u{1f}";
@@ -116,7 +116,7 @@ fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
         value_after(&req.argv, "--agent"),
         req.argv.len(),
     );
-    let expected = (Some(copilot::BINARY), json, "analyzer", 11);
+    let expected = (Some(copilot::BINARY), json, "no-such-plugin:analyzer", 11);
     assert_eq!(parts, expected);
 }
 
@@ -144,7 +144,10 @@ fn unresolvable_plugin_reference_passes_the_name_through() {
         copied.exists(),
         req.timeout,
     );
-    assert_eq!(seen, ("helper", false, copilot::DEFAULT_TIMEOUT));
+    assert_eq!(
+        seen,
+        ("plugin-zzz-absent:helper", false, copilot::DEFAULT_TIMEOUT)
+    );
 }
 
 #[test]
@@ -157,7 +160,24 @@ fn plugin_reference_uses_the_pre_activated_discovery_file() {
     let req = copilot_request(&role, &step(None), dir.path());
     let readback = std::fs::read_to_string(activated).expect("activated agent");
     let seen = (readback.as_str(), value_after(&req.argv, "--agent"));
-    assert_eq!(seen, (AGENT_BODY, "helper"));
+    assert_eq!(seen, (AGENT_BODY, "demo:helper"));
+}
+
+#[test]
+fn failed_process_reports_stdout_or_process_error() {
+    let result = |stdout: &[u8], error: Option<&str>| SpawnResult {
+        outcome: SpawnOutcome::SpawnFailed,
+        exit_code: None,
+        stdout: stdout.to_vec(),
+        stderr: Vec::new(),
+        duration: Duration::ZERO,
+        error: error.map(str::to_owned),
+    };
+    let messages = [
+        result_from_spawn(&result(b"No such agent: implementer", None)).message,
+        result_from_spawn(&result(b"", Some("signal 9"))).message,
+    ];
+    assert_eq!(messages, ["No such agent: implementer", "signal 9"]);
 }
 
 #[test]

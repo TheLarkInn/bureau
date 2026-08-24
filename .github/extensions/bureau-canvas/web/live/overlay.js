@@ -198,6 +198,9 @@ function stepStarted(overlay, event) {
       [step]: {
         outcome: null,
         state: STEP_RUNNING,
+        role: event.data?.role ?? null,
+        configuredAgent: event.data?.configured_agent ?? null,
+        resolvedAgent: event.data?.resolved_agent ?? null,
         attempts: (overlay.steps[step]?.attempts ?? 0) + 1,
         startedAt: eventMs(event),
       },

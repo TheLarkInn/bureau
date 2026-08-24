@@ -68,8 +68,10 @@ fn write(dir: &Path, name: &str, text: &str) {
 
 /// The committed pipeline's steps, in order. Named here rather than inline so
 /// the assertion below stays inside the function-length limit.
-const COMMITTED_STEPS: [&str; 6] = [
+const COMMITTED_STEPS: [&str; 8] = [
     "implement",
+    "lint",
+    "fix-lint",
     "verify",
     "review",
     "repair",
@@ -84,16 +86,30 @@ fn committed_config_json_contains_pipeline_steps_in_order() {
     let steps = value["config"]["pipelines"]["agent-eligible-pipeline"]["steps"]
         .as_array()
         .expect("steps array");
-    let names = step_names(steps);
     let got = (
         output.status.success(),
         stderr(&output),
         value["ok"].as_bool(),
-        names,
+        step_names(steps),
     );
     assert_eq!(
         got,
         (true, String::new(), Some(true), COMMITTED_STEPS.to_vec())
+    );
+}
+
+/// `bureau validate --json` is the Canvas's only source for the agent a role
+/// really invokes, so the report names both what config asked for and what the
+/// adapter resolves it to. A role whose plugin qualifier is dropped resolves to
+/// a different name, and the Canvas can only say so if both are reported.
+#[test]
+fn committed_config_json_reports_configured_and_resolved_agent() {
+    let value = json(&validate_json(&repo_root().join(".bureau")));
+    let agent = &value["agents"]["implementer"];
+
+    assert_eq!(
+        (text(&agent["configured"]), text(&agent["resolved"])),
+        ("/bureau:implementer", "bureau:implementer")
     );
 }
 

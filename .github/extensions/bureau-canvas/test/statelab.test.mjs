@@ -126,13 +126,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 470292479796,
       matrixStates: 204,
-      probes: 34,
-      states: 238,
-      transitions: 130,
-      entryTransitions: 96,
+      probes: 36,
+      states: 240,
+      transitions: 132,
+      entryTransitions: 98,
       returnTransitions: 34,
       roots: 142,
-      renders: 476,
+      renders: 480,
     },
   );
 });
@@ -584,7 +584,8 @@ test("the catch-all root category names a cause that really holds", () => {
   );
 });
 
-test("every scoping rule is held to account by a crossing probe that really breaks it", () => {  const probes = STATES.filter((state) => state.kind === "probe");
+test("every scoping rule is held to account by a crossing probe that really breaks it", () => {
+  const probes = STATES.filter((state) => state.kind === "probe");
   const crossings = probes.filter((state) => state.rule);
   const probed = new Set(crossings.map((state) => state.rule));
   assert.deepStrictEqual(

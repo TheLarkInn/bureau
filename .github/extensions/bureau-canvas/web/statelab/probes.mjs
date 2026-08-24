@@ -698,6 +698,44 @@ export const PROBES = [
     },
   }),
   sample({
+    id: "probe--step-agent-agrees",
+    covers: "a run whose invoked agent matches the validated runtime identity",
+    summary: "the run names the qualified agent it invoked without raising a discrepancy",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      ...runOps("live", "running"),
+      { op: "wait", selector: S.stepAgent },
+    ],
+    expect: {
+      shows: [S.stepAgent],
+      hides: [S.stepAgentMismatch],
+      copy: [{ selector: S.stepAgent, text: "agent bureau:implementer" }],
+    },
+  }),
+  sample({
+    id: "probe--step-agent-mismatch",
+    covers: "a run whose invoked agent lost its plugin qualifier",
+    summary: "the run names both the invoked and expected agent when they disagree",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      ...runOps("live", "paused"),
+      { op: "wait", selector: S.stepAgentMismatch },
+    ],
+    expect: {
+      shows: [S.stepAgent, S.stepAgentMismatch],
+      copy: [{
+        selector: S.stepAgentMismatch,
+        text: "invoked implementer; expected bureau:implementer from /bureau:implementer",
+      }],
+    },
+  }),
+  sample({
     id: "probe--run-activity-idle",
     covers: "an honest zero-run listing, distinct from a stopped or unreadable reconciler",
     summary: "no run is writing to this pipeline: Live explains that a reconcile process is not itself a run",
@@ -793,7 +831,8 @@ export const PROBES = [
       ],
       allowErrors: ["Failed to load resource", "503"],
     },
-  }),  sample({
+  }),
+  sample({
     id: "probe--run-activity-unavailable",
     covers: "a run listing failure, distinct from the honest zero-runs state",
     summary: "the run log cannot be read: Live says so and promises its automatic retry rather than reporting zero",

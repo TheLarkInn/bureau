@@ -64,7 +64,7 @@ fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
 }
 
 /// The agent name a path implies: file name minus discovery suffixes.
-fn agent_name(source: &Path) -> String {
+pub(super) fn agent_name(source: &Path) -> String {
     let file = source
         .file_name()
         .and_then(|n| n.to_str())

@@ -236,6 +236,7 @@ function resultFromPayload(payload, fallbackDir) {
         dir: payload.dir ?? fallbackDir,
         errors: payload.errors ?? [],
         config: payload.config ?? null,
+        agents: payload.agents ?? {},
         findings: payload.findings ?? [],
     };
 }
@@ -256,6 +257,7 @@ async function fallbackResult(dir, reason) {
         dir,
         errors: [],
         config: payload.config,
+        agents: payload.agents ?? {},
         findings: payload.findings ?? [],
         fixtureReason: reason.state,
         message: fallbackMessage(reason),
@@ -273,6 +275,7 @@ function payloadFromResult(result) {
         dir: result.dir,
         errors: result.errors ?? [],
         config: result.config ?? null,
+        agents: result.agents ?? {},
         findings: result.findings ?? [],
     };
 }

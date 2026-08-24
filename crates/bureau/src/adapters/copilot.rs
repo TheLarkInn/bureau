@@ -51,7 +51,7 @@ pub const BINARY: &str = "copilot";
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(real::DEFAULT_TIMEOUT_SECS);
 
 /// Copilot's agent discovery location inside a worktree.
-const DISCOVERY: real::Discovery = real::Discovery {
+pub(super) const DISCOVERY: real::Discovery = real::Discovery {
     dir: ".github/agents",
     suffix: ".agent.md",
 };
@@ -146,7 +146,7 @@ pub fn spawn_request(
     log: Option<SharedLog>,
 ) -> SpawnRequest {
     let json = request.to_json().unwrap_or_default();
-    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let agent = super::resolved_agent(role, &request.worktree);
     let found = real::scoped_credentials(&role.permissions, &real::FORGE_GRANTS, &CREDENTIAL_VARS);
     let (env, secrets) = real::child_env(found, secrets);
     SpawnRequest {

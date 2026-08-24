@@ -449,6 +449,25 @@ block, because reflowing a stack trace destroys it.
 Output events are not retained by the overlay reducer, which is why both mode
 hooks also hand the panel the raw events.
 
+### The agent a step really invoked
+
+A role names an agent in config (`/bureau:implementer`), but the name the
+adapter finally invokes is resolved, not copied: a plugin reference keeps its
+`plugin:agent` qualifier, while a path resolves to its file name. Those can
+disagree, and when they do the run did not do what the config says.
+
+So `step_started` carries the role, the configured agent and the resolved one,
+and the log head names the agent the step invoked. `bureau validate --json`
+reports the same pair per role under `agents`, which is where the side panel's
+**Agent identities** section and the head's expected value come from. When the
+two agree the head reads `agent bureau:implementer`; when they do not it names
+both — `invoked implementer; expected bureau:implementer from
+/bureau:implementer` — rather than silently showing whichever one it had.
+
+The canvas does not compute either name. Resolution lives in
+`crates/bureau/src/adapters`, and both the validator and the engine call it, so
+the identity the canvas shows is the identity the engine would use.
+
 ## Rules worth knowing before changing it
 
 - **The canvas never authors an error message.** It shows a `bureau validate`
