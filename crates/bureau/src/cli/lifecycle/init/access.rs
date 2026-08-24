@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use bureau::config::ForgeKind;
+use bureau::config::{CONFIG_CREDENTIAL, ForgeKind};
 use bureau::forge::Forge;
 use bureau::forge::ado::AdoForge;
 use bureau::forge::github::GitHubForge;
 use bureau::git::{Credential, credential_for};
 use bureau::process::Secret;
+
+use crate::cli::prepare::config_identity;
 
 pub(super) struct Access {
     pub(super) forge: Arc<dyn Forge>,
@@ -101,30 +103,33 @@ fn repo_name(kind: ForgeKind, remote: &str) -> anyhow::Result<String> {
     }
 }
 
-pub(super) fn forge_kind(remote: &str) -> ForgeKind {
-    if remote.contains("/_git/") {
-        ForgeKind::Ado
-    } else {
-        ForgeKind::Github
-    }
-}
-
-pub(super) fn resolve(settings: &bureau::setup::Settings) -> anyhow::Result<Access> {
+fn access(
+    settings: &bureau::setup::Settings,
+    kind: ForgeKind,
+    secret: Secret,
+) -> anyhow::Result<Access> {
     let remote = settings.config.remote();
-    let kind = forge_kind(remote);
-    let secret = bureau::credential::resolve(settings, "config")?;
-    let forge = forge(kind, remote, secret.clone())?;
     Ok(Access {
-        forge,
+        forge: forge(kind, remote, secret.clone())?,
         git: credential_for(kind, secret),
         repo: repo_name(kind, remote)?,
     })
 }
 
-pub(super) fn credential(settings: &bureau::setup::Settings) -> anyhow::Result<Option<Credential>> {
-    settings
-        .credentials
-        .contains_key("config")
-        .then(|| resolve(settings).map(|access| access.git))
-        .transpose()
+/// Access to the reviewed config repo, proved: init clones with this
+/// credential, pushes the proposal branch with it, and opens the config
+/// pull request as it, so a declared identity is checked before the
+/// first of those. Declaring none leaves those calls their own check.
+pub(super) async fn verified(settings: &bureau::setup::Settings) -> anyhow::Result<Access> {
+    let (kind, secret) = config_identity::verified_secret(settings).await?;
+    access(settings, kind, secret)
+}
+
+pub(super) async fn credential(
+    settings: &bureau::setup::Settings,
+) -> anyhow::Result<Option<Credential>> {
+    if !settings.credentials.contains_key(CONFIG_CREDENTIAL) {
+        return Ok(None);
+    }
+    Ok(Some(verified(settings).await?.git))
 }

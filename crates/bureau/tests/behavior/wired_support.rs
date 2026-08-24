@@ -203,14 +203,11 @@ impl World {
     /// Assembles the reconciler over the loaded config.
     fn from_config(dir: TestDir, config: Config) -> Self {
         let forge = Arc::new(FakeForge::new(vec![item()]));
-        let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
-        let engine = Arc::new(Engine::new(
-            dir.path().join("runs"),
-            dir.path().join("cache"),
-        ));
+        let runs = Engine::new(dir.path().join("runs"), dir.path().join("cache"));
+        let engine = Arc::new(runs);
         let reconciler = Reconciler {
             config,
-            state: store,
+            state: Arc::new(Store::open_in_memory().expect("in-memory store")),
             forges: BTreeMap::from([(
                 "fix-failing-test".to_owned(),
                 forge.clone() as Arc<dyn Forge>,
@@ -218,6 +215,8 @@ impl World {
             label_forges: BTreeMap::new(),
             engine: engine.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         };

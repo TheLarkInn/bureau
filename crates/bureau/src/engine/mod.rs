@@ -36,7 +36,9 @@ mod edge;
 mod execute;
 mod finalize;
 mod gitcmd;
+mod identity;
 mod machine;
+mod open;
 mod panic;
 mod plugins;
 mod recovery;
@@ -79,6 +81,13 @@ pub struct RunPlan {
     pub forge: Arc<dyn Forge>,
     /// Credentials keyed by registry credential name, resolved pre-spawn.
     pub credentials: BTreeMap<String, Secret>,
+    /// Identity each credential must authenticate as, declared in local
+    /// settings. A reference absent here is verified as valid only.
+    pub identities: BTreeMap<String, String>,
+    /// The forge clients authorized to verify each credential: one per
+    /// host a registered repo naming it points at. Runtime only, and
+    /// never a host no repo in `repos` named.
+    pub identity_forges: crate::forge::identity::Authorizations,
     /// Exact committed config source for this run.
     pub config_source: Option<crate::runlog::ConfigSource>,
     /// Exact plugin snapshots keyed by plugin name.
@@ -107,12 +116,15 @@ impl RunPlan {
     }
 }
 
-/// Rehydrates a durable snapshot with current secret values and forge client.
+/// Rehydrates a durable snapshot with current secret values, forge
+/// client, and the clients authorized to verify each credential.
 #[must_use]
 pub fn rehydrate(
     snapshot: RunSnapshot,
     forge: Arc<dyn Forge>,
     credentials: BTreeMap<String, Secret>,
+    identities: BTreeMap<String, String>,
+    identity_forges: crate::forge::identity::Authorizations,
 ) -> RunPlan {
     RunPlan {
         run_id: snapshot.run_id,
@@ -123,6 +135,8 @@ pub fn rehydrate(
         item: snapshot.item,
         forge,
         credentials,
+        identities,
+        identity_forges,
         config_source: snapshot.config_source,
         plugin_sources: snapshot.plugin_sources,
         direct_agents: snapshot.direct_agents,

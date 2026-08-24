@@ -3,6 +3,7 @@
 #[path = "engine/rig.rs"]
 mod rig;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,7 +35,7 @@ fn run_snapshot_round_trips_through_the_started_event() {
     let mut plan = rig.plan(Vec::new());
     plan.direct_agents
         .insert("worker".to_owned(), b"agent".to_vec());
-    let value = run_started_snapshot(&plan.snapshot());
+    let value = run_started_snapshot(&plan.snapshot(), &BTreeMap::new());
     let decoded: RunStartedData = serde_json::from_value(value).expect("snapshot decodes");
     let snapshot = decoded.snapshot.expect("snapshot");
     assert_eq!(
@@ -46,7 +47,7 @@ fn run_snapshot_round_trips_through_the_started_event() {
 #[test]
 fn old_snapshot_without_terminal_labels_still_decodes() {
     let rig = rig::Rig::new();
-    let mut value = run_started_snapshot(&rig.plan(Vec::new()).snapshot());
+    let mut value = run_started_snapshot(&rig.plan(Vec::new()).snapshot(), &BTreeMap::new());
     let work = &mut value["snapshot"]["assignment"]["work"];
     work.as_object_mut()
         .expect("work object")
@@ -70,13 +71,18 @@ fn engine_discovers_and_rehydrates_unfinished_snapshot() {
     let mut log = RunLog::create(&engine.runs_dir, &plan.run_id, &[]).expect("log");
     log.append(
         EventKind::RunStarted,
-        run_started_snapshot(&plan.snapshot()),
+        run_started_snapshot(&plan.snapshot(), &BTreeMap::new()),
     )
     .expect("started");
     log.close().expect("close");
     let snapshot = engine.unfinished().expect("unfinished").pop().expect("one");
-    let restored =
-        bureau::engine::rehydrate(snapshot, plan.forge.clone(), plan.credentials.clone());
+    let restored = bureau::engine::rehydrate(
+        snapshot,
+        plan.forge.clone(),
+        plan.credentials.clone(),
+        BTreeMap::new(),
+        plan.identity_forges.clone(),
+    );
     assert_eq!(
         (restored.run_id, restored.pipeline.name),
         (plan.run_id, plan.pipeline.name)
@@ -231,7 +237,7 @@ fn write_finished_first(rig: &rig::Rig, plan: &RunPlan) {
     let mut log = RunLog::create(&engine.runs_dir, &plan.run_id, &[]).expect("log");
     log.append(
         EventKind::RunStarted,
-        run_started_snapshot(&plan.snapshot()),
+        run_started_snapshot(&plan.snapshot(), &BTreeMap::new()),
     )
     .expect("started");
     log.append(
@@ -256,7 +262,7 @@ fn write_recovery_history(engine: &bureau::engine::Engine, plan: &RunPlan, pr: &
     let mut log = RunLog::create(&engine.runs_dir, &plan.run_id, &[]).expect("log");
     log.append(
         EventKind::RunStarted,
-        run_started_snapshot(&plan.snapshot()),
+        run_started_snapshot(&plan.snapshot(), &BTreeMap::new()),
     )
     .expect("started");
     log.append(EventKind::StepStarted, bureau::runlog::step_started("work"))

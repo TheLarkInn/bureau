@@ -74,6 +74,39 @@ pub enum CredentialSource {
     },
 }
 
+/// A declared credential: where its value resolves from, and the forge
+/// identity it must authenticate as.
+///
+/// Omitting `identity` verifies that the value works and stays
+/// permissive about the account name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credential {
+    /// Secret-free value reference.
+    #[serde(flatten)]
+    pub source: CredentialSource,
+    /// Forge account this credential must authenticate as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+}
+
+impl Credential {
+    /// A credential resolved from `source` with no declared identity.
+    #[must_use]
+    pub const fn new(source: CredentialSource) -> Self {
+        Self {
+            source,
+            identity: None,
+        }
+    }
+
+    /// The same credential, declared to authenticate as `identity`.
+    #[must_use]
+    pub fn as_identity(mut self, identity: &str) -> Self {
+        self.identity = Some(identity.to_owned());
+        self
+    }
+}
+
 /// User-global plugin behavior.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,13 +130,36 @@ pub struct Settings {
     /// Committed configuration source.
     pub config: ConfigSource,
     /// Resolution source for each credential reference.
-    pub credentials: BTreeMap<String, CredentialSource>,
+    pub credentials: BTreeMap<String, Credential>,
     /// User-global plugin choice.
     #[serde(default)]
     pub plugin: PluginSettings,
     /// Optional migration source.
     #[serde(default)]
     pub migration: MigrationSettings,
+}
+
+impl Settings {
+    /// The identity one declared credential must authenticate as, when
+    /// its declaration names one.
+    #[must_use]
+    pub fn declared_identity(&self, reference: &str) -> Option<&str> {
+        self.credentials.get(reference)?.identity.as_deref()
+    }
+
+    /// The identity each declared credential must authenticate as. A
+    /// credential without one is verified as usable and matched against
+    /// no name: omission stays permissive.
+    #[must_use]
+    pub fn declared_identities(&self) -> BTreeMap<String, String> {
+        self.credentials
+            .keys()
+            .filter_map(|reference| {
+                let identity = self.declared_identity(reference)?;
+                Some((reference.clone(), identity.to_owned()))
+            })
+            .collect()
+    }
 }
 
 /// How the first pipeline is obtained.

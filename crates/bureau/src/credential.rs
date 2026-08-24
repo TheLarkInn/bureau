@@ -58,11 +58,11 @@ fn file(path: &Path, reference: &str) -> Result<Secret, Error> {
 /// # Errors
 /// Rejects undeclared, missing, empty, symlinked, or unreadable sources.
 pub fn resolve(settings: &Settings, reference: &str) -> Result<Secret, Error> {
-    let source = settings
+    let declared = settings
         .credentials
         .get(reference)
         .ok_or_else(|| Error::Undeclared(reference.to_owned()))?;
-    match source {
+    match &declared.source {
         CredentialSource::Environment { variable } => environment(variable, reference),
         CredentialSource::Directory { path } => file(&path.join(reference), reference),
         CredentialSource::File { path } => file(path, reference),

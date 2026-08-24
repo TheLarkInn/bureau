@@ -65,7 +65,7 @@ fn doctor_machine_rejects_out_of_order_and_incomplete_input() {
     assert_eq!(
         (
             matches!(wrong, Err(doctor::Error::UnexpectedArea { .. })),
-            matches!(incomplete, Err(doctor::Error::Incomplete(7))),
+            matches!(incomplete, Err(doctor::Error::Incomplete(8))),
         ),
         (true, true)
     );

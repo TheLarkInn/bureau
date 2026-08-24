@@ -59,7 +59,7 @@ fn credential_resolves(
     settings
         .credentials
         .get(name)
-        .is_some_and(|source| source_resolves(source, name, environment_names))
+        .is_some_and(|declared| source_resolves(&declared.source, name, environment_names))
 }
 
 fn credential_references(
@@ -202,7 +202,7 @@ impl LocalEffects {
         let references = credential_references(config.as_ref(), settings);
         let unresolved: Vec<_> = references
             .iter()
-            .filter(|name| !credential_resolves(name, settings, &self.environment_names))
+            .filter(|name| !credential_resolves(name, settings, &self.system.environment_names))
             .cloned()
             .collect();
         Ok(credential_observation(

@@ -246,6 +246,8 @@ impl Rig {
             item: item(),
             forge: Arc::new(FakeForge::new(vec![item()])),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),

@@ -5,8 +5,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use bureau_lifecycle::setup::{
-    ConfigSource, CredentialSource, FlowError, MigrationEffects, MigrationSettings, PluginEffects,
-    PluginSettings, Settings, SettingsEffects, SetupFlow, SetupState,
+    ConfigSource, Credential, CredentialSource, FlowError, MigrationEffects, MigrationSettings,
+    PluginEffects, PluginSettings, Settings, SettingsEffects, SetupFlow, SetupState,
 };
 
 #[derive(Default)]
@@ -63,25 +63,26 @@ fn config_source(single: bool) -> ConfigSource {
     }
 }
 
-fn credential_sources() -> BTreeMap<String, CredentialSource> {
+fn credential_sources() -> BTreeMap<String, Credential> {
     BTreeMap::from([
         (
             "environment".to_owned(),
-            CredentialSource::Environment {
+            Credential::new(CredentialSource::Environment {
                 variable: "BUREAU_CREDENTIAL_GITHUB".to_owned(),
-            },
+            })
+            .as_identity("bureau-bot"),
         ),
         (
             "directory".to_owned(),
-            CredentialSource::Directory {
+            Credential::new(CredentialSource::Directory {
                 path: PathBuf::from("/secrets"),
-            },
+            }),
         ),
         (
             "file".to_owned(),
-            CredentialSource::File {
+            Credential::new(CredentialSource::File {
                 path: PathBuf::from("/run/credentials/github"),
-            },
+            }),
         ),
     ])
 }

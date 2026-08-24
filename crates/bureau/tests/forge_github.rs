@@ -246,6 +246,11 @@ async fn malformed_json_becomes_error_parse() {
     assert!(matches!(err, Error::Parse(_)), "got {err:?}");
 }
 
+/// The identity call and its installation fallback live beside their
+/// own fixtures.
+#[path = "forge_github/identity.rs"]
+mod identity;
+
 #[tokio::test]
 async fn query_follows_next_links() {
     let page1 = r#"{"items":[{"number":1,"repository_url":"https://api.github.com/repos/o/r","title":"A","body":null,"html_url":"https://x/1","labels":[],"author_association":"NONE"}]}"#;

@@ -8,12 +8,14 @@
 pub mod ado;
 pub mod fake;
 pub mod github;
+pub mod identity;
 pub(crate) mod repository;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::contract::Trust;
+use crate::process::Secret;
 
 /// Which forge hosts a repo or work source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +146,31 @@ pub enum PrStatus {
     },
 }
 
+/// Who a resolved credential authenticates as: the GitHub login or the
+/// ADO account the forge itself reports, never a name the runner invents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Identity {
+    /// The forge's own account name for the credential.
+    pub account: String,
+}
+
+impl Identity {
+    /// The identity a forge reported for one credential.
+    #[must_use]
+    pub fn new(account: impl Into<String>) -> Self {
+        Self {
+            account: account.into(),
+        }
+    }
+
+    /// Whether the forge's account is the declared one. Forge account
+    /// names are case-insensitive, so the comparison is too.
+    #[must_use]
+    pub fn is(&self, declared: &str) -> bool {
+        self.account.trim().eq_ignore_ascii_case(declared.trim())
+    }
+}
+
 fn retry_suffix(seconds: Option<u64>) -> String {
     seconds.map_or_else(String::new, |value| format!("; retry after {value}s"))
 }
@@ -187,6 +214,13 @@ impl Error {
 /// runner never parses it (WIQL for ADO, search syntax for GitHub).
 #[async_trait]
 pub trait Forge: Send + Sync {
+    /// What this forge reports about `credential`: the account it
+    /// authenticates as, an acceptance it will not name, or nothing at
+    /// all (the offline fake, unless a test opts in). The credential is
+    /// passed in, so one client verifies every credential a repo on its
+    /// own host declares (DESIGN.md section 7, layer 0).
+    async fn identity(&self, credential: &Secret) -> Result<identity::Reported, Error>;
+
     /// Work items matching the forge-native `filter` at `source`.
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error>;
 

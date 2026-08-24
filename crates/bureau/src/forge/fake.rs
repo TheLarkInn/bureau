@@ -11,7 +11,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
 
-use super::{Dependency, Error, Forge, Item, LabelForge, Pr, PrRequest, PrStatus};
+use super::{Dependency, Error, Forge, Identity, Item, LabelForge, Pr, PrRequest, PrStatus};
+use crate::process::Secret;
 
 /// Lock that survives a poisoned mutex: a panicking test must not cascade
 /// into misleading secondary failures.
@@ -50,6 +51,9 @@ pub struct FakeForge {
     labels: Mutex<BTreeMap<String, Vec<String>>>,
     dependencies: Mutex<BTreeMap<String, Vec<Dependency>>>,
     label_failure: Mutex<Option<String>>,
+    identity: Mutex<Option<Result<Identity, String>>>,
+    unnamed: AtomicBool,
+    identified: Mutex<Vec<Secret>>,
     rate_limit_once: AtomicBool,
     next_pr_number: AtomicU64,
 }
@@ -105,10 +109,63 @@ impl FakeForge {
     pub fn rate_limit_next_label_update(&self) {
         self.rate_limit_once.store(true, Ordering::Relaxed);
     }
+
+    /// Opts this fake into identity verification, answering with
+    /// `account`. Without this call the fake reports no identity, so
+    /// the offline suite never verifies one (DESIGN.md section 12).
+    pub fn verify_identity_as(&self, account: &str) {
+        *lock(&self.identity) = Some(Ok(Identity::new(account)));
+    }
+
+    /// Opts in with a rejection instead: the forge refuses the value,
+    /// as it does for an invalid or expired credential.
+    pub fn reject_identity(&self, message: &str) {
+        *lock(&self.identity) = Some(Err(message.to_owned()));
+    }
+
+    /// Opts in as a forge that accepts the value but names no account
+    /// for it, the way GitHub answers for an installation token.
+    pub fn accept_identity_unnamed(&self) {
+        self.unnamed.store(true, Ordering::Relaxed);
+    }
+
+    /// Every credential this forge was asked to identify, in order.
+    /// Tests read it to prove a value only ever reached a host one of
+    /// its own repos names; the values stay wrapped, so neither this
+    /// list nor `{:?}` on the forge can print one.
+    #[must_use]
+    pub fn identified(&self) -> Vec<Secret> {
+        lock(&self.identified).clone()
+    }
+
+    /// What an un-opted-in fake reports: nothing, unless a test asked
+    /// for a nameless acceptance.
+    fn unnamed_or_silent(&self) -> super::identity::Reported {
+        if self.unnamed.load(Ordering::Relaxed) {
+            super::identity::Reported::Unnamed
+        } else {
+            super::identity::Reported::Silent
+        }
+    }
 }
 
 #[async_trait]
 impl Forge for FakeForge {
+    /// Offline by default: nothing reported until a test opts in, so no
+    /// run and no `doctor` pass verifies an identity against this forge.
+    async fn identity(&self, credential: &Secret) -> Result<super::identity::Reported, Error> {
+        lock(&self.identified).push(credential.clone());
+        let configured = lock(&self.identity).clone();
+        match configured {
+            None => Ok(self.unnamed_or_silent()),
+            Some(Ok(identity)) => Ok(super::identity::Reported::Account(identity)),
+            Some(Err(message)) => Err(Error::Api {
+                status: 401,
+                message,
+            }),
+        }
+    }
+
     async fn query(&self, _source: &str, _filter: &str) -> Result<Vec<Item>, Error> {
         Ok(lock(&self.items).clone())
     }

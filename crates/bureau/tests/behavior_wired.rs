@@ -95,7 +95,13 @@ async fn check_idempotent_rerun(world: &World, dir: &std::path::Path) {
         .snapshot
         .expect("snapshot");
     let credentials = world.reconciler.credentials.clone();
-    let plan = engine::rehydrate(snapshot, world.forge.clone(), credentials);
+    let plan = engine::rehydrate(
+        snapshot,
+        world.forge.clone(),
+        credentials,
+        std::collections::BTreeMap::new(),
+        std::collections::BTreeMap::new(),
+    );
     let second = world.engine.run(&plan).await;
     let after = runlog::read_events(dir).expect("events").len();
     assert_eq!(

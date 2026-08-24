@@ -12,6 +12,8 @@ pub enum Area {
     Repositories,
     /// Credential reference names and whether each resolves.
     CredentialReferences,
+    /// The forge identity each credential authenticates as.
+    CredentialIdentity,
     /// Configured adapter binaries and local usability.
     Adapters,
     /// Plugin resolution, activation recovery, and MCP availability.
@@ -22,11 +24,12 @@ pub enum Area {
 
 impl Area {
     /// Every required check in deterministic display order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::LocalState,
         Self::ConfigSource,
         Self::Repositories,
         Self::CredentialReferences,
+        Self::CredentialIdentity,
         Self::Adapters,
         Self::PluginsAndMcp,
         Self::RecoveryState,
@@ -40,6 +43,7 @@ impl Area {
             Self::ConfigSource => "config source",
             Self::Repositories => "repositories",
             Self::CredentialReferences => "credential references",
+            Self::CredentialIdentity => "credential identity",
             Self::Adapters => "adapters",
             Self::PluginsAndMcp => "plugins/MCP",
             Self::RecoveryState => "recovery state",

@@ -4,6 +4,10 @@ use std::path::Path;
 
 use anyhow::Context as _;
 
+use bureau::config::CONFIG_CREDENTIAL;
+
+use crate::cli::prepare::config_identity;
+
 pub(super) struct Loaded {
     pub(super) config: bureau::config::Config,
     pub(super) settings: bureau::setup::Settings,
@@ -11,28 +15,22 @@ pub(super) struct Loaded {
     pub(super) direct_agents: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
-fn infer_forge(remote: &str) -> bureau::config::ForgeKind {
-    if remote.contains("dev.azure.com") || remote.contains("/_git/") {
-        bureau::config::ForgeKind::Ado
-    } else {
-        bureau::config::ForgeKind::Github
-    }
-}
-
-fn config_credential(
+/// The reserved config credential, resolved once and — when it declares
+/// an identity — proved to be that account before the fetch it signs
+/// carries it anywhere.
+async fn config_credential(
     settings: &bureau::setup::Settings,
 ) -> anyhow::Result<Option<bureau::git::Credential>> {
-    let Some(_) = settings.credentials.get("config") else {
+    if !settings.credentials.contains_key(CONFIG_CREDENTIAL) {
         return Ok(None);
-    };
-    let secret = bureau::credential::resolve(settings, "config")?;
-    let forge = infer_forge(settings.config.remote());
+    }
+    let (forge, secret) = config_identity::verified_secret(settings).await?;
     Ok(Some(bureau::git::credential_for(forge, secret)))
 }
 
 pub(super) async fn load(settings_path: &Path, cache: &Path) -> anyhow::Result<Loaded> {
     let settings = bureau::setup::load_settings(settings_path).context("loading settings")?;
-    let credential = config_credential(&settings)?;
+    let credential = config_credential(&settings).await?;
     let source = &settings.config;
     let git = bureau::config::GitSource::new(
         source.remote().to_owned(),

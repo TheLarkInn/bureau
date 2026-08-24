@@ -104,6 +104,7 @@ credentials:
   github-main:
     source: environment        # read the value from one environment variable
     variable: GH_TOKEN
+    identity: bureau-bot       # optional: the account it must authenticate as
   ado-main:
     source: file               # read the value from one exact file
     path: /run/secrets/ado-pat
@@ -115,6 +116,40 @@ credentials:
 Values are injected into step environments scoped by the role's permissions
 and are scrubbed from everything written to the run log. A step missing a
 required credential fails *before* spawn, naming the reference.
+
+### Identity, verified before the first spawn
+
+Presence is not correctness. Before a run spawns anything, every credential
+its repos require is checked against the forge itself — and only against a
+host one of those repos points at, so a context repo's Azure DevOps or GitHub
+Enterprise value never reaches the work forge:
+
+- a value the forge refuses fails the run as **invalid or expired**;
+- a value that authenticates as another account fails it as a **wrong
+  identity**, naming the reference, the declared identity, and the observed
+  one — never the value;
+- a credential with no `identity` is verified as usable and matched against
+  no name, because omission stays permissive;
+- a credential no registered repo references fails closed when it declares an
+  `identity`, because no host is authorized to answer for it.
+
+A GitHub App installation token is a special case GitHub itself creates: `GET
+/user` answers 403 for one, so a 403 is settled by a read-only installation
+call. Confirmed, the value is valid but has no account name of its own — enough
+when no `identity` is declared, never enough to satisfy one. Unconfirmed, the
+credential is reported as unverifiable, never as expired.
+
+The check runs once per run, not once per step, and the verified identity is
+recorded in `run_started` and pinned there: changing the underlying source
+mid-run cannot change the identity the run is already using. A resumed run
+re-resolves its credentials and re-checks them against that pinned identity,
+so a rotated value that now belongs to another account aborts the resume
+before its next step. `bureau doctor` performs the same check read-only and
+reports one line per credential; `bureau validate` reports an `identity`
+declared for a credential no repo references — except the reserved `config`
+reference, which the runner uses to clone the config repo itself. Under the
+`fake` forge nothing is verified unless a test opts in, so the offline suite
+stays offline.
 
 ### No token in git, no clicking
 

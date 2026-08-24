@@ -15,8 +15,8 @@ pub(super) async fn init(from: &Path) -> anyhow::Result<i32> {
     init::run(from).await
 }
 
-pub(super) fn doctor(json: bool) -> anyhow::Result<i32> {
-    doctor::run(json)
+pub(super) async fn doctor(json: bool) -> anyhow::Result<i32> {
+    doctor::run(json).await
 }
 
 pub(super) fn repair(clear_checkout_cache: bool, clear_config_cache: bool) -> anyhow::Result<i32> {

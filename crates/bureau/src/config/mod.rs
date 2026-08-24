@@ -5,17 +5,21 @@
 //! authorization model. Loading accumulates every error found into one
 //! `Vec`.
 
+mod config_remote;
 mod files;
 mod label_rule;
 mod pipeline;
+mod repo_host;
 mod source;
 mod source_tree;
 mod validate;
 mod validate_concurrent;
+mod validate_identity;
 mod validate_label_rule;
 mod validate_pipeline;
 
 pub use crate::forge::ForgeKind;
+pub use config_remote::{config_forge, config_repo};
 pub use files::{
     Access, AdapterKind, Assignment, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };
@@ -23,6 +27,7 @@ pub use label_rule::{LabelRule, LabelRuleCondition, LabelRuleLimits, LabelRuleWo
 pub use pipeline::{Completion, Pipeline, StepDef, StepKind, TERMINALS};
 pub use source::GitSource;
 pub use validate::{validate, validate_pipelines};
+pub use validate_identity::{CONFIG_CREDENTIAL, validate_identities};
 
 /// A validated, activated configuration source.
 pub type ActivatedConfig = source::Activated;

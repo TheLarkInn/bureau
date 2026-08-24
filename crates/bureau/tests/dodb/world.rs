@@ -42,16 +42,16 @@ impl World {
         let items = ids.iter().map(|id| fixtures::item(id)).collect();
         let forge = Arc::new(FakeForge::new(items));
         let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+        let engine = Engine::new(dir.path().join("runs"), dir.path().join("cache"));
         let reconciler = Arc::new(Reconciler {
             config: fixtures::config(&url, run, limits),
             state: store.clone(),
             forges: BTreeMap::from([(ASSIGNMENT.to_owned(), forge.clone() as Arc<dyn Forge>)]),
             label_forges: BTreeMap::new(),
-            engine: Arc::new(Engine::new(
-                dir.path().join("runs"),
-                dir.path().join("cache"),
-            )),
+            engine: Arc::new(engine),
             credentials: credentials(),
+            identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });
@@ -153,6 +153,8 @@ impl EngineRig {
             item: fixtures::item("42"),
             forge: self.forge.clone(),
             credentials,
+            identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),

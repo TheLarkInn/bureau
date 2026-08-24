@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use daemon::Daemon;
 
+pub use args::Args;
 use args::ResolvedArgs;
-pub use args::{Args, ForgeArg};
 
 enum Cycle {
     Continue,
@@ -148,7 +148,7 @@ pub(super) async fn run(args: Args) -> anyhow::Result<i32> {
     let args = args.resolve()?;
     let interval = parse_interval(&args.interval)?;
     let once = args.now;
-    let daemon = daemon::new(&args)?;
+    let daemon = daemon::new(&args).await?;
     let signals = active::Signals::new()?;
     let started = startup(daemon, signals, once).await?;
     continue_from(started, interval).await

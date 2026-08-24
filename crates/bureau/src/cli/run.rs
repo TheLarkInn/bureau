@@ -24,6 +24,7 @@ struct Prepared {
     forge: Arc<dyn Forge>,
     item: Item,
     credentials: BTreeMap<String, Secret>,
+    identities: BTreeMap<String, String>,
 }
 
 /// The one assignment bound to `pipeline`; v0 runs exactly one, so zero
@@ -116,6 +117,7 @@ async fn prepare_execution(
         forge,
         item,
         credentials,
+        identities: settings.declared_identities(),
     }))
 }
 
@@ -151,10 +153,10 @@ fn plan(
     config: &Config,
     assignment: &Assignment,
     item: Item,
-    forge: Arc<dyn Forge>,
-    credentials: BTreeMap<String, Secret>,
+    prepared: Prepared,
     run_id: String,
 ) -> RunPlan {
+    let repos = prepare::plan_repos(config, assignment);
     RunPlan {
         run_id,
         assignment: assignment.clone(),
@@ -164,10 +166,12 @@ fn plan(
             .expect("config validation guarantees the pipeline")
             .clone(),
         roles: config.roles.clone(),
-        repos: prepare::plan_repos(config, assignment),
         item,
-        forge,
-        credentials,
+        forge: prepared.forge,
+        identity_forges: prepare::authorizations(&repos, &prepared.credentials),
+        credentials: prepared.credentials,
+        identities: prepared.identities,
+        repos,
         config_source: None,
         plugin_sources: BTreeMap::new(),
         direct_agents: BTreeMap::new(),
@@ -231,14 +235,8 @@ async fn execute(
     let Some(owner) = claim(store.clone(), assignment, &prepared.item, &run_id)? else {
         return Ok(1);
     };
-    let mut plan = plan(
-        &loaded.config,
-        assignment,
-        prepared.item,
-        prepared.forge,
-        prepared.credentials,
-        run_id,
-    );
+    let item = prepared.item.clone();
+    let mut plan = plan(&loaded.config, assignment, item, prepared, run_id);
     plan.config_source = Some(loaded.source.clone());
     plan.direct_agents.clone_from(&loaded.direct_agents);
     plan.lease = Some(owner);

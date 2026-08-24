@@ -101,7 +101,7 @@ fn doctor_json_is_read_only_and_structured() {
     let home = TestDir::new();
     let output = bureau(&home.0, &["doctor", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
-    assert_eq!(value["diagnostics"].as_array().map(Vec::len), Some(7));
+    assert_eq!(value["diagnostics"].as_array().map(Vec::len), Some(8));
 }
 
 #[test]

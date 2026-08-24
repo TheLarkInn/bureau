@@ -3,10 +3,9 @@ use std::collections::BTreeMap;
 use bureau::runlog::RunStatus;
 use bureau::setup::{Outcome, OutcomeSummary, RunSummary, Settings, ValidatedConfig};
 
-use crate::cli::reconcile::{self, Args, ForgeArg};
+use crate::cli::reconcile::{self, Args};
 
 use super::super::migrate;
-use super::access;
 use super::files::Temporary;
 
 struct DurablePaths {
@@ -30,13 +29,6 @@ fn durable_paths(
     )
 }
 
-fn forge_arg(settings: &Settings) -> ForgeArg {
-    match access::forge_kind(settings.config.remote()) {
-        bureau::config::ForgeKind::Github => ForgeArg::Github,
-        bureau::config::ForgeKind::Ado => ForgeArg::Ado,
-    }
-}
-
 fn arguments(
     layout: &bureau::home::Layout,
     settings: &Settings,
@@ -53,9 +45,9 @@ fn arguments(
         config_subdir: Some(config.source.subdirectory().to_path_buf()),
         config_credential: settings
             .credentials
-            .contains_key("config")
-            .then(|| "config".into()),
-        config_forge: forge_arg(settings),
+            .contains_key(bureau::config::CONFIG_CREDENTIAL)
+            .then(|| bureau::config::CONFIG_CREDENTIAL.into()),
+        config_forge: None,
         config_cache: Some(layout.config_cache().to_path_buf()),
         runs: Some(durable.runs.clone()),
         state: Some(durable.state.clone()),

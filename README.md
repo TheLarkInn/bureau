@@ -92,6 +92,25 @@ git. `settings.yaml` declares exactly where each reference resolves:
 - one exact file; or
 - one credential directory containing a file named after the reference.
 
+A credential may also declare the forge `identity` it must authenticate
+as. Before a run spawns anything, each credential its repos require is
+checked against the forge a repo naming that credential points at — and
+never against any other host: a refused value fails the run as invalid or
+expired, and a value belonging to another account fails it as a wrong
+identity, naming the reference and both identities. Declaring no
+`identity` verifies the value and matches it against no name. A GitHub
+App installation token can be checked for validity but carries no account
+name, so it satisfies no declared `identity`. The result is pinned in the
+run log, and a resumed run re-checks its freshly resolved credentials
+against that pinned identity, so a value rotated mid-run aborts the
+resume rather than continue as somebody else.
+
+The reserved `config` credential — the one the runner clones the reviewed
+config repo with — is checked the same way, against the forge the
+configured config remote points at, before that clone happens and so
+before anything can run from it. `bureau init` checks it before it
+pushes the config branch or opens the pull request as that account.
+
 Values are scrubbed from everything written to the run log.
 
 ## Inspect and control runs

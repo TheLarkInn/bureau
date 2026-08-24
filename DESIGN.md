@@ -485,6 +485,30 @@ Requirements, all testable with `/bin/sh` and no model:
   setting a sentinel var in the test process and asserting the child cannot see it.
 - A missing required credential fails **before spawn**, with the credential name in
   the error.
+- **A resolved forge credential is verified before spawn**, once per run, and only
+  against a host one of the run's own repos names: the client for a repo that
+  references the credential answers for it, so a context repo's Azure DevOps or
+  Enterprise value never travels to the work forge, and a reference no registered repo
+  names fails closed instead of being checked somewhere unauthorized. A refused value
+  fails as "invalid or expired", and an account other than the one the credential's
+  optional `identity` declares fails as a wrong identity, naming the reference and both
+  identities. The verified identity is recorded in `run_started` and pinned for the run;
+  a resumed run re-resolves its credentials and re-checks them against that pinned
+  identity, so a value rotated to another account aborts the resume before its next
+  step. GitHub answers `GET /user` with 403 for a valid GitHub App installation token,
+  so a 403 is settled by one read-only installation call: confirmed, the value is valid
+  but carries no account name and therefore satisfies no declared `identity`;
+  unconfirmed, it is unverifiable rather than expired. No credential value appears in
+  any of those messages.
+- **The reserved `config` credential is verified before the config is fetched.** No
+  registry entry is required for it — the runner clones the reviewed config repo with
+  it before any config is loaded — so the remote in `settings.config` is the host that
+  answers for it there. A declared `identity` is checked against that host before the
+  fetch, and therefore before any run spawns; the reconcile daemon checks it once at
+  startup rather than once per pass, and `init` checks it before it clones, pushes,
+  or opens the config pull request as that account. A registered repo naming the same
+  reference still authorizes its own host for a run's check, as any repo does.
+  Declaring no `identity` leaves the fetch its own validity check.
 - **Timeout hard-kills the process group**, so orphaned children die too. Use
   `std::os::unix::process::CommandExt::process_group(0)` at spawn, then signal the
   negated pgid on timeout. Killing only the direct child leaves grandchildren alive —
@@ -1159,8 +1183,23 @@ fixed or AI-authored first pipeline. It previews and validates config, creates
 a config PR, waits for merge, validates the merged commit, runs one reconcile
 pass, and waits for its outcomes. It never runs unmerged config.
 
-`doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
-and recovery state. `repair` may restore directories/permissions, disposable
+Each credential in `settings.yaml` may also declare the forge `identity` it
+must authenticate as; omitting it verifies the value and matches it against no
+name. `bureau validate` reports an `identity` declared for a credential no repo
+references, except the reserved `config` reference the runner clones the config
+repo with, which `repos.yaml` never names. That exemption is not an exception
+to enforcement: when the `config` credential declares an identity, `run`,
+`retry`, `init`, and the reconcile daemon verify it against the forge root
+`settings.config.remote()` implies — before the config fetch and therefore
+before any run spawns — and the daemon does that once at startup rather than
+once per pass.
+
+`doctor` checks local state, config, repos, credentials, credential identity,
+adapters, plugins/MCP, and recovery state. Its identity check is the same
+read-only verification a run performs before spawn, reported per credential,
+and it covers the reserved `config` credential too when that credential
+declares an identity.
+`repair` may restore directories/permissions, disposable
 caches, the same plugin version, stale activation, expired ownership, orphan
 worktrees, and derived state. It never changes reviewed policy, credentials,
 plugin versions, live work, or durable history.

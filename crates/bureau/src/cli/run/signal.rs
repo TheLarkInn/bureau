@@ -1,6 +1,7 @@
 //! Two-stage signal handling for one-shot runs.
 
 use crate::cli::out;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -44,7 +45,8 @@ fn ensure_started(
     };
     log.append(
         bureau::runlog::EventKind::RunStarted,
-        bureau::runlog::run_started_snapshot(snapshot),
+        // A run cancelled before it started verified no identity.
+        bureau::runlog::run_started_snapshot(snapshot, &BTreeMap::new()),
     )?;
     log.close()?;
     Ok(())

@@ -3,14 +3,17 @@
 //! `query` takes `project/repo`; `open_prs`/`create_pr` take the registry
 //! URL or bare `project/repo`; `comment`/`set_labels` take `{project}/{id}`.
 
+mod auth;
+mod identity;
 mod labels;
 mod status;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use self::auth::basic_auth;
 use self::status::RawPr;
-use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
+use super::{Error, Forge, Identity, Item, Pr, PrRequest, PrStatus};
 use crate::contract::Trust;
 use crate::process::Secret;
 
@@ -54,34 +57,6 @@ struct RawWorkItem {
     fields: WorkItemFields,
     #[serde(rename = "_links")]
     links: serde_json::Value,
-}
-
-/// RFC 4648 base64; a local twin of `git.rs`'s private encoder.
-fn base64(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    data.chunks(3)
-        .flat_map(|chunk| {
-            let bits = chunk
-                .iter()
-                .fold(0usize, |acc, &byte| (acc << 8) | usize::from(byte))
-                << (8 * (3 - chunk.len()));
-            (0..4).map(move |i| {
-                if i <= chunk.len() {
-                    char::from(TABLE[(bits >> (18 - 6 * i)) & 63])
-                } else {
-                    '='
-                }
-            })
-        })
-        .collect()
-}
-
-/// ADO Basic credential: empty user, PAT as password; never logged.
-fn basic_auth(token: &Secret) -> String {
-    format!(
-        "Basic {}",
-        base64(format!(":{}", token.expose()).as_bytes())
-    )
 }
 
 /// Splits a registry URL (`.../{project}/_git/{repo}`) or bare `project/repo`.
@@ -175,10 +150,20 @@ impl AdoForge {
         }
     }
 
-    fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+    /// A request signed with one resolved credential.
+    fn request_as(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        token: &Secret,
+    ) -> reqwest::RequestBuilder {
         self.client
             .request(method, url)
-            .header("authorization", basic_auth(&self.token))
+            .header("authorization", basic_auth(token))
+    }
+
+    fn request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        self.request_as(method, url, &self.token)
     }
 
     fn get(&self, url: &str) -> reqwest::RequestBuilder {
@@ -216,6 +201,10 @@ impl AdoForge {
 
 #[async_trait]
 impl Forge for AdoForge {
+    async fn identity(&self, credential: &Secret) -> Result<super::identity::Reported, Error> {
+        identity::get(self, credential).await
+    }
+
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error> {
         let (project, _) = repo_parts(source)?;
         let ids = self.wiql_ids(&project, filter).await?;

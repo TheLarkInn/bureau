@@ -133,6 +133,8 @@ impl Rig {
             item: item(),
             forge: self.forge.clone(),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            identities: BTreeMap::new(),
+            identity_forges: BTreeMap::new(),
             config_source: None,
             plugin_sources: BTreeMap::new(),
             direct_agents: BTreeMap::new(),

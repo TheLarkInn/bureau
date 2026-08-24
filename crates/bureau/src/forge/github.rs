@@ -1,7 +1,9 @@
 //! GitHub REST forge; registry arguments accept URLs or bare `owner/name`.
 
 mod dependencies;
+mod identity;
 mod labels;
+mod pulls;
 mod rate;
 mod status;
 
@@ -10,7 +12,8 @@ use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
+use self::pulls::{Pull, issue_number};
+use super::{Error, Forge, Identity, Item, Pr, PrRequest, PrStatus};
 use crate::contract::Trust;
 use crate::process::Secret;
 
@@ -62,20 +65,6 @@ fn trust(association: &str) -> Trust {
     }
 }
 
-fn closes_item(body: Option<&str>, repo: &str) -> Option<String> {
-    let body = body?.to_lowercase();
-    let start = body.find("closes #")? + "closes #".len();
-    let digits: String = body[start..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    (!digits.is_empty()).then(|| format!("{repo}#{digits}"))
-}
-
-fn issue_number(item_id: &str) -> &str {
-    item_id.rsplit('#').next().unwrap_or(item_id)
-}
-
 fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
     let parsed = || {
         let (repo, number) = item_id.rsplit_once('#')?;
@@ -122,34 +111,6 @@ struct SearchPage {
     items: Vec<Issue>,
 }
 
-#[derive(Deserialize)]
-struct Head {
-    #[serde(rename = "ref")]
-    branch: String,
-}
-
-#[derive(Deserialize)]
-struct Pull {
-    number: u64,
-    title: String,
-    html_url: String,
-    body: Option<String>,
-    head: Head,
-}
-
-impl Pull {
-    fn into_pr(self, repo: &str) -> Pr {
-        Pr {
-            number: self.number,
-            repo: repo.to_owned(),
-            branch: self.head.branch,
-            title: self.title,
-            url: self.html_url,
-            item_id: closes_item(self.body.as_deref(), repo),
-        }
-    }
-}
-
 pub struct GitHubForge {
     /// API root: `https://api.github.com`, or a local server in tests.
     pub base_url: String,
@@ -185,14 +146,20 @@ impl GitHubForge {
         self
     }
 
-    /// A request carrying the headers every GitHub call needs.
-    fn request(&self, method: Method, url: &str) -> RequestBuilder {
+    /// A request carrying the headers every GitHub call needs, signed
+    /// with one resolved credential.
+    fn request_as(&self, method: Method, url: &str, token: &Secret) -> RequestBuilder {
         self.client
             .request(method, url)
-            .bearer_auth(self.token.expose())
+            .bearer_auth(token.expose())
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2026-03-10")
             .header("User-Agent", "bureau")
+    }
+
+    /// The same request, signed with this client's own credential.
+    fn request(&self, method: Method, url: &str) -> RequestBuilder {
+        self.request_as(method, url, &self.token)
     }
 
     /// GETs `first`, following up to [`MAX_PAGES`] `rel="next"` links.
@@ -215,6 +182,10 @@ impl GitHubForge {
 
 #[async_trait]
 impl Forge for GitHubForge {
+    async fn identity(&self, credential: &Secret) -> Result<super::identity::Reported, Error> {
+        identity::get(self, credential).await
+    }
+
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error> {
         let repo = repo_name(source)?;
         let q = format!("{filter} repo:{repo}");
