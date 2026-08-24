@@ -21,7 +21,7 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, viewerCardFor } from "./selectors.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, viewerCardFor, withheld } from "./selectors.mjs";
 import { INFERRED_FILTER_URL, REPO_ADD_URL, SAMPLE_STEPS, runOps } from "./paths.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
@@ -179,6 +179,48 @@ export const PROBES = [
       { op: "wait", selector: S.createBar },
     ],
     expect: { shows: [S.createBar, S.assignmentDetail], hides: [], copy: [] },
+  }),
+  /*
+   * The create form with its request in flight.
+   *
+   * Every other write on this surface models both ends of its round trip; this
+   * one modelled neither, and the renderer matched the model — `submit` posted
+   * with the button live and applied whatever came back. So a second press sent
+   * a second create, and a Cancel pressed while the first was still out closed
+   * the form and then had the answer installed over whatever the reader opened
+   * next. Both are the defect the field editors and the delete prompt were
+   * already fixed for, on the one write nothing had looked at.
+   *
+   * A sample rather than a value on `fieldState`: the create bar is a landing
+   * disclosure, not a field on a card, so the `field` axis cannot name it and a
+   * new axis value would pair with nothing else.
+   *
+   * The held name input is asserted beside the held button because they fail
+   * apart: the button alone comes back true the moment `busy` reaches it, while
+   * a form that kept taking keystrokes would still throw them away — it posts
+   * the name it captured when Create was pressed.
+   */
+  sample({
+    id: "probe--create-saving",
+    covers: "the create form while its request is in flight — the one write on this surface with no in-flight state at all",
+    summary: "a create in flight: the form holds its own controls so the write cannot be sent twice, and names the verb that is running",
+    fixture: "validated",
+    intercept: "stall-intent",
+    ops: [
+      { op: "click", selector: S.createOpen },
+      { op: "wait", selector: S.createBar },
+      { op: "fill", selector: S.createName, value: "second-pipeline" },
+      { op: "click", selector: S.createSubmit },
+      { op: "wait", selector: withheld(S.createSubmit) },
+    ],
+    expect: {
+      // Cancel stays offered for the same reason it does in every field editor:
+      // a host that never answers must not trap the reader on the form. What
+      // makes it safe here is the ticket, not a disabled attribute.
+      shows: [S.createBar, withheld(S.createSubmit), withheld(S.createName), offered(S.createCancel)],
+      hides: [],
+      copy: ["Creating…"],
+    },
   }),
   crossing({
     id: "probe--relation-open-under-expanded-card",

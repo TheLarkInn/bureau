@@ -339,6 +339,57 @@ test.describe("leaving an open field editor", () => {
     await expect(url).toBeFocused();
     await expect(card.page.locator(".limits-editor")).toHaveCount(0);
   });
+
+  /**
+   * The same race on the one write that had no guard at all.
+   *
+   * `CreateBar` posted with Create still live and applied whatever came back.
+   * Two presses sent two creates, and a Cancel pressed while the first was out
+   * closed the form and then had the answer installed over whatever the reader
+   * opened next — `publishLocalState` on a create they had abandoned, and a
+   * `close()` that pulls focus back to the create trigger.
+   *
+   * The editors solve their half with `useLive()`, but that cannot reach this
+   * one: cancelling a create closes the *form* and leaves `CreateBar` itself
+   * mounted, so the component is still live and the reply is still its own. The
+   * generation ticket is what makes the answer nobody's.
+   *
+   * Held until after Cancel and after the next editor is open, so both are
+   * genuinely in the past when the reply lands.
+   */
+  test("a create reply that lands after Cancel installs nothing and takes no focus", async ({ card }) => {
+    let release = () => {};
+    const held = new Promise((resolve) => { release = resolve; });
+    await card.page.route("**/intent", async (route) => {
+      if (route.request().postDataJSON()?.kind === "create") {
+        await held;
+      }
+      await route.continue();
+    });
+
+    await card.page.getByTestId("create-open").click();
+    await card.page.locator("#create-name").fill("abandoned-pipeline");
+    await card.page.getByTestId("create-submit").click();
+    await expect(card.page.getByTestId("create-submit")).toBeDisabled();
+    await card.page.getByTestId("create-cancel").click();
+    await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
+
+    // Where the reader went next, and the counter the stale reply would move.
+    await card.page.locator(".ws-value").click();
+    const url = card.page.getByLabel("Board, query, or issues URL");
+    await expect(url).toBeFocused();
+    await card.page.evaluate(() => {
+      window.__published = 0;
+      window.addEventListener("bureau-state", () => { window.__published += 1; });
+    });
+
+    release();
+    await card.page.waitForTimeout(250);
+
+    expect(await card.page.evaluate(() => window.__published)).toBe(0);
+    await expect(url).toBeFocused();
+    await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
+  });
 });
 
 /** What the work-source editor looks like once nothing is in flight. */

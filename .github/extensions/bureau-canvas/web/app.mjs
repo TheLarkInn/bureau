@@ -182,15 +182,31 @@ function CreateBar({ dir }) {
   const [kind, setKind] = useState("pipeline");
   const [name, setName] = useState("");
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const live = useLive();
   const trigger = useRef(null);
-  const close = () => closeDisclosure(setOpen, trigger);
+  // The generation of the open form. Cancel advances it, so an answer to a
+  // create the reader has already dismissed is nobody's and is dropped rather
+  // than installed over whatever they opened next.
+  const ticket = useRef(0);
+  const close = () => {
+    ticket.current += 1;
+    setBusy(false);
+    closeDisclosure(setOpen, trigger);
+  };
   const submit = (event) => {
     event.preventDefault();
-    if (!name.trim()) {
+    if (!name.trim() || busy) {
       return;
     }
     setError(null);
+    setBusy(true);
+    const mine = ticket.current;
     postIntent({ kind: "create", input: { dir, kind, name: name.trim(), fields: {} } }).then((result) => {
+      if (!live.current || ticket.current !== mine) {
+        return;
+      }
+      setBusy(false);
       if (!result?.ok) {
         setError(result?.error ?? `could not create ${kind}`);
         return;
@@ -244,14 +260,13 @@ function CreateBar({ dir }) {
       "div",
       { className: "create-bar__fields" },
       h("label", { className: "detail-label", htmlFor: "create-kind" }, "Kind"),
-      h(
-        "select",
-        {
-          id: "create-kind",
-          className: "form-control form-select",
-          value: kind,
-          onChange: (event) => setKind(event.target.value),
-        },
+      h("select", {
+        id: "create-kind",
+        className: "form-control form-select",
+        value: kind,
+        disabled: busy,
+        onChange: (event) => setKind(event.target.value),
+      },
         ["pipeline", "role"].map((option) =>
           h("option", { key: option, value: option }, option)),
       ),
@@ -260,6 +275,7 @@ function CreateBar({ dir }) {
         id: "create-name",
         className: "form-control",
         value: name,
+        disabled: busy,
         onChange: (event) => setName(event.target.value),
         placeholder: `${kind} name`,
         autoFocus: true,
@@ -283,8 +299,8 @@ function CreateBar({ dir }) {
         type: "submit",
         className: "btn btn--primary",
         "data-testid": "create-submit",
-        disabled: !name.trim(),
-      }, `Create ${kind}`),
+        disabled: !name.trim() || busy,
+      }, busy ? "Creating…" : `Create ${kind}`),
       h("button", {
         type: "button",
         className: "btn",

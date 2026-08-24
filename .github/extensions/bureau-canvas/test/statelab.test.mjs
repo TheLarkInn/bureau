@@ -24,6 +24,7 @@ import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -86,6 +87,53 @@ test("every excluded combination is attributed, and the books balance", () => {
       noRuleIsDeadWeight: EXCLUSIONS.every((entry) => entry.pruned > 0),
     },
     { balances: true, everyRuleAccountedFor: true, everyRemovalHasAnExample: true, noRuleIsDeadWeight: true },
+  );
+});
+
+/**
+ * Every number this branch reports about itself, pinned to a literal.
+ *
+ * `summary()` is what the PR body and the lab header both read, and only two of
+ * its fields were ever compared with anything: the root split, and the internal
+ * identity above — which, as its own comment says, cannot fail. The rest were
+ * derived, printed and believed. That is precisely the defect this registry
+ * exists to refuse, and it had already produced a wrong claim: a root count
+ * carried in prose that drifted to 69 while the graph held 136, with nothing
+ * able to say so.
+ *
+ * Returning `dimensionValues + 1` passed every other test in this file.
+ *
+ * Pinning the whole object is deliberately brittle. A new dimension value or
+ * state is *meant* to stop here and be looked at, rather than have the branch
+ * quietly restate its own new arithmetic as though it were the reviewed one.
+ *
+ * `renders` is not a field of `summary()` — it is what the gallery and the
+ * matrix suite actually produce — so it is derived from the only two things
+ * that decide it and pinned alongside, because it is reported the same way.
+ */
+test("every count the branch reports about itself is what the registry holds", () => {
+  const renders = STATES.length * Object.keys(VIEWPORTS).length;
+
+  assert.deepStrictEqual(
+    { ...summary(), renders },
+    {
+      dimensions: 16,
+      dimensionValues: 94,
+      combinations: 470292480000,
+      constraintRules: 33,
+      structuralRules: 22,
+      scopingRules: 7,
+      harnessRules: 4,
+      excludedCombinations: 470292479796,
+      matrixStates: 204,
+      probes: 29,
+      states: 233,
+      transitions: 130,
+      entryTransitions: 96,
+      returnTransitions: 34,
+      roots: 137,
+      renders: 466,
+    },
   );
 });
 
@@ -453,7 +501,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 72, probe: 22, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 72, probe: 23, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1171,6 +1219,42 @@ test("the same-kind overlap rule spares a row drawn inside another row", () => {
 });
 
 /**
+ * The graph's cards are the one region both halves of the overlap rule would
+ * otherwise miss, and nothing required them to be covered.
+ *
+ * React Flow gives every node its own absolutely positioned wrapper, so
+ * `.flow-card` boxes are not in normal flow and share no DOM parent: the
+ * sibling rule skips them by construction, and no `SIBLINGS` pair names them.
+ * Same-selector comparison is the only rule that can reach them, and it reaches
+ * them only while `.flow-card` is in `STACKED` — while `MEASURED` is what
+ * decides the boxes are collected at all.
+ *
+ * Both memberships were unasserted. Deleting `.flow-card` from either list left
+ * every test in this file green while the matrix quietly stopped detecting two
+ * pipeline cards drawn on top of each other — the collision that put a terminal
+ * rail inside a concurrent group's member row.
+ *
+ * Asserted through the behaviour rather than by reading the lists back, so a
+ * rule that keeps the name and stops acting on it fails too.
+ */
+test("two graph cards drawn on top of each other are caught, and their boxes are collected", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  // Absolutely positioned and parentless, exactly as React Flow draws them, so
+  // this passes only if the same-selector rule is doing the work.
+  const card = (id, extra) => ({ selector: ".flow-card", id, x: 0, y: 0, width: 200, height: 80, parent: null, flow: false, within: [], ...extra });
+  const snapshot = (boxes) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes });
+
+  assert.deepStrictEqual(
+    {
+      collected: measureFor(state).includes(".flow-card"),
+      apart: verdict(state, snapshot([card("node-0"), card("node-1", { x: 220 })])),
+      overprinted: verdict(state, snapshot([card("node-0"), card("node-1", { x: 100 })])).map((item) => item.detail),
+    },
+    { collected: true, apart: [], overprinted: [".flow-card #0 overlaps #1"] },
+  );
+});
+
+/**
  * The sibling rule, and the two things it must not mistake for a defect.
  *
  * `SIBLINGS` in `checks.mjs` is a hand-kept list of landing pairs; this is the
@@ -1261,7 +1345,7 @@ test("the verdict catches a label that names a control it does not sit beside", 
  * `toString()`, in the browser suite and in the lab alike — so it may not
  * reference anything outside itself. Nothing enforced that, and the way it
  * fails is maximally unhelpful: a helper lifted to module scope leaves a
- * `ReferenceError` inside every single `page.evaluate`, so all 440 renders and
+ * `ReferenceError` inside every single `page.evaluate`, so every render and
  * every transition go red at once and none of them names the cause.
  *
  * Rebuilding it the way the hosts do and running it over a document that
@@ -1383,11 +1467,32 @@ function pageStub() {
   };
 }
 
-test("every contrast selector names small text coloured from a kind hue", () => {
-  // A hue that reads as decoration rather than text is a defect the
-  // screenshots would not show, so the ratio is asserted rather than eyeballed.
-  assert.ok(CONTRAST.includes(".kind-label"));
-  assert.deepStrictEqual(CONTRAST.filter((selector) => !selector.startsWith(".")), []);
+/**
+ * Both contrast selectors, and the ratio itself.
+ *
+ * This asserted `CONTRAST.includes(".kind-label")` and that every entry began
+ * with a dot. `.access` could be deleted outright and the threshold dropped
+ * from 4.5 to 2, and it still passed — so the check that exists because a hue
+ * retune is invisible in a screenshot was itself invisible to a hue retune.
+ *
+ * The set is pinned exactly, and the floor is pinned at its boundary: 4.49 is
+ * reported and 4.5 is not. Asserting only that some low ratio is caught would
+ * survive any threshold at all above it.
+ */
+test("both contrast selectors are held to WCAG AA, at the boundary", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const snapshot = (contrast) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast, boxes: [] });
+  const at = (selector, ratio) => ({ selector, text: "label", ratio });
+  const kinds = (entries) => verdict(state, snapshot(entries)).filter((item) => item.kind === "low-contrast").length;
+
+  assert.deepStrictEqual(
+    {
+      selectors: [...CONTRAST].sort(),
+      below: kinds([at(".kind-label", 4.49), at(".access", 4.49)]),
+      atFloor: kinds([at(".kind-label", 4.5), at(".access", 4.5)]),
+    },
+    { selectors: [".access", ".kind-label"], below: 2, atFloor: 0 },
+  );
 });
 
 /**
