@@ -400,9 +400,11 @@ function describeOp(op) {
  * The categories are ordered and the first match wins, so each state is named
  * by the strongest fact about it: a saving field is intercepted *and* has a
  * fixture its parent lacks, and "cannot be walked into" is the reason that
- * matters. Three probes also satisfy `landing`, so the order is load-bearing
- * rather than decorative, and `test/statelab.test.mjs` pins the resulting
- * tally — a reordering that relabels those three fails there by name.
+ * matters. Two boundaries carry real weight, on disjoint sets of three probes:
+ * three probes also satisfy `landing`, and three ride a request route, so
+ * moving `landing` up or `probe` above `intercepted` relabels one set or the
+ * other with a reason that is false of it. `test/statelab.test.mjs` pins the
+ * resulting tally — either reordering fails there by name.
  */
 export const ROOT_REASONS = [
   {

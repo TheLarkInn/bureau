@@ -83,6 +83,20 @@ const GROUP_RUN_OPS = [
   { op: "wait", selector: S.groupMembers },
 ];
 
+/**
+ * A route belongs on the state as well as on the op that installs it.
+ *
+ * The op is what the walkers read, so a probe riding a route always *worked* —
+ * and every consumer that asks the state itself saw `undefined`. Three probes
+ * were published as "a hand-assembled crossing" when the fact that actually
+ * keeps them unreachable is the route; `abort-intent` is asked for by probes
+ * alone, so the test that checks every requested kind is one this module names
+ * never saw it; and the lab's refusal to render a route it cannot install read
+ * `undefined` for all 29 probes and so could never refuse. That last one is
+ * latent rather than wrong today — both kinds in play are servable in-frame —
+ * which is exactly why it had to be closed before a probe asks for one that is
+ * not, and the lab draws a screen it did not produce.
+ */
 function state({ id, summary, page = "index", surface, fixture, ops, expect, intercept, ...rest }) {
   return {
     id,
@@ -91,6 +105,7 @@ function state({ id, summary, page = "index", surface, fixture, ops, expect, int
     page,
     fixture,
     surface: surface ?? (page === "editor" ? "editor" : "config"),
+    intercept: intercept ?? null,
     ops: [{ op: "page", value: page, ...(intercept ? { intercept } : {}) }, { op: "fixture", value: fixture }, ...ops],
     expect,
     ...rest,

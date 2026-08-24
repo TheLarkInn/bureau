@@ -483,12 +483,22 @@ function hasCycle(edges) {
  * so.
  *
  * The tally is pinned per category rather than merely totalled, because the
- * categories overlap and their order is what resolves the overlap: three
- * probes also satisfy `landing`, so listing `landing` first would relabel them
- * "the screen the canvas opens on for that config", which is false of a
- * hand-written crossing. A total alone survives that reordering unchanged —
- * the three move between categories and the sum does not notice. Pinning the
- * split is what makes the documented ordering load-bearing.
+ * categories overlap and their order is what resolves the overlap. Two
+ * boundaries do real work, on disjoint sets of three probes each. Three probes
+ * also satisfy `landing`, so listing `landing` first would relabel them "the
+ * screen the canvas opens on for that config", which is false of a hand-written
+ * crossing. Three others ride a request route, so listing `probe` before
+ * `intercepted` would relabel *those* "a hand-assembled crossing written to
+ * cross two dimensions a scoping rule keeps apart" — false of `probe--create-saving`,
+ * which crosses no rule and is unreachable because of the route. A total alone
+ * survives either reordering unchanged — the three move between categories and
+ * the sum does not notice. Pinning the split is what makes the documented
+ * ordering load-bearing.
+ *
+ * The `intercepted`/`probe` boundary only became load-bearing once probes
+ * carried their route on the state as well as on the op that installs it.
+ * Before that the `intercepted` predicate could not fire for a probe at all,
+ * and swapping the two categories left this tally byte-identical.
  *
  * Pinned numbers go stale by design: a new state that lands in a category has
  * to be looked at, which is the review this registry exists to force.
@@ -501,7 +511,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 72, probe: 23, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 75, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1514,4 +1524,33 @@ test("no state asks for two different request routes at once", () => {
     .filter((entry) => entry.routes.length > 1);
 
   assert.deepStrictEqual(conflicted, []);
+});
+
+/**
+ * The route a state rides is written twice — on the page op, which the walkers
+ * read to install it, and on the state, which every consumer that asks *about*
+ * a state reads instead: the `intercepted` root category, the lab's route tag,
+ * the lab's refusal to draw a condition it cannot install, and the suite's list
+ * of states the lab can drive.
+ *
+ * Two derivations, so they can disagree, and they did: probes emitted the route
+ * onto the op alone, so all four consumers read `undefined` for all 29 of them.
+ * Nothing failed, because both kinds the probes ask for happen to be servable
+ * in-frame — the lab would have drawn a blocked-renderer probe as though the
+ * renderer had loaded, which is the one thing a review surface may not do.
+ *
+ * Asserting agreement rather than presence is what makes this able to fail from
+ * either side: dropping the state-level field fails here, and so does an op
+ * that installs a route the state does not name.
+ */
+test("a state rides the same route its own path installs", () => {
+  const disagreeing = STATES
+    .map((state) => ({ id: state.id, op: state.ops.find((op) => op.intercept)?.intercept ?? null, state: state.intercept ?? null }))
+    .filter((entry) => entry.op !== entry.state);
+  const routed = STATES.filter((state) => state.intercept);
+
+  assert.deepStrictEqual(
+    { disagreeing, routed: routed.length, probesRouted: routed.filter((state) => state.kind === "probe").length },
+    { disagreeing: [], routed: 79, probesRouted: 3 },
+  );
 });

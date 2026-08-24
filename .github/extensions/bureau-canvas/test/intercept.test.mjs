@@ -57,7 +57,10 @@ test("every intercept the registry asks for is one this module names", () => {
   assert.deepEqual(
     { asked, unservable, preSurface: asked.filter(isPreSurface).sort() },
     {
-      asked: ["block-editor-renderer", "block-renderer", "fail-intent", "offer-ended-run", "stall-intent", "stall-state"],
+      // `abort-intent` is asked for by probes alone. It was missing from this
+      // list — and so unchecked against this module — for as long as a probe
+      // carried its route on the page op and not on the state.
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "fail-intent", "offer-ended-run", "stall-intent", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
