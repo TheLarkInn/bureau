@@ -187,6 +187,100 @@ test("a run control posts one intent per press and returns to rest", async ({ pa
 });
 
 /*
+ * The hold is about the run, not about the visit.
+ *
+ * `useLiveOverlay` outlives Live, and `dismissControls` deliberately keeps the
+ * selected run — so the invocation a held control stands for is still running
+ * against that same run after a trip to Design. Clearing `controlBusy` there
+ * re-armed the button over an intent still in flight, and the mode tabs are
+ * never disabled, so two clicks bought a second `bureau` process against one
+ * run: exactly the duplicate the guard at the top of `send` exists to refuse.
+ *
+ * The sibling hold already behaves this way and is asserted above — `reconciling`
+ * survives the same trip because "the pass really is still running". This is the
+ * run control's half of that invariant, from both ends: held on the way back,
+ * and released when the answer finally lands.
+ */
+test("a held run control survives a trip to Design and takes no second intent", async ({ page, canvas }) => {
+  const runId = "hold-across-modes-run";
+  let finish = () => {};
+  const held = new Promise((resolve) => {
+    finish = resolve;
+  });
+  let pauses = 0;
+  await seedRun(canvas, runId);
+  await page.route("**/intent", async (route) => {
+    if (route.request().postDataJSON()?.kind !== "pause-run") {
+      await route.continue();
+      return;
+    }
+    pauses += 1;
+    await held;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+  await openPipeline(page, canvas);
+  await page.getByRole("tab", { name: /live/iu }).click();
+  await page.getByLabel("Live run").selectOption(runId);
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+
+  await page.getByRole("tab", { name: /design/iu }).click();
+  await page.getByRole("tab", { name: /live/iu }).click();
+
+  // Still held on the way back, so the second press cannot be made at all.
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+  await page.getByRole("button", { name: "Pausing…" }).click({ force: true });
+  finish();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeEnabled();
+  expect(pauses).toBe(1);
+});
+
+/*
+ * A reply releases the hold it took, and no other.
+ *
+ * The hold's ticket is bumped on a change of selection and only there. Without
+ * that bump a pause left in flight against run A would, when answered, release
+ * the hold the reader has since taken out on run B — re-arming B's control over
+ * B's own in-flight invocation and reintroducing the duplicate one run further
+ * along. Selecting a run is the one event that genuinely changes the subject.
+ */
+test("an answer about the run that was left does not release the hold on the run selected since", async ({ page, canvas }) => {
+  const [first, second] = ["hold-subject-a", "hold-subject-b"];
+  const gates = new Map();
+  const opened = new Map();
+  for (const id of [first, second]) {
+    await seedRun(canvas, id);
+    gates.set(id, new Promise((resolve) => opened.set(id, resolve)));
+  }
+  await page.route("**/intent", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body?.kind !== "pause-run") {
+      await route.continue();
+      return;
+    }
+    await gates.get(body.run_id);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+  await openPipeline(page, canvas);
+  await page.getByRole("tab", { name: /live/iu }).click();
+  await page.getByLabel("Live run").selectOption(first);
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+
+  // Changing the subject frees the new run's transport immediately.
+  await page.getByLabel("Live run").selectOption(second);
+  await expect(page.getByRole("button", { name: "Pause" })).toBeEnabled();
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+
+  // The first run's answer is not about this hold, so it must not lift it.
+  opened.get(first)();
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+  opened.get(second)();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeEnabled();
+});
+
+/*
  * The pass reports on itself, and moves nothing it did not start.
  *
  * A refused pass that still selected a run was drawing a paused run the reader

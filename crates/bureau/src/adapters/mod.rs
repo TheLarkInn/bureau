@@ -27,6 +27,13 @@ pub use usage::{Execution, Usage};
 
 type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = Execution> + Send + 'a>>;
 
+/// The `--agent` value a role's reference implies, without touching disk.
+///
+/// This is where the adapters disagree about a plugin reference: Copilot takes
+/// the whole `plugin:agent` pair, Claude takes the bare agent name. Deciding it
+/// here — rather than in the path-shaped [`real::resolve_agent`] — keeps one
+/// rule that cannot be right for one adapter and wrong for the other, and keeps
+/// it pure, so `validate --json` can report the expected agent with no worktree.
 #[must_use]
 pub fn expected_agent(role: &Role) -> String {
     let direct = || real::agent_name(std::path::Path::new(&role.agent));

@@ -87,6 +87,14 @@ export function useLiveOverlay(activity, onOpenReplay) {
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResult, setReconcileResult] = useState(null);
   const controlTicket = useRef(0);
+  // The *hold* has a ticket separate from the refusal's, because the two have
+  // different subjects. A refusal is speech of one visit to Live, so it is
+  // withdrawn on the way out; the hold is a `bureau` invocation against a run,
+  // and that process does not end because the reader looked at Design. Sharing
+  // one ticket forced a choice between a permanently dead button and a control
+  // re-armed over an intent still in flight — this is bumped on a change of
+  // selection only, so the hold outlives the visit but never the run.
+  const holdTicket = useRef(0);
   // The reconcile pass has a ticket of its own rather than sharing the run
   // controls'. That one is bumped on every change of selection, and a pass is
   // about the pipeline, not the run being watched — so sharing it would drop
@@ -112,6 +120,10 @@ export function useLiveOverlay(activity, onOpenReplay) {
     // Bumped on every change of selection, so a reply that was in flight when
     // the reader moved on cannot install itself over the run they moved to.
     controlTicket.current += 1;
+    // The hold's own ticket, bumped here and only here: the request that set it
+    // is about the run being left, so its answer must not release a hold the
+    // reader has since taken out on a different run.
+    holdTicket.current += 1;
     if (!runId) {
       return undefined;
     }
@@ -173,10 +185,17 @@ export function useLiveOverlay(activity, onOpenReplay) {
     }
     const refused = REFUSED[kind] ?? "could not act on this run";
     const mine = controlTicket.current;
+    const held = holdTicket.current;
     // A reply is only about the run that was selected when it was asked for.
+    // The two halves settle on different tickets on purpose: the hold is
+    // released by the run's ticket, so it survives a trip to Design and back
+    // and the control cannot be pressed twice over one invocation; the refusal
+    // installs on the visit's, so it is not spoken to a reader who has left.
     const settle = (result) => {
-      if (mine === controlTicket.current) {
+      if (held === holdTicket.current) {
         setControlBusy(null);
+      }
+      if (mine === controlTicket.current) {
         setControlResult(result);
       }
     };
@@ -295,13 +314,16 @@ export function useLiveOverlay(activity, onOpenReplay) {
    * `controls` — so without this a refusal raised before a trip to Design is
    * still on screen on the way back, describing a request this visit never
    * made. The selected run is deliberately kept: returning to Live should
-   * return to the run you were watching.
+   * return to the run you were watching. `controlBusy` is deliberately *not*
+   * cleared, for the same reason: the invocation it stands for is still running
+   * against that same kept run, and re-arming the control here would let one
+   * held run take a second `bureau` process — the exact duplicate the hold
+   * exists to prevent. It is released by its own ticket when the answer lands.
    */
   const dismissControls = () => {
     controlTicket.current += 1;
     reconcileTicket.current += 1;
     setControlResult(null);
-    setControlBusy(null);
     setReconcileResult(null);
   };
 
