@@ -59,6 +59,11 @@ const surface = {
       id: "pipeline",
       summary: "the read-only pipeline viewer",
       page: "index",
+      // The Live badge is fetch-backed: it carries no `data-count` until the
+      // first `/runs` read resolves. Every mode asserts that attribute, and
+      // design is reached without a click of its own, so the settle is waited
+      // for here — once, on the surface all three modes are entered from.
+      enter: [{ op: "wait", selector: S.liveCountSettled }],
       shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher],
       hides: [S.configView],
     },
@@ -608,6 +613,7 @@ const mode = {
       id: "design",
       summary: "the static config graph",
       shows: [S.modeSwitcher, S.legend, S.terminalPill, ...VIEWER_EDGES],
+      derive: () => activityCount(2),
       // The overlay controls are named absent, not merely unmentioned. Design
       // was pinned in one direction only, so the way *back* from Live and
       // Replay — both of which return here — asserted that the design graph had
@@ -620,13 +626,15 @@ const mode = {
       id: "live",
       summary: "one live run, streamed",
       enter: [{ op: "click", selector: S.modeLive }],
-      shows: [S.runControls, S.runPickerLive],
+      shows: [S.runControls, S.runPickerLive, S.reconcileNow],
+      derive: (combo) => activityCount(combo.run === "ended" ? 3 : 2),
     },
     {
       id: "replay",
       summary: "any run, scrubbed on a timeline",
       enter: [{ op: "click", selector: S.modeReplay }],
       shows: [S.replayControls, S.runPickerReplay],
+      derive: () => activityCount(2),
     },
   ],
 };
@@ -653,11 +661,15 @@ const run = {
      */
     {
       id: "none",
-      summary: "no run picked",
+      summary: "no run available in Live, or none picked in Replay",
       hides: [S.overlayRunning, S.overlayPaused],
       derive: (combo) => (combo.mode === "replay"
         ? { hides: [S.replayTimeline] }
-        : { hides: [S.runPause, S.runResume] }),
+        : {
+            shows: [S.runActivityAvailable],
+            hides: [S.runPause, S.runResume],
+            copy: ["2 runs in progress", "Choose a run to inspect it"],
+          }),
     },
     { id: "running", summary: "a run still appending events", derive: (combo) => overlay(combo, "running") },
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
@@ -765,6 +777,22 @@ function overlay(combo, runValue) {
   return runValue === "paused"
     ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: [{ selector: S.runStatus, text: "paused" }] }
     : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: [{ selector: S.runStatus, text: "running" }] };
+}
+
+/**
+ * The Live badge, waited for before it is asserted.
+ *
+ * The badge carries no `data-count` at all until the first `/runs` read
+ * resolves, so asserting the attribute without waiting for it races an
+ * in-flight fetch — and a `shows` that loses that race fails for a reason that
+ * has nothing to do with the state. Waiting on the value is how every other
+ * fetch-backed expectation in this registry stops racing.
+ */
+function activityCount(count) {
+  return {
+    shows: [`${S.liveCount}[data-count="${count}"]`],
+    copy: [{ selector: S.liveCount, text: String(count) }],
+  };
 }
 
 /**

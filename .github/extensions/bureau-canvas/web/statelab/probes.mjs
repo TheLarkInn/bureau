@@ -697,4 +697,126 @@ export const PROBES = [
       copy: ["No output captured for this step yet.", { selector: S.stepLogTitle, text: SAMPLE_STEPS.deterministic }],
     },
   }),
+  sample({
+    id: "probe--run-activity-idle",
+    covers: "an honest zero-run listing, distinct from a stopped or unreadable reconciler",
+    summary: "no run is writing to this pipeline: Live explains that a reconcile process is not itself a run",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "empty-runs",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "wait", selector: S.runActivityIdle },
+    ],
+    expect: {
+      shows: [S.reconcileNow, S.runPickerLiveDisabled, S.runActivityIdle],
+      hides: [S.runActivityAvailable, S.runActivityUnavailable],
+      copy: [{ selector: S.runActivityTitle, text: "No runs in progress" }, "A reconcile loop is not itself a run."],
+    },
+  }),
+  sample({
+    id: "probe--reconcile-now-running",
+    covers: "the immediate reconcile pass while its process is still running",
+    summary: "a reconcile pass in flight: its button is disabled and names the work so a second pass cannot be started",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "stall-intent",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "click", selector: S.reconcileNow },
+      { op: "wait", selector: S.reconcileNowPending },
+    ],
+    expect: {
+      shows: [S.reconcileNowPending],
+      copy: [{ selector: S.reconcileNow, text: "Reconciling…" }],
+    },
+  }),
+  sample({
+    id: "probe--reconcile-now-refused",
+    covers: "an immediate reconcile pass the host could not start",
+    summary: "a refused reconcile pass: the button returns, the failure is named, and nothing the reader was looking at has moved",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "fail-intent",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "click", selector: S.reconcileNow },
+      { op: "wait", selector: S.runControlError },
+    ],
+    expect: {
+      // The activity panel is asserted still standing. A refused pass used to
+      // select a live run anyway, which drew that run's overlay beside the
+      // sentence saying the pass could not be started — two claims about one
+      // click that cannot both be true, and neither of which this state's
+      // controls-and-copy alone would have caught.
+      shows: [S.reconcileNow, S.runControlError, S.runActivityAvailable],
+      hides: [S.reconcileNowPending, S.overlayPaused, S.overlayRunning],
+      copy: ["Could not run reconcile now."],
+    },
+  }),
+  /*
+   * The one screen where this surface can contradict itself.
+   *
+   * A run is selected from a listing that answered; the listing then fails. The
+   * overlay keeps streaming from `./runs/<id>/events`, which is a different
+   * endpoint and still works — so the panel must not claim the run log cannot
+   * be read while that run''s events are visibly arriving, and the picker must
+   * not go dead over a run the reader is watching.
+   *
+   * Both were wrong: the copy said "run log", and `RunPicker` disabled itself
+   * whenever the listing was not ready, stranding the reader on a run they
+   * could neither leave nor see listed. Nothing modelled this combination, so
+   * nothing failed.
+   */
+  sample({
+    id: "probe--run-under-failed-listing",
+    covers: "a run being watched while the listing that offered it has failed - the two halves of Live disagreeing",
+    summary: "the run streams on, the picker still names it, and the failure is scoped to the list rather than to the log",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "fail-runs-later",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      ...runOps("live", "running"),
+      { op: "wait", selector: S.runActivityUnavailable },
+    ],
+    expect: {
+      shows: [S.overlayRunning, S.runActivityUnavailable, S.runPickerLive],
+      hides: [S.runPickerLiveDisabled],
+      copy: [
+        { selector: S.runActivityTitle, text: "Run list unavailable" },
+        "a run already open keeps streaming",
+      ],
+      allowErrors: ["Failed to load resource", "503"],
+    },
+  }),  sample({
+    id: "probe--run-activity-unavailable",
+    covers: "a run listing failure, distinct from the honest zero-runs state",
+    summary: "the run log cannot be read: Live says so and promises its automatic retry rather than reporting zero",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "fail-runs",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "wait", selector: S.runActivityUnavailable },
+    ],
+    expect: {
+      // The badge is asserted at its failed value, not merely present. Reading
+      // a refused listing as `0` is the exact confusion this state exists to
+      // rule out: it would draw the same chrome as an idle reconciler and tell
+      // a reviewer that nothing is running when nothing is known.
+      shows: [S.liveCountUnavailable, S.runPickerLiveDisabled, S.runActivityUnavailable],
+      hides: [S.runActivityIdle, S.liveCountZero],
+      copy: [{ selector: S.runActivityTitle, text: "Run list unavailable" }, "a run already open keeps streaming"],
+      // The refused request is the state. The browser logs the 503 itself, and
+      // a state that stages a failing response has to own the console line it
+      // causes — the way the blocked-renderer states do.
+      allowErrors: ["Failed to load resource", "503"],
+    },
+  }),
 ];

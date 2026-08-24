@@ -60,7 +60,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "fail-intent", "offer-ended-run", "stall-intent", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "stall-intent", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
@@ -237,6 +237,21 @@ test("the ended run is offered as live, and no other listing is touched", async 
       preSurface: false,
     },
   );
+});
+
+test("empty and unavailable run listings are different host conditions", async () => {
+  const results = [];
+  for (const kind of ["empty-runs", "fail-runs"]) {
+    const win = windowStub();
+    installIntercept(win, kind);
+    const response = await win.fetch("./runs");
+    results.push([kind, response.status, await response.json(), IN_FRAME.has(kind)]);
+  }
+
+  assert.deepEqual(results, [
+    ["empty-runs", 200, { runs: [] }, true],
+    ["fail-runs", 503, { error: "run listing unavailable" }, true],
+  ]);
 });
 
 test("a state that asked for no condition still sits on the write floor", async () => {

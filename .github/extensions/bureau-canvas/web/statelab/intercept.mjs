@@ -86,7 +86,7 @@ export const ENDED_RUN = "run-finished";
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent", "offer-ended-run"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent", "offer-ended-run", "empty-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -126,6 +126,10 @@ export function installIntercept(win, kind) {
     offerEndedRun(win);
     return;
   }
+  if (kind === "empty-runs" || kind === "fail-runs" || kind === "fail-runs-later") {
+    interceptRuns(win, kind);
+    return;
+  }
   if (kind) {
     stallIntent(win, kind);
   }
@@ -156,10 +160,40 @@ function offerEndedRun(win) {
     if (!/\/runs$/u.test(urlOf(input)) || !response.ok) {
       return response;
     }
+
     return new win.Response(JSON.stringify(offeredAsLive(await response.json())), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  };
+}
+
+/**
+ * Stages the run-listing states that cannot come from the shared fixture.
+ *
+ * `fail-runs-later` serves the real listing once and refuses every read after
+ * it. That ordering is the whole point: a run can only be *selected* from a
+ * listing that answered, so the screen where a reader is watching a run while
+ * the listing has since failed is unreachable if the very first read fails.
+ * It is also the screen where the two halves of this surface can contradict
+ * each other, which is why it has to be stageable at all.
+ */
+function interceptRuns(win, kind) {
+  const native = win.fetch.bind(win);
+  let served = 0;
+  win.fetch = async (input, init) => {
+    if (!/\/runs$/u.test(urlOf(input))) {
+      return native(input, init);
+    }
+    served += 1;
+    if (kind === "fail-runs-later" && served === 1) {
+      return native(input, init);
+    }
+    const failing = kind === "fail-runs" || kind === "fail-runs-later";
+    return new win.Response(
+      JSON.stringify(failing ? { error: "run listing unavailable" } : { runs: [] }),
+      { status: failing ? 503 : 200, headers: { "Content-Type": "application/json" } },
+    );
   };
 }
 

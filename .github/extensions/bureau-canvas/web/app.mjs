@@ -14,8 +14,8 @@ import {
 } from "@xyflow/react";
 // graph-overlays: mode switcher plus live/replay overlay controllers. The
 // pipeline graph rendering below stays as-is; overlay modes only restyle it.
-import { ModeSwitcher } from "./modes.js";
-import { useLiveOverlay } from "./live/live.js";
+import { ModeSwitcher, useRunActivity } from "./modes.js";
+import { LiveActivity, useLiveOverlay } from "./live/live.js";
 import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
 import { useReplayOverlay } from "./replay/replay.js";
@@ -1463,8 +1463,15 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   // graph-overlays: design keeps the static graph; live and replay restyle
   // it from run events via the shared reducer in web/live/overlay.js.
   const [mode, setMode] = useState("design");
-  const live = useLiveOverlay();
-  const replay = useReplayOverlay();
+  const activity = useRunActivity(name, state.config?.view?.assignments ?? []);
+  const replay = useReplayOverlay(activity);
+  // A pass started from Live produces a run that has already finished, so the
+  // hand-off target is Replay. Wired here because this is where both overlays
+  // and the mode itself are owned.
+  const live = useLiveOverlay(activity, (runId) => {
+    replay.setRunId(runId);
+    setMode("replay");
+  });
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
     () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
@@ -1481,12 +1488,17 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       { className: "pipeline-main" },
       h(
         "div",
-        { className: "pipeline-toolbar" },
-        h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
-        h("h2", {}, name),
-        h(ModeSwitcher, { mode, onMode: setMode }),
-        h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
-        active?.controls ?? null,
+        { className: "pipeline-chrome" },
+        h(
+          "div",
+          { className: "pipeline-toolbar" },
+          h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
+          h("h2", {}, name),
+          h(ModeSwitcher, { mode, onMode: setMode, activity }),
+          h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
+          active?.controls ?? null,
+        ),
+        mode === "live" ? h(LiveActivity, { activity, runId: live.runId }) : null,
       ),
       h(
         "div",

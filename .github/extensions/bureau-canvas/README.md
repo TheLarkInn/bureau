@@ -39,10 +39,10 @@ Alongside the config view, the same server exposes the run log
 
 | | |
 |---|---|
-| `GET /runs` | one summary per run: `run_id`, `assignment`, `started_at`, `live`, `current_step` |
+| `GET /runs` | one summary per run: `run_id`, `assignment`, `pipeline`, `started_at`, `live`, `current_step` |
 | `GET /runs/<id>/events` | the run's full event log, via `bureau show <id> --events --json` when a binary with that flag is on hand, else parsed straight from `events.jsonl` (`source: "log"`) |
 | `GET /events` | the SSE channel; live runs forward each appended event as `event: run-event` with `{ run_id, event }`, and stop when the run's `run_finished` arrives |
-| `POST /intent` | `pause-run`, `resume-run`, `cancel-run` with `{ run_id }`, shelled out to `bureau pause/resume/cancel` — the canvas never writes run markers itself |
+| `POST /intent` | `pause-run`, `resume-run`, `cancel-run` with `{ run_id }`, plus `reconcile-now`; all shell out to the matching `bureau` command — the canvas never writes run markers itself |
 
 The runs root is `BUREAU_CANVAS_RUNS` when set, then `BUREAU_HOME`. Otherwise
 it follows bureau rather than this process: when the workspace (or the resolved
@@ -57,6 +57,21 @@ Liveness is pure filesystem: a run is live while its `events.jsonl` holds no
 `fs.watch`, because the log is appended by another process and can sit on a
 WSL share where watch events are unreliable; a one-second poll is cheap at
 run-log sizes and behaves the same on every platform.
+
+The pipeline toolbar polls that listing in every graph mode. Its Live badge is
+the count for the pipeline currently open. **Run reconcile now** executes one
+`bureau reconcile --now` pass and prevents a duplicate click while it runs.
+Because that command returns only once the pass is over, the button re-reads
+the listing itself rather than waiting for the poll, and reports which of three
+things happened: it started a run for this pipeline, it claimed no work, or the
+listing could not be read. A run it started is shown only when nothing was
+already being watched — a pass never moves the overlay off a run the reader
+chose, and a refused pass moves nothing at all.
+
+Zero is an explicit idle state, not evidence that the reconcile process
+stopped: a reconcile loop becomes a run only after it claims eligible work. A
+failed listing is shown separately and retried rather than silently presented
+as zero.
 
 ## Layout
 

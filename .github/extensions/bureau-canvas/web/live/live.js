@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { RunPicker } from "../modes.js";
-import { applyEvent, emptyOverlay, runActions } from "./overlay.js";
+import { applyEvent, emptyOverlay, newRunSince, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
@@ -29,17 +29,57 @@ const REFUSED = {
   "cancel-run": "could not cancel this run",
 };
 
+/** What is said when a reconcile pass could not be started at all. */
+const RECONCILE_REFUSED = "Could not run reconcile now.";
+
+/**
+ * The host's reason, and a sentence when it gave none.
+ *
+ * Coalescing on *emptiness* rather than on nullish is the whole point. A
+ * non-zero exit with no output produces `output: ""`, and `""` is not nullish —
+ * so `??` chained past it and rendered a refusal as an empty red paragraph,
+ * which announces nothing at all to a screen reader.
+ */
+function reason(result) {
+  return result?.error || result?.output || RECONCILE_REFUSED;
+}
+
+/** One SSE frame, or `null` when it is not the JSON this channel promises. */
+function parseFrame(data) {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+/** Posts the pass and reduces every ending to `ok`, or a reason not to report one. */
+function postReconcile() {
+  return fetch("./intent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "reconcile-now" }),
+  })
+    .then((response) => response.json())
+    .then((result) => (result?.ok
+      ? { ok: true }
+      : { ok: false, message: reason(result) }))
+    .catch(() => ({ ok: false, message: RECONCILE_REFUSED }));
+}
+
 /**
  * Returns `{ runId, setRunId, decoration, controls }` — the decoration feeds
  * `toFlow(pipeline, state, selectedStep, decoration)`; `controls` renders
  * into the pipeline toolbar.
  */
-export function useLiveOverlay() {
+export function useLiveOverlay(activity, onOpenReplay) {
   const [runId, setRunId] = useState(null);
   const [overlay, setOverlay] = useState(emptyOverlay);
   const [events, setEvents] = useState([]);
   const [collapsed, setCollapsed] = useState(new Set());
   const [controlResult, setControlResult] = useState(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState(null);
 
   useEffect(() => {
     if (!runId) {
@@ -71,8 +111,16 @@ export function useLiveOverlay() {
       })
       .catch(() => {});
     const source = new EventSource("./events");
+    // A frame this cannot parse is dropped, not thrown. An exception raised
+    // inside an `EventSource` listener escapes as an uncaught error on the
+    // page, which the state matrix reads as a broken render — so one malformed
+    // frame would condemn every state that streams a run.
     source.addEventListener("run-event", (message) => {
-      const { run_id, event } = JSON.parse(message.data);
+      const frame = parseFrame(message.data);
+      if (!frame) {
+        return;
+      }
+      const { run_id, event } = frame;
       if (run_id !== runId) {
         return;
       }
@@ -100,19 +148,131 @@ export function useLiveOverlay() {
       body: JSON.stringify({ kind, run_id: runId }),
     })
       .then((response) => response.json())
-      .then((result) => setControlResult(result?.ok ? result : { ...result, error: result?.error ?? result?.output ?? refused }))
+      .then((result) => setControlResult(result?.ok ? result : { ...result, error: result?.error || result?.output || refused }))
       .catch(() => setControlResult({ ok: false, error: refused }));
+  };
+
+  /*
+   * One reconcile pass, and an honest report of what it did.
+   *
+   * `bureau reconcile --now` does not return when the pass is issued — it
+   * drains every run the pass started first (`after_first` -> `daemon.drain`).
+   * So by the time this answer arrives the work is over: the run exists, and it
+   * is already finished. Two things follow, and both were wrong before.
+   *
+   * The listing is re-read here rather than waited for, because the fact is
+   * already true and a poll interval would only delay reporting it.
+   *
+   * And the run is handed to Replay, not to Live. Selecting a finished run into
+   * a tab defined as "one live run, streamed" put a completed run under live
+   * transport controls, and telling the reader to "choose it" pointed at a run
+   * the live-only picker will not offer. Replay is where a finished run is
+   * read, so that is where the button sends it — by offering the move, never by
+   * performing it, so nothing the reader is watching is taken away.
+   *
+   * `known` and `since` together are the attribution. The pass can be open for
+   * minutes, and a background reconciler's run that appears in that window is
+   * absent from `known` while being none of this click's doing; requiring it to
+   * have started after the click is what keeps the sentence true.
+   */
+  const reconcileNow = () => {
+    const known = new Set(activity.runs.map((run) => run.run_id));
+    const since = Date.now();
+    setReconciling(true);
+    setReconcileResult(null);
+    postReconcile()
+      .then((outcome) => (outcome.ok ? reportPass(known, since) : outcome))
+      .then(setReconcileResult)
+      .catch(() => setReconcileResult({ ok: false, message: RECONCILE_REFUSED }))
+      .finally(() => setReconciling(false));
+  };
+
+  const reportPass = async (known, since) => {
+    const next = await activity.refresh();
+    if (next.status !== "ready") {
+      return { ok: true, message: "Reconcile pass finished. The run list could not be read." };
+    }
+    const started = newRunSince(next.runs, known, since);
+    if (!started) {
+      return { ok: true, message: "Reconcile pass finished. It claimed no work for this pipeline." };
+    }
+    return {
+      ok: true,
+      run: started.run_id,
+      message: `Reconcile pass finished. It ran ${started.run_id}, which has already finished.`,
+    };
   };
 
   const controls = h(
     "div",
     { className: "run-controls" },
-    h(RunPicker, { liveOnly: true, value: runId, onChange: setRunId }),
+    h(RunPicker, { activity, liveOnly: true, value: runId, onChange: setRunId }),
+    h("button", {
+      type: "button",
+      className: "btn btn--small btn--primary",
+      "data-testid": "reconcile-now",
+      disabled: reconciling,
+      onClick: reconcileNow,
+    }, reconciling ? "Reconciling…" : "Run reconcile now"),
     runId ? h(RunButtons, { overlay, onAction: send }) : null,
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
+    reconcileResult ? h("p", {
+      className: reconcileResult.ok ? "run-control-result" : "run-control-error",
+      role: "status",
+    }, reconcileResult.message) : null,
+    reconcileResult?.run ? h("button", {
+      type: "button",
+      className: "run-control",
+      "data-testid": "open-run-replay",
+      onClick: () => onOpenReplay?.(reconcileResult.run),
+    }, "Open in Replay") : null,
   );
 
   return { runId, setRunId, decoration, controls, events, until: Infinity };
+}
+
+/** The Live surface must distinguish idle, loading, and unavailable. */
+export function LiveActivity({ activity, runId }) {
+  if (runId && activity.status !== "error") {
+    return null;
+  }
+  const content = activityMessage(activity);
+  return h(
+    "section",
+    {
+      className: `run-activity run-activity--${content.state}`,
+      "data-testid": "run-activity",
+      "data-state": content.state,
+      "aria-live": "polite",
+    },
+    h("span", { className: "run-activity__mark", "aria-hidden": "true" }),
+    h("div", {}, h("p", { className: "run-activity__title" }, content.title), h("p", { className: "run-activity__detail" }, content.detail)),
+  );
+}
+
+function activityMessage(activity) {
+  if (activity.status === "loading") {
+    return { state: "loading", title: "Checking run activity", detail: "Reading Bureau's run log for this pipeline." };
+  }
+  if (activity.status === "error") {
+    // Scoped to the run *list*, because that is the only thing that failed. A
+    // run already selected keeps streaming from its own endpoint, and saying
+    // the run log could not be read while its events are visibly arriving is
+    // two claims about one screen that cannot both be true.
+    return { state: "unavailable", title: "Run list unavailable", detail: "The canvas could not list Bureau's runs. It will retry automatically; a run already open keeps streaming." };
+  }
+  if (activity.liveCount > 0) {
+    return {
+      state: "available",
+      title: `${activity.liveCount} ${activity.liveCount === 1 ? "run" : "runs"} in progress`,
+      detail: "Choose a run to inspect it, or run another reconcile pass now.",
+    };
+  }
+  return {
+    state: "idle",
+    title: "No runs in progress",
+    detail: "A reconcile loop is not itself a run. Live appears here when eligible work is claimed for this pipeline.",
+  };
 }
 
 /**

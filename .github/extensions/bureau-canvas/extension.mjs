@@ -524,6 +524,24 @@ async function runControlIntent(entry, intent, response) {
     sendJson(response, { ok: run.code === 0, exit_code: run.code, output: `${run.stdout}${run.stderr}`.trim() }, false);
 }
 
+/**
+ * Runs one complete reconcile pass; the request stays open while active runs drain.
+ *
+ * `--runs` is passed for the same reason pause, resume and cancel pass it: the
+ * pass has to write its run log where this server is reading. Without it a pass
+ * started from the canvas lands in bureau's default root, and the canvas then
+ * reports that the pass claimed no work while the run it started is on disk
+ * somewhere this window never looks.
+ */
+async function reconcileNowIntent(entry, response) {
+    const run = await runBureau(["reconcile", "--now", "--runs", runsRoot(entry)], entry.options ?? {});
+    if (run === null) {
+        sendJson(response, { ok: false, error: "bureau binary not available" }, false);
+        return;
+    }
+    sendJson(response, { ok: run.code === 0, exit_code: run.code, output: `${run.stdout}${run.stderr}`.trim() }, false);
+}
+
 const CRUD_INTENTS = { create, delete: removeEntity, rename };
 
 async function handleIntent(entry, request, response) {
@@ -565,6 +583,10 @@ async function handleIntent(entry, request, response) {
     }
     if (intent?.kind === "save-pipeline") {
         await runSavePipelineIntent(entry, intent, response);
+        return;
+    }
+    if (intent?.kind === "reconcile-now") {
+        await reconcileNowIntent(entry, response);
         return;
     }
     if (RUN_CONTROL_VERBS[intent?.kind]) {

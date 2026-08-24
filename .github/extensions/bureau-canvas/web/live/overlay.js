@@ -68,6 +68,59 @@ export function runsOffered(runs, { liveOnly, watching }) {
   return (runs ?? []).filter((run) => !liveOnly || run.live || run.run_id === watching);
 }
 
+/** Runs whose recorded pipeline, or assignment fallback, belongs to this view. */
+export function runsForPipeline(runs, pipeline, assignments = []) {
+  const owners = new Set(
+    assignments
+      .filter((assignment) => assignment.pipeline === pipeline)
+      .map((assignment) => assignment.name),
+  );
+  return (runs ?? []).filter((run) =>
+    run.pipeline ? run.pipeline === pipeline : owners.has(run.assignment),
+  );
+}
+
+/**
+ * Runs no pipeline in this config can claim.
+ *
+ * A run names its pipeline in the `run_started` snapshot and falls back to the
+ * assignment that selected it; a log written before snapshots, or one whose
+ * assignment has since been renamed or deleted, has neither. Those are counted
+ * rather than discarded - dropping them let Replay report "no runs recorded"
+ * over a run directory with runs in it, which is the dishonest zero this
+ * surface exists to refuse.
+ */
+export function unattributedRuns(runs, assignments = []) {
+  const known = new Set((assignments ?? []).map((assignment) => assignment.name));
+  return (runs ?? []).filter((run) => !run.pipeline && !known.has(run.assignment));
+}
+
+/**
+ * The newest run in this listing that the caller had not already seen.
+ *
+ * This is what "the run a reconcile pass started" means, and it is stated as a
+ * difference on purpose. Picking the newest *live* run instead would let one
+ * click on **Run reconcile now** move the reader onto a run that was already
+ * in progress — including one the pass had nothing to do with, and including
+ * one that was already being watched at a different point in its own log. A
+ * pass that starts nothing must move nothing, and a refused pass most of all.
+ *
+ * `since` bounds it in time as well as by identity. `reconcile --now` drains
+ * before it returns and can be open for minutes, so a background reconciler's
+ * run can appear in the fresh listing while being none of this click's doing;
+ * a run that started before the click was never started by it.
+ */
+export function newRunSince(runs, known, since = 0) {
+  return [...(runs ?? [])]
+    .filter((run) => !known.has(run.run_id) && runTime(run) >= since)
+    .sort((left, right) => runTime(right) - runTime(left) || right.run_id.localeCompare(left.run_id))[0] ?? null;
+}
+
+function runTime(run) {
+  const parsed = Date.parse(run.started_at ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 export function emptyOverlay() {
   return {
     runId: null,

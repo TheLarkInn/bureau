@@ -317,6 +317,22 @@ async function intercept(page, kind) {
       const response = await route.fetch();
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(offeredAsLive(await response.json())) });
     }),
+    "empty-runs": () => page.route(/\/runs$/u, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runs: [] }) })),
+    "fail-runs": () => page.route(/\/runs$/u, (route) =>
+      route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) })),
+    // Serves the real listing once, then refuses. A run can only be selected
+    // from a listing that answered, so this is the only way to reach the screen
+    // where a run is being watched while the listing has since failed.
+    "fail-runs-later": () => {
+      let served = 0;
+      return page.route(/\/runs$/u, (route) => {
+        served += 1;
+        return served === 1
+          ? route.continue()
+          : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) });
+      });
+    },
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })

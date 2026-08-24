@@ -891,6 +891,12 @@
         min-width: 0;
       }
 
+      .pipeline-chrome {
+        display: grid;
+        gap: var(--space-2);
+        min-width: 0;
+      }
+
       /* Wraps: the run picker and the replay timeline are wider than the
          toolbar, and without this they render past the right edge where they
          cannot be clicked at all. */
@@ -1043,15 +1049,28 @@
 
       /* graph-overlays: live/replay mode UI and run-event overlay states. */
       .mode-switcher { display: flex; gap: 0; margin-left: var(--space-4); border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; overflow: hidden; }
-      .mode-tab { border: 0; padding: var(--space-1) var(--space-3); background: var(--background-color-default, #ffffff); color: var(--text-color-muted, #656d76); cursor: pointer; text-transform: capitalize; }
+      .mode-tab { display: inline-flex; align-items: center; gap: var(--space-1); border: 0; padding: var(--space-1) var(--space-3); background: var(--background-color-default, #ffffff); color: var(--text-color-muted, #656d76); cursor: pointer; text-transform: capitalize; }
       .mode-tab--active { background: var(--color-focus-outline, #0969da); color: #ffffff; }
+      .live-count { min-width: 1.15rem; padding: 0 0.3rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 999px; background: var(--surface-subtle, #f6f8fa); color: var(--text-color-muted, #656d76); font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace); font-size: 0.7rem; line-height: 1rem; text-align: center; }
+      .live-count--active { border-color: var(--color-focus-outline, #0969da); background: var(--color-focus-outline, #0969da); color: #ffffff; }
+      .mode-tab--active .live-count { border-color: #ffffff; background: #ffffff; color: var(--color-focus-outline, #0969da); }
       .run-picker { flex: 0 1 22rem; min-width: 8rem; border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; background: var(--background-color-default, #ffffff); color: inherit; font: inherit; }
+      .run-picker:disabled { background: var(--surface-subtle, #f6f8fa); color: var(--text-color-muted, #656d76); cursor: not-allowed; }
       .run-controls, .replay-controls, .replay-timeline { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
       .run-control { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 3px 10px; background: var(--background-color-default, #ffffff); color: inherit; cursor: pointer; }
       .run-control--active { border-color: var(--color-focus-outline, #0969da); color: var(--color-focus-outline, #0969da); }
       .run-control--danger { color: var(--outcome-failure); }
       .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
+      .run-control-result { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
       .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
+      .run-activity { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-color-default, #d0d7de); border-radius: var(--radius-sm, 6px); background: var(--surface-subtle, #f6f8fa); }
+      .run-activity__mark { width: 0.55rem; height: 0.55rem; margin-top: 0.35rem; border-radius: 999px; background: var(--text-color-muted, #656d76); }
+      .run-activity__title, .run-activity__detail { margin: 0; }
+      .run-activity__title { font-weight: 700; }
+      .run-activity__detail { color: var(--text-color-muted, #656d76); }
+      .run-activity--available .run-activity__mark { background: var(--color-focus-outline, #0969da); }
+      .run-activity--unavailable { border-color: color-mix(in srgb, var(--outcome-failure, #cf222e) 45%, var(--border-color-default, #d0d7de)); background: color-mix(in srgb, var(--outcome-failure, #cf222e) 7%, var(--background-color-default, #ffffff)); }
+      .run-activity--unavailable .run-activity__mark { background: var(--outcome-failure, #cf222e); }
       .replay-scrubber { flex: 1 1 10rem; min-width: 6rem; max-width: 16rem; }
 
       /* Step log: the CLI's drawing glyphs are parsed away, so each tool

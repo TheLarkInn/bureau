@@ -126,13 +126,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 470292479796,
       matrixStates: 204,
-      probes: 29,
-      states: 233,
+      probes: 34,
+      states: 238,
       transitions: 130,
       entryTransitions: 96,
       returnTransitions: 34,
-      roots: 137,
-      renders: 466,
+      roots: 142,
+      renders: 476,
     },
   );
 });
@@ -511,7 +511,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 75, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 80, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1551,6 +1551,6 @@ test("a state rides the same route its own path installs", () => {
 
   assert.deepStrictEqual(
     { disagreeing, routed: routed.length, probesRouted: routed.filter((state) => state.kind === "probe").length },
-    { disagreeing: [], routed: 79, probesRouted: 3 },
+    { disagreeing: [], routed: 84, probesRouted: 8 },
   );
 });

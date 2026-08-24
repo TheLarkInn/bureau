@@ -167,6 +167,25 @@ export function parseEvents(text) {
   return events;
 }
 
+/**
+ * Which pipeline a run belongs to, read where bureau actually writes it.
+ *
+ * `run_started` carries no `pipeline` field: `RunStartedData` is `run_id`,
+ * `assignment`, `item` and `snapshot` (`crates/bureau/src/runlog/event.rs`).
+ * The pinned pipeline lives inside the snapshot — as the pipeline's own name,
+ * and again as the name the assignment selected. Reading a flat `data.pipeline`
+ * compiled and tested clean while being `null` for every run bureau has ever
+ * written, so the ordering here is deliberate: snapshot first, and a flat field
+ * only as the forward-compatible last resort if one is ever added.
+ *
+ * A run whose log predates snapshots resolves to `null`, which is a run this
+ * canvas cannot attribute — not a run belonging to no pipeline.
+ */
+function pipelineOf(started) {
+  const snapshot = started?.data?.snapshot;
+  return snapshot?.pipeline?.name ?? snapshot?.assignment?.pipeline ?? started?.data?.pipeline ?? null;
+}
+
 /** Liveness, identity, and the step a run is currently inside. */
 export function summarize(runId, events) {
   const started = events.find((event) => event.kind === RUN_STARTED);
@@ -187,6 +206,7 @@ export function summarize(runId, events) {
   return {
     run_id: runId,
     assignment: started?.data?.assignment ?? null,
+    pipeline: pipelineOf(started),
     started_at: typeof started?.at_ms === "number" ? new Date(started.at_ms).toISOString() : null,
     live: !finished,
     current_step: openSteps.at(-1) ?? null,
