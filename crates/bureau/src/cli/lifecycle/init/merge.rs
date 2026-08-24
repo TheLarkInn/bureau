@@ -26,7 +26,7 @@ pub(super) async fn wait(settings: &Settings, proposal: &Proposal) -> anyhow::Re
         return Ok(proposal.commit.clone());
     }
     proposal::display(proposal);
-    let access = access::resolve(settings)?;
+    let access = access::verified(settings).await?;
     anyhow::ensure!(
         access.repo == proposal.repo,
         "config pull request repository changed"
@@ -48,7 +48,7 @@ pub(super) async fn validate(
     settings: &Settings,
     commit: &str,
 ) -> anyhow::Result<ValidatedConfig> {
-    let credential = access::credential(settings)?;
+    let credential = access::credential(settings).await?;
     let source = bureau::config::GitSource::new(
         settings.config.remote().to_owned(),
         commit.to_owned(),

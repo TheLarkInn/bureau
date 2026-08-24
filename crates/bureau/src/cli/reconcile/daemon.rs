@@ -16,6 +16,7 @@ use bureau::state::{LeaseOwner, Store};
 use super::active::Active;
 use super::{ResolvedArgs, build};
 use crate::cli::prepare;
+use crate::cli::prepare::config_identity::ConfigRemote;
 
 struct Revision {
     config: Config,
@@ -198,26 +199,42 @@ fn maintenance(args: &ResolvedArgs) -> anyhow::Result<Option<bureau::maintenance
     }
 }
 
-/// Assembles the daemon from resolved arguments; a free constructor so
-/// the state machine type carries no builder surface.
-pub(super) fn new(args: &ResolvedArgs) -> anyhow::Result<Daemon> {
-    let credential = build::config_credential(
-        args.config_credential.as_deref(),
-        args.config_forge,
-        args.settings.as_ref(),
-    )?;
-    let maintenance = maintenance(args)?;
-    let source = GitSource::new(
+/// The committed source the daemon refreshes from, signed with the
+/// credential the caller already proved.
+fn source(args: &ResolvedArgs, credential: Option<bureau::git::Credential>) -> GitSource {
+    GitSource::new(
         args.config_remote.clone(),
         args.config_ref.clone(),
         args.config_subdir.clone(),
         &args.config_cache,
         credential,
-    );
+    )
+}
+
+/// The config credential the daemon will fetch with, and the one host
+/// authorized to answer for it.
+fn config_remote(args: &ResolvedArgs) -> Option<ConfigRemote<'_>> {
+    args.config_credential
+        .as_deref()
+        .map(|reference| ConfigRemote {
+            reference,
+            remote: &args.config_remote,
+            forge: args.config_forge,
+        })
+}
+
+/// Assembles the daemon from resolved arguments; a free constructor so
+/// the state machine type carries no builder surface. The config
+/// credential is resolved and proved here, once, before the first
+/// refresh can fetch with it.
+pub(super) async fn new(args: &ResolvedArgs) -> anyhow::Result<Daemon> {
+    let maintenance = maintenance(args)?;
     let state = Arc::new(Store::open(&args.state).context("opening state database")?);
     let engine = Arc::new(Engine::new(args.runs.clone(), args.cache.clone()));
+    let credential =
+        build::config_credential(config_remote(args).as_ref(), args.settings.as_ref()).await?;
     Ok(Daemon {
-        manager: ConfigManager::new(source),
+        manager: ConfigManager::new(source(args, credential)),
         state,
         engine,
         active: Active::new(args.runs.clone()),

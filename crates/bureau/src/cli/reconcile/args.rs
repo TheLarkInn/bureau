@@ -27,7 +27,7 @@ pub(super) struct ResolvedArgs {
     pub(super) config_ref: String,
     pub(super) config_subdir: PathBuf,
     pub(super) config_credential: Option<String>,
-    pub(super) config_forge: ForgeArg,
+    pub(super) config_forge: bureau::config::ForgeKind,
     pub(super) config_cache: PathBuf,
     pub(super) runs: PathBuf,
     pub(super) state: PathBuf,
@@ -54,8 +54,10 @@ pub struct Args {
     pub config_subdir: Option<PathBuf>,
     #[arg(long)]
     pub config_credential: Option<String>,
-    #[arg(long, value_enum, default_value_t = ForgeArg::Github)]
-    pub config_forge: ForgeArg,
+    /// Forge the config remote is addressed on; inferred from the
+    /// remote when omitted.
+    #[arg(long, value_enum)]
+    pub config_forge: Option<ForgeArg>,
     #[arg(long)]
     pub config_cache: Option<PathBuf>,
     #[arg(long)]
@@ -170,11 +172,19 @@ impl Args {
     }
 
     fn default_config_credential(args: &mut Self, settings: Option<&bureau::setup::Settings>) {
-        let configured = settings.is_some_and(|value| value.credentials.contains_key("config"));
+        let reference = bureau::config::CONFIG_CREDENTIAL;
+        let configured = settings.is_some_and(|value| value.credentials.contains_key(reference));
         if args.config_credential.is_none() && configured {
-            args.config_credential = Some("config".to_owned());
+            args.config_credential = Some(reference.to_owned());
         }
     }
+}
+
+/// The forge the config remote is addressed on: the explicit flag when
+/// given, and otherwise the one the remote itself implies — the same
+/// answer `run` and `doctor` derive from `settings.config`.
+fn config_forge(flag: Option<ForgeArg>, remote: &str) -> bureau::config::ForgeKind {
+    flag.map_or_else(|| bureau::config::config_forge(remote), Into::into)
 }
 
 fn resolved(
@@ -189,11 +199,11 @@ fn resolved(
     ResolvedArgs {
         maintenance_guarded: args.maintenance_guarded,
         maintenance_root,
+        config_forge: config_forge(args.config_forge, &remote),
         config_remote: remote,
         config_ref: reference,
         config_subdir: subdir,
         config_credential: args.config_credential,
-        config_forge: args.config_forge,
         config_cache: paths.0,
         runs: paths.1,
         state: paths.2,

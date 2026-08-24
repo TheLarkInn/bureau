@@ -12,7 +12,7 @@ use bureau::forge::{Forge, LabelForge};
 use bureau::git::{Credential, credential_for};
 use bureau::process::{Secret, resolve};
 
-use super::ForgeArg;
+use crate::cli::prepare::config_identity::{self, ConfigRemote};
 
 fn resolve_reference(
     settings: Option<&bureau::setup::Settings>,
@@ -76,18 +76,25 @@ fn label_forge(
     }
 }
 
-pub(super) fn config_credential(
-    reference: Option<&str>,
-    forge: ForgeArg,
+/// The reserved config credential, resolved once and — when it declares
+/// an identity — proved to be that account before the fetch it signs
+/// carries it anywhere. The daemon builds it once at startup, so the
+/// check costs one round trip there and none per pass.
+///
+/// # Errors
+/// Propagates resolution and verification failures, secret-free.
+pub(super) async fn config_credential(
+    target: Option<&ConfigRemote<'_>>,
     settings: Option<&bureau::setup::Settings>,
 ) -> anyhow::Result<Option<Credential>> {
-    reference
-        .map(|reference| {
-            let secret = resolve_reference(settings, reference)
-                .with_context(|| format!("resolving config credential reference `{reference}`"))?;
-            Ok(credential_for(forge.into(), secret))
-        })
-        .transpose()
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    let reference = target.reference;
+    let secret = resolve_reference(settings, reference)
+        .with_context(|| format!("resolving config credential reference `{reference}`"))?;
+    config_identity::verify_optional(settings, target, &secret).await?;
+    Ok(Some(credential_for(target.forge, secret)))
 }
 
 pub(super) fn credentials(

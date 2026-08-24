@@ -144,12 +144,13 @@ async fn propose(
     })
 }
 
-pub(super) async fn create(
+/// The remote's current head, when it already carries this exact draft.
+async fn merged_head(
     layout: &bureau::home::Layout,
     settings: &Settings,
+    access: &access::Access,
     draft: &ConfigDraft,
-) -> anyhow::Result<Proposal> {
-    let access = access::resolve(settings)?;
+) -> anyhow::Result<Option<String>> {
     let cache = bureau::git::CheckoutCache::new(layout.config_cache().join("init-mirrors"));
     let (mirror, head) = cache
         .resolve_reference(
@@ -158,7 +159,17 @@ pub(super) async fn create(
             settings.config.reference(),
         )
         .await?;
-    if already_merged(&mirror, &head, settings.config.subdirectory(), draft).await? {
+    let merged = already_merged(&mirror, &head, settings.config.subdirectory(), draft).await?;
+    Ok(merged.then_some(head))
+}
+
+pub(super) async fn create(
+    layout: &bureau::home::Layout,
+    settings: &Settings,
+    draft: &ConfigDraft,
+) -> anyhow::Result<Proposal> {
+    let access = access::verified(settings).await?;
+    if let Some(head) = merged_head(layout, settings, &access, draft).await? {
         return Ok(Proposal::premerged(
             &access,
             settings.config.reference(),

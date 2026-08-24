@@ -5,6 +5,7 @@
 //! authorization model. Loading accumulates every error found into one
 //! `Vec`.
 
+mod config_remote;
 mod files;
 mod label_rule;
 mod pipeline;
@@ -18,6 +19,7 @@ mod validate_label_rule;
 mod validate_pipeline;
 
 pub use crate::forge::ForgeKind;
+pub use config_remote::{config_forge, config_repo};
 pub use files::{
     Access, AdapterKind, Assignment, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };

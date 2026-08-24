@@ -236,8 +236,9 @@ fn settings_declare_identity_per_credential_and_omission_declares_none() {
 
 /// An identity declared for a credential no repo references is reported
 /// against `settings.yaml`, in the accumulate-all validation pass. The
-/// reserved `config` reference is exempt: the runner clones the config
-/// repo with it, so `repos.yaml` never names it.
+/// reserved `config` reference is exempt and not unenforced: the runner
+/// verifies it against the config remote before it fetches, and
+/// `doctor` re-checks it read-only.
 #[test]
 fn validate_reports_an_identity_no_repo_references() {
     let config = config_with_credential("git-main");

@@ -105,6 +105,12 @@ run log, and a resumed run re-checks its freshly resolved credentials
 against that pinned identity, so a value rotated mid-run aborts the
 resume rather than continue as somebody else.
 
+The reserved `config` credential — the one the runner clones the reviewed
+config repo with — is checked the same way, against the forge the
+configured config remote points at, before that clone happens and so
+before anything can run from it. `bureau init` checks it before it
+pushes the config branch or opens the pull request as that account.
+
 Values are scrubbed from everything written to the run log.
 
 ## Inspect and control runs

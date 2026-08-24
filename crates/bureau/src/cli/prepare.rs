@@ -5,6 +5,7 @@
 //! section 13).
 
 mod authorize;
+pub mod config_identity;
 
 use crate::cli::out;
 use std::collections::{BTreeMap, BTreeSet};

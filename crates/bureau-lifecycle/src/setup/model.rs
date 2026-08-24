@@ -140,16 +140,23 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// The identity one declared credential must authenticate as, when
+    /// its declaration names one.
+    #[must_use]
+    pub fn declared_identity(&self, reference: &str) -> Option<&str> {
+        self.credentials.get(reference)?.identity.as_deref()
+    }
+
     /// The identity each declared credential must authenticate as. A
     /// credential without one is verified as usable and matched against
     /// no name: omission stays permissive.
     #[must_use]
     pub fn declared_identities(&self) -> BTreeMap<String, String> {
         self.credentials
-            .iter()
-            .filter_map(|(reference, declared)| {
-                let identity = declared.identity.as_ref()?;
-                Some((reference.clone(), identity.clone()))
+            .keys()
+            .filter_map(|reference| {
+                let identity = self.declared_identity(reference)?;
+                Some((reference.clone(), identity.to_owned()))
             })
             .collect()
     }

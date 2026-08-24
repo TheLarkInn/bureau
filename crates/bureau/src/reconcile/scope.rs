@@ -28,22 +28,12 @@ pub(super) fn credentials(
         .collect()
 }
 
-/// The hosts these repos authorize for one reference, and no others.
-fn hosts_of(
-    reference: &str,
-    authorized: &Authorizations,
-    hosts: &BTreeSet<String>,
-) -> Vec<Authorized> {
+/// The exact host these repos authorize for one reference.
+fn host_of(reference: &str, authorized: &Authorizations, host: &str) -> Option<Authorized> {
     authorized
         .get(reference)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter(|entry| hosts.contains(&entry.host))
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
+        .and_then(|entries| entries.iter().find(|entry| entry.host == host))
+        .cloned()
 }
 
 /// The authorized hosts for exactly these repos' credentials, so a run
@@ -52,15 +42,17 @@ pub(super) fn identity_forges(
     repos: &BTreeMap<String, Repo>,
     authorized: &Authorizations,
 ) -> Authorizations {
-    let hosts: BTreeSet<String> = repos.values().map(Repo::forge_host).collect();
-    repos
-        .values()
-        .map(|repo| {
-            let reference = repo.credential.clone();
-            let entries = hosts_of(&reference, authorized, &hosts);
-            (reference, entries)
-        })
-        .collect()
+    let mut scoped = Authorizations::new();
+    let mut seen = BTreeSet::new();
+    for repo in repos.values() {
+        let key = (repo.credential.clone(), repo.forge_host());
+        if seen.insert(key.clone())
+            && let Some(entry) = host_of(&key.0, authorized, &key.1)
+        {
+            scoped.entry(key.0).or_default().push(entry);
+        }
+    }
+    scoped
 }
 
 #[cfg(test)]
@@ -105,32 +97,62 @@ mod tests {
         ])
     }
 
-    /// A run takes only what its own repos name: another assignment's
-    /// credential stays out entirely, and a host only that other repo
-    /// points at is dropped even when it shares the credential.
+    /// This run's own repos: one on `shared` at `api.github.com`, one
+    /// on `other` at the Enterprise host.
+    fn run_repos() -> BTreeMap<String, Repo> {
+        BTreeMap::from([
+            (
+                "main".to_owned(),
+                repo("https://github.com/acme/web", "shared"),
+            ),
+            (
+                "internal".to_owned(),
+                repo("https://ghe/acme/internal", "other"),
+            ),
+        ])
+    }
+
+    /// Every (reference, host) pair the run was handed.
+    fn pairs(taken: &Authorizations) -> Vec<(String, String)> {
+        taken
+            .iter()
+            .flat_map(|(reference, entries)| {
+                entries
+                    .iter()
+                    .map(move |entry| (reference.clone(), entry.host.clone()))
+            })
+            .collect()
+    }
+
+    /// A run takes exactly the reference-host pairs its own repos name.
+    /// `shared` is authorized on the Enterprise host too, and only the
+    /// `other` credential's repo points there, so that pair is dropped
+    /// rather than handed over with it.
     #[test]
     fn a_run_takes_only_the_credentials_and_hosts_its_repos_name() {
-        let repos = BTreeMap::from([(
-            "main".to_owned(),
-            repo("https://github.com/acme/web", "shared"),
-        )]);
+        let taken = identity_forges(&run_repos(), &everything_authorized());
+        assert_eq!(
+            pairs(&taken),
+            vec![
+                ("other".to_owned(), "github https://ghe/api/v3".to_owned()),
+                (
+                    "shared".to_owned(),
+                    "github https://api.github.com".to_owned()
+                ),
+            ]
+        );
+    }
+
+    /// Resolution is scoped the same way: a value no repo in this run
+    /// names is not carried into it at all.
+    #[test]
+    fn a_run_resolves_only_the_credentials_its_repos_name() {
         let resolved = BTreeMap::from([
             ("shared".to_owned(), Secret::new("mine")),
             ("other".to_owned(), Secret::new("theirs")),
+            ("elsewhere".to_owned(), Secret::new("nobody")),
         ]);
-        let taken = identity_forges(&repos, &everything_authorized());
-        let hosts: Vec<&str> = taken["shared"]
-            .iter()
-            .map(|one| one.host.as_str())
-            .collect();
-        let references: Vec<String> = credentials(&repos, &resolved).into_keys().collect();
-        assert_eq!(
-            (taken.len(), hosts, references),
-            (
-                1,
-                vec!["github https://api.github.com"],
-                vec!["shared".to_owned()]
-            )
-        );
+        let references: Vec<String> = credentials(&run_repos(), &resolved).into_keys().collect();
+        assert_eq!(references, vec!["other".to_owned(), "shared".to_owned()]);
     }
 }

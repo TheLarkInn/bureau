@@ -8,13 +8,14 @@ use super::{Config, push};
 use crate::ConfigError;
 
 /// The reserved credential reference: the one the runner uses to clone
-/// the reviewed config repo itself. `repos.yaml` never names it,
+/// the reviewed config repo itself. `repos.yaml` need not name it,
 /// because it is not a repo the pipeline works in.
 pub const CONFIG_CREDENTIAL: &str = "config";
 
 /// Whether a declared identity names a credential nothing can exercise.
-/// The reserved config reference is exempt: it is used by the runner
-/// itself, not by an entry in the registry.
+/// The reserved config reference is exempt from this rule and not
+/// unenforced: the runner verifies it against the config remote before
+/// it fetches, and `doctor` re-checks it read-only.
 fn orphaned(reference: &str, referenced: &BTreeSet<&str>) -> bool {
     reference != CONFIG_CREDENTIAL && !referenced.contains(reference)
 }
