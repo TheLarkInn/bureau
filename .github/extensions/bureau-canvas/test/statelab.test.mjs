@@ -24,7 +24,7 @@ import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
-import { VIEWPORTS } from "../web/statelab/selectors.mjs";
+import { VIEWPORTS, SELECTORS } from "../web/statelab/selectors.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -1211,6 +1211,55 @@ test("a state's selector list covers the elements its copy names", () => {
   assert.deepStrictEqual([scoped.length > 0, uncovered], [true, []]);
 });
 
+/**
+ * Selectors the vocabulary defines but the registry deliberately does not
+ * promise, each with the reason it is exempt.
+ *
+ * An allow-list rather than silence, because the two are not the same claim: a
+ * name in here is a decision someone can disagree with, and a name that is
+ * merely absent is an accident nothing can see. It is empty, and that is the
+ * intended resting state — every control the vocabulary names is promised by
+ * some render.
+ */
+const UNPROMISED = {};
+
+/**
+ * Every selector in the vocabulary is claimed by some state, or exempt by name.
+ *
+ * This exists because the defect it catches has now happened five times. A
+ * selector defined in `selectors.mjs` and read by no state is a control the
+ * whole matrix is blind to: `pipelineBack`, `pipelineEditLink` and `editorBack`
+ * were the doors out of the viewer and the editor, `pipelineRef` was the door
+ * in — the one control carrying the assignment-first mental model — and
+ * deleting any of them left all 500 renders green while the surface became a
+ * room with no door. `status` was the fifth, found by review rather than by a
+ * test, which is the point: the previous four were fixed by hand and nothing
+ * was added that would notice the next one.
+ *
+ * A claim is `shows`, `hides`, a scoped `copy` selector, or an operation in an
+ * entry path or a transition delta — any of which makes some render fail when
+ * the control goes away.
+ */
+test("every selector the vocabulary defines is promised by a state, or exempt by name", () => {
+  const claimed = new Set(STATES.flatMap((state) => [
+    ...(state.expect.shows ?? []),
+    ...(state.expect.hides ?? []),
+    ...(state.expect.copy ?? []).filter((phrase) => typeof phrase === "object").map((phrase) => phrase.selector),
+    ...selectorsOf(state.ops),
+  ]).concat(TRANSITIONS.flatMap((edge) => selectorsOf(edge.delta))));
+
+  const unclaimed = Object.entries(SELECTORS)
+    .filter(([name, selector]) => !claimed.has(selector) && !(name in UNPROMISED))
+    .map(([name, selector]) => `${name} (${selector})`);
+  const staleExemption = Object.keys(UNPROMISED).filter((name) => !(name in SELECTORS) || claimed.has(SELECTORS[name]));
+
+  assert.deepStrictEqual({ unclaimed, staleExemption }, { unclaimed: [], staleExemption: [] });
+});
+
+function selectorsOf(ops) {
+  return (ops ?? []).map((op) => op.selector).filter(Boolean);
+}
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {
@@ -1436,6 +1485,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "INPUT|class=field,data-testid=create-name||release-pipeline|",
       "INPUT|class=toggle,data-testid=limit-on||on|checked",
       "DETAILS|class=relation-section,open=|||",
+      "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
     text: "Bureau",
     overflowX: 0,
@@ -1452,6 +1502,35 @@ const BASE_STYLE = {
   color: "rgb(0, 0, 0)",
   position: "static",
 };
+
+/**
+ * The claim the fold actually makes: a state signs the same whichever port the
+ * harness happened to bind, and still signs differently when the words change.
+ *
+ * Asserted as two comparisons rather than against a literal, because the literal
+ * above already pins the shape. What was unfalsifiable before is the *pair* — a
+ * signature carrying `127.0.0.1:40091` is perfectly well-formed, so nothing that
+ * looked at one render alone could tell that the state could never match itself
+ * on the next run, and `surface:boot+data:render-error` was a standing
+ * broken-twin finding that no fix to the product would ever have cleared.
+ */
+test("a signature folds the harness's port away without folding the message away", () => {
+  const signatureFor = (text) => {
+    const doc = pageStub();
+    const held = doc.querySelectorAll("body *");
+    held[held.length - 1].textContent = text;
+    return new Function(`return (${collect.toString()})`)()(doc, { selectors: [], measure: [], contrast: [] }).signature;
+  };
+  const onPort = (port) => `failed to import http://127.0.0.1:${port}/app.mjs`;
+
+  assert.deepStrictEqual(
+    [
+      signatureFor(onPort(40091)) === signatureFor(onPort(35781)),
+      signatureFor(onPort(40091)) === signatureFor("failed to import http://127.0.0.1:40091/editor.mjs"),
+    ],
+    [true, false],
+  );
+});
 
 function boxOf(x, y, width, height) {
   return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height };
@@ -1583,13 +1662,21 @@ function pageStub() {
     attributes: [{ name: "class", value: "relation-section" }, { name: "open", value: "" }],
     childElementCount: 2,
   });
+  // Copy that quotes the harness's own address. The renderer-error fallback
+  // names the module it could not fetch, and `serve.mjs` binds an ephemeral
+  // port per worker — so without folding the origin this element alone made the
+  // state sign differently on every run and every worker, for a reason that
+  // says nothing about the product.
+  const quoting = named("P", null, "fallback-error", boxOf(0, 460, 760, 20), {
+    textContent: " TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:40091/app.mjs ",
+  });
 
   const matches = {
     ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
     ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
     "label[for]": [label],
-    "body *": [leaf, parent, arealess, typed, ticked, disclosure],
+    "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
   };
   return {
     defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },

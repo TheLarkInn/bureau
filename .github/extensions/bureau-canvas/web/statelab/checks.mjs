@@ -236,6 +236,19 @@ export function collect(doc, request) {
   // `boxed` rather than `visible`: this is a description, not a promise, taken
   // over every element rather than the handful a state names. An element
   // painted or not is still a difference between two screens.
+  //
+  // The harness's own address is not a property of the state, and leaving it in
+  // made two states permanently undiffable. `serve.mjs` binds an ephemeral port
+  // per worker, and the renderer-error fallback quotes the module it could not
+  // fetch — so `surface:boot+data:render-error` signed
+  // `…127.0.0.1:40091/app.mjs` on one run and `…:35781/app.mjs` on the next.
+  // That is not late content and no amount of settling reaches it: the state
+  // could never match itself between runs, nor a twin rendered by a different
+  // worker, so it was a standing finding that said nothing about the product.
+  // Loopback origins are folded to one name rather than the document's own,
+  // because the lab renders the page in an iframe under a second host.
+  const ORIGIN = /https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost):\d+/gu;
+  const stable = (value) => value.replace(ORIGIN, "http://canvas.invalid");
   const GEOMETRY = new Set(["style", "transform", "d", "points", "viewBox", "x", "y", "cx", "cy", "r", "width", "height"]);
   const signature = [];
   for (const node of doc.querySelectorAll("body *")) {
@@ -265,7 +278,7 @@ export function collect(doc, request) {
     boxes,
     contrast,
     labels,
-    signature: signature.join("\n"),
+    signature: stable(signature.join("\n")),
     text: doc.body ? doc.body.innerText : "",
     overflowX: root.scrollWidth - root.clientWidth,
     viewport: { width: root.clientWidth, height: root.clientHeight },

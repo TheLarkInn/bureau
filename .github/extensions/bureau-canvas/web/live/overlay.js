@@ -172,19 +172,50 @@ export function applyEvents(events) {
  * `seq` is the run log's own order, so it decides both questions. A frame the
  * history already carries is the same event rather than a second one, and the
  * result is ordered by it so the reducer sees the run in the order it happened.
- * An event without a `seq` keeps its position: the sort is stable, so a log
- * that predates sequencing replays exactly as it did before.
+ *
+ * An event without a `seq` keeps its position, and that took a second attempt to
+ * mean. Sorting on `seqOf(event) ?? 0` gave every seq-less event the key `0`,
+ * which sorts it ahead of every real event — so a tail frame from a log that
+ * predates sequencing, chronologically the newest thing known, was replayed
+ * first and the run drew as whatever that frame said. The comparison is now on
+ * position for those, which is what "keeps its position" always claimed.
+ *
+ * The tail is also deduplicated against itself, not only against the history: a
+ * reconnect can redeliver a frame that never reached the history at all.
  *
  * Here beside the other pure facts about a run, so the offline suite can hold
  * it without a browser and without a clock.
  */
 export function mergeRunEvents(history, tailed) {
   const carried = new Set((history ?? []).map(seqOf).filter((seq) => seq !== null));
-  const missed = (tailed ?? []).filter((event) => {
+  const missed = [];
+  for (const event of tailed ?? []) {
     const seq = seqOf(event);
-    return seq === null || !carried.has(seq);
-  });
-  return [...(history ?? []), ...missed].sort((left, right) => (seqOf(left) ?? 0) - (seqOf(right) ?? 0));
+    if (seq === null || !carried.has(seq)) {
+      missed.push(event);
+      if (seq !== null) {
+        carried.add(seq);
+      }
+    }
+  }
+  return [...(history ?? []), ...missed]
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => compareEvents(left, right))
+    .map((entry) => entry.event);
+}
+
+/**
+ * Ordered by `seq` where both have one, and by arrival otherwise — never by a
+ * substituted `0`, which is a real sequence number and not a stand-in for "no
+ * opinion".
+ */
+function compareEvents(left, right) {
+  const one = seqOf(left.event);
+  const other = seqOf(right.event);
+  if (one === null || other === null) {
+    return left.index - right.index;
+  }
+  return one - other || left.index - right.index;
 }
 
 function seqOf(event) {

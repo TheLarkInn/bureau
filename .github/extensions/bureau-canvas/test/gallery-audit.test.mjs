@@ -13,6 +13,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { auditNames, auditTwins, expectedShots, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
+import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const VIEWPORTS = [{ id: "desktop" }, { id: "compact" }];
 const STATES = [{ id: "surface:config+card:expanded" }, { id: "probe--draft-bar" }];
@@ -107,4 +109,64 @@ test("one state rendered at both viewports is not a twin of itself", () => {
   const both = { [A]: "digest-1", [shotName("probe--refusal-dismissed", "compact")]: "digest-1" };
 
   assert.deepEqual(auditTwins(both, []), []);
+});
+
+/**
+ * A twin the run did not render is not a twin that held.
+ *
+ * `broken` only ever spoke when both renders were present, so a partial run — a
+ * `--grep`, a shard, an early bail — returned clean for claims it never
+ * compared. That is the audit saying "checked" about work it did not do, which
+ * is the one thing a review surface may not do, and it is the same defect in
+ * miniature as an index that links figures it does not hold.
+ */
+test("a twin this run did not render is reported as unchecked, not as holding", () => {
+  const twin = { a: "probe--refusal-dismissed", b: "surface:config+disclosure:create", viewports: ["desktop"], why: "the refusal left with the create it was about" };
+
+  assert.deepEqual(
+    [
+      auditTwins({ [A]: "digest-1" }, [twin]).map((finding) => finding.kind),
+      auditTwins({}, [twin]).map((finding) => finding.kind),
+      auditTwins({ [A]: "digest-1", [B]: "digest-1" }, [twin]).map((finding) => finding.kind),
+    ],
+    [["unchecked-twin"], ["unchecked-twin"], []],
+  );
+});
+
+/**
+ * A group of identical renders is one finding, not one per pair.
+ *
+ * The run that makes this matter is the catastrophic one — every state drawing
+ * a single "Loading…" screen — where per-pair reporting is quadratic and the
+ * banner built from it is megabytes at the top of the page a reviewer came to
+ * read. The gallery has to stay legible in exactly the run that broke it.
+ */
+test("a group of renders drawing one screen is reported once, with a count", () => {
+  const D = shotName("surface:config+section:empty", "desktop");
+  const crowd = { [A]: "same", [B]: "same", [C]: "same", [D]: "same" };
+
+  const findings = auditTwins(crowd, []);
+
+  assert.deepEqual(
+    [findings.length, findings[0].kind, findings[0].detail.includes("4 renders draw the same screen")],
+    [1, "undeclared-twin", true],
+  );
+});
+
+/**
+ * Two state ids that differ only in punctuation must not name one file.
+ *
+ * `shotName` folds every run of non-alphanumerics to `_`, which is not
+ * injective. A collision is the one failure the completeness check cannot
+ * report: the second render silently overwrites the first, and `expectedShots`
+ * collapses the same way, so `auditNames` calls the gallery complete while a
+ * state a reviewer believes they reviewed was never on the page.
+ */
+test("every state in the registry names its own render file", () => {
+  const shots = expectedShots(REGISTRY_STATES, Object.values(REAL_VIEWPORTS));
+
+  assert.deepEqual(
+    [shots.length, new Set(shots).size],
+    [REGISTRY_STATES.length * Object.values(REAL_VIEWPORTS).length, shots.length],
+  );
 });

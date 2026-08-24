@@ -57,7 +57,9 @@ export function auditNames(expected, present) {
  * A twin is a claim in both directions. If the two stop matching, the claim was
  * wrong or the screen regressed, and either way it needs re-reading — so a
  * declared twin that no longer holds is reported exactly like an undeclared one
- * that does.
+ * that does. A twin whose renders are *absent* is reported too, and separately:
+ * a partial run would otherwise return clean for twins it never compared, which
+ * is the audit quietly saying "checked" about work it did not do.
  */
 export function auditTwins(signatures, twins) {
   const byName = new Map(Object.entries(signatures));
@@ -89,17 +91,29 @@ function pairKey([one, other]) {
   return [one, other].sort().join(" == ");
 }
 
+/**
+ * One finding per identical-signature group rather than per pair.
+ *
+ * Per-pair is quadratic in the group, and the run where that matters is the run
+ * where the report matters most: a catastrophe in which every state draws one
+ * "Loading…" screen produces C(250,2) = 31,125 findings per viewport, and the
+ * banner carrying them into `index.html` is megabytes of unreadable text. A
+ * group states the same fact once and stays legible.
+ */
 function undeclared(groups, declared) {
   const findings = [];
   for (const group of groups.values()) {
-    for (const pair of pairsOf(group.sort())) {
-      if (!declared.has(pairKey(pair))) {
-        findings.push({
-          kind: "undeclared-twin",
-          detail: `${pair[0]} and ${pair[1]} draw the same screen; declare the twin and say why, or make the states differ`,
-        });
-      }
+    const names = group.sort();
+    const undeclaredPairs = pairsOf(names).filter((pair) => !declared.has(pairKey(pair)));
+    if (!undeclaredPairs.length) {
+      continue;
     }
+    findings.push({
+      kind: "undeclared-twin",
+      detail: names.length > 2
+        ? `${names.length} renders draw the same screen (${names.slice(0, 4).join(", ")}${names.length > 4 ? ", …" : ""}); declare the twins and say why, or make the states differ`
+        : `${names[0]} and ${names[1]} draw the same screen; declare the twin and say why, or make the states differ`,
+    });
   }
   return findings;
 }
@@ -108,8 +122,13 @@ function broken(twins, byName) {
   const findings = [];
   for (const twin of twins) {
     for (const [one, other] of keysFor(twin)) {
-      const held = byName.has(one) && byName.has(other) && byName.get(one) === byName.get(other);
-      if (!held && byName.has(one) && byName.has(other)) {
+      const held = byName.has(one) && byName.has(other);
+      if (!held) {
+        findings.push({
+          kind: "unchecked-twin",
+          detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and this run rendered neither or only one, so the claim was not tested`,
+        });
+      } else if (byName.get(one) !== byName.get(other)) {
         findings.push({
           kind: "broken-twin",
           detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and no longer do`,

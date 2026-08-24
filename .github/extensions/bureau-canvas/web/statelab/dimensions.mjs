@@ -61,7 +61,7 @@ const surface = {
       id: "config",
       summary: "the assignment-first landing",
       page: "index",
-      shows: [S.shell, S.header, S.configView, S.configHeading, S.relationSection],
+      shows: [S.shell, S.header, S.status, S.configView, S.configHeading, S.relationSection],
       copy: ["Assignments"],
     },
     {
@@ -81,7 +81,7 @@ const surface = {
        * no door. They sit on the surface rather than on a mode because the
        * toolbar draws them in all three, which is the claim being made.
        */
-      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher, S.pipelineBack, S.pipelineEditLink],
+      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher, S.pipelineBack, S.pipelineEditLink, S.stepCard, S.sidePanel],
       hides: [S.configView],
     },
     {
@@ -444,7 +444,7 @@ const field = {
       id: "repos",
       summary: "the ranked repo list",
       enter: [{ op: "click", selector: S.reposValue }],
-      shows: [S.reposEditor, S.reposSave, S.reposAdd],
+      shows: [S.reposEditor, S.reposSave, S.reposAdd, S.repoRow],
     },
     {
       id: "repos-add",
@@ -827,7 +827,7 @@ const run = {
  */
 function overlay(combo, runValue) {
   if (combo.mode === "replay") {
-    return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
+    return { shows: [S.replayTimeline, S.replayScrubber, replaySpanFor(RUN_END[runValue])] };
   }
   return runValue === "paused"
     ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: [{ selector: S.runStatus, text: "paused" }] }
@@ -918,7 +918,7 @@ const tab = {
       // edge class per outcome and per relation, and the terminals the steps
       // route into. Both were named by the design system and asserted nowhere,
       // so an editor that drew every edge alike passed all 21 of these states.
-      shows: [S.editorToolbar, S.editorPanel, S.editorTerminal, ...EDITOR_EDGES],
+      shows: [S.editorToolbar, S.editorPanel, S.editorTerminal, S.editorCard, ...EDITOR_EDGES],
       /*
        * `EditorApp` keeps both panes mounted and separates them with `hidden`
        * alone. The leak was pinned in one direction only — the two Relations
@@ -1087,7 +1087,7 @@ const edit = {
     },
     // The one edit Save itself refuses: an attempt count the editor cannot
     // render. That refusal is the whole difference from `created`.
-    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorDiscard, withheld(S.editorSave)] },
+    { id: "invalid", summary: "an edit the editor refuses to save", shows: [S.editorIssues, S.editorHints, S.editorDiscard, withheld(S.editorSave)] },
     /*
      * The two ends of a pipeline save, rendered with `./intent` routed in the
      * browser so nothing is written. `saving` is the state that was hiding a

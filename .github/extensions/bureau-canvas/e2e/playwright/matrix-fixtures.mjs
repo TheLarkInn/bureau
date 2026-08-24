@@ -447,6 +447,26 @@ export async function applyOps(ops, state, page, host) {
 
 const SETTLE_MS = 5000;
 const SETTLE_POLL_MS = 100;
+/**
+ * How many consecutive samples must agree before a render is called finished.
+ *
+ * One was not enough. React Flow appends the relation graph's edges in a pass
+ * after it has measured the cards, and under a fully-parallel suite that pass
+ * lands wherever the scheduler puts it — so a single repeat caught the surface
+ * mid-draw and filed a graph of disconnected boxes. Measured on this tree, two
+ * runs of one matrix disagreed on 81 of 500 renders; widening the window to
+ * three agreeing samples took that to about 60.
+ *
+ * It is not zero, and the honest reason is that no wait can make it zero: the
+ * same states are stable at one worker and drift at four, so what is being
+ * waited out is CPU contention rather than a step the page takes. A
+ * MutationObserver gate was tried here instead of the poll — the document
+ * itself reporting it had stopped, rather than agreement across sampled
+ * instants — and measured 61 of 500, no better than the poll for an extra
+ * round trip per sample. So the poll stays, the residue is #116, and that is
+ * why the twin audit reports rather than gates.
+ */
+const SETTLE_REPEATS = 3;
 
 /**
  * Judges the render once it has settled, and settles on the render itself.
@@ -475,21 +495,40 @@ const SETTLE_POLL_MS = 100;
  * settled when its own signature stops changing. That needs no knowledge of
  * which surfaces animate or which library measures late, and it cannot fall out
  * of date the way a hand-kept list of selectors does.
+ *
+ * "Stops changing" needed a wider window than one poll, which `SETTLE_REPEATS`
+ * above explains and measures.
+ *
+ * The last sample is not what is returned, though, and that is the second half.
+ * The loop exits on `failures === 0` *and* agreement, so a render that passes
+ * immediately but keeps drifting goes on polling — and returning the final
+ * sample would let a state that was observed correct be failed by the frame the
+ * deadline happened to land on. A settled pass is preferred to a late one, so
+ * the first failure-free sample is kept and handed back if the deadline
+ * arrives; a state that never passed still reports its last look, which is the
+ * one carrying the failures worth reading.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
   let result = await sample(state, page);
+  let passed = result.failures.length ? null : result;
+  let agreed = 0;
   let previous = null;
-  while (unsettled(result, previous) && Date.now() < deadline) {
+  while (Date.now() < deadline) {
+    agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
+    if (isSettled(result, agreed)) {
+      return result;
+    }
     previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
     result = await sample(state, page);
+    passed ??= result.failures.length ? null : result;
   }
-  return result;
+  return result.failures.length ? (passed ?? result) : result;
 }
 
-function unsettled(result, previous) {
-  return result.failures.length > 0 || result.snapshot.signature !== previous;
+function isSettled(result, agreed) {
+  return result.failures.length === 0 && agreed >= SETTLE_REPEATS;
 }
 
 async function sample(state, page) {

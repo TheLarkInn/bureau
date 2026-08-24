@@ -97,10 +97,20 @@ async function report(published, signatures) {
   await stamp(lines, names.missing);
 }
 
-/** Marks the findings in the artefact itself, not only on a console. */
+/**
+ * Marks the findings in the artefact itself, not only on a console.
+ *
+ * Both lists are capped. A run in which every state drew one screen produces a
+ * finding per group and a missing entry per render, and a banner carrying all
+ * of them unabridged is megabytes of text at the top of the page a reviewer
+ * came to read — the run where the gallery most needs to stay legible is
+ * exactly the run that would make it unreadable.
+ */
 async function stamp(lines, missing) {
+  const shown = lines.slice(0, 20);
   const banner = '<p style="margin:0;padding:.75rem 1.5rem;background:#ffebe9;color:#cf222e;font-weight:700">'
-    + `This gallery is not the whole matrix, or not every state in it draws its own screen: ${lines.join("; ")}. `
+    + `This gallery is not the whole matrix, or not every state in it draws its own screen: ${shown.join("; ")}`
+    + `${lines.length > shown.length ? `; and ${lines.length - shown.length} more` : ""}. `
     + `${missing.length ? `Missing: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`;
   const index = join(GALLERY, "index.html");
   const written = await readFile(index, "utf8").catch(() => null);

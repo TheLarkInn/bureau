@@ -444,6 +444,43 @@ test("step start retains configured and resolved agent identity", () => {
   );
 });
 
+/**
+ * The two things "an event without a `seq` keeps its position" has to mean.
+ *
+ * The sort key was `seqOf(event) ?? 0`, and `0` is a real sequence number, not
+ * a stand-in for "no opinion". So a seq-less tail frame — chronologically the
+ * newest thing known, from a log written before sequencing — was given the
+ * lowest key there is and replayed *first*, ahead of the whole history. The
+ * comment claimed the position was kept; the arithmetic moved it to the front.
+ *
+ * The second half is the tail against itself. `carried` was built from the
+ * history alone, so a reconnect that redelivered a frame the history never held
+ * appended it twice, and a `step_started` applied twice is a step restarted.
+ */
+test("a seq-less frame keeps its place, and a redelivered tail frame is not a second event", () => {
+  const started = { seq: 1, at_ms: 1000, kind: "run_started", data: { run_id: "r1", assignment: "fix" } };
+  const stepped = { seq: 2, at_ms: 1100, kind: "step_started", data: { step: "propose" } };
+  const legacyTail = { at_ms: 1200, kind: "run_finished", data: { outcome: "success" } };
+  // The seq-less frame arrived last and belongs last; `?? 0` put it first, which
+  // ended the run before it had started.
+  const withLegacy = mergeRunEvents([started, stepped], [legacyTail]);
+  // One frame, delivered twice by the tail, absent from the history entirely.
+  const echoed = mergeRunEvents([started], [stepped, stepped]);
+
+  assert.deepEqual(
+    {
+      order: withLegacy.map((event) => event.kind),
+      status: applyEvents(withLegacy).status,
+      echoed: echoed.map((event) => event.kind),
+    },
+    {
+      order: ["run_started", "step_started", "run_finished"],
+      status: "finished",
+      echoed: ["run_started", "step_started"],
+    },
+  );
+});
+
 /*
  * The backfill race, reduced to a fact about two lists.
  *
