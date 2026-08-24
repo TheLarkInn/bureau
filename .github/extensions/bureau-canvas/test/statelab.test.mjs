@@ -23,7 +23,7 @@ import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
@@ -306,8 +306,26 @@ test("every fixture changes the payload, and no two fixtures agree", async () =>
   );
 });
 
-test("every entry path uses only verbs the driver implements", () => {
-  const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
+/**
+ * A twin declares that two states draw one screen on purpose. Declared against
+ * an id no state has, it suppresses nothing and asserts nothing — an inert
+ * sentence that reads like a decision — so the ids are held to the registry and
+ * the reason is required to be a sentence rather than a placeholder.
+ */
+test("every declared render twin names two real states, at real viewports, with a reason", () => {
+  const ids = new Set(STATES.map((state) => state.id));
+  const viewports = new Set(Object.values(VIEWPORTS).map((viewport) => viewport.id));
+  const faults = RENDER_TWINS.flatMap((twin) => [
+    ...[twin.a, twin.b].filter((id) => !ids.has(id)).map((id) => `no state ${id}`),
+    ...twin.viewports.filter((id) => !viewports.has(id)).map((id) => `no viewport ${id}`),
+    ...(twin.a === twin.b ? [`${twin.a} is declared a twin of itself`] : []),
+    ...((twin.why ?? "").length > 20 ? [] : [`${twin.a} declares no reason`]),
+  ]);
+
+  assert.deepStrictEqual(faults, []);
+});
+
+test("every entry path uses only verbs the driver implements", () => {  const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
   const unknown = STATES.flatMap((state) => state.ops.filter((op) => !verbs.has(op.op)).map((op) => `${state.id}: ${op.op}`));
   assert.deepStrictEqual(unknown, []);
 });
@@ -1399,11 +1417,12 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
   assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 1 },
-    texts: { ".a": "saved" },
+    counts: { ".a": 2 },
+    texts: { ".a": "saved wrapped" },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
       { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", within: [], flow: true, clipped: true, trimmed: 150 },
+      { selector: ".b", id: "node-2", x: 10, y: 60, width: 100, height: 80, parent: "parent-1", within: [], flow: true, clipped: false, trimmed: 40 },
     ],
     contrast: [{ selector: ".c", text: "Kind", ratio: 21 }],
     labels: [{
@@ -1411,6 +1430,13 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       label: { x: 0, y: 40, width: 60, height: 16 },
       control: { x: 70, y: 40, width: 120, height: 24 },
     }],
+    signature: [
+      "BUTTON|class=btn,data-testid=draft-save|Save||",
+      "DIV|class=draft-bar|||",
+      "INPUT|class=field,data-testid=create-name||release-pipeline|",
+      "INPUT|class=toggle,data-testid=limit-on||on|checked",
+      "DETAILS|class=relation-section,open=|||",
+    ].join("\n"),
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1431,6 +1457,9 @@ function boxOf(x, y, width, height) {
   return { x, y, width, height, top: y, left: x, right: x + width, bottom: y + height };
 }
 
+/** The rect list a node that occupies space reports. */
+const AREA = [{ width: 100, height: 20 }];
+
 /**
  * A document shaped so that each of `collect`'s inner helpers is called at
  * least once — `visible`, `keyFor`, `idFor`, `clipper`, `channels`, `opaque`,
@@ -1441,7 +1470,7 @@ function pageStub() {
   const styles = new Map();
   const element = (style, own = {}) => {
     const node = {
-      getClientRects: () => [{}],
+      getClientRects: () => AREA,
       getBoundingClientRect: () => boxOf(0, 0, 0, 0),
       parentElement: null,
       textContent: "",
@@ -1467,6 +1496,15 @@ function pageStub() {
   // Zero-area, so the measure loop skips it and the ids stay contiguous.
   const collapsed = element({}, { parentElement: clip });
 
+  // The two axes clipped by different ancestors, which is the ordinary shape of
+  // a truncating label inside a lidded pane: the nearer wrapper hides overflow
+  // on x only, the outer box on y only. A walk that stops at the first ancestor
+  // clipping *either* axis reads this node's y overflow off the x-only wrapper,
+  // finds it visible, and reports a clean box for content cut off below the lid.
+  const lid = element({ overflowY: "hidden" }, { getBoundingClientRect: () => boxOf(0, 0, 200, 100) });
+  const ellipsis = element({ overflowX: "hidden" }, { parentElement: lid, getBoundingClientRect: () => boxOf(0, 0, 200, 400) });
+  const underLid = element({}, { parentElement: ellipsis, getBoundingClientRect: () => boxOf(10, 60, 100, 80) });
+
   // `visible` has to answer both ways over a node that still reports rects.
   // The painted one carries words and the unpainted one carries different
   // words, so the text gather is exercised *and* shown to skip what the reade
@@ -1486,6 +1524,15 @@ function pageStub() {
     innerText: "invisible discard",
     parentElement: element({ opacity: "0" }),
   });
+  // The third way: a control collapsed to no area at all. It reports a rect,
+  // so counting rects called it shown; it covers no pixel, so a reader looking
+  // at the screen would say the control is gone.
+  const flattened = element({}, { innerText: "invisible cancel", getClientRects: () => [{ width: 0, height: 0 }] });
+  // And the case that keeps the fix from being "every rect must have area": an
+  // inline run broken across two lines reports an empty rect beside a real one,
+  // and it is on screen. Requiring area of *every* rect would report an
+  // ordinary wrapped label as missing.
+  const wrapped = element({}, { innerText: "wrapped", getClientRects: () => [{ width: 0, height: 0 }, { width: 80, height: 20 }] });
 
   // Transparent over white, so `backdrop` must walk up and `opaque` answers
   // false then true before `luminance` runs on what it settles on.
@@ -1503,11 +1550,46 @@ function pageStub() {
     getAttribute: (name) => (name === "for" ? "field-1" : null),
   });
 
+  // The signature walk, which reads different properties from the same nodes:
+  // what each element is, where it sits, and its own words when it has no
+  // children to carry them. A leaf, a parent, and one element with no area —
+  // the last because a signature that included collapsed nodes would report a
+  // difference between two screens that look the same.
+  const named = (tag, testid, className, box, own) => element({}, {
+    tagName: tag,
+    childElementCount: 0,
+    attributes: [
+      ...(testid ? [{ name: "data-testid", value: testid }] : []),
+      ...(className ? [{ name: "class", value: className }] : []),
+      // Computed geometry, which the signature must drop: React Flow writes a
+      // node's position into `style` on every layout, so keeping it would put
+      // the drift straight back that leaving boxes out took away.
+      { name: "style", value: "transform: translate(13px, 760px)" },
+    ],
+    getBoundingClientRect: () => box,
+    getAttribute: (attribute) => ({ "data-testid": testid, class: className })[attribute] ?? null,
+    ...own,
+  });
+  const leaf = named("BUTTON", "draft-save", "btn", boxOf(10, 20, 80, 24), { textContent: " Save " });
+  const parent = named("DIV", null, "draft-bar", boxOf(0, 0, 760, 44), { childElementCount: 1, textContent: "Save" });
+  const arealess = named("SPAN", null, "caret", boxOf(0, 0, 0, 0), { getClientRects: () => [{ width: 0, height: 0 }] });
+  // A form control carries its state in properties rather than in the text, so
+  // the walk has to read them or two forms holding different things are one
+  // screen. The disclosure carries its state in an attribute for the same
+  // reason: a `<details>` keeps its subtree mounted either way.
+  const typed = named("INPUT", "create-name", "field", boxOf(0, 60, 200, 28), { value: "release-pipeline", checked: false });
+  const ticked = named("INPUT", "limit-on", "toggle", boxOf(0, 100, 16, 16), { value: "on", checked: true });
+  const disclosure = named("DETAILS", null, "relation-section", boxOf(0, 140, 760, 300), {
+    attributes: [{ name: "class", value: "relation-section" }, { name: "open", value: "" }],
+    childElementCount: 2,
+  });
+
   const matches = {
-    ".a": [shown, unpainted, transparent, behindTransparent],
-    ".b": [inside, past, collapsed],
+    ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
+    ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
     "label[for]": [label],
+    "body *": [leaf, parent, arealess, typed, ticked, disclosure],
   };
   return {
     defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },

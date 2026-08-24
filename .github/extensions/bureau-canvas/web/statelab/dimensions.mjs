@@ -73,14 +73,25 @@ const surface = {
       // design is reached without a click of its own, so the settle is waited
       // for here — once, on the surface all three modes are entered from.
       enter: [{ op: "wait", selector: S.liveCountSettled }],
-      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher],
+      /*
+       * The two ways off this surface are promised here, and they were promised
+       * nowhere: `S.pipelineBack` and `S.pipelineEditLink` were defined in
+       * `selectors.mjs` and read by no state, so deleting either control left
+       * every one of the 500 renders green while the viewer became a room with
+       * no door. They sit on the surface rather than on a mode because the
+       * toolbar draws them in all three, which is the claim being made.
+       */
+      shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher, S.pipelineBack, S.pipelineEditLink],
       hides: [S.configView],
     },
     {
       id: "editor",
       summary: "editor.html — the pipeline editor and the relation graph",
       page: "editor",
-      shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations],
+      // `S.editorBack` for the same reason as the viewer's pair: this page is
+      // entered from the landing and the header button is the only way back, so
+      // a state that does not require it cannot notice the way out going away.
+      shows: [S.shell, S.editorTabs, S.editorTabPipeline, S.editorTabRelations, S.editorBack],
       /*
        * The wrong render this page can actually produce. `.view-shell--config`
        * used to sit here, but that class is emitted only by `app.mjs`, which
@@ -392,7 +403,7 @@ const card = {
       id: "expanded",
       summary: "work source, work rules, signals, repos, pipeline and limits",
       enter: [{ op: "click", selector: S.assignmentHead }],
-      shows: [S.assignmentDetail, S.workSourceValue, S.workRulesValue, S.signalsValue, S.reposValue, S.limitsValue],
+      shows: [S.assignmentDetail, S.workSourceValue, S.workRulesValue, S.signalsValue, S.reposValue, S.limitsValue, S.pipelineRef],
       copy: ["work source", "work rules", "forge signals", "repos", "pipeline", "limits"],
     },
   ],
