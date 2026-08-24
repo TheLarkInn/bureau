@@ -145,21 +145,21 @@ test("every count the branch reports about itself is what the registry holds", (
     { ...summary(), renders },
     {
       dimensions: 16,
-      dimensionValues: 94,
-      combinations: 470292480000,
+      dimensionValues: 97,
+      combinations: 627056640000,
       constraintRules: 33,
       structuralRules: 22,
       scopingRules: 7,
       harnessRules: 4,
-      excludedCombinations: 470292479796,
-      matrixStates: 204,
+      excludedCombinations: 627056639793,
+      matrixStates: 207,
       probes: 41,
-      states: 245,
+      states: 248,
       transitions: 132,
       entryTransitions: 98,
       returnTransitions: 34,
-      roots: 147,
-      renders: 490,
+      roots: 150,
+      renders: 496,
     },
   );
 });
@@ -538,7 +538,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 85, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 88, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1636,6 +1636,6 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 89 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 92 },
   );
 });

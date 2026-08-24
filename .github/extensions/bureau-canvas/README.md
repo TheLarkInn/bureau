@@ -353,8 +353,8 @@ product. `test/statelab.test.mjs` requires every such rule to be `harness`, and
 asserts that it matched at least one rule so the check cannot pass by vacuity if
 the constant is ever renamed.
 
-So the plan bar's save, the pipeline editor's save, a refused create and a
-refused run control are ordinary states now, each reached by pressing the real
+So the plan bar's save, the pipeline editor's save, a refused create and both
+ends of a run control are ordinary states now, each reached by pressing the real
 button under `stall-intent` or `fail-intent`. Both ends are exact rather than
 timing-dependent: stalling pins the in-flight branch on, and a refusal is the
 branch that renders each surface's own sentence. Each declares the 500 the
@@ -391,9 +391,13 @@ Two further exclusions in this family remain, and they are narrower still.
 `a-refused-control-is-a-live-control` is structural in the strict sense:
 `web/replay/replay.js` draws a picker and a timeline, and its transport moves
 the reader's own position without posting anything, so there is no control there
-whose refusal could be shown. Crossing it with replay produced three ids for one
-render, which the distinguishability gate caught by name. And
-`mutations-need-a-selected-step` now covers the editor saves, whose path is a
+to hold mid-request or to show a refusal on. Crossing it with replay produced
+three ids for one render, which the distinguishability gate caught by name. It
+reads `postsRunIntent` rather than the `refused` prefix, so the held end of the
+same round trip is scoped by the same rule that scopes the refused one — written
+the other way, `holding-pause` crossed with replay would have been enumerated
+and its path would have hunted for a Pause button on a surface that draws none.
+And `mutations-need-a-selected-step` now covers the editor saves, whose path is a
 rename plus a click — an editor with nothing selected has nothing to rename, and
 without the rule the click would silently never happen. The successful write
 paths still belong to `specs/editor.spec.mjs` and `specs/controls.spec.mjs`,

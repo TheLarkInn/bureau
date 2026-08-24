@@ -10,7 +10,7 @@ import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
 import { isAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runOps, runRefusalOps, selectStep } from "./paths.mjs";
+import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
@@ -100,6 +100,9 @@ function configOps(combo) {
 function pipelineOps(combo) {
   if (combo.run.startsWith("refused")) {
     return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runRefusalOps(combo.run)];
+  }
+  if (combo.run.startsWith("holding")) {
+    return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runHoldOps(combo.run)];
   }
   return [
     ...(valueOf("mode", combo.mode)?.enter ?? []),

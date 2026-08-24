@@ -285,12 +285,15 @@ export const SAVE_INTERCEPTS = { saving: "stall-intent", discarding: "stall-inte
  * raced a second write against the first one's revert.
  */
 export function interceptFor(combo) {
-  const refusedRun = String(combo.run ?? "").startsWith("refused");
   const wanted = [
     SAVE_INTERCEPTS[combo.fieldState],
     SAVE_INTERCEPTS[combo.draft],
     SAVE_INTERCEPTS[combo.edit],
-    refusedRun ? "fail-intent" : null,
+    String(combo.run ?? "").startsWith("refused") ? "fail-intent" : null,
+    // The held end takes the same route every other in-flight state takes: the
+    // intent is never answered, which is the only way the wait is a screen
+    // rather than a frame between two of them.
+    RUN_HOLDS[combo.run] ? "stall-intent" : null,
     combo.run === "ended" ? "offer-ended-run" : null,
     combo.disclosure === "create-error" ? "fail-intent" : null,
   ].filter(Boolean);
@@ -618,6 +621,53 @@ export function runRefusalOps(runValue) {
     { op: "click", selector: refusal.control },
     { op: "wait", selector: S.runControlError },
   ];
+}
+
+/**
+ * Holding a run control, per verb — the other end of the same round trip.
+ *
+ * A refusal was modelled for all three verbs and the wait for none of them, so
+ * the screen between the press and the answer was the last write on this
+ * surface with no state at all. The renderer matched the model: `send` posted
+ * with every control live, so a second press sent a second intent and Bureau
+ * was asked twice about one run. A duplicate resume is the worst of the three —
+ * the first clears `PAUSE`, and the second is then refused about a run that is
+ * already running, so the reader is told a request failed that in fact
+ * succeeded.
+ *
+ * Each verb is held on the run that offers it, exactly as its refusal is:
+ * pause and cancel on a running run, resume on a paused one. `stall-intent`
+ * answers none of them, which is what a host taking its time looks like.
+ *
+ * The status is asserted unchanged, because the claim being made is that a
+ * *held* control has not moved the run — only the request is in flight.
+ */
+export const RUN_HOLDS = {
+  "holding-pause": { run: "running", control: S.runPause, verb: "pause", pending: "Pausing…" },
+  "holding-resume": { run: "paused", control: S.runResume, verb: "resume", pending: "Resuming…" },
+  "holding-cancel": { run: "running", control: S.runCancel, verb: "cancel", pending: "Cancelling…" },
+};
+
+export function runHoldOps(runValue) {
+  const hold = RUN_HOLDS[runValue];
+  return [
+    ...runOps("live", hold.run),
+    { op: "click", selector: hold.control },
+    { op: "wait", selector: withheld(hold.control) },
+  ];
+}
+
+/**
+ * The run values whose entry path posts an intent about the run.
+ *
+ * One predicate for both ends, read by the rule that scopes them to Live, by
+ * the intercept that stages them and by the path that walks them — so a verb
+ * whose wait is modelled and whose refusal is not, or the reverse, cannot be
+ * scoped by one and missed by the other.
+ */
+export function postsRunIntent(runValue) {
+  const value = String(runValue ?? "");
+  return value.startsWith("refused") || value.startsWith("holding");
 }
 
 function selectionLayer(combo) {

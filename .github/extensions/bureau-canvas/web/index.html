@@ -1074,6 +1074,13 @@
       .run-control { border: 1px solid var(--border-color-default, #d0d7de); border-radius: 6px; padding: 3px 10px; background: var(--background-color-default, #ffffff); color: inherit; cursor: pointer; }
       .run-control--active { border-color: var(--color-focus-outline, #0969da); color: var(--color-focus-outline, #0969da); }
       .run-control--danger { color: var(--outcome-failure); }
+      /* Held for the length of a request, and it has to look held: a Cancel
+         that keeps its danger colour and its pointer reads as pressable while
+         the intent it belongs to is already out. Same treatment `.btn:disabled`
+         gives every other withheld control, so a held run control is not a
+         second vocabulary. The colour is stated after `--danger` so it wins
+         over it without needing to out-specify it. */
+      .run-control:disabled { color: var(--text-color-muted, #656d76); background-color: var(--surface-subtle, #f6f8fa); cursor: not-allowed; }
       .run-control-error { color: var(--outcome-failure); font-size: var(--text-code-inline, 12px); }
       .run-control-result { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }
       .run-status { color: var(--text-color-muted, #656d76); font-size: var(--text-code-inline, 12px); }

@@ -56,7 +56,7 @@
 // and what a bundled fixture happens to contain is never a fact about the
 // canvas. `test/statelab.test.mjs` requires every such rule to be `harness`.
 
-import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
+import { FIELD_LIFECYCLE, SAMPLE_STEPS, postsRunIntent } from "./paths.mjs";
 import { PAIRABLE_FIELDS } from "./dimensions.mjs";
 const BOOT_DATA = ["loading", "render-error"];
 const BOOT_SURFACES = ["boot", "boot-editor"];
@@ -286,13 +286,19 @@ export const CONSTRAINTS = [
      * never posts an intent. Crossing the refusal with replay produced tuples
      * whose entry path was the live one over again — three ids for one render,
      * which the distinguishability gate caught by name.
+     *
+     * `postsRunIntent` covers both ends of that round trip. The rule used to
+     * read the `refused` prefix directly, so when the held end was modelled it
+     * would have been scoped by nothing: `holding-pause` crossed with replay
+     * would have been enumerated, and its path would have looked for a Pause
+     * button on a surface that draws no such control.
      */
     id: "a-refused-control-is-a-live-control",
     kind: "structural",
     reads: ["mode", "run"],
-    title: "Only the live transport can have an intent refused",
-    why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control whose refusal could be shown.",
-    holds: (combo) => !combo.run.startsWith("refused") || combo.mode === "live",
+    title: "Only the live transport posts an intent about a run",
+    why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control that could be held mid-request or have a refusal shown.",
+    holds: (combo) => !postsRunIntent(combo.run) || combo.mode === "live",
   },
   {
     /*

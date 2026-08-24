@@ -102,6 +102,91 @@ test("Run reconcile now stays busy until the pass finishes, then says what it di
 });
 
 /*
+ * A pass report belongs to the visit that asked for it.
+ *
+ * `useLiveOverlay` is owned by `PipelineView`, so leaving Live only stops
+ * rendering the controls — the hook, and the request it has out, survive the
+ * trip. `dismissControls` withdrew the *rendered* result on the way out and
+ * nothing withdrew the one still in flight, so a pass answered while the reader
+ * was in Design installed its sentence anyway, and Live had a report waiting on
+ * the way back for a pass this visit never ran.
+ *
+ * The run controls were already ticketed against exactly this; the pass had no
+ * ticket of its own. It needs a separate one rather than a share of theirs,
+ * because theirs is bumped on every change of selection and a pass is about the
+ * pipeline, not the run being watched.
+ */
+test("a reconcile report does not follow the reader out of Live and back", async ({ page, canvas }) => {
+  let finish = () => {};
+  const held = new Promise((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/intent", async (route) => {
+    if (route.request().postDataJSON()?.kind !== "reconcile-now") {
+      await route.continue();
+      return;
+    }
+    await held;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) });
+  });
+  await openPipeline(page, canvas);
+  await page.getByRole("tab", { name: /live/iu }).click();
+  await page.getByRole("button", { name: "Run reconcile now" }).click();
+  await expect(page.getByRole("button", { name: "Reconciling…" })).toBeDisabled();
+
+  await page.getByRole("tab", { name: /design/iu }).click();
+  finish();
+  await page.getByRole("tab", { name: /live/iu }).click();
+
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run reconcile now" })).toBeEnabled();
+});
+
+/*
+ * One press, one intent, and the transport comes back.
+ *
+ * A run control is a `bureau` invocation, not a form submission: two pauses are
+ * two processes against one run, and the second is answered about a run the
+ * first has already moved. A duplicate resume is the one that lies — the first
+ * clears `PAUSE`, and the second is then refused about a run that is already
+ * running, so the reader is told their request failed when it succeeded.
+ *
+ * The held render itself is asserted by the matrix, at both viewports, on all
+ * three verbs. What only a round trip can show is the far end: the controls
+ * have to come back when the answer arrives, or a slow host leaves the reader
+ * holding a run they can no longer act on at all.
+ */
+test("a run control posts one intent per press and returns to rest", async ({ page, canvas }) => {
+  const runId = "control-guard-run";
+  let finish = () => {};
+  const held = new Promise((resolve) => {
+    finish = resolve;
+  });
+  let pauses = 0;
+  await seedRun(canvas, runId);
+  await page.route("**/intent", async (route) => {
+    if (route.request().postDataJSON()?.kind !== "pause-run") {
+      await route.continue();
+      return;
+    }
+    pauses += 1;
+    await held;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+  await openPipeline(page, canvas);
+  await page.getByRole("tab", { name: /live/iu }).click();
+  await page.getByLabel("Live run").selectOption(runId);
+
+  await page.getByRole("button", { name: "Pause" }).click();
+  await expect(page.getByRole("button", { name: "Pausing…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  finish();
+
+  await expect(page.getByRole("button", { name: "Pause" })).toBeEnabled();
+  expect(pauses).toBe(1);
+});
+
+/*
  * The pass reports on itself, and moves nothing it did not start.
  *
  * A refused pass that still selected a run was drawing a paused run the reader

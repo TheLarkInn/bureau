@@ -12,9 +12,18 @@
 // recorded rather than silently dropped.
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
+import { FIELD_SAVE, RUN_END, RUN_HOLDS, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
+
+/**
+ * The three controls that post an intent about the run.
+ *
+ * Read out of the transport `overlay()` already derives rather than listed
+ * again beside it: a held state must withhold exactly what its resting screen
+ * offers, and a second list is how the two stop agreeing.
+ */
+const RUN_CONTROLS = new Set([S.runPause, S.runResume, S.runCancel]);
 
 /**
  * D1 — which top-level render surface is mounted. Boot covers the two states
@@ -746,6 +755,41 @@ const run = {
         // one it was — asserted here rather than assumed, because a refusal
         // that also moved the run would be the worst version of this bug.
         copy: [`could not ${refusal.verb} this run`, ...(transport.copy ?? [])],
+      };
+    }),
+    /*
+     * A run control with its request still out, once per verb.
+     *
+     * The refusals above are the answer; this is the wait, and it was modelled
+     * nowhere — so `send` posted with every control live and a second press
+     * asked Bureau a second time about one run.
+     *
+     * Every drawn control is asserted withheld, not just the one pressed:
+     * pausing a run while cancelling it is two intents about the same run, and
+     * withholding only the pressed button would still allow it. They fail
+     * apart, so both are named.
+     *
+     * The status is asserted unchanged for the reason the refusals assert it —
+     * a control that is merely *held* has moved nothing yet, and a screen that
+     * showed "paused" the instant Pause was pressed would be reporting a run
+     * state on the strength of a request that has not been answered.
+     *
+     * `.run-control-error` is asserted absent for the same reason: there is no
+     * refusal yet, and a wait that already reports one would be inventing it.
+     */
+    ...Object.entries(RUN_HOLDS).map(([id, hold]) => {
+      const transport = overlay({ mode: "live" }, hold.run);
+      const drawn = transport.shows.filter((selector) => RUN_CONTROLS.has(selector));
+      return {
+        id,
+        summary: `a ${hold.verb} still in flight: every control is held, so the run cannot be asked twice`,
+        // Everything the resting screen shows that is not a control, plus every
+        // control it does show, withheld. The decoration is carried through
+        // rather than dropped: a held control has not moved the run, so the
+        // graph must still be showing the run it was showing.
+        shows: [...transport.shows.filter((selector) => !RUN_CONTROLS.has(selector)), ...drawn.map(withheld)],
+        hides: [...(transport.hides ?? []), S.runControlError],
+        copy: [hold.pending, ...(transport.copy ?? [])],
       };
     }),
   ],

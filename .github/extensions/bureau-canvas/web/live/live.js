@@ -29,6 +29,25 @@ const REFUSED = {
   "cancel-run": "could not cancel this run",
 };
 
+/*
+ * What a run control says while its request is out, named per verb for the
+ * reason the refusals are: these three leave the run in different places, so
+ * one shared word for the wait would describe none of them.
+ *
+ * A run control was the last write on this surface with no in-flight state at
+ * all. Every other one — the five field editors, the delete prompt, the create
+ * bar — holds itself for the length of its round trip; these stayed live, so a
+ * second press sent a second intent and Bureau was asked twice about one run.
+ * A duplicate resume is the worst of the three: the first clears `PAUSE`, and
+ * the second is then refused about a run that is already running, so the reader
+ * is told a request failed that in fact succeeded.
+ */
+const PENDING = {
+  "pause-run": "Pausing…",
+  "resume-run": "Resuming…",
+  "cancel-run": "Cancelling…",
+};
+
 
 /** One SSE frame, or `null` when it is not the JSON this channel promises. */
 function parseFrame(data) {
@@ -64,9 +83,16 @@ export function useLiveOverlay(activity, onOpenReplay) {
   const [events, setEvents] = useState([]);
   const [collapsed, setCollapsed] = useState(new Set());
   const [controlResult, setControlResult] = useState(null);
+  const [controlBusy, setControlBusy] = useState(null);
   const [reconciling, setReconciling] = useState(false);
   const [reconcileResult, setReconcileResult] = useState(null);
   const controlTicket = useRef(0);
+  // The reconcile pass has a ticket of its own rather than sharing the run
+  // controls'. That one is bumped on every change of selection, and a pass is
+  // about the pipeline, not the run being watched — so sharing it would drop
+  // the report of a pass that is still perfectly true because the reader
+  // switched runs while it was out.
+  const reconcileTicket = useRef(0);
 
   useEffect(() => {
     // A refusal and a fold both belong to the run that was selected when they
@@ -78,6 +104,11 @@ export function useLiveOverlay(activity, onOpenReplay) {
     setEvents([]);
     setCollapsed(new Set());
     setControlResult(null);
+    // Cleared beside the refusal for the same reason: a request in flight
+    // belongs to the run it was pressed on, so its hold must not outlive that
+    // selection. Left set, the new run's transport would be dead until an
+    // answer arrived about a run the reader had already left.
+    setControlBusy(null);
     // Bumped on every change of selection, so a reply that was in flight when
     // the reader moved on cannot install itself over the run they moved to.
     controlTicket.current += 1;
@@ -134,14 +165,22 @@ export function useLiveOverlay(activity, onOpenReplay) {
   } : null), [runId, overlay, collapsed]);
 
   const send = (kind) => {
+    // One intent at a time. Bureau is a process, not a form: two pauses are two
+    // `bureau` invocations against one run, and the second is answered about a
+    // run the first has already moved.
+    if (controlBusy) {
+      return;
+    }
     const refused = REFUSED[kind] ?? "could not act on this run";
     const mine = controlTicket.current;
     // A reply is only about the run that was selected when it was asked for.
     const settle = (result) => {
       if (mine === controlTicket.current) {
+        setControlBusy(null);
         setControlResult(result);
       }
     };
+    setControlBusy(kind);
     fetch("./intent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -178,12 +217,21 @@ export function useLiveOverlay(activity, onOpenReplay) {
   const reconcileNow = () => {
     const known = new Set(activity.runs.map((run) => run.run_id));
     const since = Date.now();
+    const mine = reconcileTicket.current;
+    // A report is speech of the visit that asked for it. `reconciling` is not
+    // ticketed with it: the pass really is still running, so the button that
+    // says so stays honest across a trip to Design and back.
+    const settle = (outcome) => {
+      if (mine === reconcileTicket.current) {
+        setReconcileResult(outcome);
+      }
+    };
     setReconciling(true);
     setReconcileResult(null);
     postReconcile()
       .then((outcome) => (outcome.ok ? reportPass(known, since) : outcome))
-      .then(setReconcileResult)
-      .catch(() => setReconcileResult({ ok: false, message: RECONCILE_REFUSED }))
+      .then(settle)
+      .catch(() => settle({ ok: false, message: RECONCILE_REFUSED }))
       .finally(() => setReconciling(false));
   };
 
@@ -214,7 +262,7 @@ export function useLiveOverlay(activity, onOpenReplay) {
       disabled: reconciling,
       onClick: reconcileNow,
     }, reconciling ? "Reconciling…" : "Run reconcile now"),
-    runId ? h(RunButtons, { overlay, onAction: send }) : null,
+    runId ? h(RunButtons, { overlay, onAction: send, busy: controlBusy }) : null,
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
     reconcileResult ? h("p", {
       className: reconcileResult.ok ? "run-control-result" : "run-control-error",
@@ -238,7 +286,9 @@ export function useLiveOverlay(activity, onOpenReplay) {
    */
   const dismissControls = () => {
     controlTicket.current += 1;
+    reconcileTicket.current += 1;
     setControlResult(null);
+    setControlBusy(null);
     setReconcileResult(null);
   };
 
@@ -293,19 +343,20 @@ function activityMessage(activity) {
  * Which run controls a status can still act on lives in `overlay.js`, beside
  * the reducer that produces the status — pure, and testable without a browser.
  */
-function RunButtons({ overlay, onAction }) {
+function RunButtons({ overlay, onAction, busy }) {
   const { transport, cancel } = runActions(overlay.status);
+  const label = (kind, resting) => (busy === kind ? PENDING[kind] : resting);
   return h(
     React.Fragment,
     null,
     transport === "resume"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", onClick: () => onAction("resume-run") }, "Resume")
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", disabled: Boolean(busy), onClick: () => onAction("resume-run") }, label("resume-run", "Resume"))
       : null,
     transport === "pause"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", onClick: () => onAction("pause-run") }, "Pause")
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", disabled: Boolean(busy), onClick: () => onAction("pause-run") }, label("pause-run", "Pause"))
       : null,
     cancel
-      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel")
+      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", disabled: Boolean(busy), onClick: () => onAction("cancel-run") }, label("cancel-run", "Cancel"))
       : null,
     h("span", { className: "run-status", "data-status": overlay.status }, overlay.status),
   );
