@@ -668,6 +668,15 @@ export const PROBES = [
    * A step the live run has not written to. `verify` is in the sample pipeline
    * and absent from `run-live`'s log, so it has a head and an empty body —
    * which is the honest answer, and distinct from the step having failed.
+   *
+   * The step's name is asserted *in the log's own heading*, not as a word
+   * somewhere on the page. The path reaches this state by clicking the graph
+   * node whose card renders that same name, so the unscoped form was satisfied
+   * by the element the probe had just pressed: delete the heading from
+   * `LogHead` and `.step-log-head` still renders — the kind pill keeps it
+   * non-empty — while the log stops naming its step and every expectation here
+   * stayed green. The summary claims the step "names itself", so the assertion
+   * has to be about the thing doing the naming.
    */
   sample({
     id: "probe--step-log-unwritten",
@@ -683,9 +692,9 @@ export const PROBES = [
       { op: "wait", selector: S.stepLogEmpty },
     ],
     expect: {
-      shows: [S.stepLog, S.stepLogHead, S.stepLogEmpty],
+      shows: [S.stepLog, S.stepLogHead, S.stepLogTitle, S.stepLogEmpty],
       hides: [S.stepLogIdle],
-      copy: ["No output captured for this step yet.", SAMPLE_STEPS.deterministic],
+      copy: ["No output captured for this step yet.", { selector: S.stepLogTitle, text: SAMPLE_STEPS.deterministic }],
     },
   }),
 ];

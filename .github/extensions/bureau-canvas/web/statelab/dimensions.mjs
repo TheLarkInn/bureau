@@ -687,7 +687,12 @@ const run = {
       summary: "a run picked while live that has since reached its terminal",
       shows: [S.runStatusFinished, S.runPickerLive],
       hides: [S.runPause, S.runResume, S.runCancel, S.overlayRunning, S.overlayPaused],
-      copy: ["finished"],
+      // Scoped for the same reason the other two statuses are, and with one
+      // more: `S.runStatusFinished` matches on `data-status`, which is written
+      // from the same value as the text but is not the text. Blank the child
+      // and the attribute selector still matches — so the element reporting
+      // why the transport went silent could say nothing at all.
+      copy: [{ selector: S.runStatus, text: "finished" }],
     },
     /*
      * A run control the host refused, once per verb.
@@ -744,14 +749,22 @@ const run = {
  * run can be acted on and withdrawn once it cannot, and `.run-status` is the
  * element that reports which of those it is — both were drawn by every live
  * state and asserted by none, so deleting Cancel changed no verdict.
+ *
+ * The status word is scoped to that element rather than searched for in the
+ * body, because both words are already on the page from something else: a
+ * paused run draws `.paused-badge`, whose entire text is "paused" and which
+ * this very list asserts, and a running one draws an `outcome-pill--running`
+ * in the step-log head. Unscoped, the status could be blanked or frozen — the
+ * precise regression a refused control is most likely to cause — and every
+ * live state stayed green.
  */
 function overlay(combo, runValue) {
   if (combo.mode === "replay") {
     return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
   }
   return runValue === "paused"
-    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: ["paused"] }
-    : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: ["running"] };
+    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: [{ selector: S.runStatus, text: "paused" }] }
+    : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: [{ selector: S.runStatus, text: "running" }] };
 }
 
 /**

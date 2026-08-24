@@ -166,6 +166,11 @@ export const SELECTORS = {
   stepLog: ".step-log",
   stepLogIdle: ".step-log--idle",
   stepLogHead: ".step-log-head",
+  // The head's own heading, separate from the head, because the head is
+  // non-empty without it: the kind and outcome pills are its siblings. The one
+  // thing the head exists to say — which step this output belongs to — is the
+  // one thing `.step-log-head` being present does not prove.
+  stepLogTitle: ".step-log-title",
   stepLogEmpty: ".step-log-empty",
   legend: ".legend",
   stepCard: ".flow-card",

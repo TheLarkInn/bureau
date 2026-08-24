@@ -1,3 +1,5 @@
+import { readdir } from "node:fs/promises";
+
 import { STATES } from "../../../web/statelab/registry.mjs";
 import { enterState, expect, test } from "../matrix-fixtures.mjs";
 
@@ -59,6 +61,36 @@ test.describe("@visual approved product screens", () => {
       });
     });
   }
+});
+
+/**
+ * How many approved screens there are is printed to every reader of a run and
+ * asserted, until now, by nothing: the job is named `10 approved screens` and
+ * its summary line repeats the figure. Add an eleventh screen and both keep
+ * saying ten, green. That is this branch's own subject one layer out — a count
+ * reported to a human that no test can falsify — and the reason the rest of
+ * `summary()` is pinned to literals a few files away.
+ *
+ * The baselines on disk are the independent half of the comparison, and they
+ * catch the drift a missing one does not. A missing baseline already fails:
+ * Playwright writes it and reports the run red. An *orphaned* one cannot.
+ * Rename a screen and the old image stays, gating nothing, while the folder a
+ * reviewer scrolls to see what was approved grows a picture no test reads.
+ */
+test("@visual the ten approved screens are exactly the baselines on disk", async ({}, testInfo) => {
+  const suffix = `-${testInfo.project.name}-${process.platform}.png`;
+  const files = await readdir(new URL("./visual-regression.spec.mjs-snapshots/", import.meta.url));
+  const approved = files.filter((name) => name.endsWith(suffix)).map((name) => name.slice(0, -suffix.length));
+
+  expect({
+    approved: approved.sort(),
+    count: SCREENS.length,
+    unreadable: files.filter((name) => !name.endsWith(suffix)),
+  }).toEqual({
+    approved: SCREENS.map((item) => item.name).sort(),
+    count: 10,
+    unreadable: [],
+  });
 });
 
 function screen(name, stateId, viewport) {

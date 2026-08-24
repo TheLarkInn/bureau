@@ -333,7 +333,7 @@ test.describe("leaving an open field editor", () => {
     });
 
     release();
-    await card.page.waitForTimeout(250);
+    await landed(card.page, "set-limits");
 
     expect(await card.page.evaluate(() => window.__published)).toBe(0);
     await expect(url).toBeFocused();
@@ -384,13 +384,34 @@ test.describe("leaving an open field editor", () => {
     });
 
     release();
-    await card.page.waitForTimeout(250);
+    await landed(card.page, "create");
 
     expect(await card.page.evaluate(() => window.__published)).toBe(0);
     await expect(url).toBeFocused();
     await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
   });
 });
+
+/**
+ * The settle window both race tests take before reading their counter.
+ *
+ * Both prove a negative — a reply that lands after Cancel moves nothing — and
+ * a negative is worth exactly as much as the certainty that the thing it
+ * denies actually happened. A bare `waitForTimeout` after `release()` does not
+ * carry that: the window is spent waiting for the round trip rather than
+ * watching what the reply did, so on a loaded machine it can close while the
+ * reply is still in flight, and the test passes for the one reason it must
+ * never pass — the guarded path never ran at all.
+ *
+ * Anchoring on the response starts the window where the risk starts. The wait
+ * that follows is what lets the continuation — `publishLocalState`, the focus
+ * move — run and be caught, rather than what hopes the reply arrives.
+ */
+async function landed(page, kind) {
+  await page.waitForResponse((response) => response.url().includes("/intent")
+    && response.request().postDataJSON()?.kind === kind);
+  await page.waitForTimeout(250);
+}
 
 /** What the work-source editor looks like once nothing is in flight. */
 async function settled(page) {
