@@ -27,6 +27,37 @@ pub use usage::{Execution, Usage};
 
 type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = Execution> + Send + 'a>>;
 
+/// The `--agent` value a role's reference implies, without touching disk.
+///
+/// This is where the adapters disagree about a plugin reference: Copilot takes
+/// the whole `plugin:agent` pair, Claude takes the bare agent name. Deciding it
+/// here — rather than in the path-shaped [`real::resolve_agent`] — keeps one
+/// rule that cannot be right for one adapter and wrong for the other, and keeps
+/// it pure, so `validate --json` can report the expected agent with no worktree.
+#[must_use]
+pub fn expected_agent(role: &Role) -> String {
+    let direct = || real::agent_name(std::path::Path::new(&role.agent));
+    match role.adapter {
+        AdapterKind::Copilot => {
+            bureau_plugin::copilot_agent_name(&role.agent).unwrap_or_else(direct)
+        }
+        AdapterKind::Claude => bureau_plugin::plugin_agent_name(&role.agent).unwrap_or_else(direct),
+        AdapterKind::Fake => role.agent.clone(),
+    }
+}
+
+#[must_use]
+pub fn resolved_agent(role: &Role, worktree: &std::path::Path) -> String {
+    if bureau_plugin::is_plugin_reference(&role.agent) || role.adapter == AdapterKind::Fake {
+        return expected_agent(role);
+    }
+    let discovery = match role.adapter {
+        AdapterKind::Claude => &claude::DISCOVERY,
+        AdapterKind::Copilot | AdapterKind::Fake => &copilot::DISCOVERY,
+    };
+    real::resolve_agent(&role.agent, worktree, discovery)
+}
+
 const fn successful(result: &SpawnResult) -> bool {
     matches!(
         (result.outcome, result.exit_code),
@@ -54,8 +85,19 @@ const fn outcome_of(result: &SpawnResult) -> StepOutcome {
 }
 
 fn tail(result: &SpawnResult) -> String {
-    let text = String::from_utf8_lossy(&result.stderr);
+    let bytes = if result.stderr.is_empty() {
+        &result.stdout
+    } else {
+        &result.stderr
+    };
+    let text = String::from_utf8_lossy(bytes);
     let text = text.trim();
+    if text.is_empty() {
+        return result
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("process ended {:?}", result.outcome));
+    }
     let start = text.len().saturating_sub(500);
     text.get(start..).unwrap_or(text).to_owned()
 }

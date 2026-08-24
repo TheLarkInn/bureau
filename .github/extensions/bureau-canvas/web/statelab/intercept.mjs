@@ -20,17 +20,23 @@ export const READ_INTENTS = new Set(["derive-work-source", "resolve-repo"]);
 
 /**
  * What may reach the real host at all — the floor under the browser suite,
- * which holds `./intent` whether or not a state declared an intercept.
+ * which holds `./intent` whether or not a state declared an intercept, and now
+ * also the one definition of "this request writes" that the save intercepts
+ * read.
  *
  * Wider than `READ_INTENTS` by exactly one entry, and the difference is not a
- * drift. A save intercept holds writes so that a *saving* or *refused* screen
- * can be rendered; the floor holds them so a state that declared no intercept
- * cannot write to the contributor's own `.bureau/` by omission. The delete
- * preflight belongs on the second list and not the first: `lib/crud.mjs`
- * `remove()` answers an unconfirmed delete with the referrer report and writes
- * nothing, so it is a read — and it is the one intent the matrix deliberately
- * lets through, which is what `a-preflight-answers-with-the-hosts-own-config`
- * is a `harness` rule about.
+ * drift: the delete preflight belongs on this list and not that one, because
+ * `lib/crud.mjs` `remove()` answers an unconfirmed delete with the referrer
+ * report and writes nothing. It is a read that only looks like a write, which
+ * is what `a-preflight-answers-with-the-hosts-own-config` is a `harness` rule
+ * about.
+ *
+ * There used to be a second, narrower predicate beside this one, reading
+ * `READ_INTENTS` directly, and the gap between them was exactly that entry. It
+ * meant a `stall-intent` held the preflight as well as the removal — so the
+ * screen the confirmation is reached *through* never answered, and neither end
+ * of a delete could be rendered. One definition holds both ends now: the
+ * unconfirmed delete is answered, the confirmed one is held.
  */
 export function reachesHost(body) {
   return READ_INTENTS.has(body?.kind) || isPreflight(body);
@@ -72,6 +78,55 @@ export function refusalFor(kind) {
 export const ENDED_RUN = "run-finished";
 
 /**
+ * The run a staged reconcile pass is made to have started.
+ *
+ * The same committed log `ENDED_RUN` names, in a different role: there it is a
+ * finished run reported as live, here it is a finished run the listing did not
+ * carry until the pass answered. Reusing it is deliberate — a hand-off to
+ * Replay has to land on a run whose log really exists, or the button would be
+ * asserted against a screen that cannot draw.
+ */
+export const PASS_RUN = "run-finished";
+
+/**
+ * The listing before the pass: the host's own, minus the run it is about to
+ * start.
+ *
+ * Withholding is what makes the report exact rather than lucky. `reconcileNow`
+ * snapshots the run ids it can already see and only attributes a run that is
+ * *absent* from that snapshot and started after the click, so a pass staged
+ * over an unchanged listing can only ever report "claimed no work".
+ */
+export function withoutPassRun(payload) {
+  return { ...payload, runs: (payload?.runs ?? []).filter((run) => run.run_id !== PASS_RUN) };
+}
+
+/**
+ * The listing after it, with that run back and stamped after the click.
+ *
+ * A projection of the host's own answer, like `offeredAsLive`: the run keeps
+ * its own summary and only `started_at` moves, so the run the button hands to
+ * Replay is one the host really holds a log for. A listing that does not carry
+ * it is left exactly as served — the shim reports no run rather than inventing
+ * one Replay could not open. `atMs` is when the pass answered, necessarily
+ * after the click that issued it, which is the bound `newRunSince` applies so
+ * that a background reconciler's run cannot be reported as this click's doing.
+ */
+export function withPassRun(payload, atMs) {
+  const started = (payload?.runs ?? []).find((run) => run.run_id === PASS_RUN);
+  if (!started) {
+    return payload;
+  }
+  return {
+    ...payload,
+    runs: [...withoutPassRun(payload).runs, { ...started, live: false, started_at: new Date(atMs).toISOString() }],
+  };
+}
+
+/** The answer a pass that started one run gives. */
+export const PASS_STARTED = { ok: true, output: "started 1 run" };
+
+/**
  * The kinds an in-frame shim can serve.
  *
  * `fetch` and `EventSource` are ordinary window properties, so a same-origin
@@ -80,7 +135,7 @@ export const ENDED_RUN = "run-finished";
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent", "offer-ended-run"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -120,6 +175,14 @@ export function installIntercept(win, kind) {
     offerEndedRun(win);
     return;
   }
+  if (kind === "empty-runs" || kind === "stall-runs" || kind === "fail-runs" || kind === "fail-runs-later") {
+    interceptRuns(win, kind);
+    return;
+  }
+  if (kind === "pass-starts-run") {
+    passStartsRun(win);
+    return;
+  }
   if (kind) {
     stallIntent(win, kind);
   }
@@ -150,10 +213,48 @@ function offerEndedRun(win) {
     if (!/\/runs$/u.test(urlOf(input)) || !response.ok) {
       return response;
     }
+
     return new win.Response(JSON.stringify(offeredAsLive(await response.json())), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  };
+}
+
+/**
+ * Stages the run-listing states that cannot come from the shared fixture.
+ *
+ * `fail-runs-later` serves the real listing once and refuses every read after
+ * it. That ordering is the whole point: a run can only be *selected* from a
+ * listing that answered, so the screen where a reader is watching a run while
+ * the listing has since failed is unreachable if the very first read fails.
+ * It is also the screen where the two halves of this surface can contradict
+ * each other, which is why it has to be stageable at all.
+ *
+ * `stall-runs` is the read that has not come back yet — the badge before it has
+ * a number. Every other run state describes an answer; this is the only one that
+ * describes the wait, and it is the state `liveCountLoading` was declared for
+ * and never rendered in.
+ */
+function interceptRuns(win, kind) {
+  const native = win.fetch.bind(win);
+  let served = 0;
+  win.fetch = async (input, init) => {
+    if (!/\/runs$/u.test(urlOf(input))) {
+      return native(input, init);
+    }
+    served += 1;
+    if (kind === "fail-runs-later" && served === 1) {
+      return native(input, init);
+    }
+    if (kind === "stall-runs") {
+      return forever();
+    }
+    const failing = kind === "fail-runs" || kind === "fail-runs-later";
+    return new win.Response(
+      JSON.stringify(failing ? { error: "run listing unavailable" } : { runs: [] }),
+      { status: failing ? 503 : 200, headers: { "Content-Type": "application/json" } },
+    );
   };
 }
 
@@ -204,7 +305,7 @@ function stallState(win) {
   };
 }
 
-/** The three ends of a save, applied to writes only. */
+/** The four ends of a write: held, refused, dropped, or answered. */
 function stallIntent(win, kind) {
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
@@ -217,11 +318,57 @@ function stallIntent(win, kind) {
     if (kind === "abort-intent") {
       return Promise.reject(new TypeError("Failed to fetch"));
     }
-    return Promise.resolve(new win.Response(JSON.stringify(refusalFor(kindOf(init))), {
+    // `pass-intent` is the only one that answers `ok`. It exists for the
+    // reconcile pass, whose *success* is a screen — three distinct sentences
+    // about what the pass did — that no state rendered, leaving
+    // `reconcileResult` a declared selector with no reference anywhere. The
+    // pass writes nothing here: the answer is synthesised in-frame, and the
+    // listing it then re-reads is the host's own unchanged one, which is what
+    // makes "it claimed no work" the deterministic sentence.
+    const answer = kind === "pass-intent" ? { ok: true, output: "no eligible work" } : refusalFor(kindOf(init));
+    return Promise.resolve(new win.Response(JSON.stringify(answer), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }));
   };
+}
+
+/**
+ * A pass that really started something: the write answers `ok`, and the listing
+ * it is read back through gains the run that answer is about.
+ *
+ * This is the only staged pass whose report names a run, so it is the only
+ * condition under which **Open in Replay** is drawn at all. Both halves have to
+ * be one condition: an answer without the listing change reports "claimed no
+ * work", and a listing change without the answer is a run nothing attributes to
+ * this click. The stamp is taken when the pass answers rather than when the
+ * shim is installed, because `newRunSince` compares it against the click.
+ */
+function passStartsRun(win) {
+  const native = win.fetch.bind(win);
+  let answered = null;
+  win.fetch = async (input, init) => {
+    if (/\/intent$/u.test(urlOf(input)) && isWrite(init)) {
+      answered = Date.now();
+      return jsonIn(win, PASS_STARTED);
+    }
+    if (!/\/runs$/u.test(urlOf(input))) {
+      return native(input, init);
+    }
+    const response = await native(input, init);
+    if (!response.ok) {
+      return response;
+    }
+    const payload = await response.json();
+    return jsonIn(win, answered === null ? withoutPassRun(payload) : withPassRun(payload, answered));
+  };
+}
+
+function jsonIn(win, body) {
+  return new win.Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /** A request that is never answered, which is what a hung host looks like. */
@@ -245,8 +392,17 @@ function bodyOf(init) {
   }
 }
 
-/** Anything other than one of the two known reads, unparseable bodies included. */
+/**
+ * Anything the floor would not let through — unparseable bodies included.
+ *
+ * The same predicate `reachesHost` uses, rather than a second one that agreed
+ * with it about everything but the delete preflight. That disagreement had a
+ * cost: a `stall-intent` held the *unconfirmed* delete too, so the preflight
+ * that the confirmation is reached through never answered, and the two ends of
+ * a delete could not be rendered at all. Reading the floor's own definition
+ * holds exactly the writes and answers exactly the reads, which is what lets
+ * `field: delete` carry a lifecycle like every other field.
+ */
 function isWrite(init) {
-  const kind = kindOf(init);
-  return kind === null || !READ_INTENTS.has(kind);
+  return !reachesHost(bodyOf(init));
 }

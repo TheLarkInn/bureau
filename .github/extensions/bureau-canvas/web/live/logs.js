@@ -14,7 +14,7 @@ const MINUTE = 60;
  * `step` is the step name, `record` its overlay entry (state, outcome,
  * timings) and `text` its captured output up to the current position.
  */
-export function StepLog({ step, kind, record, text }) {
+export function StepLog({ step, kind, record, text, expectedAgent }) {
   if (!step) {
     return h("section", { className: "step-log step-log--idle" },
       h("p", { className: "step-log-empty" }, "Select a step to see what it did."));
@@ -22,12 +22,12 @@ export function StepLog({ step, kind, record, text }) {
   return h(
     "section",
     { className: "step-log" },
-    h(LogHead, { step, kind, record }),
+    h(LogHead, { step, kind, record, expectedAgent }),
     h(LogBody, { text }),
   );
 }
 
-function LogHead({ step, kind, record }) {
+function LogHead({ step, kind, record, expectedAgent }) {
   const span = elapsed(record);
   return h(
     "header",
@@ -36,8 +36,41 @@ function LogHead({ step, kind, record }) {
     kind ? h("span", { className: `kind-pill kind-pill--${kind}` }, kind) : null,
     record?.outcome ? h("span", { className: `outcome-pill outcome-pill--${record.outcome}` }, record.outcome) : null,
     record?.state === "running" ? h("span", { className: "outcome-pill outcome-pill--running" }, "running") : null,
+    h(AgentIdentity, { record, expectedAgent }),
     span ? h("span", { className: "step-log-elapsed mono" }, span) : null,
   );
+}
+
+/**
+ * The two agent identities a step can be read against, and what their
+ * disagreement actually means.
+ *
+ * Both sides are projections of config, not observations of a spawn: the log
+ * records what the role selected when the run started, and `expectedAgent`
+ * comes from `bureau validate --json` reading the config as it stands now.
+ * `crates/bureau/src/config/validate.rs` is what keeps the logged name equal to
+ * the one the adapter passes to `--agent` — an `agent` that is neither a plugin
+ * reference nor a `.md` path does not validate, and that is the only shape for
+ * which the pure and the resolving forms differ.
+ *
+ * So the badge fires when the config has moved since the run, which is a real
+ * and readable thing. It is not evidence that a spawn used the wrong agent, and
+ * the copy may not say it is: "invoked X" claimed an observation nothing here
+ * made, on a comparison that against an unchanged config cannot fail at all.
+ */
+function AgentIdentity({ record, expectedAgent }) {
+  if (!record?.resolvedAgent) {
+    return null;
+  }
+  const mismatch = Boolean(expectedAgent && record.resolvedAgent !== expectedAgent);
+  const text = mismatch
+    ? `this run used ${record.resolvedAgent}; the config now selects ${expectedAgent}`
+    : `agent ${record.resolvedAgent}`;
+  return h("span", {
+    className: `step-agent${mismatch ? " step-agent--mismatch" : ""}`,
+    "data-testid": "step-agent",
+    "data-mismatch": String(mismatch),
+  }, text);
 }
 
 function LogBody({ text }) {

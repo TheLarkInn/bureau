@@ -11,7 +11,7 @@ use bureau::contract::StepOutcome;
 use bureau::process::{REDACTED, Secret};
 use bureau::runlog::{
     self, EventKind, RunLog, RunState, RunStatus, StepRecord, run_finished, run_started,
-    step_finished, step_started,
+    step_finished, step_started, step_started_agent,
 };
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
@@ -38,6 +38,31 @@ impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn agent_step_start_records_configured_and_resolved_identity() {
+    let data = step_started_agent(
+        "implement",
+        "implementer",
+        "/bureau:implementer",
+        "bureau:implementer",
+    );
+    let got = (
+        data["step"].as_str(),
+        data["role"].as_str(),
+        data["configured_agent"].as_str(),
+        data["resolved_agent"].as_str(),
+    );
+    assert_eq!(
+        got,
+        (
+            Some("implement"),
+            Some("implementer"),
+            Some("/bureau:implementer"),
+            Some("bureau:implementer")
+        )
+    );
 }
 
 /// Appends a representative run and closes the log.

@@ -3,9 +3,9 @@
 // module only owns the subscription, the run-control intents, and the
 // collapsed-group toggle state.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
-import { applyEvent, emptyOverlay, runActions } from "./overlay.js";
+import { RECONCILE_REFUSED, applyEvent, emptyOverlay, newRunSince, reconcileReason, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
@@ -29,28 +29,104 @@ const REFUSED = {
   "cancel-run": "could not cancel this run",
 };
 
+/*
+ * What a run control says while its request is out, named per verb for the
+ * reason the refusals are: these three leave the run in different places, so
+ * one shared word for the wait would describe none of them.
+ *
+ * A run control was the last write on this surface with no in-flight state at
+ * all. Every other one — the five field editors, the delete prompt, the create
+ * bar — holds itself for the length of its round trip; these stayed live, so a
+ * second press sent a second intent and Bureau was asked twice about one run.
+ * A duplicate resume is the worst of the three: the first clears `PAUSE`, and
+ * the second is then refused about a run that is already running, so the reader
+ * is told a request failed that in fact succeeded.
+ */
+const PENDING = {
+  "pause-run": "Pausing…",
+  "resume-run": "Resuming…",
+  "cancel-run": "Cancelling…",
+};
+
+
+/** One SSE frame, or `null` when it is not the JSON this channel promises. */
+function parseFrame(data) {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+/** Posts the pass and reduces every ending to `ok`, or a reason not to report one. */
+function postReconcile() {
+  return fetch("./intent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "reconcile-now" }),
+  })
+    .then((response) => response.json())
+    .then((result) => (result?.ok
+      ? { ok: true }
+      : { ok: false, message: reconcileReason(result) }))
+    .catch(() => ({ ok: false, message: RECONCILE_REFUSED }));
+}
+
 /**
  * Returns `{ runId, setRunId, decoration, controls }` — the decoration feeds
  * `toFlow(pipeline, state, selectedStep, decoration)`; `controls` renders
  * into the pipeline toolbar.
  */
-export function useLiveOverlay() {
+export function useLiveOverlay(activity, onOpenReplay) {
   const [runId, setRunId] = useState(null);
   const [overlay, setOverlay] = useState(emptyOverlay);
   const [events, setEvents] = useState([]);
   const [collapsed, setCollapsed] = useState(new Set());
   const [controlResult, setControlResult] = useState(null);
+  const [controlBusy, setControlBusy] = useState(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState(null);
+  const controlTicket = useRef(0);
+  // The *hold* has a ticket separate from the refusal's, because the two have
+  // different subjects. A refusal is speech of one visit to Live, so it is
+  // withdrawn on the way out; the hold is a `bureau` invocation against a run,
+  // and that process does not end because the reader looked at Design. Sharing
+  // one ticket forced a choice between a permanently dead button and a control
+  // re-armed over an intent still in flight — this is bumped on a change of
+  // selection only, so the hold outlives the visit but never the run.
+  const holdTicket = useRef(0);
+  // The reconcile pass has a ticket of its own rather than sharing the run
+  // controls'. That one is bumped on every change of selection, and a pass is
+  // about the pipeline, not the run being watched — so sharing it would drop
+  // the report of a pass that is still perfectly true because the reader
+  // switched runs while it was out.
+  const reconcileTicket = useRef(0);
 
   useEffect(() => {
-    if (!runId) {
-      setOverlay(emptyOverlay());
-      setEvents([]);
-      return undefined;
-    }
+    // A refusal and a fold both belong to the run that was selected when they
+    // were raised, so they are withdrawn here rather than inside the branch
+    // that loads one. Clearing them only on the `runId` path left a red
+    // "could not pause this run" beside a picker naming no run, describing a
+    // request that no longer has a subject and that nothing can retry.
     setOverlay(emptyOverlay());
     setEvents([]);
     setCollapsed(new Set());
     setControlResult(null);
+    // Cleared beside the refusal for the same reason: a request in flight
+    // belongs to the run it was pressed on, so its hold must not outlive that
+    // selection. Left set, the new run's transport would be dead until an
+    // answer arrived about a run the reader had already left.
+    setControlBusy(null);
+    // Bumped on every change of selection, so a reply that was in flight when
+    // the reader moved on cannot install itself over the run they moved to.
+    controlTicket.current += 1;
+    // The hold's own ticket, bumped here and only here: the request that set it
+    // is about the run being left, so its answer must not release a hold the
+    // reader has since taken out on a different run.
+    holdTicket.current += 1;
+    if (!runId) {
+      return undefined;
+    }
     // Backfill the current log once, then append live: the tail starts at
     // end-of-file, so events that landed before subscription only exist here.
     let alive = true;
@@ -71,8 +147,16 @@ export function useLiveOverlay() {
       })
       .catch(() => {});
     const source = new EventSource("./events");
+    // A frame this cannot parse is dropped, not thrown. An exception raised
+    // inside an `EventSource` listener escapes as an uncaught error on the
+    // page, which the state matrix reads as a broken render — so one malformed
+    // frame would condemn every state that streams a run.
     source.addEventListener("run-event", (message) => {
-      const { run_id, event } = JSON.parse(message.data);
+      const frame = parseFrame(message.data);
+      if (!frame) {
+        return;
+      }
+      const { run_id, event } = frame;
       if (run_id !== runId) {
         return;
       }
@@ -93,45 +177,221 @@ export function useLiveOverlay() {
   } : null), [runId, overlay, collapsed]);
 
   const send = (kind) => {
+    // One intent at a time. Bureau is a process, not a form: two pauses are two
+    // `bureau` invocations against one run, and the second is answered about a
+    // run the first has already moved.
+    if (controlBusy) {
+      return;
+    }
     const refused = REFUSED[kind] ?? "could not act on this run";
+    const mine = controlTicket.current;
+    const held = holdTicket.current;
+    // A reply is only about the run that was selected when it was asked for.
+    // The two halves settle on different tickets on purpose: the hold is
+    // released by the run's ticket, so it survives a trip to Design and back
+    // and the control cannot be pressed twice over one invocation; the refusal
+    // installs on the visit's, so it is not spoken to a reader who has left.
+    const settle = (result) => {
+      if (held === holdTicket.current) {
+        setControlBusy(null);
+      }
+      if (mine === controlTicket.current) {
+        setControlResult(result);
+      }
+    };
+    setControlBusy(kind);
     fetch("./intent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ kind, run_id: runId }),
     })
       .then((response) => response.json())
-      .then((result) => setControlResult(result?.ok ? result : { ...result, error: result?.error ?? result?.output ?? refused }))
-      .catch(() => setControlResult({ ok: false, error: refused }));
+      .then((result) => settle(result?.ok ? result : { ...result, error: result?.error || result?.output || refused }))
+      .catch(() => settle({ ok: false, error: refused }));
+  };
+
+  /*
+   * One reconcile pass, and an honest report of what it did.
+   *
+   * `bureau reconcile --now` does not return when the pass is issued — it
+   * drains every run the pass started first (`after_first` -> `daemon.drain`).
+   * So by the time this answer arrives the work is over: the run exists, and it
+   * is already finished. Two things follow, and both were wrong before.
+   *
+   * The listing is re-read here rather than waited for, because the fact is
+   * already true and a poll interval would only delay reporting it.
+   *
+   * And the run is handed to Replay, not to Live. Selecting a finished run into
+   * a tab defined as "one live run, streamed" put a completed run under live
+   * transport controls, and telling the reader to "choose it" pointed at a run
+   * the live-only picker will not offer. Replay is where a finished run is
+   * read, so that is where the button sends it — by offering the move, never by
+   * performing it, so nothing the reader is watching is taken away.
+   *
+   * `known` and `since` together are the attribution. The pass can be open for
+   * minutes, and a background reconciler's run that appears in that window is
+   * absent from `known` while being none of this click's doing; requiring it to
+   * have started after the click is what keeps the sentence true.
+   */
+  const reconcileNow = () => {
+    const known = new Set(activity.runs.map((run) => run.run_id));
+    const since = Date.now();
+    const mine = reconcileTicket.current;
+    // A report is speech of the visit that asked for it. `reconciling` is not
+    // ticketed with it: the pass really is still running, so the button that
+    // says so stays honest across a trip to Design and back.
+    const settle = (outcome) => {
+      if (mine === reconcileTicket.current) {
+        setReconcileResult(outcome);
+      }
+    };
+    setReconciling(true);
+    setReconcileResult(null);
+    postReconcile()
+      .then((outcome) => (outcome.ok ? reportPass(known, since) : outcome))
+      .then(settle)
+      .catch(() => settle({ ok: false, message: RECONCILE_REFUSED }))
+      .finally(() => setReconciling(false));
+  };
+
+  const reportPass = async (known, since) => {
+    const next = await activity.refresh();
+    if (next.status !== "ready") {
+      return { ok: true, message: "Reconcile pass finished. The run list could not be read." };
+    }
+    const started = newRunSince(next.runs, known, since);
+    if (!started) {
+      return { ok: true, message: "Reconcile pass finished. It claimed no work for this pipeline." };
+    }
+    return {
+      ok: true,
+      run: started.run_id,
+      message: `Reconcile pass finished. It ran ${started.run_id}, which has already finished.`,
+    };
   };
 
   const controls = h(
     "div",
     { className: "run-controls" },
-    h(RunPicker, { liveOnly: true, value: runId, onChange: setRunId }),
-    runId ? h(RunButtons, { overlay, onAction: send }) : null,
+    h(RunPicker, { activity, liveOnly: true, value: runId, onChange: setRunId }),
+    h("button", {
+      type: "button",
+      className: "btn btn--small btn--primary",
+      "data-testid": "reconcile-now",
+      disabled: reconciling,
+      onClick: reconcileNow,
+    }, reconciling ? "Reconciling…" : "Run reconcile now"),
+    runId ? h(RunButtons, { overlay, onAction: send, busy: controlBusy }) : null,
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
+    /*
+     * The report and the offer it makes, as one group.
+     *
+     * `.run-controls` wraps, so as two siblings the sentence ended one row and
+     * the button began the next at the far left — a reader met "Open in Replay"
+     * before reading what it was about, and the offer read as a standing
+     * control of the surface rather than as part of what this pass reported.
+     * Keeping them together is also what makes them leave together.
+     */
+    reconcileResult ? h(
+      "div",
+      { className: "reconcile-report" },
+      h("p", {
+        className: reconcileResult.ok ? "run-control-result" : "run-control-error",
+        role: "status",
+      }, reconcileResult.message),
+      reconcileResult.run ? h("button", {
+        type: "button",
+        className: "run-control",
+        "data-testid": "open-run-replay",
+        onClick: () => onOpenReplay?.(reconcileResult.run),
+      }, "Open in Replay") : null,
+    ) : null,
   );
 
-  return { runId, setRunId, decoration, controls, events, until: Infinity };
+  /**
+   * Withdraws what this visit to Live said. The hook outlives the surface —
+   * it is owned by `PipelineView`, and leaving Live only stops rendering
+   * `controls` — so without this a refusal raised before a trip to Design is
+   * still on screen on the way back, describing a request this visit never
+   * made. The selected run is deliberately kept: returning to Live should
+   * return to the run you were watching. `controlBusy` is deliberately *not*
+   * cleared, for the same reason: the invocation it stands for is still running
+   * against that same kept run, and re-arming the control here would let one
+   * held run take a second `bureau` process — the exact duplicate the hold
+   * exists to prevent. It is released by its own ticket when the answer lands.
+   */
+  const dismissControls = () => {
+    controlTicket.current += 1;
+    reconcileTicket.current += 1;
+    setControlResult(null);
+    setReconcileResult(null);
+  };
+
+  return { runId, setRunId, decoration, controls, events, dismissControls, until: Infinity };
+}
+
+/** The Live surface must distinguish idle, loading, and unavailable. */
+export function LiveActivity({ activity, runId }) {
+  if (runId && activity.status !== "error") {
+    return null;
+  }
+  const content = activityMessage(activity);
+  return h(
+    "section",
+    {
+      className: `run-activity run-activity--${content.state}`,
+      "data-testid": "run-activity",
+      "data-state": content.state,
+      "aria-live": "polite",
+    },
+    h("span", { className: "run-activity__mark", "aria-hidden": "true" }),
+    h("div", {}, h("p", { className: "run-activity__title" }, content.title), h("p", { className: "run-activity__detail" }, content.detail)),
+  );
+}
+
+function activityMessage(activity) {
+  if (activity.status === "loading") {
+    return { state: "loading", title: "Checking run activity", detail: "Reading Bureau's run log for this pipeline." };
+  }
+  if (activity.status === "error") {
+    // Scoped to the run *list*, because that is the only thing that failed. A
+    // run already selected keeps streaming from its own endpoint, and saying
+    // the run log could not be read while its events are visibly arriving is
+    // two claims about one screen that cannot both be true.
+    return { state: "unavailable", title: "Run list unavailable", detail: "The canvas could not list Bureau's runs. It will retry automatically; a run already open keeps streaming." };
+  }
+  if (activity.liveCount > 0) {
+    return {
+      state: "available",
+      title: `${activity.liveCount} ${activity.liveCount === 1 ? "run" : "runs"} in progress`,
+      detail: "Choose a run to inspect it, or run another reconcile pass now.",
+    };
+  }
+  return {
+    state: "idle",
+    title: "No runs in progress",
+    detail: "A reconcile loop is not itself a run. Live appears here when eligible work is claimed for this pipeline.",
+  };
 }
 
 /**
  * Which run controls a status can still act on lives in `overlay.js`, beside
  * the reducer that produces the status — pure, and testable without a browser.
  */
-function RunButtons({ overlay, onAction }) {
+function RunButtons({ overlay, onAction, busy }) {
   const { transport, cancel } = runActions(overlay.status);
+  const label = (kind, resting) => (busy === kind ? PENDING[kind] : resting);
   return h(
     React.Fragment,
     null,
     transport === "resume"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", onClick: () => onAction("resume-run") }, "Resume")
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", disabled: Boolean(busy), onClick: () => onAction("resume-run") }, label("resume-run", "Resume"))
       : null,
     transport === "pause"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", onClick: () => onAction("pause-run") }, "Pause")
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", disabled: Boolean(busy), onClick: () => onAction("pause-run") }, label("pause-run", "Pause"))
       : null,
     cancel
-      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", onClick: () => onAction("cancel-run") }, "Cancel")
+      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", disabled: Boolean(busy), onClick: () => onAction("cancel-run") }, label("cancel-run", "Cancel"))
       : null,
     h("span", { className: "run-status", "data-status": overlay.status }, overlay.status),
   );

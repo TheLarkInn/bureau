@@ -45,6 +45,7 @@ export const CONCURRENT_STATE = {
         {
           "name": "reviewer",
           "agent": "reviewer",
+          "resolvedAgent": null,
           "permissions": [
             "repo:read",
             "model:invoke"

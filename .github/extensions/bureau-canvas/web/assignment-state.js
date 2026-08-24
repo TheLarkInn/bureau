@@ -33,9 +33,16 @@ export const FIELD_EDITORS = [
  *
  * Each editor publishes `data-dirty` from the same value it uses to decide
  * whether to offer its own save, so the guard and the save agree by
- * construction. An editor added to the list without the predicate would take
- * the guard back to warning about nothing; `test/assignment-state.test.mjs`
- * fails on that.
+ * construction.
+ *
+ * The predicate is applied here by `map` rather than written out per editor,
+ * so an editor cannot be added to the list without it — and what
+ * `test/assignment-state.test.mjs` holds in place is exactly that
+ * construction, not the behaviour. Rewriting this back into a bare
+ * `FIELD_EDITORS.join(", ")` fails there. The behavioural half — that each
+ * editor really does publish `data-dirty` from its own save gate — is not
+ * visible to a DOM-free test at all, and is held by the browser suite's
+ * "every field editor reports its own draft the same way".
  */
 export const DIRTY_FIELD_EDITORS = FIELD_EDITORS
   .map((editor) => `${editor}[data-dirty="true"]`)

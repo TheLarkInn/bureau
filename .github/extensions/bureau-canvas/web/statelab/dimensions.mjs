@@ -12,9 +12,18 @@
 // recorded rather than silently dropped.
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
-import { FIELD_SAVE, RUN_END, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, stepFor } from "./paths.mjs";
+import { FIELD_SAVE, RUN_END, RUN_HOLDS, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
+
+/**
+ * The three controls that post an intent about the run.
+ *
+ * Read out of the transport `overlay()` already derives rather than listed
+ * again beside it: a held state must withhold exactly what its resting screen
+ * offers, and a second list is how the two stop agreeing.
+ */
+const RUN_CONTROLS = new Set([S.runPause, S.runResume, S.runCancel]);
 
 /**
  * D1 — which top-level render surface is mounted. Boot covers the two states
@@ -59,6 +68,11 @@ const surface = {
       id: "pipeline",
       summary: "the read-only pipeline viewer",
       page: "index",
+      // The Live badge is fetch-backed: it carries no `data-count` until the
+      // first `/runs` read resolves. Every mode asserts that attribute, and
+      // design is reached without a click of its own, so the settle is waited
+      // for here — once, on the surface all three modes are entered from.
+      enter: [{ op: "wait", selector: S.liveCountSettled }],
       shows: [S.shell, S.pipelineView, S.pipelineToolbar, S.pipelineFlow, S.modeSwitcher],
       hides: [S.configView],
     },
@@ -442,7 +456,13 @@ const field = {
       // The point of a preflight is the answer it gives, and the answer is the
       // state of the confirm button. Asserting only that a preflight appeared
       // left the one control it exists to gate unasserted.
-      shows: [S.preflight, offered(S.deleteConfirm)],
+      //
+      // Offered is the *resting* answer, so it is derived rather than fixed:
+      // the two ends of the confirmation own that button too, and a fixed
+      // `offered` here would have demanded a live Confirm from the very state
+      // whose contract is that it is held.
+      shows: [S.preflight],
+      derive: (combo) => (combo.fieldState === "n/a" ? { shows: [offered(S.deleteConfirm)] } : {}),
       copy: ["Nothing references this"],
       /*
        * The preflight is a real intent, and `runCrudIntent` answers even a
@@ -505,7 +525,15 @@ const fieldState = {
      * unconditionally — so nothing about being refused is logged to the
      * console. A console line on one of these states is a defect in it.
      */
-    { id: "saving", summary: "the save is in flight; the button says so and refuses a second click", derive: (combo) => save(combo, withheld), copy: ["Saving…"] },
+    /*
+     * The in-flight verb belongs to the control that is in flight, so it is
+     * derived rather than fixed. Every field editor's Save says "Saving…"; the
+     * delete confirmation borrows this lifecycle for the same two ends but is
+     * removing something, and says "Deleting…" — which its own lifecycle entry
+     * in `paths.mjs` asserts. A fixed word here would have demanded the wrong
+     * one from that screen.
+     */
+    { id: "saving", summary: "the write is in flight; the button says so and refuses a second click", derive: (combo) => ({ ...save(combo, withheld), copy: FIELD_SAVE[combo.field] ? ["Saving…"] : [] }) },
     {
       id: "save-error",
       summary: "the save came back refused and the draft is still there to retry",
@@ -594,6 +622,7 @@ const mode = {
       id: "design",
       summary: "the static config graph",
       shows: [S.modeSwitcher, S.legend, S.terminalPill, ...VIEWER_EDGES],
+      derive: () => activityCount(2),
       // The overlay controls are named absent, not merely unmentioned. Design
       // was pinned in one direction only, so the way *back* from Live and
       // Replay — both of which return here — asserted that the design graph had
@@ -606,13 +635,15 @@ const mode = {
       id: "live",
       summary: "one live run, streamed",
       enter: [{ op: "click", selector: S.modeLive }],
-      shows: [S.runControls, S.runPickerLive],
+      shows: [S.runControls, S.runPickerLive, S.reconcileNow],
+      derive: (combo) => activityCount(combo.run === "ended" ? 3 : 2),
     },
     {
       id: "replay",
       summary: "any run, scrubbed on a timeline",
       enter: [{ op: "click", selector: S.modeReplay }],
       shows: [S.replayControls, S.runPickerReplay],
+      derive: () => activityCount(2),
     },
   ],
 };
@@ -639,11 +670,15 @@ const run = {
      */
     {
       id: "none",
-      summary: "no run picked",
+      summary: "no run available in Live, or none picked in Replay",
       hides: [S.overlayRunning, S.overlayPaused],
       derive: (combo) => (combo.mode === "replay"
         ? { hides: [S.replayTimeline] }
-        : { hides: [S.runPause, S.runResume] }),
+        : {
+            shows: [S.runActivityAvailable],
+            hides: [S.runPause, S.runResume],
+            copy: ["2 runs in progress", "Choose a run to inspect it"],
+          }),
     },
     { id: "running", summary: "a run still appending events", derive: (combo) => overlay(combo, "running") },
     { id: "paused", summary: "a run paused at a step", derive: (combo) => overlay(combo, "paused") },
@@ -673,7 +708,12 @@ const run = {
       summary: "a run picked while live that has since reached its terminal",
       shows: [S.runStatusFinished, S.runPickerLive],
       hides: [S.runPause, S.runResume, S.runCancel, S.overlayRunning, S.overlayPaused],
-      copy: ["finished"],
+      // Scoped for the same reason the other two statuses are, and with one
+      // more: `S.runStatusFinished` matches on `data-status`, which is written
+      // from the same value as the text but is not the text. Blank the child
+      // and the attribute selector still matches — so the element reporting
+      // why the transport went silent could say nothing at all.
+      copy: [{ selector: S.runStatus, text: "finished" }],
     },
     /*
      * A run control the host refused, once per verb.
@@ -695,13 +735,63 @@ const run = {
      * Pause and cancel are pressed on a running run; resume needs a paused one,
      * so it is a different screen and not the same one with another button
      * pressed — its transport offers Resume where the others offer Pause.
+     *
+     * The transport comes from `overlay()`, the same helper the unrefused run
+     * values use, rather than from the verb that was refused. Naming only the
+     * refused control was how a refused *cancel* stopped asserting Pause at
+     * all — so the one regression this state exists to catch, a refusal that
+     * withdrew the rest of the transport, would have rendered green. Deriving
+     * it also brings the `hides` along, so each refusal now denies the verb the
+     * other run offers instead of being silent about it.
      */
-    ...Object.entries(RUN_REFUSALS).map(([id, refusal]) => ({
-      id,
-      summary: `a ${refusal.verb} the host refused, named as a ${refusal.verb}, with the transport still offered`,
-      shows: [S.runControlError, refusal.run === "paused" ? S.overlayPaused : S.overlayRunning, refusal.control, S.runCancel, S.runStatus],
-      copy: [`could not ${refusal.verb} this run`],
-    })),
+    ...Object.entries(RUN_REFUSALS).map(([id, refusal]) => {
+      const transport = overlay({ mode: "live" }, refusal.run);
+      return {
+        id,
+        summary: `a ${refusal.verb} the host refused, named as a ${refusal.verb}, with the transport still offered`,
+        shows: [S.runControlError, ...transport.shows],
+        hides: [...(transport.hides ?? [])],
+        // The status is unchanged by a refusal, so the run still reads as the
+        // one it was — asserted here rather than assumed, because a refusal
+        // that also moved the run would be the worst version of this bug.
+        copy: [`could not ${refusal.verb} this run`, ...(transport.copy ?? [])],
+      };
+    }),
+    /*
+     * A run control with its request still out, once per verb.
+     *
+     * The refusals above are the answer; this is the wait, and it was modelled
+     * nowhere — so `send` posted with every control live and a second press
+     * asked Bureau a second time about one run.
+     *
+     * Every drawn control is asserted withheld, not just the one pressed:
+     * pausing a run while cancelling it is two intents about the same run, and
+     * withholding only the pressed button would still allow it. They fail
+     * apart, so both are named.
+     *
+     * The status is asserted unchanged for the reason the refusals assert it —
+     * a control that is merely *held* has moved nothing yet, and a screen that
+     * showed "paused" the instant Pause was pressed would be reporting a run
+     * state on the strength of a request that has not been answered.
+     *
+     * `.run-control-error` is asserted absent for the same reason: there is no
+     * refusal yet, and a wait that already reports one would be inventing it.
+     */
+    ...Object.entries(RUN_HOLDS).map(([id, hold]) => {
+      const transport = overlay({ mode: "live" }, hold.run);
+      const drawn = transport.shows.filter((selector) => RUN_CONTROLS.has(selector));
+      return {
+        id,
+        summary: `a ${hold.verb} still in flight: every control is held, so the run cannot be asked twice`,
+        // Everything the resting screen shows that is not a control, plus every
+        // control it does show, withheld. The decoration is carried through
+        // rather than dropped: a held control has not moved the run, so the
+        // graph must still be showing the run it was showing.
+        shows: [...transport.shows.filter((selector) => !RUN_CONTROLS.has(selector)), ...drawn.map(withheld)],
+        hides: [...(transport.hides ?? []), S.runControlError],
+        copy: [hold.pending, ...(transport.copy ?? [])],
+      };
+    }),
   ],
 };
 
@@ -715,14 +805,38 @@ const run = {
  * run can be acted on and withdrawn once it cannot, and `.run-status` is the
  * element that reports which of those it is — both were drawn by every live
  * state and asserted by none, so deleting Cancel changed no verdict.
+ *
+ * The status word is scoped to that element rather than searched for in the
+ * body, because both words are already on the page from something else: a
+ * paused run draws `.paused-badge`, whose entire text is "paused" and which
+ * this very list asserts, and a running one draws an `outcome-pill--running`
+ * in the step-log head. Unscoped, the status could be blanked or frozen — the
+ * precise regression a refused control is most likely to cause — and every
+ * live state stayed green.
  */
 function overlay(combo, runValue) {
   if (combo.mode === "replay") {
     return { shows: [S.replayTimeline, replaySpanFor(RUN_END[runValue])] };
   }
   return runValue === "paused"
-    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: ["paused"] }
-    : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: ["running"] };
+    ? { shows: [S.overlayPaused, S.pausedBadge, S.runResume, S.runCancel, S.runStatus], hides: [S.runPause], copy: [{ selector: S.runStatus, text: "paused" }] }
+    : { shows: [S.overlayRunning, S.runPause, S.runCancel, S.runStatus], hides: [S.runResume], copy: [{ selector: S.runStatus, text: "running" }] };
+}
+
+/**
+ * The Live badge, waited for before it is asserted.
+ *
+ * The badge carries no `data-count` at all until the first `/runs` read
+ * resolves, so asserting the attribute without waiting for it races an
+ * in-flight fetch — and a `shows` that loses that race fails for a reason that
+ * has nothing to do with the state. Waiting on the value is how every other
+ * fetch-backed expectation in this registry stops racing.
+ */
+function activityCount(count) {
+  return {
+    shows: [`${S.liveCount}[data-count="${count}"]`],
+    copy: [{ selector: S.liveCount, text: String(count) }],
+  };
 }
 
 /**
@@ -875,14 +989,28 @@ const edit = {
      * cascading — leaving the sample's referrers pointing at a name no step has
      * — would have passed here. This is the same shape `delete-confirm` was
      * given one round earlier, for the same reason: one path, two screens.
+     *
+     * Neither half asserted *the rename*, though, and for a decision o
+     * concurrent step that left this state's whole expectation identical to
+     * `created`'s — dirty, unwired, Save offered — which is exactly the screen
+     * the path arrives from. The `created → renamed` edge could not fail: the
+     * commit is on the input's Enter handler, so deleting that handler leaves
+     * the name uncommitted and every one of those assertions still true.
+     *
+     * So the committed name is read off the graph, where a name only appears
+     * once the editor has taken it, and the name it was renamed *from* is
+     * asserted gone. An Enter that stops committing now fails by name, at both
+     * viewports, for all four step kinds.
      */
     {
       id: "renamed",
       summary: "a step renamed — cascading to its referrers when the fixture drew it, still unwired when it had to be added first",
       shows: [S.editorDiscard, offered(S.editorSave)],
-      derive: (combo) => (SAMPLE_STEPS[combo.pick]
-        ? { copy: [{ selector: S.editorStatus, text: "unsaved edits" }], hides: [S.editorIssues] }
-        : { shows: [S.editorIssues] }),
+      derive: (combo) => ({
+        shows: [editorCardFor(renamedStep(combo.pick)), ...(SAMPLE_STEPS[combo.pick] ? [] : [S.editorIssues])],
+        hides: [editorCardFor(stepFor(combo.pick)), ...(SAMPLE_STEPS[combo.pick] ? [S.editorIssues] : [])],
+        copy: SAMPLE_STEPS[combo.pick] ? [{ selector: S.editorStatus, text: "unsaved edits" }] : [],
+      }),
     },
     {
       id: "delete-confirm",

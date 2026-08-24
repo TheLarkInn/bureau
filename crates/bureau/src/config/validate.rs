@@ -73,7 +73,8 @@ fn check_repo(errors: &mut Vec<ConfigError>, name: &str, repo: &Repo) {
 
 fn check_role(errors: &mut Vec<ConfigError>, name: &str, role: &Role) {
     let path = path_of("roles", name);
-    if !(role.agent.starts_with('/') || role.agent.to_ascii_lowercase().ends_with(".md")) {
+    let plugin = bureau_plugin::is_plugin_reference(&role.agent);
+    if !(plugin || role.agent.to_ascii_lowercase().ends_with(".md")) {
         push(
             errors,
             path,

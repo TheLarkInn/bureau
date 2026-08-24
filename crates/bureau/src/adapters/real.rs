@@ -55,16 +55,8 @@ pub struct Discovery {
     pub suffix: &'static str,
 }
 
-/// Splits a `/plugin:agent` reference; anything else is a path.
-fn plugin_parts(agent: &str) -> Option<(&str, &str)> {
-    if !bureau_plugin::is_plugin_reference(agent) {
-        return None;
-    }
-    agent.strip_prefix('/')?.split_once(':')
-}
-
 /// The agent name a path implies: file name minus discovery suffixes.
-fn agent_name(source: &Path) -> String {
+pub(super) fn agent_name(source: &Path) -> String {
     let file = source
         .file_name()
         .and_then(|n| n.to_str())
@@ -95,13 +87,10 @@ fn copy_agent(
 /// Resolves a role's agent reference to the `--agent` value
 /// (DESIGN.md section 6).
 ///
-/// The engine activates a pinned `/plugin:agent` before this call, so a
-/// plugin reference only contributes its agent name. A direct `.md` path
-/// is materialized verbatim for adapter discovery.
+/// Path references only. A plugin reference never arrives here — it is
+/// answered by [`super::expected_agent`]; see there for why. A direct `.md`
+/// path is materialized verbatim for adapter discovery.
 pub fn resolve_agent(agent: &str, worktree: &Path, discovery: &Discovery) -> String {
-    if let Some((_, name)) = plugin_parts(agent) {
-        return name.to_owned();
-    }
     if !agent.to_ascii_lowercase().ends_with(".md") {
         return agent.to_owned();
     }

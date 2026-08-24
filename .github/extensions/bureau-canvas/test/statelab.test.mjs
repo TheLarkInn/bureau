@@ -23,7 +23,8 @@ import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -86,6 +87,80 @@ test("every excluded combination is attributed, and the books balance", () => {
       noRuleIsDeadWeight: EXCLUSIONS.every((entry) => entry.pruned > 0),
     },
     { balances: true, everyRuleAccountedFor: true, everyRemovalHasAnExample: true, noRuleIsDeadWeight: true },
+  );
+});
+
+/**
+ * Every `enter` a dimension value declares has to reach a path.
+ *
+ * `entryPath` consumes `enter` from a hand-written list of axes, and `surface`
+ * was not on it. So the pipeline surface's `wait` for the Live badge to settle
+ * — declared with a comment stating it happened "once, on the surface all three
+ * modes are entered from" — was dropped from every state, and `liveCountSettled`
+ * had exactly one reference in the repository: its own dead declaration. The
+ * `data-count` assertions were left racing an in-flight fetch, saved only by the
+ * suite's re-sample loop.
+ *
+ * A missing consumer is invisible to every other test here, because a dropped
+ * `enter` produces a path that is merely shorter — still valid, still walkable,
+ * still passing. This is the one assertion that can see it, and it is written
+ * over the whole vocabulary rather than over `surface` alone, so the next axis
+ * to grow an `enter` is covered on the day it is added rather than after.
+ */
+test("no dimension value declares an entry operation that no state performs", () => {
+  const performed = new Set(STATES.flatMap((state) => state.ops).map((op) => JSON.stringify(op)));
+  const orphaned = DIMENSIONS
+    .flatMap((dimension) => dimension.values.map((value) => ({ axis: dimension.id, value })))
+    .flatMap(({ axis, value }) => (value.enter ?? []).map((op) => ({ axis, value: value.id, op })))
+    .filter((entry) => !performed.has(JSON.stringify(entry.op)));
+
+  assert.deepStrictEqual(orphaned, []);
+});
+
+/**
+ * Every number this branch reports about itself, pinned to a literal.
+ *
+ * `summary()` is what the PR body and the lab header both read, and only two of
+ * its fields were ever compared with anything: the root split, and the internal
+ * identity above — which, as its own comment says, cannot fail. The rest were
+ * derived, printed and believed. That is precisely the defect this registry
+ * exists to refuse, and it had already produced a wrong claim: a root count
+ * carried in prose that drifted to 69 while the graph held 136, with nothing
+ * able to say so.
+ *
+ * Returning `dimensionValues + 1` passed every other test in this file.
+ *
+ * Pinning the whole object is deliberately brittle. A new dimension value or
+ * state is *meant* to stop here and be looked at, rather than have the branch
+ * quietly restate its own new arithmetic as though it were the reviewed one.
+ *
+ * `renders` is not a field of `summary()` — it is what the gallery and the
+ * matrix suite actually produce — so it is derived from the only two things
+ * that decide it and pinned alongside, because it is reported the same way.
+ */
+test("every count the branch reports about itself is what the registry holds", () => {
+  const renders = STATES.length * Object.keys(VIEWPORTS).length;
+
+  assert.deepStrictEqual(
+    { ...summary(), renders },
+    {
+      dimensions: 16,
+      dimensionValues: 97,
+      combinations: 627056640000,
+      constraintRules: 33,
+      structuralRules: 22,
+      scopingRules: 7,
+      harnessRules: 4,
+      excludedCombinations: 627056639793,
+      matrixStates: 207,
+      probes: 43,
+      states: 250,
+      transitions: 136,
+      entryTransitions: 100,
+      returnTransitions: 36,
+      roots: 150,
+      renders: 500,
+    },
   );
 });
 
@@ -427,7 +502,117 @@ function hasCycle(edges) {
   return [...next.keys()].some((node) => walk(node, new Set()));
 }
 
-test("every scoping rule is held to account by a crossing probe that really breaks it", () => {  const probes = STATES.filter((state) => state.kind === "probe");
+/**
+ * `EXCLUSIONS` says why a combination is not a state. `ROOTS` says why nothing
+ * reaches one first — the same question asked of the graph rather than the
+ * product, and it went unasked for a while. The number it would have produced
+ * was carried in the PR body instead, where it was wrong and nothing could say
+ * so.
+ *
+ * The tally is pinned per category rather than merely totalled, because the
+ * categories overlap and their order is what resolves the overlap. Two
+ * boundaries do real work, on disjoint sets of three probes each. Three probes
+ * also satisfy `landing`, so listing `landing` first would relabel them "the
+ * screen the canvas opens on for that config", which is false of a hand-written
+ * crossing. Three others ride a request route, so listing `probe` before
+ * `intercepted` would relabel *those* "a hand-assembled crossing written to
+ * cross two dimensions a scoping rule keeps apart" — false of `probe--create-saving`,
+ * which crosses no rule and is unreachable because of the route. A total alone
+ * survives either reordering unchanged — the three move between categories and
+ * the sum does not notice. Pinning the split is what makes the documented
+ * ordering load-bearing.
+ *
+ * The `intercepted`/`probe` boundary only became load-bearing once probes
+ * carried their route on the state as well as on the op that installs it.
+ * Before that the `intercepted` predicate could not fire for a probe at all,
+ * and swapping the two categories left this tally byte-identical.
+ *
+ * Pinned numbers go stale by design: a new state that lands in a category has
+ * to be looked at, which is the review this registry exists to force.
+ *
+ * `RETURN_ONLY_ROOTS` is the other half, and it is the one that pins the
+ * *definition* rather than the arithmetic. These are the states a return edge
+ * arrives at and no entry edge does — eight landings and three probes. Under
+ * the all-edges definition this change replaced, every one of them was
+ * silently not a root. Asserting they are roots fails that revert by name;
+ * asserting merely that no root is entered does not, because the all-edges
+ * roots are a subset of these and so satisfy it too.
+ */
+const ROOT_TALLY = { boot: 4, intercepted: 89, probe: 19, landing: 30, "fixture-differs": 8 };
+const RETURN_ONLY_ROOTS = 11;
+
+test("every state nothing reaches first is attributed, and the books balance", () => {
+  const entered = new Set(ENTRY_TRANSITIONS.map((edge) => edge.to));
+  const roots = STATES.filter((state) => !entered.has(state.id));
+  const rootIds = new Set(ROOTS.map((root) => root.id));
+  const returnOnly = roots.filter((state) => TRANSITIONS.some((edge) => edge.to === state.id));
+  const tally = Object.fromEntries(
+    ROOT_REASONS.map((reason) => [reason.id, ROOTS.filter((root) => root.reason === reason.id).length]),
+  );
+
+  assert.deepStrictEqual(
+    {
+      tally,
+      countsAgree: ROOTS.length === roots.length && ROOTS.length === summary().roots,
+      returnOnly: returnOnly.length,
+      returnOnlyAreRoots: returnOnly.every((state) => rootIds.has(state.id)),
+      everyCategoryExplainsItself: ROOT_REASONS.every((reason) => Boolean(reason.title && reason.why)),
+    },
+    {
+      tally: ROOT_TALLY,
+      countsAgree: true,
+      returnOnly: RETURN_ONLY_ROOTS,
+      returnOnlyAreRoots: true,
+      everyCategoryExplainsItself: true,
+    },
+  );
+});
+
+/**
+ * The catch-all makes a specific claim — that the clicks reaching these states
+ * are some real screen's clicks, and only the published fixture differs — and
+ * a catch-all is where an untrue claim hides, because it absorbs whatever the
+ * named categories did not.
+ *
+ * So it is checked rather than trusted. Blinding the fixture's value alone is
+ * not enough to discriminate: 17 of the probe roots satisfy that too, and
+ * would be absorbed with a reason that is false of them, since a probe's
+ * fixture is hand-written rather than chosen by an axis. `kind === "matrix"`
+ * is the gate that does that work.
+ *
+ * The fixture comparison is kept for what it documents rather than what it
+ * decides: for a root it cannot change an outcome, because `blind` erases only
+ * the fixture op's *value*, so a blinded match with an equal fixture would be
+ * an exact match — which `nearestParent` would have found, giving the state an
+ * entry edge and disqualifying it as a root. It records the half of the claim
+ * that the state's own rootness already guarantees.
+ */
+test("the catch-all root category names a cause that really holds", () => {
+  const blind = (ops) => JSON.stringify(ops.map((op) => (op.op === "fixture" ? { op: "fixture" } : op)));
+  const byBlindPath = new Map(STATES.map((state) => [blind(state.ops.filter(isAction)), state]));
+  const fixtureOf = (state) => JSON.stringify([].concat(state.fixture ?? []));
+  const explains = (state) => {
+    const acting = state.ops.filter(isAction);
+    return acting.slice(1).some((_, index) => {
+      const ancestor = byBlindPath.get(blind(acting.slice(0, acting.length - 1 - index)));
+      return Boolean(ancestor) && fixtureOf(ancestor) !== fixtureOf(state);
+    });
+  };
+  const caught = ROOTS.map((root) => STATES.find((state) => state.id === root.id))
+    .filter((state) => rootReason(state).id === "fixture-differs");
+  const unexplained = caught.filter((state) => state.kind !== "matrix" || !explains(state));
+
+  // `caught` is asserted non-empty by name rather than against itself: a
+  // category that has stopped catching anything would make the second half
+  // vacuously true, which is the failure this whole test exists to refuse.
+  assert.deepStrictEqual(
+    { catchesSomething: caught.length > 0, unexplained: unexplained.map((state) => state.id) },
+    { catchesSomething: true, unexplained: [] },
+  );
+});
+
+test("every scoping rule is held to account by a crossing probe that really breaks it", () => {
+  const probes = STATES.filter((state) => state.kind === "probe");
   const crossings = probes.filter((state) => state.rule);
   const probed = new Set(crossings.map((state) => state.rule));
   assert.deepStrictEqual(
@@ -708,14 +893,39 @@ function describeOp(op) {
   if (op.op === "click") {
     return `click ${op.selector}`;
   }
-  if (op.op === "fill" || op.op === "select") {
+  if (op.op === "fill" || op.op === "select" || op.op === "press") {
     return `${op.op} ${op.selector} = ${JSON.stringify(op.value)}`;
+  }
+  if (op.op === "drag") {
+    return `drag ${op.selector} by ${op.dx},${op.dy}`;
   }
   if (op.op === "fixture") {
     return `publish ${[].concat(op.value).join(" + ")}`;
   }
   return op.op;
 }
+
+/**
+ * The label check above rebuilds the text with a copy of the registry's own
+ * formatter, so on the *format* half the two agree by construction: an op kind
+ * the formatter drops is dropped identically on both sides and nothing fails.
+ * That is not hypothetical — `press` fell through to a bare "press" for exactly
+ * this reason, and the copy here fell through with it, so "fill the name →
+ * press" passed while naming neither the key nor the control it went to.
+ *
+ * So this holds labels to the property the formatter exists to have, rather
+ * than to a second copy of the formatter: whatever an operation acts on, and
+ * whatever value it uses, the label says so. A new op kind added to the
+ * vocabulary and not to `describeOp` fails here on the day it is used, which is
+ * the case the duplicated version can never reach.
+ */
+test("every edge label names the selector each operation acts on and the value it uses", () => {
+  const lossy = TRANSITIONS.flatMap((edge) => edge.delta
+    .filter(isAction)
+    .filter((op) => [op.selector, ...[].concat(op.value ?? [])].some((part) => part && !edge.via.includes(part)))
+    .map((op) => `${edge.from} -> ${edge.to}: ${op.op} in ${JSON.stringify(edge.via)}`));
+  assert.deepStrictEqual(lossy, []);
+});
 
 /**
  * The registry addresses the replay timeline by the span of the run it is
@@ -1047,6 +1257,42 @@ test("the same-kind overlap rule spares a row drawn inside another row", () => {
 });
 
 /**
+ * The graph's cards are the one region both halves of the overlap rule would
+ * otherwise miss, and nothing required them to be covered.
+ *
+ * React Flow gives every node its own absolutely positioned wrapper, so
+ * `.flow-card` boxes are not in normal flow and share no DOM parent: the
+ * sibling rule skips them by construction, and no `SIBLINGS` pair names them.
+ * Same-selector comparison is the only rule that can reach them, and it reaches
+ * them only while `.flow-card` is in `STACKED` — while `MEASURED` is what
+ * decides the boxes are collected at all.
+ *
+ * Both memberships were unasserted. Deleting `.flow-card` from either list left
+ * every test in this file green while the matrix quietly stopped detecting two
+ * pipeline cards drawn on top of each other — the collision that put a terminal
+ * rail inside a concurrent group's member row.
+ *
+ * Asserted through the behaviour rather than by reading the lists back, so a
+ * rule that keeps the name and stops acting on it fails too.
+ */
+test("two graph cards drawn on top of each other are caught, and their boxes are collected", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  // Absolutely positioned and parentless, exactly as React Flow draws them, so
+  // this passes only if the same-selector rule is doing the work.
+  const card = (id, extra) => ({ selector: ".flow-card", id, x: 0, y: 0, width: 200, height: 80, parent: null, flow: false, within: [], ...extra });
+  const snapshot = (boxes) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes });
+
+  assert.deepStrictEqual(
+    {
+      collected: measureFor(state).includes(".flow-card"),
+      apart: verdict(state, snapshot([card("node-0"), card("node-1", { x: 220 })])),
+      overprinted: verdict(state, snapshot([card("node-0"), card("node-1", { x: 100 })])).map((item) => item.detail),
+    },
+    { collected: true, apart: [], overprinted: [".flow-card #0 overlaps #1"] },
+  );
+});
+
+/**
  * The sibling rule, and the two things it must not mistake for a defect.
  *
  * `SIBLINGS` in `checks.mjs` is a hand-kept list of landing pairs; this is the
@@ -1137,7 +1383,7 @@ test("the verdict catches a label that names a control it does not sit beside", 
  * `toString()`, in the browser suite and in the lab alike — so it may not
  * reference anything outside itself. Nothing enforced that, and the way it
  * fails is maximally unhelpful: a helper lifted to module scope leaves a
- * `ReferenceError` inside every single `page.evaluate`, so all 440 renders and
+ * `ReferenceError` inside every single `page.evaluate`, so every render and
  * every transition go red at once and none of them names the cause.
  *
  * Rebuilding it the way the hosts do and running it over a document that
@@ -1259,11 +1505,32 @@ function pageStub() {
   };
 }
 
-test("every contrast selector names small text coloured from a kind hue", () => {
-  // A hue that reads as decoration rather than text is a defect the
-  // screenshots would not show, so the ratio is asserted rather than eyeballed.
-  assert.ok(CONTRAST.includes(".kind-label"));
-  assert.deepStrictEqual(CONTRAST.filter((selector) => !selector.startsWith(".")), []);
+/**
+ * Both contrast selectors, and the ratio itself.
+ *
+ * This asserted `CONTRAST.includes(".kind-label")` and that every entry began
+ * with a dot. `.access` could be deleted outright and the threshold dropped
+ * from 4.5 to 2, and it still passed — so the check that exists because a hue
+ * retune is invisible in a screenshot was itself invisible to a hue retune.
+ *
+ * The set is pinned exactly, and the floor is pinned at its boundary: 4.49 is
+ * reported and 4.5 is not. Asserting only that some low ratio is caught would
+ * survive any threshold at all above it.
+ */
+test("both contrast selectors are held to WCAG AA, at the boundary", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const snapshot = (contrast) => ({ counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast, boxes: [] });
+  const at = (selector, ratio) => ({ selector, text: "label", ratio });
+  const kinds = (entries) => verdict(state, snapshot(entries)).filter((item) => item.kind === "low-contrast").length;
+
+  assert.deepStrictEqual(
+    {
+      selectors: [...CONTRAST].sort(),
+      below: kinds([at(".kind-label", 4.49), at(".access", 4.49)]),
+      atFloor: kinds([at(".kind-label", 4.5), at(".access", 4.5)]),
+    },
+    { selectors: [".access", ".kind-label"], below: 2, atFloor: 0 },
+  );
 });
 
 /**
@@ -1285,4 +1552,92 @@ test("no state asks for two different request routes at once", () => {
     .filter((entry) => entry.routes.length > 1);
 
   assert.deepStrictEqual(conflicted, []);
+});
+
+/**
+ * The route a state rides is written twice — on the page op, which the walkers
+ * read to install it, and on the state, which every consumer that asks *about*
+ * a state reads instead: the `intercepted` root category, the lab's route tag,
+ * the lab's refusal to draw a condition it cannot install, and the suite's list
+ * of states the lab can drive.
+ *
+ * Comparing those two to each other is what this test used to do, and it could
+ * not fail. `registry.mjs` derives `state.intercept` as
+ * `ops.find((op) => op.intercept)?.intercept`, and the test recomputed that
+ * expression character for character; `probes.mjs` writes both from one
+ * parameter. Both sides were one read of one value, so `disagreeing` was `[]`
+ * by construction. Rerouting every `stall-intent` state to `fail-intent` — an
+ * inversion that turns a held save into a refused one on some twenty screens —
+ * left the whole file green.
+ *
+ * So each family is held to a source that is genuinely not the ops:
+ *
+ * - matrix states are held to `interceptFor(dimensions)`, the function that
+ *   *decides* the route, which `interceptOp` then places. A boot state is not
+ *   one of these: its route comes from `bootOps` and `interceptFor` knows
+ *   nothing about it, so re-deriving it here would restore the tautology.
+ * - boot states and routed probes are held to literal id→route maps, which are
+ *   data rather than a second copy of the derivation. A probe that stops
+ *   writing the route onto its state, or acquires one nobody reviewed, fails
+ *   by name.
+ */
+const BOOT_ROUTES = {
+  "surface:boot+data:loading": "stall-state",
+  "surface:boot+data:render-error": "block-renderer",
+  "surface:boot-editor+data:loading": "stall-state",
+  "surface:boot-editor+data:render-error": "block-editor-renderer",
+};
+
+const PROBE_ROUTES = {
+  "probe--create-saving": "stall-intent",
+  "probe--create-refusal-dismissed": "fail-intent",
+  "probe--delete-refusal-dismissed": "fail-intent",
+  "probe--reconcile-now-reported": "pass-intent",
+  "probe--reconcile-now-started-a-run": "pass-starts-run",
+  "probe--replay-opened-from-a-pass": "pass-starts-run",
+  "probe--live-count-loading": "stall-runs",
+  "probe--draft-save-transport-lost": "abort-intent",
+  "probe--editor-save-transport-lost": "abort-intent",
+  "probe--run-activity-idle": "empty-runs",
+  "probe--reconcile-now-running": "stall-intent",
+  "probe--reconcile-now-refused": "fail-intent",
+  "probe--run-refusal-dismissed": "fail-intent",
+  "probe--run-under-failed-listing": "fail-runs-later",
+  "probe--run-activity-unavailable": "fail-runs",
+};
+
+/** The id→route map a family of states actually holds, for one comparison. */
+function routesOf(states) {
+  return Object.fromEntries(states.filter((state) => state.intercept).map((state) => [state.id, state.intercept]));
+}
+
+test("a state rides the route its own source decided, not merely the one its ops carry", () => {
+  const matrix = STATES.filter((state) => state.kind === "matrix" && !state.surface.startsWith("boot"));
+  const misrouted = matrix
+    .map((state) => ({ id: state.id, state: state.intercept ?? null, decided: interceptFor(state.dimensions)[0] ?? null }))
+    .filter((entry) => entry.state !== entry.decided);
+  // Placement, which is the half a consumer cannot see and the half that can
+  // actually be wrong. Comparing the op's route to `state.intercept` was a
+  // tautology in the same shape as the one above: `registry.mjs` *defines*
+  // `state.intercept` as `ops.find((op) => op.intercept)?.intercept`, and
+  // `probes.mjs` writes both from one parameter, so the two sides were one
+  // read of one value. What the route needs is not to exist somewhere in the
+  // ops but to be installed before the page it conditions is fetched — a
+  // route hung on any later op leaves the load unrouted and the condition
+  // never happens.
+  const unrouted = STATES
+    .filter((state) => state.intercept)
+    .map((state) => ({ id: state.id, carrier: state.ops.findIndex((op) => op.intercept), first: state.ops[0]?.op ?? null }))
+    .filter((entry) => entry.carrier !== 0 || entry.first !== "page");
+
+  assert.deepStrictEqual(
+    {
+      misrouted,
+      unrouted,
+      boot: routesOf(STATES.filter((state) => state.surface.startsWith("boot"))),
+      probes: routesOf(STATES.filter((state) => state.kind === "probe")),
+      routed: STATES.filter((state) => state.intercept).length,
+    },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 94 },
+  );
 });

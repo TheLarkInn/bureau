@@ -14,8 +14,8 @@ import {
 } from "@xyflow/react";
 // graph-overlays: mode switcher plus live/replay overlay controllers. The
 // pipeline graph rendering below stays as-is; overlay modes only restyle it.
-import { ModeSwitcher } from "./modes.js";
-import { useLiveOverlay } from "./live/live.js";
+import { ModeSwitcher, useRunActivity } from "./modes.js";
+import { LiveActivity, useLiveOverlay } from "./live/live.js";
 import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
 import { useReplayOverlay } from "./replay/replay.js";
@@ -182,15 +182,36 @@ function CreateBar({ dir }) {
   const [kind, setKind] = useState("pipeline");
   const [name, setName] = useState("");
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const live = useLive();
   const trigger = useRef(null);
-  const close = () => closeDisclosure(setOpen, trigger);
+  // The generation of the open form. Cancel advances it, so an answer to a
+  // create the reader has already dismissed is nobody's and is dropped rather
+  // than installed over whatever they opened next.
+  const ticket = useRef(0);
+  // The refusal belongs to the form it was raised in. This component outlives
+  // the form — closing it only hides the disclosure — so a refusal not cleared
+  // here is still on screen when the reader opens the create bar again, naming
+  // a failure they already dismissed and no request is in flight for.
+  const close = () => {
+    ticket.current += 1;
+    setBusy(false);
+    setError(null);
+    closeDisclosure(setOpen, trigger);
+  };
   const submit = (event) => {
     event.preventDefault();
-    if (!name.trim()) {
+    if (!name.trim() || busy) {
       return;
     }
     setError(null);
+    setBusy(true);
+    const mine = ticket.current;
     postIntent({ kind: "create", input: { dir, kind, name: name.trim(), fields: {} } }).then((result) => {
+      if (!live.current || ticket.current !== mine) {
+        return;
+      }
+      setBusy(false);
       if (!result?.ok) {
         setError(result?.error ?? `could not create ${kind}`);
         return;
@@ -244,14 +265,13 @@ function CreateBar({ dir }) {
       "div",
       { className: "create-bar__fields" },
       h("label", { className: "detail-label", htmlFor: "create-kind" }, "Kind"),
-      h(
-        "select",
-        {
-          id: "create-kind",
-          className: "form-control form-select",
-          value: kind,
-          onChange: (event) => setKind(event.target.value),
-        },
+      h("select", {
+        id: "create-kind",
+        className: "form-control form-select",
+        value: kind,
+        disabled: busy,
+        onChange: (event) => setKind(event.target.value),
+      },
         ["pipeline", "role"].map((option) =>
           h("option", { key: option, value: option }, option)),
       ),
@@ -260,6 +280,7 @@ function CreateBar({ dir }) {
         id: "create-name",
         className: "form-control",
         value: name,
+        disabled: busy,
         onChange: (event) => setName(event.target.value),
         placeholder: `${kind} name`,
         autoFocus: true,
@@ -283,8 +304,8 @@ function CreateBar({ dir }) {
         type: "submit",
         className: "btn btn--primary",
         "data-testid": "create-submit",
-        disabled: !name.trim(),
-      }, `Create ${kind}`),
+        disabled: !name.trim() || busy,
+      }, busy ? "Creating…" : `Create ${kind}`),
       h("button", {
         type: "button",
         className: "btn",
@@ -303,10 +324,14 @@ function DeleteControl({ dir, kind, name }) {
   const [preflight, setPreflight] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const ask = () => {
     setBusy(true);
     setError(null);
     postIntent({ kind: "delete", input: { dir, kind, name } }).then((response) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (response?.ok) {
         setPreflight(response.result);
@@ -315,14 +340,31 @@ function DeleteControl({ dir, kind, name }) {
       }
     });
   };
-  const confirm = () => postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
-    if (result?.ok) {
-      setPreflight(null);
-      publishLocalState(result);
-    } else {
-      setError(result?.error ?? `could not delete ${name}`);
-    }
-  });
+  /*
+   * The same two tickets every field editor's save carries, on the one request
+   * here that cannot be taken back. `busy` holds both answers still for the
+   * round trip: a Confirm that stayed live would let a second click race a
+   * second removal against the first, and a Cancel that stayed live would let a
+   * reader believe they had stopped a delete that was already on its way. And
+   * after unmount the answer is nobody's — this card is removed by its own
+   * success, so the reply lands on a component that has gone.
+   */
+  const confirm = () => {
+    setBusy(true);
+    setError(null);
+    postIntent({ kind: "delete", input: { dir, kind, name, confirm: true } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
+      setBusy(false);
+      if (result?.ok) {
+        setPreflight(null);
+        publishLocalState(result);
+      } else {
+        setError(result?.error ?? `could not delete ${name}`);
+      }
+    });
+  };
   if (!preflight) {
     return h(React.Fragment, null,
       h("button", { type: "button", className: "btn btn--small btn--danger card-action", "data-testid": "delete-start", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
@@ -336,9 +378,13 @@ function DeleteControl({ dir, kind, name }) {
     preflight.blocking
       ? h("p", { className: "note note--err" }, "Repoint these references before deleting this item.")
       : null,
+    // Cancel clears the refusal with the prompt. The `!preflight` branch above
+    // renders `error` too, so a refused confirm left set here would follow the
+    // reader back out to a resting card and sit beside an intact Delete —
+    // reporting a removal that is neither in flight nor was ever performed.
     h("div", { className: "actions" },
-      h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking, onClick: confirm }, "Confirm delete"),
-      h("button", { type: "button", className: "btn btn--small", onClick: () => setPreflight(null) }, "Cancel")),
+      h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking || busy, onClick: confirm }, busy ? "Deleting…" : "Confirm delete"),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "delete-cancel", disabled: busy, onClick: () => { setPreflight(null); setError(null); } }, "Cancel")),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
 }
@@ -507,21 +553,51 @@ function draftRoot(className, dirty, onDone) {
 }
 
 /**
-* An editable control on a field editor, held still while a save is in flight.
-*
-* Every one of these editors submits the draft it held at the moment Save was
-* pressed and then calls `onDone()` when the host answers — so anything typed
-* *during* the round trip was never submitted, and the close throws it away
-* without the leave guard ever being consulted, because the editor closed
-* itself rather than being navigated away from. A form whose button already
-* reads "Saving…" has nothing useful to do with input, so it stops taking it.
-*
-* Only the inputs. Cancel stays live on purpose: a host that never answers
-* would otherwise leave the reader inside a form with no way out, which is a
-* worse trap than the edit this is protecting.
-*/
+ * An editable control on a field editor, held still while a save is in flight.
+ *
+ * Every one of these editors submits the draft it held at the moment Save was
+ * pressed and then calls `onDone()` when the host answers — so anything typed
+ * *during* the round trip was never submitted, and the close throws it away
+ * without the leave guard ever being consulted, because the editor closed
+ * itself rather than being navigated away from. A form whose button already
+ * reads "Saving…" has nothing useful to do with input, so it stops taking it.
+ *
+ * Only the inputs. Cancel stays live on purpose: a host that never answers
+ * would otherwise leave the reader inside a form with no way out, which is a
+ * worse trap than the edit this is protecting.
+ */
 function editable(busy, props) {
- return { ...props, disabled: busy || props.disabled };
+  return { ...props, disabled: busy || props.disabled };
+}
+
+/**
+ * Whether this editor is still the screen the reader is looking at.
+ *
+ * Cancel staying live during a save is the decision above; this is the rest of
+ * it. A save submits and then closes when the host answers, so once Cancel has
+ * closed the editor the reply belongs to nobody — and an unguarded
+ * continuation then does two things the reader never asked for. It calls
+ * `publishLocalState`, applying the edit that was just cancelled with no
+ * message; and it calls `onDone()`, whose `closeDisclosure` re-focuses the
+ * field's trigger, pulling focus out of whatever was opened next, mid
+ * keystroke. On a refusal it calls `setError` on a component that has gone,
+ * so the reason is dropped rather than shown.
+ *
+ * The two derivations already carry a ticket against a reply that outlived the
+ * question. This is that guard one level up: after unmount the answer is not
+ * anyone's, so it is dropped rather than acted on. It is the one draft-safety
+ * path `confirmClosingEditor` cannot cover, because the editor was not
+ * navigated away from — it closed itself.
+ */
+function useLive() {
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  return live;
 }
 
 /**
@@ -586,6 +662,7 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
   const [fields, setFields] = useState(initial);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
   const invalid = !fields.filter.trim() || !fields.branch_prefix.trim();
   const set = (field, value) => setFields((current) => ({ ...current, [field]: value }));
@@ -598,6 +675,9 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
       branch_prefix: fields.branch_prefix.trim(),
     }) };
     postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -684,6 +764,7 @@ function TerminalLabelsEditor({ assignment, onDone }) {
   const [fields, setFields] = useState(initial);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   const changed = Object.keys(initial).some((key) => fields[key] !== initial[key]);
   const invalid = !fields.abort_label.trim() || !fields.escalate_label.trim()
     || fields.abort_label.trim() === fields.escalate_label.trim();
@@ -697,6 +778,9 @@ function TerminalLabelsEditor({ assignment, onDone }) {
     };
     const input = { assignment: assignment.name, fields: runtimeFields(assignment, labels) };
     postIntent({ kind: "set-assignment-runtime", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -798,11 +882,15 @@ function ReposEditor({ state, assignment, onDone }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
 
   const commit = (next, register) => {
     setBusy(true);
     const input = { assignment: assignment.name, repos: next, ...(register ? { register } : {}) };
     postIntent({ kind: "set-repos", input }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -1080,6 +1168,7 @@ function LimitsEditor({ assignment, saved, onDone }) {
   const [lastValues, setLastValues] = useState(saved);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
 
   const changed = LIMIT_FIELDS.some((field) => draft[field.key] !== saved[field.key]);
   // A cleared box is kept as its raw text rather than coerced: `Number("")`
@@ -1105,6 +1194,9 @@ function LimitsEditor({ assignment, saved, onDone }) {
   const save = () => {
     setBusy(true);
     postIntent({ kind: "set-limits", input: { assignment: assignment.name, limits: draft } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -1214,6 +1306,7 @@ function WorkSourceEditor({ assignment, onDone }) {
   const [derived, setDerived] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const live = useLive();
   // The same guard the repo adder keeps, and for the same reason: every
   // keystroke asks the host to read the URL and the answers need not come back
   // in the order they were asked. Without it, clearing the box could be
@@ -1254,6 +1347,9 @@ function WorkSourceEditor({ assignment, onDone }) {
       escalate_label: assignment.work?.escalateLabel ?? "",
     };
     postIntent({ kind: "set-work-source", input: { assignment: assignment.name, work } }).then((result) => {
+      if (!live.current) {
+        return;
+      }
       setBusy(false);
       if (result?.ok) {
         publishLocalState(result);
@@ -1376,8 +1472,24 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   // graph-overlays: design keeps the static graph; live and replay restyle
   // it from run events via the shared reducer in web/live/overlay.js.
   const [mode, setMode] = useState("design");
-  const live = useLiveOverlay();
-  const replay = useReplayOverlay();
+  const activity = useRunActivity(name, state.config?.view?.assignments ?? []);
+  const replay = useReplayOverlay(activity);
+  // A pass started from Live produces a run that has already finished, so the
+  // hand-off target is Replay. Wired here because this is where both overlays
+  // and the mode itself are owned.
+  const live = useLiveOverlay(activity, (runId) => {
+    replay.setRunId(runId);
+    leaveLive("replay");
+  });
+  // Leaving Live ends what this visit said: its refusal and its pass report
+  // are statements about a request made here, and the hook that holds them
+  // outlives the surface.
+  const leaveLive = (next) => {
+    if (next !== "live") {
+      live.dismissControls();
+    }
+    setMode(next);
+  };
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
     () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
@@ -1394,12 +1506,17 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       { className: "pipeline-main" },
       h(
         "div",
-        { className: "pipeline-toolbar" },
-        h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
-        h("h2", {}, name),
-        h(ModeSwitcher, { mode, onMode: setMode }),
-        h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
-        active?.controls ?? null,
+        { className: "pipeline-chrome" },
+        h(
+          "div",
+          { className: "pipeline-toolbar" },
+          h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
+          h("h2", {}, name),
+          h(ModeSwitcher, { mode, onMode: leaveLive, activity }),
+          h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
+          active?.controls ?? null,
+        ),
+        mode === "live" ? h(LiveActivity, { activity, runId: live.runId }) : null,
       ),
       h(
         "div",
@@ -1421,7 +1538,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
         }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
       ),
       // graph-overlays: a run's steps left output; design mode has no run.
-      active ? h(StepLog, stepLogProps(pipeline, active, selectedStep)) : null,
+      active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,
     ),
     h(SidePanel, { state, pipeline, name }),
   );
@@ -1447,14 +1564,16 @@ function MissingPipeline({ notice, name }) {
 }
 
 /** What the log panel needs: the focused step, its kind, record and output. */
-function stepLogProps(pipeline, active, selectedStep) {
+function stepLogProps(state, pipeline, active, selectedStep) {
   const overlay = active.decoration?.overlay ?? null;
   const step = focusStep(selectedStep, overlay);
   const layoutStep = (pipeline?.layout?.steps ?? []).find((item) => item.name === step);
+  const role = state.config?.view?.roles?.find((item) => item.name === overlay?.steps?.[step]?.role);
   return {
     step,
     kind: layoutStep?.kind ?? null,
     record: overlay?.steps?.[step] ?? null,
+    expectedAgent: role?.resolvedAgent ?? null,
     text: step ? stepOutput(active.events, step, active.until) : "",
   };
 }
@@ -1797,8 +1916,33 @@ function SidePanel({ state, pipeline, name }) {
     "aside",
     { className: "side-panel" },
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
+    h(AgentIdentities, { state, pipeline }),
     h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
+  );
+}
+
+function AgentIdentities({ state, pipeline }) {
+  const names = new Set((pipeline?.layout?.steps ?? []).map((step) => step.fields?.role).filter(Boolean));
+  const roles = (state.config?.view?.roles ?? []).filter((role) => names.has(role.name));
+  if (!roles.length) {
+    return null;
+  }
+  return h(
+    "section",
+    { className: "panel-section agent-identities" },
+    h("h3", {}, "Agent identities"),
+    h("ul", {}, roles.map((role) => h(
+      "li",
+      { key: role.name },
+      h("span", { className: "mono" }, role.name),
+      // `selects`, not an arrow. The right-hand name is what this reference
+      // resolves *to* only in the sense that the config projects it; no
+      // discovery, no worktree and no file copy has happened, and an arrow read
+      // as resolution is exactly what someone debugging a missing agent would
+      // trust it to mean.
+      h("span", { className: "agent-map mono" }, `${role.agent} selects ${role.resolvedAgent ?? "not checked"}`),
+    ))),
   );
 }
 

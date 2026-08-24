@@ -2,6 +2,16 @@
   "ok": true,
   "errors": [],
   "dir": ".bureau",
+  "agents": {
+    "implementer": {
+      "configured": "/bureau:implementer",
+      "resolved": "bureau:implementer"
+    },
+    "reviewer": {
+      "configured": "/bureau:reviewer",
+      "resolved": "bureau:reviewer"
+    }
+  },
   "config": {
     "repos": {
       "bureau": {

@@ -21,7 +21,7 @@ pub use event::{
     BranchPushedData, CheckpointData, Event, EventKind, OutputData, PrCreatedData, RunFinishedData,
     RunStartedData, StepFinishedData, StepStartedData, branch_pushed, checkpoint, output,
     pr_created, run_finished, run_finished_full, run_started, run_started_for_item,
-    run_started_snapshot, step_finished, step_finished_full, step_started,
+    run_started_snapshot, step_finished, step_finished_full, step_started, step_started_agent,
 };
 pub use gist::{gist, kind_name, outcome_name, status_text};
 pub use group::{

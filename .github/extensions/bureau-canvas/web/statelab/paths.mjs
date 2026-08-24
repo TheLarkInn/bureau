@@ -21,7 +21,7 @@
 // `driver.mjs` implements exactly this set, and an offline test fails if a
 // path uses a verb that is not on it.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, withheld } from "./selectors.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, withheld } from "./selectors.mjs";
 const FILTER = '[data-testid="wr-filter"]';
 const BRANCH = '[data-testid="wr-branch"]';
 const ABORT = '[data-testid="sig-abort"]';
@@ -56,6 +56,30 @@ export const SAMPLE_STEPS = { deterministic: "verify", agent: "implement" };
  */
 export const SAMPLE_STEP_COUNT = 3;
 export const ADDED_STEP = `step-${SAMPLE_STEP_COUNT + 1}`;
+
+/**
+ * The one control per field that a save in flight has to hold still.
+ *
+ * This exists so the claim is falsifiable. Every editor stops taking input
+ * while it is saving, because each submits the draft it held when Save was
+ * pressed and then closes on the answer — so a keystroke landing in between is
+ * thrown away without the leave guard being consulted. `saving` already
+ * asserted the withheld Save and the "Saving…" label, but both of those were
+ * true before the inputs were held, so the behaviour was unasserted: deleting
+ * the `busy ||` from `editable` left every suite green.
+ *
+ * Each entry is deliberately a control whose *only* disabled condition is the
+ * save. The repos editor is named by its Remove rather than the reorder its
+ * `dirty` path presses, because a repo moved to the top disables its own Move
+ * up — an assertion that would then hold with the guard removed.
+ */
+const FIELD_HELD = {
+  "work-source": S.workSourceUrl,
+  "work-rules": FILTER,
+  "forge-signals": ABORT,
+  repos: '[aria-label="Remove bureau-docs"]',
+  limits: CONCURRENT_LIMIT,
+};
 
 /**
  * Per-field lifecycle: how an open field editor is driven from `rest` into a
@@ -145,7 +169,36 @@ const FIELD_DRAFTS = {
     dirty: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "3" }] },
     invalid: { ops: [{ op: "fill", selector: CONCURRENT_LIMIT, value: "0" }], copy: ["need whole numbers of at least 1"] },
   },
-  delete: { "n/a": {} },
+  /*
+   * Delete is not a draft editor — it has nothing typed and no save of its own
+   * — but the confirmation it *does* have is a write with two ends, and they
+   * were modelled nowhere. So it borrows the two lifecycle names the saving
+   * fields use, on the button that is actually pressed: `saving` is the removal
+   * in flight, `save-error` is the removal refused.
+   *
+   * Both ends are asserted on the pair of controls rather than on the verb
+   * alone, because the pair is the contract. A confirmed delete cannot be taken
+   * back, so while it is in flight Confirm must not accept a second press and
+   * Cancel must not offer a way out it no longer has; and when it is refused
+   * both must come back, or the reader is left holding a dead prompt over an
+   * assignment that is still there.
+   */
+  delete: {
+    "n/a": {},
+    saving: {
+      ops: [{ op: "click", selector: S.deleteConfirm }, { op: "wait", selector: withheld(S.deleteConfirm) }],
+      shows: [withheld(S.deleteConfirm), withheld(S.deleteCancel)],
+      copy: ["Deleting…"],
+    },
+    // The refusal as a treatment as well as a sentence, and inside the prompt
+    // it belongs to: an error drawn in the ordinary note class, or outside the
+    // preflight, would read as advice about a delete that had not failed.
+    "save-error": {
+      ops: [{ op: "click", selector: S.deleteConfirm }, { op: "wait", selector: S.deleteRefused }],
+      shows: [S.deleteRefused, offered(S.deleteConfirm), offered(S.deleteCancel)],
+      copy: ["could not delete"],
+    },
+  },
 };
 
 /**
@@ -232,12 +285,15 @@ export const SAVE_INTERCEPTS = { saving: "stall-intent", discarding: "stall-inte
  * raced a second write against the first one's revert.
  */
 export function interceptFor(combo) {
-  const refusedRun = String(combo.run ?? "").startsWith("refused");
   const wanted = [
     SAVE_INTERCEPTS[combo.fieldState],
     SAVE_INTERCEPTS[combo.draft],
     SAVE_INTERCEPTS[combo.edit],
-    refusedRun ? "fail-intent" : null,
+    String(combo.run ?? "").startsWith("refused") ? "fail-intent" : null,
+    // The held end takes the same route every other in-flight state takes: the
+    // intent is never answered, which is the only way the wait is a screen
+    // rather than a frame between two of them.
+    RUN_HOLDS[combo.run] ? "stall-intent" : null,
     combo.run === "ended" ? "offer-ended-run" : null,
     combo.disclosure === "create-error" ? "fail-intent" : null,
   ].filter(Boolean);
@@ -261,10 +317,14 @@ function saveStates(field, dirty) {
   const save = FIELD_SAVE[field];
   const refusal = `${FIELD_EDITOR[field]} .note--err`;
   const draft = [...(dirty.ops ?? []), { op: "click", selector: save }];
+  const held = FIELD_HELD[field];
   return {
     saving: {
       fixture: dirty.fixture,
       ops: [...draft, { op: "wait", selector: withheld(save) }],
+      // Both ends of the in-flight form: the save cannot be pressed twice, and
+      // the field cannot be typed into and have the keystroke silently lost.
+      shows: [withheld(save), withheld(held)],
       copy: ["Saving…"],
     },
     // The refusal is asserted as a *treatment*, not only as words: an editor
@@ -316,10 +376,23 @@ export const FIELD_LIFECYCLE = Object.fromEntries(
   ]),
 );
 
+/**
+ * The name a rename commits.
+ *
+ * Shared by the path that types it and the expectation that reads it back off
+ * the graph, because those two drifting apart is the one way the rename
+ * assertion could go quiet: an expectation naming a card no path produces
+ * would fail always, and one naming the card the path started from would fail
+ * never.
+ */
+export function renamedStep(kind) {
+  return `${kind}-renamed`;
+}
+
 /** How the editor is driven into each mutation state, per selected step kind. */
 const renamedPath = (kind) => [
   ...selectStep(kind),
-  { op: "fill", selector: S.editorStepName, value: `${kind}-renamed` },
+  { op: "fill", selector: S.editorStepName, value: renamedStep(kind) },
   { op: "press", selector: S.editorStepName, value: "Enter" },
 ];
 
@@ -548,6 +621,53 @@ export function runRefusalOps(runValue) {
     { op: "click", selector: refusal.control },
     { op: "wait", selector: S.runControlError },
   ];
+}
+
+/**
+ * Holding a run control, per verb — the other end of the same round trip.
+ *
+ * A refusal was modelled for all three verbs and the wait for none of them, so
+ * the screen between the press and the answer was the last write on this
+ * surface with no state at all. The renderer matched the model: `send` posted
+ * with every control live, so a second press sent a second intent and Bureau
+ * was asked twice about one run. A duplicate resume is the worst of the three —
+ * the first clears `PAUSE`, and the second is then refused about a run that is
+ * already running, so the reader is told a request failed that in fact
+ * succeeded.
+ *
+ * Each verb is held on the run that offers it, exactly as its refusal is:
+ * pause and cancel on a running run, resume on a paused one. `stall-intent`
+ * answers none of them, which is what a host taking its time looks like.
+ *
+ * The status is asserted unchanged, because the claim being made is that a
+ * *held* control has not moved the run — only the request is in flight.
+ */
+export const RUN_HOLDS = {
+  "holding-pause": { run: "running", control: S.runPause, verb: "pause", pending: "Pausing…" },
+  "holding-resume": { run: "paused", control: S.runResume, verb: "resume", pending: "Resuming…" },
+  "holding-cancel": { run: "running", control: S.runCancel, verb: "cancel", pending: "Cancelling…" },
+};
+
+export function runHoldOps(runValue) {
+  const hold = RUN_HOLDS[runValue];
+  return [
+    ...runOps("live", hold.run),
+    { op: "click", selector: hold.control },
+    { op: "wait", selector: withheld(hold.control) },
+  ];
+}
+
+/**
+ * The run values whose entry path posts an intent about the run.
+ *
+ * One predicate for both ends, read by the rule that scopes them to Live, by
+ * the intercept that stages them and by the path that walks them — so a verb
+ * whose wait is modelled and whose refusal is not, or the reverse, cannot be
+ * scoped by one and missed by the other.
+ */
+export function postsRunIntent(runValue) {
+  const value = String(runValue ?? "");
+  return value.startsWith("refused") || value.startsWith("holding");
 }
 
 function selectionLayer(combo) {

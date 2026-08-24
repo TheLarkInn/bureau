@@ -1,4 +1,4 @@
-{"kind":"run_started","seq":0,"at_ms":1740000200000,"data":{"run_id":"run-finished","assignment":"agent-eligible","pipeline":"agent-eligible-pipeline"}}
+{"kind":"run_started","seq":0,"at_ms":1740000200000,"data":{"run_id":"run-finished","assignment":"agent-eligible","snapshot":{"run_id":"run-finished","assignment":{"name":"agent-eligible","pipeline":"agent-eligible-pipeline"},"pipeline":{"name":"agent-eligible-pipeline"}}}}
 {"kind":"step_started","seq":1,"at_ms":1740000201000,"data":{"run_id":"run-finished","step":"implement"}}
 {"kind":"output","seq":2,"at_ms":1740000202000,"data":{"run_id":"run-finished","step":"implement","stream":"stdout","data":"edited crates/bureau/src/engine.rs"}}
 {"kind":"step_finished","seq":3,"at_ms":1740000204000,"data":{"run_id":"run-finished","step":"implement","outcome":"success"}}

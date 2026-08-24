@@ -290,7 +290,128 @@ test.describe("leaving an open field editor", () => {
     await expect(card.page.locator(".ws-open")).toHaveAttribute("data-dirty", "false");
     expect(await settled(card.page)).toEqual({ preview: 0, save: true, mark: 0 });
   });
+  /**
+   * Cancel during a save, and the reply that lands after it.
+   *
+   * Cancel stays live for the whole round trip on purpose — a host that never
+   * answers would otherwise leave the reader inside a form with no way out.
+   * That is the decision; this is its consequence. Every editor closes itself
+   * when the host answers, so a reply arriving after Cancel used to run the
+   * success path anyway: it published the edit the reader had just cancelled,
+   * and it re-focused the field's trigger, pulling the caret out of whatever
+   * was opened next.
+   *
+   * The reply is held until after Cancel *and* after the next editor has been
+   * opened, so both halves are genuinely in the past when it arrives. Waiting
+   * for the save to finish first would leave nothing in flight and the test
+   * would pass against the bug.
+   */
+  test("a save reply that lands after Cancel changes nothing and takes no focus", async ({ card }) => {
+    let release = () => {};
+    const held = new Promise((resolve) => { release = resolve; });
+    await card.page.route("**/intent", async (route) => {
+      if (route.request().postDataJSON()?.kind === "set-limits") {
+        await held;
+      }
+      await route.continue();
+    });
+
+    await card.page.locator(".limits-value").click();
+    await card.page.getByRole("button", { name: "runs per day limit" }).click();
+    await card.page.getByRole("button", { name: "Save limits" }).click();
+    await expect(card.page.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await card.page.locator(".limits-editor").getByRole("button", { name: "Cancel" }).click();
+    await expect(card.page.locator(".limits-editor")).toHaveCount(0);
+
+    // Where the reader went next, and the counter the stale reply would move.
+    await card.page.locator(".ws-value").click();
+    const url = card.page.getByLabel("Board, query, or issues URL");
+    await expect(url).toBeFocused();
+    await card.page.evaluate(() => {
+      window.__published = 0;
+      window.addEventListener("bureau-state", () => { window.__published += 1; });
+    });
+
+    release();
+    await landed(card.page, "set-limits");
+
+    expect(await card.page.evaluate(() => window.__published)).toBe(0);
+    await expect(url).toBeFocused();
+    await expect(card.page.locator(".limits-editor")).toHaveCount(0);
+  });
+
+  /**
+   * The same race on the one write that had no guard at all.
+   *
+   * `CreateBar` posted with Create still live and applied whatever came back.
+   * Two presses sent two creates, and a Cancel pressed while the first was out
+   * closed the form and then had the answer installed over whatever the reader
+   * opened next — `publishLocalState` on a create they had abandoned, and a
+   * `close()` that pulls focus back to the create trigger.
+   *
+   * The editors solve their half with `useLive()`, but that cannot reach this
+   * one: cancelling a create closes the *form* and leaves `CreateBar` itself
+   * mounted, so the component is still live and the reply is still its own. The
+   * generation ticket is what makes the answer nobody's.
+   *
+   * Held until after Cancel and after the next editor is open, so both are
+   * genuinely in the past when the reply lands.
+   */
+  test("a create reply that lands after Cancel installs nothing and takes no focus", async ({ card }) => {
+    let release = () => {};
+    const held = new Promise((resolve) => { release = resolve; });
+    await card.page.route("**/intent", async (route) => {
+      if (route.request().postDataJSON()?.kind === "create") {
+        await held;
+      }
+      await route.continue();
+    });
+
+    await card.page.getByTestId("create-open").click();
+    await card.page.locator("#create-name").fill("abandoned-pipeline");
+    await card.page.getByTestId("create-submit").click();
+    await expect(card.page.getByTestId("create-submit")).toBeDisabled();
+    await card.page.getByTestId("create-cancel").click();
+    await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
+
+    // Where the reader went next, and the counter the stale reply would move.
+    await card.page.locator(".ws-value").click();
+    const url = card.page.getByLabel("Board, query, or issues URL");
+    await expect(url).toBeFocused();
+    await card.page.evaluate(() => {
+      window.__published = 0;
+      window.addEventListener("bureau-state", () => { window.__published += 1; });
+    });
+
+    release();
+    await landed(card.page, "create");
+
+    expect(await card.page.evaluate(() => window.__published)).toBe(0);
+    await expect(url).toBeFocused();
+    await expect(card.page.getByTestId("create-bar")).toHaveCount(0);
+  });
 });
+
+/**
+ * The settle window both race tests take before reading their counter.
+ *
+ * Both prove a negative — a reply that lands after Cancel moves nothing — and
+ * a negative is worth exactly as much as the certainty that the thing it
+ * denies actually happened. A bare `waitForTimeout` after `release()` does not
+ * carry that: the window is spent waiting for the round trip rather than
+ * watching what the reply did, so on a loaded machine it can close while the
+ * reply is still in flight, and the test passes for the one reason it must
+ * never pass — the guarded path never ran at all.
+ *
+ * Anchoring on the response starts the window where the risk starts. The wait
+ * that follows is what lets the continuation — `publishLocalState`, the focus
+ * move — run and be caught, rather than what hopes the reply arrives.
+ */
+async function landed(page, kind) {
+  await page.waitForResponse((response) => response.url().includes("/intent")
+    && response.request().postDataJSON()?.kind === kind);
+  await page.waitForTimeout(250);
+}
 
 /** What the work-source editor looks like once nothing is in flight. */
 async function settled(page) {

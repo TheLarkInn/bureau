@@ -7,7 +7,7 @@
 // could start to disagree with them.
 
 import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, verdict } from "./checks.mjs";
-import { CONSTRAINTS, EXCLUSIONS, ORDER, STATES, summary, TRANSITIONS } from "./registry.mjs";
+import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
@@ -333,6 +333,13 @@ function transitionList(state) {
   const inbound = TRANSITIONS.filter((edge) => edge.to === state.id);
   const outbound = TRANSITIONS.filter((edge) => edge.from === state.id);
   box.append(el("h3", null, `Transitions (${inbound.length} in · ${outbound.length} out)`));
+  // The note is owed to a state nothing *enters*, which is not the same as a
+  // state with no edges at all. Gating on the whole list meant a root that
+  // opens something — a landing with three ways out — silently lost its note,
+  // and those are the states a reviewer is most likely to be looking at.
+  if (!ENTRY_TRANSITIONS.some((edge) => edge.to === state.id)) {
+    box.append(rootNote(state, inbound.length));
+  }
   const list = el("ul", "edges");
   for (const edge of inbound) {
     list.append(edgeRow("←", edge.from, edge.via));
@@ -340,7 +347,29 @@ function transitionList(state) {
   for (const edge of outbound) {
     list.append(edgeRow("→", edge.to, edge.via));
   }
-  box.append(list.childElementCount ? list : el("p", "muted", "a root of the DAG"));
+  if (list.childElementCount) {
+    box.append(list);
+  }
+  return box;
+}
+
+/**
+ * What a state nothing reaches first says for itself.
+ *
+ * The panel used to print "a root of the DAG" for all of them — the one
+ * sentence that is true of every root and so distinguishes none of them. A
+ * reviewer looking at such a state needs to know which kind it is, because
+ * "this is where the canvas opens" and "the screen above this one is not a
+ * state" are opposite findings.
+ */
+function rootNote(state, inbound) {
+  const reason = rootReason(state);
+  const box = el("div", "root");
+  box.dataset.rootReason = reason.id;
+  box.append(el("p", null, `Nothing reaches this screen first — ${reason.title}.`), el("p", "muted", reason.why));
+  if (inbound) {
+    box.append(el("p", "muted", `The ${inbound} edge(s) arriving here are ways back out of screens this one opens, so a reader is already here before taking one. That is not a first arrival, which is why this is still a root.`));
+  }
   return box;
 }
 

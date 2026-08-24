@@ -30,9 +30,9 @@ test("committed agent-eligible pipeline dry-runs through every step", async () =
     },
     {
       ok: true,
-      steps: ["implement", "verify", "review", "repair", "reverify", "rereview"],
+      steps: ["implement", "lint", "fix-lint", "verify", "review", "repair", "reverify", "rereview"],
       terminal: "terminal:done",
-      stepEvents: ["implement", "verify", "review", "repair", "reverify", "rereview"],
+      stepEvents: ["implement", "lint", "fix-lint", "verify", "review", "repair", "reverify", "rereview"],
       hashStable: true,
     },
   );
@@ -52,9 +52,9 @@ test("scratch config uses fake roles and absolute fixtures", async () => {
     },
     {
       validation: 0,
-      adapters: ["fake", "fake", "fake", "fake"],
-      absoluteFixtures: [true, true, true, true],
-      roleNames: ["dryrun-fake", "dryrun-fake", "dryrun-fake", "dryrun-fake"],
+      adapters: ["fake", "fake", "fake", "fake", "fake"],
+      absoluteFixtures: [true, true, true, true, true],
+      roleNames: ["dryrun-fake", "dryrun-fake", "dryrun-fake", "dryrun-fake", "dryrun-fake"],
     },
   );
 });
@@ -83,7 +83,7 @@ test("failing fixture reports the terminal from the run log", async () => {
 test("next entered step comes from the run log, not the config edge", async () => {
   const result = await runDry({ item: "dryrun-log-over-config" });
 
-  assert.deepEqual(result.steps, ["implement", "verify"]);
+  assert.deepEqual(result.steps, ["implement", "lint"]);
   assert.equal(result.terminal, "terminal:done");
 });
 

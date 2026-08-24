@@ -56,7 +56,7 @@
 // and what a bundled fixture happens to contain is never a fact about the
 // canvas. `test/statelab.test.mjs` requires every such rule to be `harness`.
 
-import { FIELD_LIFECYCLE, SAMPLE_STEPS } from "./paths.mjs";
+import { FIELD_LIFECYCLE, SAMPLE_STEPS, postsRunIntent } from "./paths.mjs";
 import { PAIRABLE_FIELDS } from "./dimensions.mjs";
 const BOOT_DATA = ["loading", "render-error"];
 const BOOT_SURFACES = ["boot", "boot-editor"];
@@ -197,7 +197,7 @@ export const CONSTRAINTS = [
     reads: ["field", "section"],
     title: "The delete preflight cannot be reviewed over an injected config",
     why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by calling `refreshState`, which republishes the host's own state over the SSE channel and replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. The screen itself is ordinary — a user with two assignments reaches it — which is why this is a harness rule and not a structural one. It stays an exclusion rather than a suppressed axis because suppressing would let the host's one-card screen pass under the name `two-cards`.",
-    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and `paths.mjs` `interceptFor` asks for no route on the delete family, so the preflight is the one intent in the matrix that reaches the host.",
+    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and the preflight is the one intent in the matrix that reaches the host — `reachesHost` names it a read, so even the two states that route `./intent` to stall or refuse the *confirmed* removal let the unconfirmed one through to be answered.",
     stands: "surface:config+data:validated+section:stack+card:expanded+field:delete",
     holds: (combo) => combo.field !== "delete" || combo.section !== "two-cards",
   },
@@ -286,13 +286,19 @@ export const CONSTRAINTS = [
      * never posts an intent. Crossing the refusal with replay produced tuples
      * whose entry path was the live one over again — three ids for one render,
      * which the distinguishability gate caught by name.
+     *
+     * `postsRunIntent` covers both ends of that round trip. The rule used to
+     * read the `refused` prefix directly, so when the held end was modelled it
+     * would have been scoped by nothing: `holding-pause` crossed with replay
+     * would have been enumerated, and its path would have looked for a Pause
+     * button on a surface that draws no such control.
      */
     id: "a-refused-control-is-a-live-control",
     kind: "structural",
     reads: ["mode", "run"],
-    title: "Only the live transport can have an intent refused",
-    why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control whose refusal could be shown.",
-    holds: (combo) => !combo.run.startsWith("refused") || combo.mode === "live",
+    title: "Only the live transport posts an intent about a run",
+    why: "`RunButtons` and the `.run-control-error` it reports into are drawn by `useLiveOverlay` (`web/live/live.js`). `web/replay/replay.js` draws a picker and a timeline, and its transport moves the reader's position without posting anything — so the replay surface has no control that could be held mid-request or have a refusal shown.",
+    holds: (combo) => !postsRunIntent(combo.run) || combo.mode === "live",
   },
   {
     /*

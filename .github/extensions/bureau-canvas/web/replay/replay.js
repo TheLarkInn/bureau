@@ -11,7 +11,7 @@ const h = React.createElement;
 const SPEEDS = [1, 4, 16];
 const TICK_MS = 100;
 
-export function useReplayOverlay() {
+export function useReplayOverlay(activity) {
   const [runId, setRunId] = useState(null);
   const [events, setEvents] = useState([]);
   const [range, setRange] = useState({ start: 0, end: 0 });
@@ -84,7 +84,7 @@ export function useReplayOverlay() {
   const controls = h(
     "div",
     { className: "replay-controls" },
-    h(RunPicker, { liveOnly: false, value: runId, onChange: setRunId }),
+    h(RunPicker, { activity, liveOnly: false, value: runId, onChange: setRunId }),
     runId ? h(Timeline, { range, position, playing, speed, onScrub, onPlay: () => setPlaying(!playing), onSpeed: setSpeed, onStep: stepBy }) : null,
   );
 

@@ -229,17 +229,19 @@ fn duplicate_names_are_an_error() {
 
 #[test]
 fn an_agent_must_be_a_plugin_invocation_or_a_path() {
-    let dir = TestDir::new("agent");
-    let role = ROLE.replace("agent: /bureau:implementer", "agent: just-a-name");
-    write_files(
-        &dir,
-        &[("repos.yaml", REPOS), ("roles/implementer.yaml", &role)],
-    );
-    let found = errors(&dir);
-    assert!(
-        found.iter().any(|e| e.contains("plugin invocation")),
-        "{found:?}"
-    );
+    for agent in ["just-a-name", "/bureau"] {
+        let dir = TestDir::new("agent");
+        let role = ROLE.replace("agent: /bureau:implementer", &format!("agent: {agent}"));
+        write_files(
+            &dir,
+            &[("repos.yaml", REPOS), ("roles/implementer.yaml", &role)],
+        );
+        let found = errors(&dir);
+        assert!(
+            found.iter().any(|e| e.contains("plugin invocation")),
+            "{found:?}"
+        );
+    }
 }
 
 #[test]

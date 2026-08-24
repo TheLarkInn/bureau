@@ -39,10 +39,10 @@ Alongside the config view, the same server exposes the run log
 
 | | |
 |---|---|
-| `GET /runs` | one summary per run: `run_id`, `assignment`, `started_at`, `live`, `current_step` |
+| `GET /runs` | one summary per run: `run_id`, `assignment`, `pipeline`, `started_at`, `live`, `current_step` |
 | `GET /runs/<id>/events` | the run's full event log, via `bureau show <id> --events --json` when a binary with that flag is on hand, else parsed straight from `events.jsonl` (`source: "log"`) |
 | `GET /events` | the SSE channel; live runs forward each appended event as `event: run-event` with `{ run_id, event }`, and stop when the run's `run_finished` arrives |
-| `POST /intent` | `pause-run`, `resume-run`, `cancel-run` with `{ run_id }`, shelled out to `bureau pause/resume/cancel` — the canvas never writes run markers itself |
+| `POST /intent` | `pause-run`, `resume-run`, `cancel-run` with `{ run_id }`, plus `reconcile-now`; all shell out to the matching `bureau` command — the canvas never writes run markers itself |
 
 The runs root is `BUREAU_CANVAS_RUNS` when set, then `BUREAU_HOME`. Otherwise
 it follows bureau rather than this process: when the workspace (or the resolved
@@ -57,6 +57,21 @@ Liveness is pure filesystem: a run is live while its `events.jsonl` holds no
 `fs.watch`, because the log is appended by another process and can sit on a
 WSL share where watch events are unreliable; a one-second poll is cheap at
 run-log sizes and behaves the same on every platform.
+
+The pipeline toolbar polls that listing in every graph mode. Its Live badge is
+the count for the pipeline currently open. **Run reconcile now** executes one
+`bureau reconcile --now` pass and prevents a duplicate click while it runs.
+Because that command returns only once the pass is over, the button re-reads
+the listing itself rather than waiting for the poll, and reports which of three
+things happened: it started a run for this pipeline, it claimed no work, or the
+listing could not be read. A run it started is shown only when nothing was
+already being watched — a pass never moves the overlay off a run the reader
+chose, and a refused pass moves nothing at all.
+
+Zero is an explicit idle state, not evidence that the reconcile process
+stopped: a reconcile loop becomes a run only after it claims eligible work. A
+failed listing is shown separately and retried rather than silently presented
+as zero.
 
 ## Layout
 
@@ -338,8 +353,8 @@ product. `test/statelab.test.mjs` requires every such rule to be `harness`, and
 asserts that it matched at least one rule so the check cannot pass by vacuity if
 the constant is ever renamed.
 
-So the plan bar's save, the pipeline editor's save, a refused create and a
-refused run control are ordinary states now, each reached by pressing the real
+So the plan bar's save, the pipeline editor's save, a refused create and both
+ends of a run control are ordinary states now, each reached by pressing the real
 button under `stall-intent` or `fail-intent`. Both ends are exact rather than
 timing-dependent: stalling pins the in-flight branch on, and a refusal is the
 branch that renders each surface's own sentence. Each declares the 500 the
@@ -376,9 +391,13 @@ Two further exclusions in this family remain, and they are narrower still.
 `a-refused-control-is-a-live-control` is structural in the strict sense:
 `web/replay/replay.js` draws a picker and a timeline, and its transport moves
 the reader's own position without posting anything, so there is no control there
-whose refusal could be shown. Crossing it with replay produced three ids for one
-render, which the distinguishability gate caught by name. And
-`mutations-need-a-selected-step` now covers the editor saves, whose path is a
+to hold mid-request or to show a refusal on. Crossing it with replay produced
+three ids for one render, which the distinguishability gate caught by name. It
+reads `postsRunIntent` rather than the `refused` prefix, so the held end of the
+same round trip is scoped by the same rule that scopes the refused one — written
+the other way, `holding-pause` crossed with replay would have been enumerated
+and its path would have hunted for a Pause button on a surface that draws none.
+And `mutations-need-a-selected-step` now covers the editor saves, whose path is a
 rename plus a click — an editor with nothing selected has nothing to rename, and
 without the rule the click would silently never happen. The successful write
 paths still belong to `specs/editor.spec.mjs` and `specs/controls.spec.mjs`,
@@ -433,6 +452,37 @@ block, because reflowing a stack trace destroys it.
 
 Output events are not retained by the overlay reducer, which is why both mode
 hooks also hand the panel the raw events.
+
+### The agent identity a step was run with
+
+A role names an agent in config (`/bureau:implementer`), and the identity that
+reference selects depends on the adapter: Copilot keeps the `plugin:agent`
+qualifier, Claude takes the bare agent name, and a path contributes its file
+name. `step_started` carries the role, the configured reference and that
+selected identity, and the log head names it.
+
+Both sides of the comparison are projections of config, never observations of a
+spawn. The run log is written before the worktree guard has captured the
+worktree's originals, so it may only use the pure form — materializing the
+agent there would have the guard record the copy as an *original* and commit it
+onto the run branch. `bureau validate --json` reports the same projection per
+role under `agents`, for the config as it stands now, and that is where the side
+panel's **Agent identities** section and the head's expected value come from.
+
+So when the two disagree, what has moved is the config — the run used one
+identity and the config now selects another. The head says exactly that: `this
+run used implementer; the config now selects bureau:implementer`. It used to say
+`invoked implementer; expected …`, which claimed an observation nothing on this
+path makes, about a comparison that against an unchanged config cannot fail at
+all. The **Agent identities** list says `selects` for the same reason, where it
+used to draw an arrow that reads as resolution.
+
+That the logged name really is the one the adapter passes to `--agent` is a
+property of `crates/bureau/src/config/validate.rs`, not a coincidence: an
+`agent` that is neither a plugin invocation nor a `.md` path does not validate,
+and that is the only shape for which the pure and the resolving forms differ.
+Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
+`the_two_forms_diverge_on_the_shape_the_loader_rejects`.
 
 ## Rules worth knowing before changing it
 

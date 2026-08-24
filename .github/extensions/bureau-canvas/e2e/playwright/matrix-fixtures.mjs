@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { READ_INTENTS, offeredAsLive, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
+import { offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -267,10 +267,11 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * disk. `installFloor` does the same job inside the lab's frame, where it
  * matters more still: that host is pointed at a contributor's own `.bureau/`.
  *
- * `READ_INTENTS`, `reachesHost` and `refusalFor` come from
- * `web/statelab/intercept.mjs`, which the lab installs inside its frame. One
- * definition, two applications: the screen a reviewer browses is under the same
- * condition CI asserts.
+ * `reachesHost` and `refusalFor` come from `web/statelab/intercept.mjs`, which
+ * the lab installs inside its frame. One definition, two applications: the
+ * screen a reviewer browses is under the same condition CI asserts — and one
+ * predicate for what writes, so the floor and the save intercepts cannot
+ * disagree about a request the way they once did about the delete preflight.
  */
 
 /**
@@ -316,10 +317,62 @@ async function intercept(page, kind) {
       const response = await route.fetch();
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(offeredAsLive(await response.json())) });
     }),
+    "empty-runs": () => page.route(/\/runs$/u, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runs: [] }) })),
+    // The read that has not come back. Every other listing route is an answer;
+    // this is the wait, and it is the only condition under which the Live badge
+    // legitimately carries no `data-count` at all.
+    "stall-runs": () => page.route(/\/runs$/u, () => {}),
+    "fail-runs": () => page.route(/\/runs$/u, (route) =>
+      route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) })),
+    // Serves the real listing once, then refuses. A run can only be selected
+    // from a listing that answered, so this is the only way to reach the screen
+    // where a run is being watched while the listing has since failed.
+    "fail-runs-later": () => {
+      let served = 0;
+      return page.route(/\/runs$/u, (route) => {
+        served += 1;
+        return served === 1
+          ? route.continue()
+          : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) });
+      });
+    },
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
       : route.continue()),
+    // The end a write can also have: it worked. Only the reconcile pass needs
+    // it — its success is three sentences about what the pass did, and no state
+    // rendered any of them, so `reconcileResult` was a selector nothing used.
+    // The answer is synthesised here and the host is never written to, so the
+    // listing the report re-reads is unchanged and "claimed no work" is exact.
+    "pass-intent": () => page.route(/\/intent$/u, (route) => writes(route)
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) })
+      : route.continue()),
+    // The other end of a pass: it started a run, and said which. Both halves
+    // are one condition — the listing withholds that run until the write has
+    // answered, so `newRunSince` can attribute it to this click and the report
+    // names it. Without the withholding the run is already in `known` and the
+    // pass reports "claimed no work"; without the answer no report is drawn at
+    // all. This is the only condition under which **Open in Replay** exists.
+    "pass-starts-run": () => {
+      let answered = null;
+      return Promise.all([
+        page.route(/\/intent$/u, (route) => {
+          if (!writes(route)) {
+            return route.continue();
+          }
+          answered = Date.now();
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PASS_STARTED) });
+        }),
+        page.route(/\/runs$/u, async (route) => {
+          const response = await route.fetch();
+          const payload = await response.json();
+          const listing = answered === null ? withoutPassRun(payload) : withPassRun(payload, answered);
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(listing) });
+        }),
+      ]);
+    },
     // The third end of a save, and the one that used to have no screen: the
     // request never reaches a responder at all, so `fetch` rejects rather than
     // answering. `fail-intent` cannot stand in for it — a 500 resolves, and it
@@ -332,10 +385,9 @@ async function intercept(page, kind) {
   await routes[kind]();
 }
 
-/** Whether this intent is anything other than one of the two known reads. */
+/** Whether this intent would write: anything the floor would not let through. */
 function writes(route) {
-  const kind = intentKind(route);
-  return kind === null || !READ_INTENTS.has(kind);
+  return !reachesHost(intentBody(route));
 }
 
 function intentKind(route) {

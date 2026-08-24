@@ -11,9 +11,22 @@ import { test } from "node:test";
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
-const { resolveRunsDir, runsDir } = await import("../lib/runs.mjs");
+const { resolveRunsDir, runsDir, summarize } = await import("../lib/runs.mjs");
 
-const RUN_STARTED = { seq: 0, at_ms: 1700000000000, kind: "run_started", data: { run_id: "run-live", assignment: "triage" } };
+/*
+ * `run_started` as bureau actually writes it.
+ *
+ * `RunStartedData` (crates/bureau/src/runlog/event.rs) is `run_id`,
+ * `assignment`, `item` and `snapshot` — there is no flat `pipeline` field, and
+ * the pipeline identity is pinned inside the snapshot. A fixture that invented
+ * one read back green while every real run summarised to `pipeline: null`.
+ */
+const SNAPSHOT = {
+  run_id: "run-live",
+  assignment: { name: "triage", pipeline: "triage-pipeline" },
+  pipeline: { name: "triage-pipeline" },
+};
+const RUN_STARTED = { seq: 0, at_ms: 1700000000000, kind: "run_started", data: { run_id: "run-live", assignment: "triage", item: "item-1", snapshot: SNAPSHOT } };
 const STEP_STARTED = { seq: 1, at_ms: 1700000001000, kind: "step_started", data: { step: "implement" } };
 const STEP_FINISHED = { seq: 2, at_ms: 1700000002000, kind: "step_finished", data: { step: "implement", outcome: "success" } };
 const RUN_FINISHED = { seq: 3, at_ms: 1700000003000, kind: "run_finished", data: { outcome: "success" } };
@@ -52,6 +65,7 @@ test("lists runs with liveness and current step", async (t) => {
       {
         run_id: "run-done",
         assignment: "triage",
+        pipeline: "triage-pipeline",
         started_at: new Date(RUN_STARTED.at_ms).toISOString(),
         live: false,
         current_step: null,
@@ -59,6 +73,7 @@ test("lists runs with liveness and current step", async (t) => {
       {
         run_id: "run-live",
         assignment: "triage",
+        pipeline: "triage-pipeline",
         started_at: new Date(RUN_STARTED.at_ms).toISOString(),
         live: true,
         current_step: "implement",
@@ -66,6 +81,39 @@ test("lists runs with liveness and current step", async (t) => {
     ]);
   } finally {
     await canvas.closeBureauCanvas({ instanceId: "bureau-runs-list-test" });
+  }
+});
+
+/*
+ * The three ways a run's pipeline can be read, and the one way it cannot.
+ *
+ * The reader walks `snapshot.pipeline.name`, then `snapshot.assignment.pipeline`,
+ * then a flat `data.pipeline` that bureau does not currently write. A log old
+ * enough to predate snapshots carries none of them and is unattributable — it
+ * must summarise to `null` rather than be silently assigned somewhere.
+ */
+test("a run's pipeline is read from the snapshot bureau pins, not an invented field", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "bureau-canvas-pipeline-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const cases = {
+    "from-pipeline": { snapshot: { pipeline: { name: "by-pipeline" }, assignment: { name: "a", pipeline: "ignored" } } },
+    "from-assignment": { snapshot: { assignment: { name: "a", pipeline: "by-assignment" } } },
+    "from-legacy-log": {},
+  };
+  for (const [runId, data] of Object.entries(cases)) {
+    await mkdir(join(dir, runId), { recursive: true });
+    await writeFile(join(dir, runId, "events.jsonl"), log({ seq: 0, at_ms: 1700000000000, kind: "run_started", data: { run_id: runId, assignment: "a", ...data } }));
+  }
+  const opened = await openCanvas("bureau-runs-pipeline-test", { runsDir: dir });
+
+  try {
+    const { body } = await json(new URL("/runs", opened.url));
+    assert.deepStrictEqual(
+      Object.fromEntries(body.runs.map((run) => [run.run_id, run.pipeline])),
+      { "from-pipeline": "by-pipeline", "from-assignment": "by-assignment", "from-legacy-log": null },
+    );
+  } finally {
+    await canvas.closeBureauCanvas({ instanceId: "bureau-runs-pipeline-test" });
   }
 });
 
@@ -154,6 +202,33 @@ test("maps run control intents to bureau pause/resume/cancel", async (t) => {
   }
 });
 
+test("runs one reconcile pass in the run root this server reads", async (t) => {
+  const dir = await fixtureRuns();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const calls = [];
+  const opened = await openCanvas("bureau-reconcile-now-test", {
+    runsDir: dir,
+    exec: (args) => {
+      calls.push(args);
+      return { code: 0, stdout: "no eligible work\n", stderr: "" };
+    },
+  });
+
+  try {
+    const response = await fetch(new URL("/intent", opened.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "reconcile-now" }),
+    });
+    const body = await response.json();
+    // The run root is asserted, not just the verb: a pass that wrote its log
+    // anywhere else would be invisible to the listing this same server serves.
+    assert.deepStrictEqual([body.ok, body.output, calls], [true, "no eligible work", [["reconcile", "--now", "--runs", dir]]]);
+  } finally {
+    await canvas.closeBureauCanvas({ instanceId: "bureau-reconcile-now-test" });
+  }
+});
+
 test("rejects a control intent without a run id", async (t) => {
   const dir = await fixtureRuns();
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -210,4 +285,45 @@ test("falls back to the host home when the distro cannot answer", async () => {
     resolved.push(await resolveRunsDir({ anchor: SHARE, env: {}, probe: () => answer }));
   }
   assert.deepStrictEqual(resolved, answers.map(() => runsDir({})));
+});
+
+/*
+ * The committed run fixtures, held to the shape bureau writes.
+ *
+ * Every one of them used to carry a flat `data.pipeline` — a key
+ * `RunStartedData` has no field for — so the whole pipeline-scoped Live surface
+ * the browser suite exercises was green against a payload production cannot
+ * emit, and the branch real runs take was reached by one node test alone.
+ *
+ * Each fixture is now pinned to the branch of `pipelineOf` it is there to
+ * cover, so the three cannot collapse into one: `run-live` and `run-finished`
+ * carry the pinned pipeline, `run-paused` carries only the assignment's
+ * selection, and `run-group` deliberately keeps the flat key so the
+ * forward-compatible last resort stays exercised rather than becoming dead code.
+ */
+const FIXTURE_PIPELINES = [
+  ["run-live", "agent-eligible-pipeline", "snapshot.pipeline.name"],
+  ["run-finished", "agent-eligible-pipeline", "snapshot.pipeline.name"],
+  ["run-paused", "agent-eligible-pipeline", "snapshot.assignment.pipeline"],
+  ["run-group", "review-queue-pipeline", "data.pipeline"],
+];
+
+/** Which key a fixture's `run_started` really carries the pipeline under. */
+function carrier(started) {
+  if (started.data?.snapshot?.pipeline?.name) {
+    return "snapshot.pipeline.name";
+  }
+  return started.data?.snapshot?.assignment?.pipeline ? "snapshot.assignment.pipeline" : "data.pipeline";
+}
+
+test("each committed run fixture carries its pipeline where bureau writes it", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const resolved = [];
+  for (const [id] of FIXTURE_PIPELINES) {
+    const raw = await readFile(new URL(`./fixtures/runs/${id}/events.jsonl`, import.meta.url), "utf8");
+    const events = raw.trim().split("\n").map((line) => JSON.parse(line));
+    resolved.push([id, summarize(id, events).pipeline, carrier(events[0])]);
+  }
+
+  assert.deepStrictEqual(resolved, FIXTURE_PIPELINES);
 });

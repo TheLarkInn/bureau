@@ -36,4 +36,24 @@ impl AgentReference {
         }
         Err(Error::InvalidReference(value.to_owned()))
     }
+
+    pub fn copilot_name(&self) -> String {
+        format!("{}:{}", self.plugin, self.agent)
+    }
+}
+
+/// Copilot CLI identity for a `/plugin:agent` reference.
+#[must_use]
+pub fn copilot_agent_name(value: &str) -> Option<String> {
+    AgentReference::parse(value)
+        .ok()
+        .map(|reference| reference.copilot_name())
+}
+
+/// The bare agent name a `/plugin:agent` reference selects.
+#[must_use]
+pub fn plugin_agent_name(value: &str) -> Option<String> {
+    AgentReference::parse(value)
+        .ok()
+        .map(|reference| reference.agent)
 }

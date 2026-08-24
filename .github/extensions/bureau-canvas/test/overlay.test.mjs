@@ -9,9 +9,13 @@ import {
   applyEvent,
   applyEvents,
   emptyOverlay,
+  newRunSince,
+  reconcileReason,
   resolveOverlay,
   runActions,
+  runsForPipeline,
   runsOffered,
+  unattributedRuns,
   stateUpTo,
 } from "../web/live/overlay.js";
 
@@ -309,5 +313,132 @@ test("the run being watched stays listed after its log stops being live", () => 
       watchingLive: ["run-live"],
       replay: ["run-live", "run-finished", "run-other"],
     },
+  );
+});
+
+test("pipeline activity excludes other drawings, and only a new run is followed", () => {
+  const runs = [
+    { run_id: "old", assignment: "first", pipeline: "shared", started_at: "2026-08-23T01:00:00Z", live: true },
+    { run_id: "new", assignment: "second", pipeline: null, started_at: "2026-08-23T02:00:00Z", live: true },
+    { run_id: "done", assignment: "first", pipeline: "shared", started_at: "2026-08-23T03:00:00Z", live: false },
+    { run_id: "other", assignment: "other", pipeline: "other-pipeline", started_at: "2026-08-23T04:00:00Z", live: true },
+  ];
+  const assignments = [
+    { name: "first", pipeline: "shared" },
+    { name: "second", pipeline: "shared" },
+    { name: "other", pipeline: "other-pipeline" },
+  ];
+  const offered = runsForPipeline(runs, "shared", assignments);
+
+  assert.deepEqual(
+    {
+      offered: offered.map((run) => run.run_id),
+      // A pass that started nothing must name nothing, even with live runs on
+      // screen: every run here was already known when the pass began.
+      startedNothing: newRunSince(offered, new Set(["old", "new", "done"])),
+      startedOne: newRunSince(offered, new Set(["old", "new"]))?.run_id,
+    },
+    { offered: ["old", "new", "done"], startedNothing: null, startedOne: "done" },
+  );
+});
+
+/*
+ * The two ways a run can fail to be this click's doing.
+ *
+ * `reconcile --now` drains before it returns, so the pass can be open for
+ * minutes. A background reconciler's run that lands in that window is absent
+ * from the runs known at the click and would otherwise be reported as the run
+ * the pass started. Being newer, it would even outrank the real one.
+ */
+test("only a run that is both new and later than the click is the pass's own", () => {
+  const known = new Set(["before"]);
+  const runs = [
+    { run_id: "before", started_at: "2026-08-23T01:00:00Z", live: false },
+    { run_id: "raced", started_at: "2026-08-23T01:30:00Z", live: true },
+    { run_id: "ours", started_at: "2026-08-23T03:00:00Z", live: false },
+  ];
+  const clicked = Date.parse("2026-08-23T02:00:00Z");
+
+  assert.deepEqual(
+    {
+      unbounded: newRunSince(runs, known)?.run_id,
+      bounded: newRunSince(runs, known, clicked)?.run_id,
+      noneAfter: newRunSince(runs, known, Date.parse("2026-08-23T04:00:00Z")),
+    },
+    { unbounded: "ours", bounded: "ours", noneAfter: null },
+  );
+});
+
+/*
+ * A run on disk that no pipeline can claim is still a run on disk.
+ *
+ * `run_started` names the pipeline only inside its snapshot, so a log written
+ * before snapshots — or one whose assignment has since been renamed away — is
+ * unattributable. Dropping those silently let Replay report "no runs recorded"
+ * over a directory holding them, which is the same untruth as reading a failed
+ * listing as zero.
+ */
+/*
+ * The refusal a host gives without giving a reason.
+ *
+ * `runBureau` reports a non-zero exit as `output: `${stdout}${stderr}`.trim()`,
+ * which is the empty string when the command failed silently. `""` is not
+ * nullish, so a `??` chain selects it and the surface renders a refusal as an
+ * empty paragraph — red, `role="status"`, and announcing nothing at all. The
+ * distinction is invisible to every fixture that omits the key entirely, which
+ * is why it is pinned here on the value rather than through a rendered state.
+ */
+test("a refusal with no reason still says something", () => {
+  assert.deepEqual(
+    [
+      reconcileReason({ ok: false, error: "bureau binary not available" }),
+      reconcileReason({ ok: false, output: "exit 2" }),
+      reconcileReason({ ok: false, output: "" }),
+      reconcileReason({ ok: false }),
+      reconcileReason(undefined),
+    ],
+    [
+      "bureau binary not available",
+      "exit 2",
+      "Could not run reconcile now.",
+      "Could not run reconcile now.",
+      "Could not run reconcile now.",
+    ],
+  );
+});
+
+test("runs no pipeline can claim are counted, not discarded", () => {
+  const runs = [
+    { run_id: "owned", assignment: "first", pipeline: "shared" },
+    { run_id: "legacy", assignment: "gone", pipeline: null },
+    { run_id: "other", assignment: "other", pipeline: "other-pipeline" },
+  ];
+  const assignments = [{ name: "first", pipeline: "shared" }, { name: "other", pipeline: "other-pipeline" }];
+
+  assert.deepEqual(
+    {
+      owned: runsForPipeline(runs, "shared", assignments).map((run) => run.run_id),
+      orphans: unattributedRuns(runs, assignments).map((run) => run.run_id),
+    },
+    { owned: ["owned"], orphans: ["legacy"] },
+  );
+});
+
+test("step start retains configured and resolved agent identity", () => {
+  const event = {
+    seq: 1,
+    at_ms: 1000,
+    kind: "step_started",
+    data: {
+      step: "implement",
+      role: "implementer",
+      configured_agent: "/bureau:implementer",
+      resolved_agent: "bureau:implementer",
+    },
+  };
+  const record = applyEvent(emptyOverlay(), event).steps.implement;
+  assert.deepEqual(
+    [record.role, record.configuredAgent, record.resolvedAgent],
+    ["implementer", "/bureau:implementer", "bureau:implementer"],
   );
 });

@@ -11,12 +11,51 @@ steps:
   steps: []
   completion: null
   max_concurrent: null
-  next: verify
+  next: lint
   on_failure: escalate
   on_blocked: escalate
   on_no_work: done
   inputs_from: []
   max_attempts: 1
+  timeout_secs: null
+- name: lint
+  type: deterministic
+  run: bash scripts/lint.sh
+  role: null
+  fixture: null
+  trust: null
+  over: null
+  on: {}
+  steps: []
+  completion: null
+  max_concurrent: null
+  next: verify
+  on_failure: fix-lint
+  on_blocked: null
+  on_no_work: null
+  inputs_from: []
+  # Initial lint plus one rerun after each of ten agent repair passes.
+  max_attempts: 11
+  timeout_secs: null
+- name: fix-lint
+  type: agent
+  run: null
+  role: implementer
+  fixture: null
+  # Lint output is derived evidence; this permits a bounded repair write.
+  trust: derived
+  over: null
+  on: {}
+  steps: []
+  completion: null
+  max_concurrent: null
+  next: lint
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  inputs_from:
+  - lint
+  max_attempts: 10
   timeout_secs: null
 - name: verify
   type: deterministic

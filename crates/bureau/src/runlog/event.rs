@@ -56,8 +56,7 @@ pub struct RunStartedData {
     pub run_id: String,
     /// The assignment the run belongs to.
     pub assignment: String,
-    /// The work item being run, when the run is for one. `bureau retry`
-    /// reads this.
+    /// Work item being run, when present; `bureau retry` reads it.
     #[serde(default)]
     pub item: Option<String>,
     /// Immutable plan snapshot for automatic restart.
@@ -79,6 +78,12 @@ pub struct OutputData {
 pub struct StepStartedData {
     /// Step name within the pipeline.
     pub step: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configured_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_agent: Option<String>,
 }
 /// Payload of a `step_finished` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,14 +92,13 @@ pub struct StepFinishedData {
     pub step: String,
     /// What the step concluded.
     pub outcome: StepOutcome,
-    /// Full scrubbed result for explicit downstream data flow and resume.
+    /// Full scrubbed result for downstream data flow and resume.
     #[serde(default)]
     pub result: Option<StepResult>,
     /// Adapter-owned usage.
     #[serde(default)]
     pub usage: Option<Usage>,
 }
-
 /// Payload of a `run_finished` event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunFinishedData {
@@ -198,6 +202,24 @@ pub fn output(step: Option<&str>, stream: &str, data: &str) -> serde_json::Value
 pub fn step_started(step: &str) -> serde_json::Value {
     to_value(&StepStartedData {
         step: step.to_owned(),
+        role: None,
+        configured_agent: None,
+        resolved_agent: None,
+    })
+}
+
+#[must_use]
+pub fn step_started_agent(
+    step: &str,
+    role: &str,
+    configured_agent: &str,
+    resolved_agent: &str,
+) -> serde_json::Value {
+    to_value(&StepStartedData {
+        step: step.to_owned(),
+        role: Some(role.to_owned()),
+        configured_agent: Some(configured_agent.to_owned()),
+        resolved_agent: Some(resolved_agent.to_owned()),
     })
 }
 

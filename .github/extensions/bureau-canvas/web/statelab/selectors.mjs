@@ -88,7 +88,16 @@ export const SELECTORS = {
 
   deleteStart: '[data-testid="delete-start"]',
   deleteConfirm: '[data-testid="delete-confirm"]',
+  deleteCancel: '[data-testid="delete-cancel"]',
   preflight: '[data-testid="preflight"]',
+  // The refusal a confirmed delete comes back with, scoped to the preflight so
+  // it cannot be satisfied by an unrelated note elsewhere on the card.
+  deleteRefused: '[data-testid="preflight"] .note--err',
+  // The same refusal after the prompt it belongs to has been dismissed. It is a
+  // *different* place in the tree — `DeleteControl`'s `!preflight` branch draws
+  // its own note beside an intact Delete — so `deleteRefused` cannot see it, and
+  // a refusal that survives Cancel would be invisible to every assertion here.
+  deleteRefusedResting: ".assignment-actions .note--err",
 
   orphanStrip: ".orphan-strip",
   relationSection: ".relation-section",
@@ -110,9 +119,29 @@ export const SELECTORS = {
   modeDesign: '[data-testid="mode-design"]',
   modeLive: '[data-testid="mode-live"]',
   modeReplay: '[data-testid="mode-replay"]',
+  liveCount: '[data-testid="live-count"]',
+  liveCountLoading: '[data-testid="live-count"][data-state="loading"]',
+  liveCountSettled: '[data-testid="live-count"][data-count]',
+  liveCountZero: '[data-testid="live-count"][data-count="0"]',
+  liveCountUnavailable: '[data-testid="live-count"][data-state="error"]',
   runPickerLive: '[aria-label="Live run"]',
+  runPickerLiveDisabled: '[aria-label="Live run"]:disabled',
   runPickerReplay: '[aria-label="Replay run"]',
   runControls: ".run-controls",
+  reconcileNow: '[data-testid="reconcile-now"]',
+  reconcileNowPending: '[data-testid="reconcile-now"]:disabled',
+  reconcileResult: ".run-control-result",
+  // The hand-off a pass offers when it really started something. It is drawn
+  // only beside a report that names a run, so it is the one control on Live
+  // that no resting state can show — and until it was declared here it was a
+  // shipped button with no state, no edge and no render: dropping the run
+  // argument that wires it would have turned it into a silent no-op with
+  // nothing to fail.
+  openRunReplay: '[data-testid="open-run-replay"]',
+  runActivityTitle: '.run-activity__title',
+  runActivityIdle: '[data-testid="run-activity"][data-state="idle"]',
+  runActivityAvailable: '[data-testid="run-activity"][data-state="available"]',
+  runActivityUnavailable: '[data-testid="run-activity"][data-state="unavailable"]',
   runStatus: ".run-controls .run-status",
   runPause: '[data-testid="run-pause"]',
   runResume: '[data-testid="run-resume"]',
@@ -162,6 +191,13 @@ export const SELECTORS = {
   stepLog: ".step-log",
   stepLogIdle: ".step-log--idle",
   stepLogHead: ".step-log-head",
+  // The head's own heading, separate from the head, because the head is
+  // non-empty without it: the kind and outcome pills are its siblings. The one
+  // thing the head exists to say — which step this output belongs to — is the
+  // one thing `.step-log-head` being present does not prove.
+  stepLogTitle: ".step-log-title",
+  stepAgent: '[data-testid="step-agent"]',
+  stepAgentMismatch: '[data-testid="step-agent"][data-mismatch="true"]',
   stepLogEmpty: ".step-log-empty",
   legend: ".legend",
   stepCard: ".flow-card",
@@ -206,6 +242,18 @@ export const SELECTORS = {
 /** One step card in the editor, addressed by the step it draws. */
 export function editorCardFor(step) {
   return `.editor-card[data-ref="${step}"]`;
+}
+
+/**
+ * One step card in the pipeline *viewer*, addressed by the step it draws.
+ *
+ * The viewer's cards are React Flow nodes rather than the editor's own list, so
+ * the step name is on the node wrapper React Flow renders and not on the card.
+ * Selecting one is how a reader reads a step's log, which is the only way to
+ * reach a log for a step the run has not written to.
+ */
+export function viewerCardFor(step) {
+  return `.react-flow__node[data-id="${step}"] .flow-card`;
 }
 
 /**

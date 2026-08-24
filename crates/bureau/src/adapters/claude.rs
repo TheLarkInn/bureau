@@ -43,7 +43,7 @@ use std::time::Duration;
 pub const BINARY: &str = "claude";
 
 /// Claude's agent discovery location inside a worktree.
-const DISCOVERY: real::Discovery = real::Discovery {
+pub(super) const DISCOVERY: real::Discovery = real::Discovery {
     dir: ".claude/agents",
     suffix: ".md",
 };
@@ -106,7 +106,7 @@ pub fn spawn_request(
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> SpawnRequest {
-    let agent = real::resolve_agent(&role.agent, &request.worktree, &DISCOVERY);
+    let agent = super::resolved_agent(role, &request.worktree);
     let found = real::scoped_credentials(&role.permissions, &real::MODEL_GRANTS, &CREDENTIAL_VARS);
     let (env, secrets) = real::child_env(found, secrets);
     SpawnRequest {

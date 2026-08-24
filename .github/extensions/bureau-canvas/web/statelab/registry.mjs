@@ -10,7 +10,7 @@ import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
 import { isAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runOps, runRefusalOps, selectStep } from "./paths.mjs";
+import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
 import { SELECTORS as S } from "./selectors.mjs";
 
@@ -101,6 +101,9 @@ function pipelineOps(combo) {
   if (combo.run.startsWith("refused")) {
     return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runRefusalOps(combo.run)];
   }
+  if (combo.run.startsWith("holding")) {
+    return [...(valueOf("mode", combo.mode)?.enter ?? []), ...runHoldOps(combo.run)];
+  }
   return [
     ...(valueOf("mode", combo.mode)?.enter ?? []),
     ...runOps(combo.mode, combo.run),
@@ -150,9 +153,18 @@ function entryPath(combo) {
     pipeline: () => [{ op: "wait", selector: S.pipelineView }, ...pipelineOps(combo)],
     editor: () => [{ op: "wait", selector: S.editorTabs }, ...editorOps(combo)],
   };
+  // The surface's own `enter`, between its shell wait and the body's path. It
+  // was declared and read by nobody: `configOps`, `pipelineOps` and `editorOps`
+  // consume the axes *below* the surface, and nothing consumed the surface
+  // itself, so the pipeline surface's settle wait was dropped from all 480
+  // renders and `S.liveCountSettled` was a dead constant. The comment that
+  // declared it said the settle happened "once, on the surface all three modes
+  // are entered from", and it happened nowhere.
+  const surfaceEnter = valueOf("surface", combo.surface)?.enter ?? [];
+  const [shellWait, ...body] = bySurface[combo.surface]();
   // The draft bar sits above the body on both index surfaces, so its own save
   // is walked last — after the body has settled into whatever rest it is in.
-  return [...ops, ...bySurface[combo.surface](), ...draftOps(combo.draft)];
+  return [...ops, shellWait, ...surfaceEnter, ...body, ...draftOps(combo.draft)];
 }
 
 function summarize(combo) {
@@ -233,6 +245,25 @@ export const REVERSIBLE = [
   { via: S.editorTabRelations, undo: S.editorTabPipeline, gone: S.relationFlow },
   { via: S.modeLive, undo: S.modeDesign, gone: S.runControls },
   { via: S.modeReplay, undo: S.modeDesign, gone: S.replayControls },
+  /*
+   * The delete preflight is deliberately absent, and this is the one entry that
+   * needs saying so.
+   *
+   * Its Cancel was pressed by nothing for a while, which is a real gap — but it
+   * cannot be closed here. A return edge holds the child's render to the
+   * *parent's* expectations, and the parent of an open preflight is a card whose
+   * expectations include its fixture's own copy. Opening the preflight answers
+   * through `runCrudIntent`, which calls `refreshState` and republishes the
+   * host's config over the injected payload, so by the time Cancel has closed
+   * the prompt the page is no longer showing the fixture the parent was
+   * enumerated with. Declared as reversible, the edge fails on `missing-copy`
+   * for a reason that is about the harness rather than about the control.
+   *
+   * That is the same fact `a-preflight-answers-with-the-hosts-own-config`
+   * already names. So the undo is walked by `probe--delete-refusal-dismissed`
+   * instead, which presses the same Cancel and carries expectations that do not
+   * depend on a fixture the preflight has already replaced.
+   */
   // The fold on a finished concurrent group, and the one toggle whose first
   // press *removes* a region. It sits on the card rather than inside the member
   // list precisely so that collapsing does not take the only button that could
@@ -241,8 +272,8 @@ export const REVERSIBLE = [
 ];
 
 /**
- * The transition DAG. An edge exists when one operation on a state's path
- * turns it into another reachable state — which is exactly what the browser
+ * The transition DAG. An edge exists when the operations on one state's path
+ * turn it into another reachable state — which is exactly what the browser
  * suite executes, so every drawn edge is one the suite has walked.
  *
  * Each edge carries the `delta`: the operations to apply to a page already
@@ -250,7 +281,7 @@ export const REVERSIBLE = [
  * re-entering the child from scratch, so the edge is the thing under test.
  *
  * Two kinds. An `enter` edge is a prefix relation: the child's path is the
- * parent's plus one operation. A `return` edge is the way back out, and it is
+ * parent's plus the delta. A `return` edge is the way back out, and it is
  * not derivable from any path, because no state's *entry* contains it.
  */
 export const TRANSITIONS = buildTransitions();
@@ -263,15 +294,39 @@ function buildTransitions() {
   const edges = [];
   for (const state of STATES) {
     const acting = state.ops.filter(isAction);
-    if (acting.length < 2) {
-      continue;
-    }
-    const parent = byPath.get(JSON.stringify(acting.slice(0, -1)));
-    if (parent && parent !== state.id) {
-      edges.push({ kind: "enter", from: parent, to: state.id, via: describe(acting.at(-1)), delta: deltaAfter(state.ops, acting.length - 1) });
+    const found = nearestParent(byPath, acting, state.id);
+    if (found) {
+      const delta = deltaAfter(state.ops, found.actions);
+      edges.push({ kind: "enter", from: found.id, to: state.id, via: describe(delta), delta });
     }
   }
   return [...edges, ...edges.map(returnEdge).filter(Boolean)];
+}
+
+/**
+ * The nearest ancestor: the longest proper action-prefix that is itself a state.
+ *
+ * It used to be the prefix exactly one action short, which quietly meant that
+ * any step a user takes in *two* operations was not a transition at all. That
+ * lost the whole create-and-rename family — `select a kind` then `press Add` is
+ * one act of creating a step, and typing a name then pressing Enter is one act
+ * of renaming it — so the editor's most-used controls were entered by every
+ * state that needed them and walked as an edge by none.
+ *
+ * Longest-first is what keeps the parent honest: a state is attributed to the
+ * closest screen it can actually be reached from, rather than to some distant
+ * ancestor that happens to share an opening. For a kind the sample has no step
+ * of, that closest screen is the created step itself — a decision step is
+ * reached by making one — and the edge says so.
+ */
+function nearestParent(byPath, acting, id) {
+  for (let actions = acting.length - 1; actions >= 1; actions -= 1) {
+    const found = byPath.get(JSON.stringify(acting.slice(0, actions)));
+    if (found && found !== id) {
+      return { id: found, actions };
+    }
+  }
+  return null;
 }
 
 /** The way back out of `edge`, when the control it used declares an undo. */
@@ -315,18 +370,121 @@ function signature(ops) {
   return JSON.stringify(ops.filter(isAction));
 }
 
-function describe(op) {
+/**
+ * The label: every acting operation the delta performs, in order.
+ *
+ * The whole delta rather than its last operation, because a delta can now
+ * carry more than one — and an edge labelled only "press Enter" would be
+ * naming the smaller half of renaming a step. `test/statelab.test.mjs` rebuilds
+ * this from the two states' own paths and compares, so a label that drifts from
+ * the work it claims fails there.
+ */
+function describe(delta) {
+  return delta.filter(isAction).map(describeOp).join(" → ");
+}
+
+function describeOp(op) {
   if (op.op === "click") {
     return `click ${op.selector}`;
   }
-  if (op.op === "fill" || op.op === "select") {
+  // `press` belongs here rather than in the fall-through it used to take: an
+  // edge labelled a bare "press" named neither the control nor the key, so
+  // "fill the name → press" described renaming a step without saying what
+  // committed it, or to what.
+  if (op.op === "fill" || op.op === "select" || op.op === "press") {
     return `${op.op} ${op.selector} = ${JSON.stringify(op.value)}`;
+  }
+  if (op.op === "drag") {
+    return `drag ${op.selector} by ${op.dx},${op.dy}`;
   }
   if (op.op === "fixture") {
     return `publish ${[].concat(op.value).join(" + ")}`;
   }
   return op.op;
 }
+
+/**
+ * Why nothing reaches a state first.
+ *
+ * `EXCLUSIONS` records why a combination is not a state. Its counterpart was
+ * missing. A state that nothing arrives at is a claim about the product too,
+ * and the graph made every one of them the same claim — the bare words "a root
+ * of the DAG", which are true of the screen the canvas opens on and equally
+ * true of a tuple whose parent quietly failed to be a state. A reviewer could
+ * not tell those apart, and the second is the first's defect wearing its
+ * clothes.
+ *
+ * The count was worse than unattributed. It was carried in prose and asserted
+ * nowhere, so it drifted: the number claimed was 69 while the graph held 136.
+ * Deriving it here is what makes it capable of being wrong.
+ *
+ * Roots are taken over `ENTRY_TRANSITIONS`, not every edge. A return edge is
+ * the way back out of a screen this one opens, so arriving along it means the
+ * reader was already here — it is not a first arrival, and counting it as one
+ * made a landing's status depend on whether some child of it happened to
+ * appear in `REVERSIBLE`. Eleven states were hidden from the count that way:
+ * eight landings, the config and editor screens the canvas actually opens on,
+ * and three probes. `test/statelab.test.mjs` names that set and requires every
+ * one of them to be a root, so this paragraph cannot drift the way the count
+ * above it once did.
+ *
+ * The categories are ordered and the first match wins, so each state is named
+ * by the strongest fact about it: a saving field is intercepted *and* has a
+ * fixture its parent lacks, and "cannot be walked into" is the reason that
+ * matters. Two boundaries carry real weight, on disjoint sets of three probes:
+ * three probes also satisfy `landing`, and three ride a request route, so
+ * moving `landing` up or `probe` above `intercepted` relabels one set or the
+ * other with a reason that is false of it. `test/statelab.test.mjs` pins the
+ * resulting tally — either reordering fails there by name.
+ */
+export const ROOT_REASONS = [
+  {
+    id: "boot",
+    title: "a condition on the load itself",
+    why: "The whole content of this state is what happened to the page load — a payload held open, or a renderer module refused. There is no earlier screen for an edge to leave from, because the surface has not been drawn yet.",
+    holds: (state) => state.surface === "boot" || state.surface === "boot-editor",
+  },
+  {
+    id: "intercepted",
+    title: "reached by a route, not by a click",
+    why: "This state rides on a request interception installed before the page loads. A page already sitting on the parent screen cannot acquire that route, so an edge into it would name a transition the suite could not walk.",
+    holds: (state) => Boolean(state.intercept),
+  },
+  {
+    id: "probe",
+    title: "a hand-assembled crossing",
+    why: "A probe is written to cross two dimensions a scoping rule keeps apart, rather than enumerated from them, so its path is nobody's extension by construction.",
+    holds: (state) => state.kind === "probe",
+  },
+  {
+    id: "landing",
+    title: "where the reader arrives",
+    why: "Loading the page and publishing its fixture are the entire path. Nothing precedes it: this is the screen the canvas opens on for that config.",
+    holds: (state) => state.ops.filter(isAction).every((op) => op.op === "page" || op.op === "fixture"),
+  },
+  {
+    id: "fixture-differs",
+    title: "the screen above it publishes a different fixture",
+    why: "The clicks that reach this state are a real screen's clicks, but the fixture it needs is chosen by its deepest axis and the screen above it is enumerated with a different one. So the prefix names the route a reader really takes and still matches no state, and the suite walks the whole path from the load rather than claiming an edge it could not follow.",
+    holds: () => true,
+  },
+];
+
+/** The reason nothing reaches a state first. Ordered; the first match wins. */
+export function rootReason(state) {
+  return ROOT_REASONS.find((reason) => reason.holds(state));
+}
+
+const FIRST_ARRIVAL = new Set(ENTRY_TRANSITIONS.map((edge) => edge.to));
+
+/**
+ * Every state no entry edge reaches, each carrying the reason it has none.
+ * The counterpart to `EXCLUSIONS`, and reported the same way.
+ */
+export const ROOTS = STATES.filter((state) => !FIRST_ARRIVAL.has(state.id)).map((state) => ({
+  id: state.id,
+  reason: rootReason(state).id,
+}));
 
 /** What the PR body and the lab header both report. */
 export function summary() {
@@ -345,6 +503,7 @@ export function summary() {
     transitions: TRANSITIONS.length,
     entryTransitions: ENTRY_TRANSITIONS.length,
     returnTransitions: TRANSITIONS.length - ENTRY_TRANSITIONS.length,
+    roots: ROOTS.length,
   };
 }
 

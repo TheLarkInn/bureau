@@ -5,8 +5,9 @@
 // human. So the suite opens it, drives it, and asserts that what it reports
 // about a state matches what the registry says about that state.
 
-import { STATES } from "../../../web/statelab/registry.mjs";
+import { ENTRY_TRANSITIONS, rootReason, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { servableInFrame } from "../../../web/statelab/intercept.mjs";
+import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { expect, test } from "../matrix-fixtures.mjs";
 
 /** A state the lab can drive itself, interception included. */
@@ -75,10 +76,19 @@ test("a replay state with a run selected passes its checks in the lab too", asyn
 test("the compact control resizes the stage and re-runs the entry path", async ({ page, host }) => {
   const errors = await openLab(page, host);
   const target = DRIVABLE.find((state) => state.id.endsWith("card:expanded"));
+  const stage = page.locator("#stage");
 
   await page.locator(".state-item", { hasText: target.id }).first().click();
+  await expect(stage).toHaveJSProperty("offsetWidth", VIEWPORTS.desktop.width);
+
   await page.locator('[data-viewport="compact"]').click();
-  await expect(page.locator("#viewport-note")).toContainText("760");
+  // The stage's own width, not the note beside it. The note is a label this
+  // control writes; asserting it would have held with the two lines that
+  // actually resize the stage deleted, which is the whole of what the button
+  // does — and the render underneath would have stayed desktop-wide while the
+  // lab claimed a compact viewport.
+  await expect(stage).toHaveJSProperty("offsetWidth", VIEWPORTS.compact.width);
+  await expect(page.locator("#viewport-note")).toContainText(`${VIEWPORTS.compact.width}`);
   await page.locator("#detail .expectations").waitFor();
   await expect(page.frameLocator("#stage-frame").locator(".assignment-detail")).toBeVisible();
   expect(errors).toEqual([]);
@@ -147,6 +157,60 @@ test("the picker judges any combination a reviewer assembles", async ({ page, ho
   await page.locator('#picker select[aria-label="card"]').selectOption("n/a");
   await expect(verdict).toHaveAttribute("data-verdict", "reachable");
   expect(errors).toEqual([]);
+});
+
+/**
+ * A state nothing reaches first used to say only "a root of the DAG" — the one
+ * sentence true of every root, so a reviewer could not tell the screen the
+ * canvas opens on from a tuple whose parent quietly failed to be a state.
+ *
+ * Both cases are walked, because they were not equivalent: the note was gated
+ * on the transition list being empty, so a root that *opens* something — a
+ * landing with three ways out — rendered its outbound edges and no note at
+ * all, which is the state a reviewer is most likely to be reading.
+ *
+ * The reason shown has to be the reason the registry assigned, not merely some
+ * prose, so the category is read back off the panel and compared with
+ * `rootReason` for that same state.
+ */
+for (const [shape, pick] of [
+  ["with no edges at all", (state) => !TRANSITIONS.some((edge) => edge.from === state.id || edge.to === state.id)],
+  ["that still opens other screens", (state) => TRANSITIONS.some((edge) => edge.from === state.id)],
+]) {
+  test(`a root ${shape} says which kind of root it is`, async ({ page, host }) => {
+    const errors = await openLab(page, host);
+    const entered = new Set(ENTRY_TRANSITIONS.map((edge) => edge.to));
+    const root = DRIVABLE.find((state) => !entered.has(state.id) && pick(state));
+
+    await page.locator(".state-item", { hasText: root.id }).first().click();
+    await page.locator("#detail h2", { hasText: root.id }).waitFor();
+    const note = page.locator("#detail .root");
+    await expect(note).toHaveAttribute("data-root-reason", rootReason(root).id);
+    await expect(note).toContainText(rootReason(root).title);
+    // A root that return edges arrive at has to reconcile its own note with
+    // the "N in" header directly above it, or the panel reads as a
+    // contradiction. That sentence is the only thing that does so.
+    const arriving = TRANSITIONS.filter((edge) => edge.to === root.id).length;
+    if (arriving) {
+      await expect(note).toContainText(`${arriving} edge(s) arriving here`);
+    }
+    expect(errors).toEqual([]);
+  });
+}
+
+/**
+ * The other half: a state that *is* entered must not claim to be a root. The
+ * pair is what makes either assertion mean anything — a lab that printed the
+ * note unconditionally would pass the two above and fail this one.
+ */
+test("a state something reaches first claims no root reason", async ({ page, host }) => {
+  await openLab(page, host);
+  const entered = DRIVABLE.find((state) => ENTRY_TRANSITIONS.some((edge) => edge.to === state.id));
+
+  await page.locator(".state-item", { hasText: entered.id }).first().click();
+  await page.locator("#detail h2", { hasText: entered.id }).waitFor();
+  await expect(page.locator("#detail .root")).toHaveCount(0);
+  await expect(page.locator("#detail .edges .linkish").first()).toBeVisible();
 });
 
 test("the lab links the transition DAG in both directions", async ({ page, host }) => {

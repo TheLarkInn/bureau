@@ -78,8 +78,11 @@ fn prepare_agent(
     let run_dir = stream::lock(&ctx.log).dir().to_path_buf();
     let activation = plugins::activate(&ctx.plan, role, &run_dir, &request.worktree)?;
     let mut runtime_role = role.clone();
-    if let Some(active) = activation.as_ref() {
-        active.agent_name().clone_into(&mut runtime_role.agent);
+    if let Some(agent) = activation
+        .as_ref()
+        .and_then(plugins::ActiveAgent::direct_agent_name)
+    {
+        agent.clone_into(&mut runtime_role.agent);
     }
     Ok((runtime_role, activation))
 }

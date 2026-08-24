@@ -93,10 +93,10 @@ pub(super) enum ActiveAgent {
 }
 
 impl ActiveAgent {
-    pub(super) fn agent_name(&self) -> &str {
+    pub(super) fn direct_agent_name(&self) -> Option<&str> {
         match self {
-            Self::Plugin(active) => active.agent_name(),
-            Self::Direct(active) => active.agent_name(),
+            Self::Plugin(_) => None,
+            Self::Direct(active) => Some(active.agent_name()),
         }
     }
 
