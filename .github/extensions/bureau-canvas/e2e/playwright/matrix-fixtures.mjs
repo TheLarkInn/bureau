@@ -473,8 +473,16 @@ const SETTLE_POLL_MS = 100;
  * MutationObserver gate was tried here instead of the poll — the document
  * itself reporting it had stopped, rather than agreement across sampled
  * instants — and measured 61 of 500, no better than the poll for an extra
- * round trip per sample. So the poll stays, the residue is #116, and that is
- * why the twin audit reports rather than gates.
+ * round trip per sample.
+ *
+ * The residue was never a wait at all, which is why widening the window kept
+ * not fixing it. What remained was the config surface's relation graph, which
+ * lives inside a `<details>` that is shut by default: a shut disclosure is a
+ * subtree the browser stops rendering but keeps answering `getClientRects`
+ * for, so the signature described a graph nobody can see and React Flow's
+ * measurement race decided what it said. `checks.mjs` asks `checkVisibility()`
+ * now, the shut graph left the signature, and two runs of this matrix agree on
+ * all 502 renders — which is what let the twin audit become a gate.
  */
 const SETTLE_REPEATS = 3;
 

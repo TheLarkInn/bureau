@@ -489,6 +489,11 @@ function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
     label
       ? h(EdgeLabelRenderer, null, h("div", {
           className: "react-flow__edge-label edge-caption",
+          // Which edge this caption belongs to. The portal's child order is
+          // commit order and rotates, so `checks.mjs` compares captions as a
+          // set; without an identity two graphs putting the same words on
+          // different edges would describe themselves identically.
+          "data-edge-id": id,
           style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
         }, label))
       : null,
