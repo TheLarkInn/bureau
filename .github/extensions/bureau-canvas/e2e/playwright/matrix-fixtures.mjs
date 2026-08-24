@@ -319,6 +319,10 @@ async function intercept(page, kind) {
     }),
     "empty-runs": () => page.route(/\/runs$/u, (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ runs: [] }) })),
+    // The read that has not come back. Every other listing route is an answer;
+    // this is the wait, and it is the only condition under which the Live badge
+    // legitimately carries no `data-count` at all.
+    "stall-runs": () => page.route(/\/runs$/u, () => {}),
     "fail-runs": () => page.route(/\/runs$/u, (route) =>
       route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) })),
     // Serves the real listing once, then refuses. A run can only be selected
@@ -336,6 +340,14 @@ async function intercept(page, kind) {
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
+      : route.continue()),
+    // The end a write can also have: it worked. Only the reconcile pass needs
+    // it — its success is three sentences about what the pass did, and no state
+    // rendered any of them, so `reconcileResult` was a selector nothing used.
+    // The answer is synthesised here and the host is never written to, so the
+    // listing the report re-reads is unchanged and "claimed no work" is exact.
+    "pass-intent": () => page.route(/\/intent$/u, (route) => writes(route)
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) })
       : route.continue()),
     // The third end of a save, and the one that used to have no screen: the
     // request never reaches a responder at all, so `fetch` rejects rather than

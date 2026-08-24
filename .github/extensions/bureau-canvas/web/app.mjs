@@ -189,9 +189,14 @@ function CreateBar({ dir }) {
   // create the reader has already dismissed is nobody's and is dropped rather
   // than installed over whatever they opened next.
   const ticket = useRef(0);
+  // The refusal belongs to the form it was raised in. This component outlives
+  // the form — closing it only hides the disclosure — so a refusal not cleared
+  // here is still on screen when the reader opens the create bar again, naming
+  // a failure they already dismissed and no request is in flight for.
   const close = () => {
     ticket.current += 1;
     setBusy(false);
+    setError(null);
     closeDisclosure(setOpen, trigger);
   };
   const submit = (event) => {
@@ -373,9 +378,13 @@ function DeleteControl({ dir, kind, name }) {
     preflight.blocking
       ? h("p", { className: "note note--err" }, "Repoint these references before deleting this item.")
       : null,
+    // Cancel clears the refusal with the prompt. The `!preflight` branch above
+    // renders `error` too, so a refused confirm left set here would follow the
+    // reader back out to a resting card and sit beside an intact Delete —
+    // reporting a removal that is neither in flight nor was ever performed.
     h("div", { className: "actions" },
       h("button", { type: "button", className: "btn btn--small btn--danger", "data-testid": "delete-confirm", disabled: preflight.blocking || busy, onClick: confirm }, busy ? "Deleting…" : "Confirm delete"),
-      h("button", { type: "button", className: "btn btn--small", "data-testid": "delete-cancel", disabled: busy, onClick: () => setPreflight(null) }, "Cancel")),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "delete-cancel", disabled: busy, onClick: () => { setPreflight(null); setError(null); } }, "Cancel")),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
 }

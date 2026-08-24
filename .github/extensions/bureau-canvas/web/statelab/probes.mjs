@@ -237,6 +237,139 @@ export const PROBES = [
       copy: ["Creating…"],
     },
   }),
+  /*
+   * The other end of a refusal: what happens to it when the reader says no.
+   *
+   * `error` was cleared in exactly one place — the start of the *next* request —
+   * so every dismissal path left it set. Neither component is unmounted by its
+   * own dismissal: `CreateBar` only hides the disclosure, and `DeleteControl`'s
+   * `!preflight` branch draws the note itself. So a refused write followed by
+   * Cancel put the reader back on a resting screen that still reported a failure
+   * — for a request that was not in flight, and that they had already dismissed.
+   *
+   * These are the two states that make that fail. Both are `sample()`s rather
+   * than crossings: no rule excluded them, and no axis names them, because
+   * `disclosure` and `fieldState` each describe a refusal that is *present*.
+   * Neither is reachable as a return edge either — Cancel here lands two screens
+   * back, not on the parent the refusal was entered from, which is exactly the
+   * shape `REVERSIBLE` cannot express.
+   */
+  sample({
+    id: "probe--create-refusal-dismissed",
+    covers: "a refused create that the reader cancelled, then opened again — the refusal must not come back with the form",
+    summary: "the create bar reopened after a refusal was dismissed: an empty form with nothing claiming to have failed",
+    fixture: "validated",
+    intercept: "fail-intent",
+    ops: [
+      { op: "click", selector: S.createOpen },
+      { op: "fill", selector: S.createName, value: "second-reviewer" },
+      { op: "click", selector: S.createSubmit },
+      { op: "wait", selector: S.createRefused },
+      { op: "click", selector: S.createCancel },
+      { op: "waitGone", selector: S.createBar },
+      { op: "click", selector: S.createOpen },
+      { op: "wait", selector: S.createBar },
+    ],
+    expect: {
+      // The form is back and empty, so Create is withheld until a name is typed.
+      // The refusal is the assertion that matters: it is `hides`, because the
+      // bug leaves it present rather than merely stale.
+      shows: [S.createBar, withheld(S.createSubmit), offered(S.createCancel)],
+      hides: [S.createRefused],
+      copy: [],
+    },
+  }),
+  sample({
+    id: "probe--delete-refusal-dismissed",
+    covers: "a refused delete that the reader cancelled — the card must not keep reporting a removal that never happened",
+    summary: "an assignment card after a refused delete was dismissed: the prompt is gone and so is its refusal",
+    fixture: "validated",
+    intercept: "fail-intent",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: S.preflight },
+      { op: "click", selector: S.deleteConfirm },
+      { op: "wait", selector: S.deleteRefused },
+      { op: "click", selector: S.deleteCancel },
+      { op: "waitGone", selector: S.preflight },
+    ],
+    expect: {
+      shows: [S.assignmentDetail, offered(S.deleteStart)],
+      // Both places the refusal could be. `deleteRefused` is scoped to the
+      // prompt and would pass by default once the prompt has gone, so on its own
+      // it asserts nothing here; `deleteRefusedResting` is where the surviving
+      // one actually renders, and is the half that fails against the bug.
+      hides: [S.deleteRefused, S.deleteRefusedResting],
+      copy: [],
+    },
+  }),
+  /*
+   * The pass that worked, which is a screen and was rendered by nothing.
+   *
+   * The refusal and the in-flight button were both modelled; the *report* was
+   * not, so `reportPass` — three distinct sentences about what a pass did — was
+   * asserted by one Playwright spec and by no state, and `reconcileResult` was a
+   * selector with no reference in the repository.
+   *
+   * "Claimed no work" is the deterministic one: `pass-intent` synthesises the
+   * answer in-frame and writes nothing, so the listing the report re-reads is
+   * the host's own, unchanged, and no run can have appeared since the click.
+   * The other two sentences depend on a listing that changes underneath the
+   * pass, which is a race rather than a state.
+   */
+  sample({
+    id: "probe--reconcile-now-reported",
+    covers: "a reconcile pass that finished and said what it did — the success half of a control whose only modelled ends were busy and refused",
+    summary: "a completed reconcile pass reporting that it claimed no work, with the button returned and nothing moved",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "pass-intent",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "click", selector: S.reconcileNow },
+      { op: "wait", selector: S.reconcileResult },
+    ],
+    expect: {
+      // The report is a *result*, not an error: drawn in the success class, and
+      // the error class asserted absent. A pass that reported through
+      // `run-control-error` would read as a failure while saying it finished.
+      shows: [S.reconcileNow, S.reconcileResult, S.runActivityAvailable],
+      hides: [S.reconcileNowPending, S.runControlError, S.overlayRunning],
+      copy: ["Reconcile pass finished. It claimed no work for this pipeline."],
+    },
+  }),
+  /*
+   * The badge before it has a number.
+   *
+   * Every other run-listing state is an answer — empty, failed, failed-later.
+   * This is the wait, and it is the state `liveCountLoading` was declared for:
+   * the selector had exactly one reference in the repository, its own
+   * declaration. It matters because the badge's `data-count` is asserted by
+   * every pipeline state, so the screen where that attribute is legitimately
+   * absent is the one that says what the reader sees in the meantime.
+   */
+  sample({
+    id: "probe--live-count-loading",
+    covers: "the Live badge while its first run listing is still in flight",
+    summary: "the pipeline toolbar before the run listing has answered: the badge reports itself as loading rather than as zero",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "stall-runs",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "wait", selector: S.liveCountLoading },
+    ],
+    expect: {
+      shows: [S.modeSwitcher, S.liveCountLoading],
+      // Neither an answer nor a zero. A badge that fell back to `0` while the
+      // read was outstanding would be reporting "no runs in progress" as a fact
+      // it does not have, which is the one thing this state exists to deny.
+      hides: [S.liveCountSettled, S.liveCountZero, S.liveCountUnavailable],
+      copy: [],
+    },
+  }),
   crossing({
     id: "probe--relation-open-under-expanded-card",
     rule: "a-disclosure-is-reviewed-against-a-resting-card",

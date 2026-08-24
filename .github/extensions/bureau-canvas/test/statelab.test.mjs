@@ -91,6 +91,33 @@ test("every excluded combination is attributed, and the books balance", () => {
 });
 
 /**
+ * Every `enter` a dimension value declares has to reach a path.
+ *
+ * `entryPath` consumes `enter` from a hand-written list of axes, and `surface`
+ * was not on it. So the pipeline surface's `wait` for the Live badge to settle
+ * — declared with a comment stating it happened "once, on the surface all three
+ * modes are entered from" — was dropped from every state, and `liveCountSettled`
+ * had exactly one reference in the repository: its own dead declaration. The
+ * `data-count` assertions were left racing an in-flight fetch, saved only by the
+ * suite's re-sample loop.
+ *
+ * A missing consumer is invisible to every other test here, because a dropped
+ * `enter` produces a path that is merely shorter — still valid, still walkable,
+ * still passing. This is the one assertion that can see it, and it is written
+ * over the whole vocabulary rather than over `surface` alone, so the next axis
+ * to grow an `enter` is covered on the day it is added rather than after.
+ */
+test("no dimension value declares an entry operation that no state performs", () => {
+  const performed = new Set(STATES.flatMap((state) => state.ops).map((op) => JSON.stringify(op)));
+  const orphaned = DIMENSIONS
+    .flatMap((dimension) => dimension.values.map((value) => ({ axis: dimension.id, value })))
+    .flatMap(({ axis, value }) => (value.enter ?? []).map((op) => ({ axis, value: value.id, op })))
+    .filter((entry) => !performed.has(JSON.stringify(entry.op)));
+
+  assert.deepStrictEqual(orphaned, []);
+});
+
+/**
  * Every number this branch reports about itself, pinned to a literal.
  *
  * `summary()` is what the PR body and the lab header both read, and only two of
@@ -126,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 470292479796,
       matrixStates: 204,
-      probes: 36,
-      states: 240,
+      probes: 40,
+      states: 244,
       transitions: 132,
       entryTransitions: 98,
       returnTransitions: 34,
-      roots: 142,
-      renders: 480,
+      roots: 146,
+      renders: 488,
     },
   );
 });
@@ -511,7 +538,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 80, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 84, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1534,24 +1561,72 @@ test("no state asks for two different request routes at once", () => {
  * the lab's refusal to draw a condition it cannot install, and the suite's list
  * of states the lab can drive.
  *
- * Two derivations, so they can disagree, and they did: probes emitted the route
- * onto the op alone, so all four consumers read `undefined` for all 29 of them.
- * Nothing failed, because both kinds the probes ask for happen to be servable
- * in-frame — the lab would have drawn a blocked-renderer probe as though the
- * renderer had loaded, which is the one thing a review surface may not do.
+ * Comparing those two to each other is what this test used to do, and it could
+ * not fail. `registry.mjs` derives `state.intercept` as
+ * `ops.find((op) => op.intercept)?.intercept`, and the test recomputed that
+ * expression character for character; `probes.mjs` writes both from one
+ * parameter. Both sides were one read of one value, so `disagreeing` was `[]`
+ * by construction. Rerouting every `stall-intent` state to `fail-intent` — an
+ * inversion that turns a held save into a refused one on some twenty screens —
+ * left the whole file green.
  *
- * Asserting agreement rather than presence is what makes this able to fail from
- * either side: dropping the state-level field fails here, and so does an op
- * that installs a route the state does not name.
+ * So each family is held to a source that is genuinely not the ops:
+ *
+ * - matrix states are held to `interceptFor(dimensions)`, the function that
+ *   *decides* the route, which `interceptOp` then places. A boot state is not
+ *   one of these: its route comes from `bootOps` and `interceptFor` knows
+ *   nothing about it, so re-deriving it here would restore the tautology.
+ * - boot states and routed probes are held to literal id→route maps, which are
+ *   data rather than a second copy of the derivation. A probe that stops
+ *   writing the route onto its state, or acquires one nobody reviewed, fails
+ *   by name.
  */
-test("a state rides the same route its own path installs", () => {
-  const disagreeing = STATES
+const BOOT_ROUTES = {
+  "surface:boot+data:loading": "stall-state",
+  "surface:boot+data:render-error": "block-renderer",
+  "surface:boot-editor+data:loading": "stall-state",
+  "surface:boot-editor+data:render-error": "block-editor-renderer",
+};
+
+const PROBE_ROUTES = {
+  "probe--create-saving": "stall-intent",
+  "probe--create-refusal-dismissed": "fail-intent",
+  "probe--delete-refusal-dismissed": "fail-intent",
+  "probe--reconcile-now-reported": "pass-intent",
+  "probe--live-count-loading": "stall-runs",
+  "probe--draft-save-transport-lost": "abort-intent",
+  "probe--editor-save-transport-lost": "abort-intent",
+  "probe--run-activity-idle": "empty-runs",
+  "probe--reconcile-now-running": "stall-intent",
+  "probe--reconcile-now-refused": "fail-intent",
+  "probe--run-under-failed-listing": "fail-runs-later",
+  "probe--run-activity-unavailable": "fail-runs",
+};
+
+/** The id→route map a family of states actually holds, for one comparison. */
+function routesOf(states) {
+  return Object.fromEntries(states.filter((state) => state.intercept).map((state) => [state.id, state.intercept]));
+}
+
+test("a state rides the route its own source decided, not merely the one its ops carry", () => {
+  const matrix = STATES.filter((state) => state.kind === "matrix" && !state.surface.startsWith("boot"));
+  const misrouted = matrix
+    .map((state) => ({ id: state.id, state: state.intercept ?? null, decided: interceptFor(state.dimensions)[0] ?? null }))
+    .filter((entry) => entry.state !== entry.decided);
+  // The op is still compared, because it is the half a consumer cannot see: a
+  // state that names a route its page never installs would render unrouted.
+  const uninstalled = STATES
     .map((state) => ({ id: state.id, op: state.ops.find((op) => op.intercept)?.intercept ?? null, state: state.intercept ?? null }))
     .filter((entry) => entry.op !== entry.state);
-  const routed = STATES.filter((state) => state.intercept);
 
   assert.deepStrictEqual(
-    { disagreeing, routed: routed.length, probesRouted: routed.filter((state) => state.kind === "probe").length },
-    { disagreeing: [], routed: 84, probesRouted: 8 },
+    {
+      misrouted,
+      uninstalled,
+      boot: routesOf(STATES.filter((state) => state.surface.startsWith("boot"))),
+      probes: routesOf(STATES.filter((state) => state.kind === "probe")),
+      routed: STATES.filter((state) => state.intercept).length,
+    },
+    { misrouted: [], uninstalled: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 88 },
   );
 });

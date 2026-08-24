@@ -86,7 +86,7 @@ export const ENDED_RUN = "run-finished";
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "abort-intent", "offer-ended-run", "empty-runs", "fail-runs", "fail-runs-later"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "pass-intent", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -126,7 +126,7 @@ export function installIntercept(win, kind) {
     offerEndedRun(win);
     return;
   }
-  if (kind === "empty-runs" || kind === "fail-runs" || kind === "fail-runs-later") {
+  if (kind === "empty-runs" || kind === "stall-runs" || kind === "fail-runs" || kind === "fail-runs-later") {
     interceptRuns(win, kind);
     return;
   }
@@ -177,6 +177,11 @@ function offerEndedRun(win) {
  * the listing has since failed is unreachable if the very first read fails.
  * It is also the screen where the two halves of this surface can contradict
  * each other, which is why it has to be stageable at all.
+ *
+ * `stall-runs` is the read that has not come back yet — the badge before it has
+ * a number. Every other run state describes an answer; this is the only one that
+ * describes the wait, and it is the state `liveCountLoading` was declared for
+ * and never rendered in.
  */
 function interceptRuns(win, kind) {
   const native = win.fetch.bind(win);
@@ -188,6 +193,9 @@ function interceptRuns(win, kind) {
     served += 1;
     if (kind === "fail-runs-later" && served === 1) {
       return native(input, init);
+    }
+    if (kind === "stall-runs") {
+      return forever();
     }
     const failing = kind === "fail-runs" || kind === "fail-runs-later";
     return new win.Response(
@@ -244,7 +252,7 @@ function stallState(win) {
   };
 }
 
-/** The three ends of a save, applied to writes only. */
+/** The four ends of a write: held, refused, dropped, or answered. */
 function stallIntent(win, kind) {
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
@@ -257,7 +265,15 @@ function stallIntent(win, kind) {
     if (kind === "abort-intent") {
       return Promise.reject(new TypeError("Failed to fetch"));
     }
-    return Promise.resolve(new win.Response(JSON.stringify(refusalFor(kindOf(init))), {
+    // `pass-intent` is the only one that answers `ok`. It exists for the
+    // reconcile pass, whose *success* is a screen — three distinct sentences
+    // about what the pass did — that no state rendered, leaving
+    // `reconcileResult` a declared selector with no reference anywhere. The
+    // pass writes nothing here: the answer is synthesised in-frame, and the
+    // listing it then re-reads is the host's own unchanged one, which is what
+    // makes "it claimed no work" the deterministic sentence.
+    const answer = kind === "pass-intent" ? { ok: true, output: "no eligible work" } : refusalFor(kindOf(init));
+    return Promise.resolve(new win.Response(JSON.stringify(answer), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }));

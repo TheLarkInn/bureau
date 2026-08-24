@@ -93,6 +93,11 @@ export const SELECTORS = {
   // The refusal a confirmed delete comes back with, scoped to the preflight so
   // it cannot be satisfied by an unrelated note elsewhere on the card.
   deleteRefused: '[data-testid="preflight"] .note--err',
+  // The same refusal after the prompt it belongs to has been dismissed. It is a
+  // *different* place in the tree — `DeleteControl`'s `!preflight` branch draws
+  // its own note beside an intact Delete — so `deleteRefused` cannot see it, and
+  // a refusal that survives Cancel would be invisible to every assertion here.
+  deleteRefusedResting: ".assignment-actions .note--err",
 
   orphanStrip: ".orphan-strip",
   relationSection: ".relation-section",

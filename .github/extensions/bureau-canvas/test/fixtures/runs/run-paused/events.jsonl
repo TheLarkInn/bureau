@@ -1,4 +1,4 @@
-{"kind":"run_started","seq":0,"at_ms":1740000100000,"data":{"run_id":"run-paused","assignment":"agent-eligible","pipeline":"agent-eligible-pipeline"}}
+{"kind":"run_started","seq":0,"at_ms":1740000100000,"data":{"run_id":"run-paused","assignment":"agent-eligible","snapshot":{"run_id":"run-paused","assignment":{"name":"agent-eligible","pipeline":"agent-eligible-pipeline"}}}}
 {"kind":"step_started","seq":1,"at_ms":1740000101000,"data":{"run_id":"run-paused","step":"implement","role":"implementer","configured_agent":"/bureau:implementer","resolved_agent":"implementer"}}
 {"kind":"step_finished","seq":2,"at_ms":1740000104000,"data":{"run_id":"run-paused","step":"implement","outcome":"success"}}
 {"kind":"output","seq":3,"at_ms":1740000105000,"data":{"run_id":"run-paused","stream":"run","data":"paused at a step boundary"}}

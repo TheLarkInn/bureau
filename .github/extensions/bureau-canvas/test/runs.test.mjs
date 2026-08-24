@@ -11,7 +11,7 @@ import { test } from "node:test";
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
-const { resolveRunsDir, runsDir } = await import("../lib/runs.mjs");
+const { resolveRunsDir, runsDir, summarize } = await import("../lib/runs.mjs");
 
 /*
  * `run_started` as bureau actually writes it.
@@ -285,4 +285,45 @@ test("falls back to the host home when the distro cannot answer", async () => {
     resolved.push(await resolveRunsDir({ anchor: SHARE, env: {}, probe: () => answer }));
   }
   assert.deepStrictEqual(resolved, answers.map(() => runsDir({})));
+});
+
+/*
+ * The committed run fixtures, held to the shape bureau writes.
+ *
+ * Every one of them used to carry a flat `data.pipeline` — a key
+ * `RunStartedData` has no field for — so the whole pipeline-scoped Live surface
+ * the browser suite exercises was green against a payload production cannot
+ * emit, and the branch real runs take was reached by one node test alone.
+ *
+ * Each fixture is now pinned to the branch of `pipelineOf` it is there to
+ * cover, so the three cannot collapse into one: `run-live` and `run-finished`
+ * carry the pinned pipeline, `run-paused` carries only the assignment's
+ * selection, and `run-group` deliberately keeps the flat key so the
+ * forward-compatible last resort stays exercised rather than becoming dead code.
+ */
+const FIXTURE_PIPELINES = [
+  ["run-live", "agent-eligible-pipeline", "snapshot.pipeline.name"],
+  ["run-finished", "agent-eligible-pipeline", "snapshot.pipeline.name"],
+  ["run-paused", "agent-eligible-pipeline", "snapshot.assignment.pipeline"],
+  ["run-group", "review-queue-pipeline", "data.pipeline"],
+];
+
+/** Which key a fixture's `run_started` really carries the pipeline under. */
+function carrier(started) {
+  if (started.data?.snapshot?.pipeline?.name) {
+    return "snapshot.pipeline.name";
+  }
+  return started.data?.snapshot?.assignment?.pipeline ? "snapshot.assignment.pipeline" : "data.pipeline";
+}
+
+test("each committed run fixture carries its pipeline where bureau writes it", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const resolved = [];
+  for (const [id] of FIXTURE_PIPELINES) {
+    const raw = await readFile(new URL(`./fixtures/runs/${id}/events.jsonl`, import.meta.url), "utf8");
+    const events = raw.trim().split("\n").map((line) => JSON.parse(line));
+    resolved.push([id, summarize(id, events).pipeline, carrier(events[0])]);
+  }
+
+  assert.deepStrictEqual(resolved, FIXTURE_PIPELINES);
 });

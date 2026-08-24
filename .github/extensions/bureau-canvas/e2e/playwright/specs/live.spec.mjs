@@ -9,11 +9,25 @@ async function openPipeline(page, canvas) {
   await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
 }
 
-/** Writes one live run into this worker's run root, before the page is opened. */
+/**
+ * Writes one live run into this worker's run root, before the page is opened.
+ *
+ * The `run_started` payload mirrors `RunStartedData` in
+ * `crates/bureau/src/runlog/event.rs` — `run_id`, `assignment`, `snapshot` —
+ * because a fixture is a claim about what bureau writes. It used to carry a flat
+ * `data.pipeline`, which that struct has no field for and bureau has never
+ * emitted, so the whole pipeline-scoped Live surface was green against a shape
+ * production cannot produce.
+ */
 async function seedRun(canvas, runId) {
   const dir = join(canvas.runs, runId);
+  const snapshot = {
+    run_id: runId,
+    assignment: { name: SAMPLE.assignment, pipeline: "agent-eligible-pipeline" },
+    pipeline: { name: "agent-eligible-pipeline" },
+  };
   const events = [
-    { seq: 0, at_ms: 1_800_000_000_000, kind: "run_started", data: { run_id: runId, assignment: SAMPLE.assignment, pipeline: "agent-eligible-pipeline" } },
+    { seq: 0, at_ms: 1_800_000_000_000, kind: "run_started", data: { run_id: runId, assignment: SAMPLE.assignment, snapshot } },
     { seq: 1, at_ms: 1_800_000_001_000, kind: "step_started", data: { run_id: runId, step: "implement" } },
   ];
   await mkdir(dir, { recursive: true });
@@ -31,13 +45,30 @@ test("Live distinguishes an idle reconciler from a broken listing", async ({ pag
   await expect(page.getByRole("button", { name: "Run reconcile now" })).toBeEnabled();
 });
 
-test("Live advertises and follows the newest run without a manual pick", async ({ page, canvas }) => {
+/*
+ * The badge advertises; the reader picks. There is deliberately no auto-follow.
+ *
+ * This test used to be titled "…follows the newest run without a manual pick"
+ * and then made a manual pick, so the load-bearing half of its own name was
+ * asserted by nothing — `useLiveOverlay` starts `runId` at `null` and only ever
+ * changes it through the picker's `onChange`. It would have passed identically
+ * against a build that had never had auto-follow, which is what it was doing.
+ *
+ * Renaming it is the fix rather than implementing the claim, because the claim
+ * is one this surface has already decided against: selecting a run for the
+ * reader moves the overlay under them, which is the same loss as a reconcile
+ * pass switching them into Replay. So the unselected state is now asserted
+ * first — the count is offered and no overlay is drawn — and the pick is what
+ * produces one. That ordering is the contract, and it can fail from both ends.
+ */
+test("Live advertises the newest run and overlays the one the reader picks", async ({ page, canvas }) => {
   const runId = "live-fixture-run";
   await seedRun(canvas, runId);
   await openPipeline(page, canvas);
 
   await expect(page.getByTestId("live-count")).toHaveAttribute("data-count", "1");
   await page.getByRole("tab", { name: /live, 1 run in progress/iu }).click();
+  await expect(page.locator(".flow-card.overlay-running")).toHaveCount(0);
   await page.getByLabel("Live run").selectOption(runId);
   await expect(page.locator(".flow-card.overlay-running")).toBeVisible();
 });

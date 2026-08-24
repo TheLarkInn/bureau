@@ -60,7 +60,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "stall-intent", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "stall-intent", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
@@ -282,4 +282,35 @@ test("a state that asked for no condition still sits on the write floor", async 
       refusalIsPlain: { ok: false },
     },
   );
+});
+
+/*
+ * The two hosts implement the same vocabulary.
+ *
+ * A condition is defined once here and applied twice — the lab installs it in
+ * its frame, the browser suite routes it with `page.route` — and nothing held
+ * the two lists to each other. A kind added to one and not the other is not a
+ * loud failure: the lab would render the state and the suite would throw
+ * `routes[kind] is not a function`, or worse, the suite would route a kind the
+ * lab silently declines to serve and the screen a reviewer approved would stop
+ * being the screen CI asserts. That is the exact drift this module's header
+ * says it exists to prevent, and it was unasserted.
+ *
+ * `matrix-fixtures.mjs` imports `@playwright/test`, so it cannot be imported
+ * from an offline test. Its route table is read out of the source instead,
+ * which is enough: the keys are literals, and a missing one is the whole bug.
+ *
+ * The suite's table is `IN_FRAME` plus exactly the two conditions an in-frame
+ * shim provably cannot stage — a `<script type="module">` is not fetched
+ * through `window.fetch` — so the relationship is an equality, not a subset.
+ */
+const SUITE_ONLY = ["block-editor-renderer", "block-renderer"];
+
+test("the lab and the browser suite serve the same set of conditions", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../e2e/playwright/matrix-fixtures.mjs", import.meta.url), "utf8");
+  const table = source.slice(source.indexOf("const routes = {"));
+  const routed = [...table.matchAll(/^\s{4}"([a-z-]+)":/gmu)].map((match) => match[1]).sort();
+
+  assert.deepEqual(routed, [...IN_FRAME, ...SUITE_ONLY].sort());
 });

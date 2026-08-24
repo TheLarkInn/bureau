@@ -150,9 +150,18 @@ function entryPath(combo) {
     pipeline: () => [{ op: "wait", selector: S.pipelineView }, ...pipelineOps(combo)],
     editor: () => [{ op: "wait", selector: S.editorTabs }, ...editorOps(combo)],
   };
+  // The surface's own `enter`, between its shell wait and the body's path. It
+  // was declared and read by nobody: `configOps`, `pipelineOps` and `editorOps`
+  // consume the axes *below* the surface, and nothing consumed the surface
+  // itself, so the pipeline surface's settle wait was dropped from all 480
+  // renders and `S.liveCountSettled` was a dead constant. The comment that
+  // declared it said the settle happened "once, on the surface all three modes
+  // are entered from", and it happened nowhere.
+  const surfaceEnter = valueOf("surface", combo.surface)?.enter ?? [];
+  const [shellWait, ...body] = bySurface[combo.surface]();
   // The draft bar sits above the body on both index surfaces, so its own save
   // is walked last — after the body has settled into whatever rest it is in.
-  return [...ops, ...bySurface[combo.surface](), ...draftOps(combo.draft)];
+  return [...ops, shellWait, ...surfaceEnter, ...body, ...draftOps(combo.draft)];
 }
 
 function summarize(combo) {
@@ -233,6 +242,25 @@ export const REVERSIBLE = [
   { via: S.editorTabRelations, undo: S.editorTabPipeline, gone: S.relationFlow },
   { via: S.modeLive, undo: S.modeDesign, gone: S.runControls },
   { via: S.modeReplay, undo: S.modeDesign, gone: S.replayControls },
+  /*
+   * The delete preflight is deliberately absent, and this is the one entry that
+   * needs saying so.
+   *
+   * Its Cancel was pressed by nothing for a while, which is a real gap — but it
+   * cannot be closed here. A return edge holds the child's render to the
+   * *parent's* expectations, and the parent of an open preflight is a card whose
+   * expectations include its fixture's own copy. Opening the preflight answers
+   * through `runCrudIntent`, which calls `refreshState` and republishes the
+   * host's config over the injected payload, so by the time Cancel has closed
+   * the prompt the page is no longer showing the fixture the parent was
+   * enumerated with. Declared as reversible, the edge fails on `missing-copy`
+   * for a reason that is about the harness rather than about the control.
+   *
+   * That is the same fact `a-preflight-answers-with-the-hosts-own-config`
+   * already names. So the undo is walked by `probe--delete-refusal-dismissed`
+   * instead, which presses the same Cancel and carries expectations that do not
+   * depend on a fixture the preflight has already replaced.
+   */
   // The fold on a finished concurrent group, and the one toggle whose first
   // press *removes* a region. It sits on the card rather than inside the member
   // list precisely so that collapsing does not take the only button that could
