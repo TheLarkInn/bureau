@@ -1936,7 +1936,12 @@ function AgentIdentities({ state, pipeline }) {
       "li",
       { key: role.name },
       h("span", { className: "mono" }, role.name),
-      h("span", { className: "agent-map mono" }, `${role.agent} → ${role.resolvedAgent ?? "unresolved"}`),
+      // `selects`, not an arrow. The right-hand name is what this reference
+      // resolves *to* only in the sense that the config projects it; no
+      // discovery, no worktree and no file copy has happened, and an arrow read
+      // as resolution is exactly what someone debugging a missing agent would
+      // trust it to mean.
+      h("span", { className: "agent-map mono" }, `${role.agent} selects ${role.resolvedAgent ?? "not checked"}`),
     ))),
   );
 }

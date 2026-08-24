@@ -453,24 +453,36 @@ block, because reflowing a stack trace destroys it.
 Output events are not retained by the overlay reducer, which is why both mode
 hooks also hand the panel the raw events.
 
-### The agent a step really invoked
+### The agent identity a step was run with
 
-A role names an agent in config (`/bureau:implementer`), but the name the
-adapter finally invokes is resolved, not copied: a plugin reference keeps its
-`plugin:agent` qualifier, while a path resolves to its file name. Those can
-disagree, and when they do the run did not do what the config says.
+A role names an agent in config (`/bureau:implementer`), and the identity that
+reference selects depends on the adapter: Copilot keeps the `plugin:agent`
+qualifier, Claude takes the bare agent name, and a path contributes its file
+name. `step_started` carries the role, the configured reference and that
+selected identity, and the log head names it.
 
-So `step_started` carries the role, the configured agent and the resolved one,
-and the log head names the agent the step invoked. `bureau validate --json`
-reports the same pair per role under `agents`, which is where the side panel's
-**Agent identities** section and the head's expected value come from. When the
-two agree the head reads `agent bureau:implementer`; when they do not it names
-both — `invoked implementer; expected bureau:implementer from
-/bureau:implementer` — rather than silently showing whichever one it had.
+Both sides of the comparison are projections of config, never observations of a
+spawn. The run log is written before the worktree guard has captured the
+worktree's originals, so it may only use the pure form — materializing the
+agent there would have the guard record the copy as an *original* and commit it
+onto the run branch. `bureau validate --json` reports the same projection per
+role under `agents`, for the config as it stands now, and that is where the side
+panel's **Agent identities** section and the head's expected value come from.
 
-The canvas does not compute either name. Resolution lives in
-`crates/bureau/src/adapters`, and both the validator and the engine call it, so
-the identity the canvas shows is the identity the engine would use.
+So when the two disagree, what has moved is the config — the run used one
+identity and the config now selects another. The head says exactly that: `this
+run used implementer; the config now selects bureau:implementer`. It used to say
+`invoked implementer; expected …`, which claimed an observation nothing on this
+path makes, about a comparison that against an unchanged config cannot fail at
+all. The **Agent identities** list says `selects` for the same reason, where it
+used to draw an arrow that reads as resolution.
+
+That the logged name really is the one the adapter passes to `--agent` is a
+property of `crates/bureau/src/config/validate.rs`, not a coincidence: an
+`agent` that is neither a plugin invocation nor a `.md` path does not validate,
+and that is the only shape for which the pure and the resolving forms differ.
+Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
+`the_two_forms_diverge_on_the_shape_the_loader_rejects`.
 
 ## Rules worth knowing before changing it
 

@@ -153,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 627056639793,
       matrixStates: 207,
-      probes: 41,
-      states: 248,
-      transitions: 132,
-      entryTransitions: 98,
-      returnTransitions: 34,
+      probes: 43,
+      states: 250,
+      transitions: 136,
+      entryTransitions: 100,
+      returnTransitions: 36,
       roots: 150,
-      renders: 496,
+      renders: 500,
     },
   );
 });
@@ -538,7 +538,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 88, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 89, probe: 19, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1593,6 +1593,8 @@ const PROBE_ROUTES = {
   "probe--create-refusal-dismissed": "fail-intent",
   "probe--delete-refusal-dismissed": "fail-intent",
   "probe--reconcile-now-reported": "pass-intent",
+  "probe--reconcile-now-started-a-run": "pass-starts-run",
+  "probe--replay-opened-from-a-pass": "pass-starts-run",
   "probe--live-count-loading": "stall-runs",
   "probe--draft-save-transport-lost": "abort-intent",
   "probe--editor-save-transport-lost": "abort-intent",
@@ -1636,6 +1638,6 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 92 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 94 },
   );
 });

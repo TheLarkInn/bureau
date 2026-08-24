@@ -78,6 +78,55 @@ export function refusalFor(kind) {
 export const ENDED_RUN = "run-finished";
 
 /**
+ * The run a staged reconcile pass is made to have started.
+ *
+ * The same committed log `ENDED_RUN` names, in a different role: there it is a
+ * finished run reported as live, here it is a finished run the listing did not
+ * carry until the pass answered. Reusing it is deliberate — a hand-off to
+ * Replay has to land on a run whose log really exists, or the button would be
+ * asserted against a screen that cannot draw.
+ */
+export const PASS_RUN = "run-finished";
+
+/**
+ * The listing before the pass: the host's own, minus the run it is about to
+ * start.
+ *
+ * Withholding is what makes the report exact rather than lucky. `reconcileNow`
+ * snapshots the run ids it can already see and only attributes a run that is
+ * *absent* from that snapshot and started after the click, so a pass staged
+ * over an unchanged listing can only ever report "claimed no work".
+ */
+export function withoutPassRun(payload) {
+  return { ...payload, runs: (payload?.runs ?? []).filter((run) => run.run_id !== PASS_RUN) };
+}
+
+/**
+ * The listing after it, with that run back and stamped after the click.
+ *
+ * A projection of the host's own answer, like `offeredAsLive`: the run keeps
+ * its own summary and only `started_at` moves, so the run the button hands to
+ * Replay is one the host really holds a log for. A listing that does not carry
+ * it is left exactly as served — the shim reports no run rather than inventing
+ * one Replay could not open. `atMs` is when the pass answered, necessarily
+ * after the click that issued it, which is the bound `newRunSince` applies so
+ * that a background reconciler's run cannot be reported as this click's doing.
+ */
+export function withPassRun(payload, atMs) {
+  const started = (payload?.runs ?? []).find((run) => run.run_id === PASS_RUN);
+  if (!started) {
+    return payload;
+  }
+  return {
+    ...payload,
+    runs: [...withoutPassRun(payload).runs, { ...started, live: false, started_at: new Date(atMs).toISOString() }],
+  };
+}
+
+/** The answer a pass that started one run gives. */
+export const PASS_STARTED = { ok: true, output: "started 1 run" };
+
+/**
  * The kinds an in-frame shim can serve.
  *
  * `fetch` and `EventSource` are ordinary window properties, so a same-origin
@@ -86,7 +135,7 @@ export const ENDED_RUN = "run-finished";
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "pass-intent", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -128,6 +177,10 @@ export function installIntercept(win, kind) {
   }
   if (kind === "empty-runs" || kind === "stall-runs" || kind === "fail-runs" || kind === "fail-runs-later") {
     interceptRuns(win, kind);
+    return;
+  }
+  if (kind === "pass-starts-run") {
+    passStartsRun(win);
     return;
   }
   if (kind) {
@@ -278,6 +331,44 @@ function stallIntent(win, kind) {
       headers: { "Content-Type": "application/json" },
     }));
   };
+}
+
+/**
+ * A pass that really started something: the write answers `ok`, and the listing
+ * it is read back through gains the run that answer is about.
+ *
+ * This is the only staged pass whose report names a run, so it is the only
+ * condition under which **Open in Replay** is drawn at all. Both halves have to
+ * be one condition: an answer without the listing change reports "claimed no
+ * work", and a listing change without the answer is a run nothing attributes to
+ * this click. The stamp is taken when the pass answers rather than when the
+ * shim is installed, because `newRunSince` compares it against the click.
+ */
+function passStartsRun(win) {
+  const native = win.fetch.bind(win);
+  let answered = null;
+  win.fetch = async (input, init) => {
+    if (/\/intent$/u.test(urlOf(input)) && isWrite(init)) {
+      answered = Date.now();
+      return jsonIn(win, PASS_STARTED);
+    }
+    if (!/\/runs$/u.test(urlOf(input))) {
+      return native(input, init);
+    }
+    const response = await native(input, init);
+    if (!response.ok) {
+      return response;
+    }
+    const payload = await response.json();
+    return jsonIn(win, answered === null ? withoutPassRun(payload) : withPassRun(payload, answered));
+  };
+}
+
+function jsonIn(win, body) {
+  return new win.Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /** A request that is never answered, which is what a hung host looks like. */

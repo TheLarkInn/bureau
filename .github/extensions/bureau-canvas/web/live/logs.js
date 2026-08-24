@@ -41,13 +41,30 @@ function LogHead({ step, kind, record, expectedAgent }) {
   );
 }
 
+/**
+ * The two agent identities a step can be read against, and what their
+ * disagreement actually means.
+ *
+ * Both sides are projections of config, not observations of a spawn: the log
+ * records what the role selected when the run started, and `expectedAgent`
+ * comes from `bureau validate --json` reading the config as it stands now.
+ * `crates/bureau/src/config/validate.rs` is what keeps the logged name equal to
+ * the one the adapter passes to `--agent` — an `agent` that is neither a plugin
+ * reference nor a `.md` path does not validate, and that is the only shape for
+ * which the pure and the resolving forms differ.
+ *
+ * So the badge fires when the config has moved since the run, which is a real
+ * and readable thing. It is not evidence that a spawn used the wrong agent, and
+ * the copy may not say it is: "invoked X" claimed an observation nothing here
+ * made, on a comparison that against an unchanged config cannot fail at all.
+ */
 function AgentIdentity({ record, expectedAgent }) {
   if (!record?.resolvedAgent) {
     return null;
   }
   const mismatch = Boolean(expectedAgent && record.resolvedAgent !== expectedAgent);
   const text = mismatch
-    ? `invoked ${record.resolvedAgent}; expected ${expectedAgent} from ${record.configuredAgent}`
+    ? `this run used ${record.resolvedAgent}; the config now selects ${expectedAgent}`
     : `agent ${record.resolvedAgent}`;
   return h("span", {
     className: `step-agent${mismatch ? " step-agent--mismatch" : ""}`,

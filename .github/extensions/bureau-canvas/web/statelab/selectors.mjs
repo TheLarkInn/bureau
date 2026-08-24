@@ -131,6 +131,13 @@ export const SELECTORS = {
   reconcileNow: '[data-testid="reconcile-now"]',
   reconcileNowPending: '[data-testid="reconcile-now"]:disabled',
   reconcileResult: ".run-control-result",
+  // The hand-off a pass offers when it really started something. It is drawn
+  // only beside a report that names a run, so it is the one control on Live
+  // that no resting state can show — and until it was declared here it was a
+  // shipped button with no state, no edge and no render: dropping the run
+  // argument that wires it would have turned it into a silent no-op with
+  // nothing to fail.
+  openRunReplay: '[data-testid="open-run-replay"]',
   runActivityTitle: '.run-activity__title',
   runActivityIdle: '[data-testid="run-activity"][data-state="idle"]',
   runActivityAvailable: '[data-testid="run-activity"][data-state="available"]',

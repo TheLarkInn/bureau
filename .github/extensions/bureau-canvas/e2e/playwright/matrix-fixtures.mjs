@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { offeredAsLive, reachesHost, refusalFor } from "../../web/statelab/intercept.mjs";
+import { offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
@@ -349,6 +349,30 @@ async function intercept(page, kind) {
     "pass-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) })
       : route.continue()),
+    // The other end of a pass: it started a run, and said which. Both halves
+    // are one condition — the listing withholds that run until the write has
+    // answered, so `newRunSince` can attribute it to this click and the report
+    // names it. Without the withholding the run is already in `known` and the
+    // pass reports "claimed no work"; without the answer no report is drawn at
+    // all. This is the only condition under which **Open in Replay** exists.
+    "pass-starts-run": () => {
+      let answered = null;
+      return Promise.all([
+        page.route(/\/intent$/u, (route) => {
+          if (!writes(route)) {
+            return route.continue();
+          }
+          answered = Date.now();
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PASS_STARTED) });
+        }),
+        page.route(/\/runs$/u, async (route) => {
+          const response = await route.fetch();
+          const payload = await response.json();
+          const listing = answered === null ? withoutPassRun(payload) : withPassRun(payload, answered);
+          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(listing) });
+        }),
+      ]);
+    },
     // The third end of a save, and the one that used to have no screen: the
     // request never reaches a responder at all, so `fetch` rejects rather than
     // answering. `fail-intent` cannot stand in for it — a 500 resolves, and it

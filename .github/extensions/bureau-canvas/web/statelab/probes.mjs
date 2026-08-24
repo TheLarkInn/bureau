@@ -21,8 +21,9 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, viewerCardFor, withheld } from "./selectors.mjs";
-import { INFERRED_FILTER_URL, REPO_ADD_URL, SAMPLE_STEPS, runOps } from "./paths.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replaySpanFor, viewerCardFor, withheld } from "./selectors.mjs";
+import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
+import { PASS_RUN } from "./intercept.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -63,6 +64,18 @@ const EDITOR_BASE = {
   pick: "none",
   edit: "rest",
 };
+
+/**
+ * The payload the editor matrix states are enumerated with, taken from the same
+ * function rather than spelled again.
+ *
+ * A crossing that publishes a different fixture is not a perturbation of a
+ * state, it is a separate screen: `buildTransitions` compares whole `fixture`
+ * ops, so a hand-picked payload silently detaches the probe from the DAG. Both
+ * tab crossings did exactly that, and what it cost them was the return edge —
+ * the only assertion able to fail if the editor drops what it was holding.
+ */
+const EDITOR_FIXTURE = fixtureFor(EDITOR_BASE);
 
 /**
  * The way to a finished concurrent group: publish the pipeline that has one,
@@ -341,6 +354,78 @@ export const PROBES = [
     },
   }),
   /*
+   * The other end of the same control, and the one screen on Live that no
+   * resting state can draw.
+   *
+   * `reportPass` has three sentences; "claimed no work" was the only one under
+   * test, and it is the only one that draws no button. The sentence that names
+   * a run also offers **Open in Replay** — a shipped control that, until this
+   * state existed, appeared in none of the renders, was named by no selector,
+   * and was walked by no edge. Dropping the run argument that wires it would
+   * have made it a silent no-op with nothing to fail.
+   *
+   * Replay rather than Live is the whole point of the hand-off: `reconcile
+   * --now` drains before it returns, so the run it started has already
+   * finished, and a finished run is not something the live-only picker will
+   * offer.
+   */
+  sample({
+    id: "probe--reconcile-now-started-a-run",
+    covers: "the reconcile report that names a run, and the hand-off it offers — the only state in which `open-run-replay` is drawn",
+    summary: "a reconcile pass that started a run and says which: the run had already finished by the time the pass returned, so the way on is Replay",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "pass-starts-run",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "click", selector: S.reconcileNow },
+      { op: "wait", selector: S.openRunReplay },
+    ],
+    expect: {
+      shows: [S.reconcileNow, S.reconcileResult, S.openRunReplay],
+      // Still Live, and still a *result* rather than an error: a pass that
+      // reported through `run-control-error` would read as a failure while
+      // saying what it accomplished.
+      hides: [S.reconcileNowPending, S.runControlError, S.replayControls],
+      copy: [`Reconcile pass finished. It ran ${PASS_RUN}, which has already finished.`],
+    },
+  }),
+  /*
+   * Pressing it. The delta is one click, so the DAG carries this as an edge out
+   * of the state above, and the suite walks it rather than re-entering here.
+   *
+   * What it asserts is the hand-off's whole claim: the reader lands in Replay,
+   * on that run — `replaySpanFor` addresses the timeline by the run's own last
+   * event, so a Replay surface showing some *other* run fails by selector. The
+   * Live controls and the report go with the move, because leaving Live ends
+   * what that visit said.
+   */
+  sample({
+    id: "probe--replay-opened-from-a-pass",
+    covers: "the cross-surface hand-off itself: the button moves the reader to Replay, on the run the pass started, without taking anything away",
+    summary: "Replay, opened from a reconcile report — the run the pass started is the run the timeline spans",
+    fixture: "pipeline",
+    surface: "pipeline",
+    intercept: "pass-starts-run",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeLive },
+      { op: "click", selector: S.reconcileNow },
+      { op: "wait", selector: S.openRunReplay },
+      { op: "click", selector: S.openRunReplay },
+      { op: "wait", selector: replaySpanFor(RUN_END.finished) },
+    ],
+    expect: {
+      shows: [S.replayControls, S.replayTimeline, replaySpanFor(RUN_END.finished)],
+      // The report is speech of a visit to Live that is over, and the button
+      // belongs to it. Both must go, or Replay would carry a sentence about a
+      // pass the reader has already been moved off.
+      hides: [S.runControls, S.openRunReplay, S.reconcileResult],
+      copy: [],
+    },
+  }),
+  /*
    * The badge before it has a number.
    *
    * Every other run-listing state is an answer — empty, failed, failed-later.
@@ -397,6 +482,17 @@ export const PROBES = [
   }),
   // The Relations tab keeps `PipelineEditor` mounted and merely `hidden`, so
   // both tab rules are `scoping`, not structural — and each owes a crossing.
+  //
+  // Both are entered from the matrix state they perturb rather than from a
+  // fixture of their own, and that is what holds their claim to account. On
+  // this tab the crossing is *supposed* to be indistinguishable — a selection
+  // must not leak onto the relation graph — so every expectation a single
+  // render can carry is equally true of the tab with nothing selected, and the
+  // desktop shot is byte-identical to it. The claim that is not vacuous is what
+  // happens next: `S.editorTabRelations` declares its undo, so attaching to the
+  // DAG earns a return edge that presses Pipeline again and holds the result to
+  // the *parent's* expectations — the selection, and the unsaved rename, still
+  // there. An editor that dropped either on a tab switch fails by name.
   crossing({
     id: "probe--selection-behind-relations-tab",
     rule: "selection-needs-the-pipeline-tab",
@@ -404,8 +500,9 @@ export const PROBES = [
     dimensions: { tab: "relations", pick: "deterministic", edit: "n/a" },
     summary: "a step selected, then Relations shown — the selection is held, and none of it may leak onto the relation graph",
     page: "editor",
-    fixture: "pipeline",
+    fixture: EDITOR_FIXTURE,
     ops: [
+      { op: "wait", selector: S.editorTabs },
       { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
       { op: "wait", selector: S.editorStepName },
       { op: "click", selector: S.editorTabRelations },
@@ -420,8 +517,9 @@ export const PROBES = [
     dimensions: { tab: "relations", pick: "deterministic", edit: "renamed" },
     summary: "an unsaved rename held behind the Relations tab — draft safety says it is kept, and the graph must not show it",
     page: "editor",
-    fixture: "pipeline",
+    fixture: EDITOR_FIXTURE,
     ops: [
+      { op: "wait", selector: S.editorTabs },
       { op: "click", selector: editorCardFor(SAMPLE_STEPS.deterministic) },
       { op: "fill", selector: S.editorStepName, value: "deterministic-renamed" },
       { op: "press", selector: S.editorStepName, value: "Enter" },
@@ -832,8 +930,8 @@ export const PROBES = [
   }),
   sample({
     id: "probe--step-agent-agrees",
-    covers: "a run whose invoked agent matches the validated runtime identity",
-    summary: "the run names the qualified agent it invoked without raising a discrepancy",
+    covers: "a step whose logged agent identity is still the one the config selects",
+    summary: "the run names the qualified agent its role selected, and the config still selects it, so nothing is flagged",
     fixture: "pipeline",
     surface: "pipeline",
     ops: [
@@ -848,10 +946,26 @@ export const PROBES = [
       copy: [{ selector: S.stepAgent, text: "agent bureau:implementer" }],
     },
   }),
+  /*
+   * The disagreement, and what it can honestly be about.
+   *
+   * Both names are projections of config — the log holds what the role selected
+   * when the run started, `validate --json` holds what it selects now — so the
+   * only thing that can put them apart is the config moving underneath a
+   * finished run. `run-paused` is that shape: a `/bureau:implementer` reference
+   * logged through the `claude` adapter, which takes the bare agent name, read
+   * against a config whose role is `copilot` and keeps the qualifier.
+   *
+   * It is deliberately *not* "the spawn used the wrong agent". Nothing on this
+   * path observes a spawn: the run log is written before the worktree guard has
+   * captured anything, so it may only use the pure identity. The copy said
+   * "invoked", which claimed an observation that was never made, on a
+   * comparison that against an unchanged config cannot fail.
+   */
   sample({
     id: "probe--step-agent-mismatch",
-    covers: "a run whose invoked agent lost its plugin qualifier",
-    summary: "the run names both the invoked and expected agent when they disagree",
+    covers: "a finished run read against a config that has since changed which agent the role selects",
+    summary: "the run names the agent it used and the one the config now selects, rather than silently showing whichever it had",
     fixture: "pipeline",
     surface: "pipeline",
     ops: [
@@ -864,7 +978,7 @@ export const PROBES = [
       shows: [S.stepAgent, S.stepAgentMismatch],
       copy: [{
         selector: S.stepAgentMismatch,
-        text: "invoked implementer; expected bureau:implementer from /bureau:implementer",
+        text: "this run used implementer; the config now selects bureau:implementer",
       }],
     },
   }),

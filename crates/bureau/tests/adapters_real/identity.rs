@@ -51,3 +51,28 @@ fn the_logged_name_is_the_one_the_adapter_invokes() {
         value_after(&request.argv, "--agent")
     );
 }
+
+/// Why the loader's rule about `agent` is load-bearing rather than tidiness.
+///
+/// "The two agree for every config that validates" is a claim about the pair,
+/// and the reason it holds is `config::validate`: an `agent` that is neither a
+/// plugin invocation nor a `.md` path is a config error, pinned by
+/// `an_agent_must_be_a_plugin_invocation_or_a_path`. This is that claim's other
+/// half. For exactly the shape the loader refuses, the two forms genuinely
+/// disagree — `agent_name` takes the file stem, `resolve_agent` passes the
+/// reference through verbatim — so loosening the rule would put a name in the
+/// run log that the adapter never invoked, and the canvas would report the
+/// disagreement as config drift.
+#[test]
+fn the_two_forms_diverge_on_the_shape_the_loader_rejects() {
+    let dir = TestDir::new("identity-diverges");
+    let role = role("agents/notes", AdapterKind::Copilot, &[]);
+
+    assert_eq!(
+        (
+            bureau::adapters::expected_agent(&role),
+            bureau::adapters::resolved_agent(&role, dir.path()),
+        ),
+        ("notes".to_owned(), "agents/notes".to_owned())
+    );
+}

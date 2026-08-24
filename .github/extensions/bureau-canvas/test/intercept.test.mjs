@@ -15,10 +15,13 @@ import {
   installIntercept,
   IN_FRAME,
   isPreSurface,
+  PASS_RUN,
   READ_INTENTS,
   reachesHost,
   refusalFor,
   servableInFrame,
+  withoutPassRun,
+  withPassRun,
 } from "../web/statelab/intercept.mjs";
 import { STATES } from "../web/statelab/registry.mjs";
 
@@ -60,7 +63,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "stall-intent", "stall-runs", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "stall-intent", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
@@ -90,6 +93,45 @@ test("a held save holds only writes, and lets the two reads through", async () =
     otherUrl: true,
     readsAreKnown: ["derive-work-source", "resolve-repo"],
   });
+});
+
+/**
+ * The pass that started something, as the two projections its report depends
+ * on. Both halves have to hold or the sentence is not the one that names a run.
+ *
+ * `reconcileNow` snapshots the run ids it can already see before it posts, and
+ * `newRunSince` attributes only a run absent from that snapshot *and* stamped
+ * after the click. So withholding is not decoration: over an unchanged listing
+ * the run is already in `known`, the pass reports "claimed no work", and **Open
+ * in Replay** is never drawn. The second half is a projection rather than a
+ * replacement — the run keeps its own summary, so the hand-off lands on a run
+ * the host really holds a log for, and only `started_at` moves.
+ */
+test("a pass that starts a run withholds it first, then returns it stamped after the click", () => {
+  const listing = { runs: [{ run_id: "other", started_at: "2026-01-01T00:00:00.000Z", live: true }, { run_id: PASS_RUN, assignment: "agent-eligible", started_at: "2026-01-01T00:00:00.000Z", live: true }] };
+  const clicked = Date.parse("2026-08-24T10:00:00.000Z");
+  const after = withPassRun(listing, clicked).runs.find((run) => run.run_id === PASS_RUN);
+
+  assert.deepEqual(
+    {
+      before: withoutPassRun(listing).runs.map((run) => run.run_id),
+      after: withPassRun(listing, clicked).runs.map((run) => run.run_id),
+      stamped: Date.parse(after.started_at) >= clicked,
+      // Finished, because `reconcile --now` drains before it returns — which is
+      // why the hand-off is to Replay and not to the live-only picker.
+      settled: [after.live, after.assignment],
+      // A listing that does not carry the run is left exactly as served: the
+      // shim reports no run rather than inventing one Replay cannot open.
+      absent: withPassRun({ runs: [{ run_id: "other" }] }, clicked).runs.map((run) => run.run_id),
+    },
+    {
+      before: ["other"],
+      after: ["other", PASS_RUN],
+      stamped: true,
+      settled: [false, "agent-eligible"],
+      absent: ["other"],
+    },
+  );
 });
 
 /**

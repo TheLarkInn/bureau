@@ -264,16 +264,29 @@ export function useLiveOverlay(activity, onOpenReplay) {
     }, reconciling ? "Reconciling…" : "Run reconcile now"),
     runId ? h(RunButtons, { overlay, onAction: send, busy: controlBusy }) : null,
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
-    reconcileResult ? h("p", {
-      className: reconcileResult.ok ? "run-control-result" : "run-control-error",
-      role: "status",
-    }, reconcileResult.message) : null,
-    reconcileResult?.run ? h("button", {
-      type: "button",
-      className: "run-control",
-      "data-testid": "open-run-replay",
-      onClick: () => onOpenReplay?.(reconcileResult.run),
-    }, "Open in Replay") : null,
+    /*
+     * The report and the offer it makes, as one group.
+     *
+     * `.run-controls` wraps, so as two siblings the sentence ended one row and
+     * the button began the next at the far left — a reader met "Open in Replay"
+     * before reading what it was about, and the offer read as a standing
+     * control of the surface rather than as part of what this pass reported.
+     * Keeping them together is also what makes them leave together.
+     */
+    reconcileResult ? h(
+      "div",
+      { className: "reconcile-report" },
+      h("p", {
+        className: reconcileResult.ok ? "run-control-result" : "run-control-error",
+        role: "status",
+      }, reconcileResult.message),
+      reconcileResult.run ? h("button", {
+        type: "button",
+        className: "run-control",
+        "data-testid": "open-run-replay",
+        onClick: () => onOpenReplay?.(reconcileResult.run),
+      }, "Open in Replay") : null,
+    ) : null,
   );
 
   /**
