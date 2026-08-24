@@ -5,7 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { RunPicker } from "../modes.js";
-import { applyEvent, emptyOverlay, newRunSince, runActions } from "./overlay.js";
+import { RECONCILE_REFUSED, applyEvent, emptyOverlay, newRunSince, reconcileReason, runActions } from "./overlay.js";
 
 const h = React.createElement;
 
@@ -29,20 +29,6 @@ const REFUSED = {
   "cancel-run": "could not cancel this run",
 };
 
-/** What is said when a reconcile pass could not be started at all. */
-const RECONCILE_REFUSED = "Could not run reconcile now.";
-
-/**
- * The host's reason, and a sentence when it gave none.
- *
- * Coalescing on *emptiness* rather than on nullish is the whole point. A
- * non-zero exit with no output produces `output: ""`, and `""` is not nullish —
- * so `??` chained past it and rendered a refusal as an empty red paragraph,
- * which announces nothing at all to a screen reader.
- */
-function reason(result) {
-  return result?.error || result?.output || RECONCILE_REFUSED;
-}
 
 /** One SSE frame, or `null` when it is not the JSON this channel promises. */
 function parseFrame(data) {
@@ -63,7 +49,7 @@ function postReconcile() {
     .then((response) => response.json())
     .then((result) => (result?.ok
       ? { ok: true }
-      : { ok: false, message: reason(result) }))
+      : { ok: false, message: reconcileReason(result) }))
     .catch(() => ({ ok: false, message: RECONCILE_REFUSED }));
 }
 

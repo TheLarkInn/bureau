@@ -10,6 +10,7 @@ import {
   applyEvents,
   emptyOverlay,
   newRunSince,
+  reconcileReason,
   resolveOverlay,
   runActions,
   runsForPipeline,
@@ -377,6 +378,35 @@ test("only a run that is both new and later than the click is the pass's own", (
  * over a directory holding them, which is the same untruth as reading a failed
  * listing as zero.
  */
+/*
+ * The refusal a host gives without giving a reason.
+ *
+ * `runBureau` reports a non-zero exit as `output: `${stdout}${stderr}`.trim()`,
+ * which is the empty string when the command failed silently. `""` is not
+ * nullish, so a `??` chain selects it and the surface renders a refusal as an
+ * empty paragraph — red, `role="status"`, and announcing nothing at all. The
+ * distinction is invisible to every fixture that omits the key entirely, which
+ * is why it is pinned here on the value rather than through a rendered state.
+ */
+test("a refusal with no reason still says something", () => {
+  assert.deepEqual(
+    [
+      reconcileReason({ ok: false, error: "bureau binary not available" }),
+      reconcileReason({ ok: false, output: "exit 2" }),
+      reconcileReason({ ok: false, output: "" }),
+      reconcileReason({ ok: false }),
+      reconcileReason(undefined),
+    ],
+    [
+      "bureau binary not available",
+      "exit 2",
+      "Could not run reconcile now.",
+      "Could not run reconcile now.",
+      "Could not run reconcile now.",
+    ],
+  );
+});
+
 test("runs no pipeline can claim are counted, not discarded", () => {
   const runs = [
     { run_id: "owned", assignment: "first", pipeline: "shared" },

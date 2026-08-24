@@ -68,6 +68,25 @@ export function runsOffered(runs, { liveOnly, watching }) {
   return (runs ?? []).filter((run) => !liveOnly || run.live || run.run_id === watching);
 }
 
+/** What is said when a reconcile pass could not be started at all. */
+export const RECONCILE_REFUSED = "Could not run reconcile now.";
+
+/**
+ * The host's reason for refusing a pass, and a sentence when it gave none.
+ *
+ * Coalescing on *emptiness* rather than on nullish is the whole point.
+ * `runBureau` reports a non-zero exit as `` `${stdout}${stderr}`.trim() ``,
+ * which is `""` when the command failed silently — and `""` is not nullish, so
+ * a `??` chain selects it and the surface draws a refusal as an empty red
+ * paragraph that announces nothing at all to a screen reader.
+ *
+ * Here rather than in `live.js` for the reason `runActions` is: `live.js`
+ * imports React, so the offline suite cannot load it. A sentence the reader
+ * depends on is decided in the module that can be held without a browser.
+ */
+export function reconcileReason(result) {
+  return result?.error || result?.output || RECONCILE_REFUSED;
+}
 /** Runs whose recorded pipeline, or assignment fallback, belongs to this view. */
 export function runsForPipeline(runs, pipeline, assignments = []) {
   const owners = new Set(
