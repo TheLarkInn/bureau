@@ -234,6 +234,55 @@ starts from a fresh session, because the assignment stack remembers its
 expanded card in `sessionStorage` and a replayed path would otherwise toggle
 it shut.
 
+### A render that was not proved settled says so
+
+The matrix waits for a state's own signature to stop changing before it judges
+and captures it, and under a fully-parallel run it does not always get there
+inside the budget — the residue is CPU contention rather than a step the page
+takes, and it is measured in `matrix-fixtures.mjs` beside the constant that
+sets the window. What matters is what happens to the renders that miss it.
+
+They used to be published indexed and captioned like any other, which made two
+different claims untrue at once. A reviewer scrolling the gallery was signing
+off on a frame a contended worker happened to be drawing, with nothing to
+distinguish it from a screen the product actually holds. And the twin audit
+compared those frames as evidence: on one run it reported three declared twins
+as "no longer draw the same screen", and rendering the same six states one at a
+time produced byte-identical signatures for all three pairs. The audit had
+published its own contention as a finding about the UI.
+
+So every render now carries whether it was proved settled, `settled.json`
+records it beside `signatures.json`, the figure is marked in the gallery, and a
+mismatched twin is a `broken-twin` only when **both** sides were proved —
+otherwise it is an `unproven-twin`, which says the difference is a frame rather
+than a finding. `web/statelab/lab.mjs` has always refused to present an
+unsettled render as verified; this is the browser suite keeping the same rule,
+and the two consumers of one registry no longer disagree about what a render is
+worth.
+
+The first thing the rule found is the one it should: on a clean run the only
+renders it marks are the two for `transport:playing`, the replay state whose
+scrubber advances on a 100ms interval. That state is animating by design — the
+registry already says so, and asserts the Play button's label rather than its
+position for exactly that reason — and it is the one screen in the gallery a
+reviewer must not read as fixed. The marker says so on the figure.
+
+Which is also why an unsettled render gets its own amber note and never the red
+banner. That banner asserts one thing — this gallery is not the whole matrix,
+or not every state in it draws its own screen — and an unsettled render is
+neither. Counting it as a finding would have lit the alarm on every clean run
+from the first, and a review surface that cries wolf about itself is read as
+background by the second time. An offline test holds the two apart.
+
+And a twin that really has broken now says what it broke in. The renders a
+declared twin names carry their signature as well as its digest, so the finding
+quotes the first element the two disagree on. Before, a broken claim was a dead
+end: two screenshots, two hashes, and a difference that is usually one attribute
+on one element — the thing a person cannot find by eye and a diff finds at once.
+
+A render missing a settle record reads as proved, so a gallery published before
+this rule existed is not retroactively cast into doubt.
+
 ### Absence, and the writes that are not a Save
 
 Two families of screen were missing from the matrix for as long as it has

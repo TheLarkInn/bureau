@@ -483,6 +483,11 @@ const SETTLE_POLL_MS = 100;
  * instants — and measured 61 of 500, no better than the poll for an extra
  * round trip per sample. So the poll stays, the residue is #116, and that is
  * why the twin audit reports rather than gates.
+ *
+ * What the residue no longer does is masquerade as a finding. A render that
+ * never reaches this window is filed as unsettled, so the audit can tell a
+ * screen that differs from a frame that had not finished, and the gallery marks
+ * it rather than offering it for review as though it had.
  */
 const SETTLE_REPEATS = 3;
 
@@ -530,6 +535,18 @@ const SETTLE_REPEATS = 3;
  * screenshots a moment later and files a signature for. Handing back an earlier
  * snapshot filed a signature for a frame the gallery does not show, so the twin
  * audit compared descriptions of renders nobody could look at.
+ *
+ * Whether the window was ever reached is returned as well, and that is the part
+ * this loop used to keep to itself. A render that ran out of budget is a frame
+ * the page happened to be drawing, and it was handed to the gallery indexed,
+ * captioned and indistinguishable from a settled one — so a reviewer signed off
+ * on a possibly-raced screen, and the twin audit compared it as though it were
+ * evidence. `web/statelab/lab.mjs` has never done this: it says "Not proved
+ * settled" rather than presenting such a render as verified, and the two
+ * consumers of one registry disagreeing about that is the contradiction
+ * `settled` closes. It is stability alone, deliberately: "the DOM stopped
+ * changing" is the property the audit needs, and a state that settles on a
+ * wrong render is still a settled render — the failure is what reports that.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
@@ -538,10 +555,14 @@ async function judge(state, page) {
   let sustained = result.failures.length ? 1 : 0;
   let agreed = 0;
   let previous = null;
-  while (Date.now() < deadline) {
+  for (;;) {
     agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
-    if (isSettled(result, agreed)) {
-      return result;
+    const settled = agreed >= SETTLE_REPEATS;
+    if (settled && !result.failures.length) {
+      return { ...result, settled };
+    }
+    if (Date.now() >= deadline) {
+      return { ...atDeadline(result, clean, sustained), settled };
     }
     previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
@@ -549,15 +570,14 @@ async function judge(state, page) {
     sustained = result.failures.length ? sustained + 1 : 0;
     clean ??= result.failures.length ? null : result;
   }
+}
+
+function atDeadline(result, clean, sustained) {
   const source = deadlineVerdict(
     { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
     SETTLE_REPEATS,
   );
   return source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
-}
-
-function isSettled(result, agreed) {
-  return result.failures.length === 0 && agreed >= SETTLE_REPEATS;
 }
 
 async function sample(state, page) {

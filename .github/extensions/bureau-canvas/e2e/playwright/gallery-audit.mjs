@@ -52,6 +52,16 @@ export function auditNames(expected, present) {
 }
 
 /**
+ * Every render name a declared twin mentions.
+ *
+ * Used to decide which renders are worth filing a full signature for: only a
+ * pair the registry has made a claim about is ever asked what it differs in.
+ */
+export function twinParticipants(twins) {
+  return new Set(twins.flatMap((twin) => keysFor(twin).flat()));
+}
+
+/**
  * States whose renders are the same screen on purpose, and why.
  *
  * A twin is a claim in both directions. If the two stop matching, the claim was
@@ -60,22 +70,44 @@ export function auditNames(expected, present) {
  * that does. A twin whose renders are *absent* is reported too, and separately:
  * a partial run would otherwise return clean for twins it never compared, which
  * is the audit quietly saying "checked" about work it did not do.
+ *
+ * `records` is one entry per render — `{ signature, settled, detail }` — rather
+ * than a bare digest map, because a digest can only ever answer "do these two
+ * draw the same screen". The two things this audit could not previously say are
+ * both in the rest of the record: whether a render was proved to have stopped
+ * changing, and, when a claim really has broken, what it broke in.
+ *
+ * A pair that differs is evidence of a difference only when both sides were
+ * proved settled; otherwise one of them is a frame a contended worker happened
+ * to be drawing, and calling that a broken claim points a reviewer at a screen
+ * that is not the product. A record without a `settled` field reads as proved,
+ * so an artefact from a run that filed no settle-proof reads exactly as it did
+ * before: absence of a record is not evidence of doubt.
  */
-export function auditTwins(signatures, twins) {
-  const byName = new Map(Object.entries(signatures));
+export function auditTwins(records, twins) {
+  const byName = new Map(Object.entries(records));
   const declared = new Set(twins.flatMap((twin) => keysFor(twin).map(pairKey)));
   const groups = new Map();
-  for (const [name, digest] of byName) {
+  for (const [name, record] of byName) {
     // Grouped per viewport, because that is as far as a geometry-free
     // signature may be compared. The two layouts draw the same DOM for most
     // states on purpose — `Loading…` at 760px and at 1280px is one screen
     // described twice, not a coincidence worth reporting — so a cross-viewport
     // match says nothing, and five of the first run's findings were exactly
     // that.
-    const key = `${viewportOf(name)}::${digest}`;
+    const key = `${viewportOf(name)}::${record.signature}`;
     groups.set(key, [...(groups.get(key) ?? []), name]);
   }
   return [...undeclared(groups, declared), ...broken(twins, byName)];
+}
+
+/** Every render this run could not prove had stopped changing. */
+export function auditSettled(records) {
+  return Object.keys(records).filter((name) => records[name]?.settled === false).sort();
+}
+
+function proved(record) {
+  return record?.settled !== false;
 }
 
 function viewportOf(name) {
@@ -128,15 +160,58 @@ function broken(twins, byName) {
           kind: "unchecked-twin",
           detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and this run rendered neither or only one, so the claim was not tested`,
         });
-      } else if (byName.get(one) !== byName.get(other)) {
-        findings.push({
-          kind: "broken-twin",
-          detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and no longer do`,
-        });
+      } else if (byName.get(one).signature !== byName.get(other).signature) {
+        findings.push(parted(twin, one, other, byName));
       }
     }
   }
   return findings;
+}
+
+/**
+ * What a mismatched pair means, which depends on whether both renders settled.
+ *
+ * Proved on both sides, the two screens really differ and the declaration is
+ * wrong or the UI regressed — and the finding then carries the first line the
+ * two signatures disagree on, because a reviewer sent to compare two
+ * screenshots and a hash has been told there is a difference and given no way
+ * to find it.
+ *
+ * With either side unproved, the mismatch is a frame rather than a screen, and
+ * saying "no longer draw the same screen" would send a reviewer looking for a
+ * difference that is not in the product.
+ */
+function parted(twin, one, other, byName) {
+  const unproved = [one, other].filter((name) => !proved(byName.get(name)));
+  if (unproved.length) {
+    return {
+      kind: "unproven-twin",
+      detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and differ, but ${unproved.join(" and ")} never stopped changing inside the settle budget, so the difference is a frame rather than a finding`,
+    };
+  }
+  return {
+    kind: "broken-twin",
+    detail: `${one} and ${other} are declared to draw the same screen (${twin.why}) and no longer do${difference(byName.get(one).detail, byName.get(other).detail)}`,
+  };
+}
+
+/**
+ * The first line two signatures disagree on, as a sentence.
+ *
+ * Says nothing when the run filed no detail for either render — only twin
+ * participants carry one — rather than inventing a difference it cannot see.
+ */
+export function difference(one, other) {
+  if (typeof one !== "string" || typeof other !== "string") {
+    return "";
+  }
+  const left = one.split("\n");
+  const right = other.split("\n");
+  const at = left.findIndex((line, index) => line !== right[index]);
+  if (at === -1) {
+    return left.length === right.length ? "" : `; they differ in length alone (${left.length} vs ${right.length} elements)`;
+  }
+  return `; first difference at element ${at + 1} of ${Math.max(left.length, right.length)}: ${JSON.stringify(left[at] ?? null)} vs ${JSON.stringify(right[at] ?? null)}`;
 }
 
 function pairsOf(group) {

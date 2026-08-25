@@ -10,27 +10,48 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
+import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
-import { shotName } from "../gallery-audit.mjs";
+import { shotName, twinParticipants } from "../gallery-audit.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
+const TWIN_SHOTS = twinParticipants(RENDER_TWINS);
 
 function shot(state, viewport) {
   return shotName(state.id, viewport.id);
 }
 
 /**
- * The render's DOM signature, filed beside its screenshot for the teardown to
- * audit. One small file per render rather than one shared file, because the
- * renders are written by several workers at once and a shared file is a race.
- * `global-teardown.mjs` collapses them into the gallery's `signatures.json`.
+ * The render's DOM signature and whether it was ever proved settled, filed
+ * beside its screenshot for the teardown to audit. One small file per render
+ * rather than one shared file, because the renders are written by several
+ * workers at once and a shared file is a race. `global-teardown.mjs` collapses
+ * them into the gallery's `signatures.json` and `settled.json`.
+ *
+ * Settle-proof is filed rather than inferred because it cannot be recovered
+ * afterwards: a raced frame and a settled one are the same PNG and the same
+ * digest to anything reading the published directory. Only the loop that took
+ * the sample knows, and it now says so.
+ *
+ * Renders that a declared twin names carry the signature itself as well as its
+ * digest. A digest answers "do these two draw the same screen" and nothing
+ * else, so a broken twin was a dead end: the audit could say two states had
+ * stopped matching and could not say in what, and a reviewer had two
+ * screenshots and a hash. It is kept to the renders a twin actually names —
+ * a couple of dozen rather than five hundred — because that is the only place
+ * the difference is ever asked for.
  */
-async function fileSignature(name, signature) {
+async function fileSignature(name, result) {
   const dir = join(galleryDir(), "signatures");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, `${name}.sha`), createHash("sha256").update(signature ?? "").digest("hex"), "utf8");
+  const signature = result?.snapshot?.signature ?? "";
+  const record = {
+    signature: createHash("sha256").update(signature).digest("hex"),
+    settled: Boolean(result?.settled),
+    ...(TWIN_SHOTS.has(name) ? { detail: signature } : {}),
+  };
+  await writeFile(join(dir, `${name}.json`), JSON.stringify(record), "utf8");
 }
 
 for (const viewport of VIEWPORT_LIST) {
@@ -41,7 +62,7 @@ for (const viewport of VIEWPORT_LIST) {
         const result = await enterState(state, watched.page, host);
 
         await watched.page.screenshot({ path: join(galleryDir(), shot(state, viewport)), fullPage: true });
-        await fileSignature(shot(state, viewport), result.snapshot?.signature);
+        await fileSignature(shot(state, viewport), result);
         await testInfo.attach(`${viewport.id} ${state.id}`, {
           path: join(galleryDir(), shot(state, viewport)),
           contentType: "image/png",
@@ -106,7 +127,7 @@ test("@matrix gallery index", async () => {
       <p class="muted">${escape(state.summary ?? "")}</p>
       <p class="meta">${escape(state.kind)}${describeProbe(state)} · fixture ${escape([].concat(state.fixture ?? []).join(" + ") || "none")}</p>
       <div class="shots">
-        ${VIEWPORT_LIST.map((viewport) => `<figure><img loading="lazy" src="./${shot(state, viewport)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${viewport.id}</figcaption></figure>`).join("")}
+        ${VIEWPORT_LIST.map((viewport) => `<figure data-shot="${escape(shot(state, viewport))}"><img loading="lazy" src="./${shot(state, viewport)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${viewport.id}</figcaption></figure>`).join("")}
       </div>
     </article>`).join("");
 
@@ -137,6 +158,12 @@ function page(rows) {
   figure { margin:0; }
   img { width:100%; border:1px solid var(--border); border-radius:6px; display:block; }
   figcaption { color:var(--muted); font-size:12px; padding-top:.25rem; }
+  /* Stamped by global-teardown.mjs on renders whose DOM never stopped changing
+     inside the settle budget. The marker sits on the figure a reviewer is
+     looking at rather than only in the banner, because the judgement being made
+     is about that screen. */
+  figure[data-settled="false"] img { border-color:#9a6700; border-width:2px; }
+  figure[data-settled="false"] figcaption::after { content:" · not proved settled"; color:#9a6700; font-weight:700; }
 </style></head>
 <body>
 <header><h1>Bureau Canvas state gallery</h1><p class="muted">${STATES.length} states × ${VIEWPORT_LIST.length} viewports, rendered by the production page.</p></header>

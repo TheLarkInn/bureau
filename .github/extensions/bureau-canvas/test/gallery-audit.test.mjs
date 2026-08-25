@@ -12,12 +12,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditNames, auditTwins, expectedShots, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, expectedShots, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { markUnsettled, notices } from "../e2e/playwright/global-teardown.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const VIEWPORTS = [{ id: "desktop" }, { id: "compact" }];
 const STATES = [{ id: "surface:config+card:expanded" }, { id: "probe--draft-bar" }];
+
+/**
+ * One record per render, which is the shape the audit reads: a digest of what
+ * the render drew, whether it was proved to have stopped changing, and — for
+ * the handful of renders a declared twin names — the signature itself.
+ */
+function drew(signatures, settled = {}, details = {}) {
+  return Object.fromEntries(Object.entries(signatures).map(([name, signature]) => [
+    name,
+    {
+      signature,
+      ...(name in settled ? { settled: settled[name] } : {}),
+      ...(name in details ? { detail: details[name] } : {}),
+    },
+  ]));
+}
 
 test("a state's render is named the same way by the registry and the audit", () => {
   assert.deepEqual(
@@ -62,7 +79,7 @@ test("two states drawing one screen are reported unless the registry says why", 
   const twin = { a: "probe--refusal-dismissed", b: "surface:config+disclosure:create", viewports: ["desktop"], why: "the refusal left with the create it was about" };
 
   assert.deepEqual(
-    [auditTwins(same, []).map((finding) => finding.kind), auditTwins(same, [twin])],
+    [auditTwins(drew(same), []).map((finding) => finding.kind), auditTwins(drew(same), [twin])],
     [["undeclared-twin"], []],
   );
 });
@@ -77,7 +94,7 @@ test("a declared twin that no longer draws one screen is reported too", () => {
   const parted = { [A]: "digest-1", [B]: "digest-9" };
   const twin = { a: "probe--refusal-dismissed", b: "surface:config+disclosure:create", viewports: ["desktop"], why: "the refusal left with the create it was about" };
 
-  const findings = auditTwins(parted, [twin]);
+  const findings = auditTwins(drew(parted), [twin]);
 
   assert.deepEqual(
     [findings.map((finding) => finding.kind), findings[0].detail.includes("the refusal left with the create")],
@@ -96,7 +113,7 @@ test("a twin declared at one viewport does not excuse the other", () => {
   const same = { [A]: "digest-1", [B]: "digest-1", [compactA]: "digest-3", [compactB]: "digest-3" };
   const twin = { a: "probe--refusal-dismissed", b: "surface:config+disclosure:create", viewports: ["desktop"], why: "the refusal left with the create it was about" };
 
-  assert.deepEqual(auditTwins(same, [twin]).map((finding) => finding.detail.includes("compact--")), [true]);
+  assert.deepEqual(auditTwins(drew(same), [twin]).map((finding) => finding.detail.includes("compact--")), [true]);
 });
 
 /**
@@ -108,7 +125,7 @@ test("a twin declared at one viewport does not excuse the other", () => {
 test("one state rendered at both viewports is not a twin of itself", () => {
   const both = { [A]: "digest-1", [shotName("probe--refusal-dismissed", "compact")]: "digest-1" };
 
-  assert.deepEqual(auditTwins(both, []), []);
+  assert.deepEqual(auditTwins(drew(both), []), []);
 });
 
 /**
@@ -125,9 +142,9 @@ test("a twin this run did not render is reported as unchecked, not as holding", 
 
   assert.deepEqual(
     [
-      auditTwins({ [A]: "digest-1" }, [twin]).map((finding) => finding.kind),
+      auditTwins(drew({ [A]: "digest-1" }), [twin]).map((finding) => finding.kind),
       auditTwins({}, [twin]).map((finding) => finding.kind),
-      auditTwins({ [A]: "digest-1", [B]: "digest-1" }, [twin]).map((finding) => finding.kind),
+      auditTwins(drew({ [A]: "digest-1", [B]: "digest-1" }), [twin]).map((finding) => finding.kind),
     ],
     [["unchecked-twin"], ["unchecked-twin"], []],
   );
@@ -145,7 +162,7 @@ test("a group of renders drawing one screen is reported once, with a count", () 
   const D = shotName("surface:config+section:empty", "desktop");
   const crowd = { [A]: "same", [B]: "same", [C]: "same", [D]: "same" };
 
-  const findings = auditTwins(crowd, []);
+  const findings = auditTwins(drew(crowd), []);
 
   assert.deepEqual(
     [findings.length, findings[0].kind, findings[0].detail.includes("4 renders draw the same screen")],
@@ -168,5 +185,155 @@ test("every state in the registry names its own render file", () => {
   assert.deepEqual(
     [shots.length, new Set(shots).size],
     [REGISTRY_STATES.length * Object.values(REAL_VIEWPORTS).length, shots.length],
+  );
+});
+
+const TWIN = {
+  a: "probe--refusal-dismissed",
+  b: "surface:config+disclosure:create",
+  viewports: ["desktop"],
+  why: "the refusal left with the create it was about",
+};
+
+/**
+ * A render whose DOM never stopped changing is not a screen, and the audit may
+ * not report a difference between one of those and anything else as news about
+ * the product.
+ *
+ * This is not hypothetical. Three of this tree's declared twins reported broken
+ * on a fully-parallel matrix run and matched exactly when the same six states
+ * were rendered one at a time — the harness's own contention, published in the
+ * gallery banner as a claim that the UI had regressed. A reviewer acting on it
+ * would go looking for a difference that is not there, which is worse than the
+ * audit saying nothing: it spends the one thing a review surface trades in.
+ */
+test("a twin that differs on a render nothing could settle is unproven, not broken", () => {
+  const parted = { [A]: "digest-1", [B]: "digest-9" };
+
+  assert.deepEqual(
+    [
+      auditTwins(drew(parted, { [A]: true, [B]: false }), [TWIN]).map((finding) => finding.kind),
+      auditTwins(drew(parted, { [A]: true, [B]: true }), [TWIN]).map((finding) => finding.kind),
+    ],
+    [["unproven-twin"], ["broken-twin"]],
+  );
+});
+
+/** The unproven finding names which side was never proved, so it is actionable. */
+test("an unproven twin names the render that never settled", () => {
+  const parted = drew({ [A]: "digest-1", [B]: "digest-9" }, { [A]: false, [B]: false });
+
+  const findings = auditTwins(parted, [TWIN]);
+
+  assert.deepEqual(
+    [findings.length, findings[0].detail.includes(A), findings[0].detail.includes(B)],
+    [1, true, true],
+  );
+});
+
+/**
+ * A settled pair that matches is still no finding, and an artefact from a run
+ * that filed no settle-proof reads exactly as it did before: absence of a
+ * record is not evidence of doubt, or every gallery written before this rule
+ * existed would re-read as unreliable.
+ */
+test("settle-proof changes nothing about a twin that holds, or one with no record", () => {
+  const same = { [A]: "digest-1", [B]: "digest-1" };
+  const parted = { [A]: "digest-1", [B]: "digest-9" };
+
+  assert.deepEqual(
+    [
+      auditTwins(drew(same, { [A]: false, [B]: false }), [TWIN]),
+      auditTwins(drew(parted), [TWIN]).map((finding) => finding.kind),
+    ],
+    [[], ["broken-twin"]],
+  );
+});
+
+test("the audit names every render this run could not prove had settled", () => {
+  assert.deepEqual(auditSettled(drew({ [B]: "s", [A]: "s", [C]: "s" }, { [B]: true, [A]: false, [C]: false })), [A, C].sort());
+});
+
+/**
+ * A broken claim has to say what broke.
+ *
+ * "These two no longer draw the same screen" leaves a reviewer with two
+ * screenshots and a hash, and the difference the audit is reporting is often a
+ * single attribute on a single element — exactly the thing a person cannot find
+ * by eye and a diff finds instantly. So the renders a twin names carry their
+ * signature, and the finding quotes the first line the two disagree on.
+ */
+test("a broken twin names the element the two renders disagree on", () => {
+  const one = "DIV class=app-shell\nBUTTON data-testid=create-submit,disabled=\nP class=note";
+  const other = "DIV class=app-shell\nBUTTON data-testid=create-submit\nP class=note";
+  const parted = drew({ [A]: "digest-1", [B]: "digest-9" }, {}, { [A]: one, [B]: other });
+
+  const findings = auditTwins(parted, [TWIN]);
+
+  assert.deepEqual(
+    [findings[0].kind, findings[0].detail.includes("first difference at element 2 of 3"), findings[0].detail.includes("disabled=")],
+    ["broken-twin", true, true],
+  );
+});
+
+/**
+ * Only twin participants carry a signature, and a run that filed none must not
+ * grow an invented explanation. The finding still stands; it simply stops at
+ * what it knows.
+ */
+test("a broken twin with no signature filed reports the break and no difference", () => {
+  const findings = auditTwins(drew({ [A]: "digest-1", [B]: "digest-9" }), [TWIN]);
+
+  assert.deepEqual(
+    [findings[0].kind, findings[0].detail.includes("first difference")],
+    ["broken-twin", false],
+  );
+});
+
+/**
+ * The mark goes on the figure, not only in the banner.
+ *
+ * A reviewer scrolls to the state they care about, and a count at the top of a
+ * five-hundred-state page does not travel with them. The whole value of knowing
+ * a render was not settled is that it is attached to the screen being judged —
+ * so the tag lands on that figure and on no other.
+ */
+test("marking tags the unsettled figure and leaves its neighbours alone", () => {
+  const html = `<figure data-shot="${A}"><img src="./${A}"></figure><figure data-shot="${B}"><img src="./${B}"></figure>`;
+
+  assert.equal(
+    markUnsettled(html, [A]),
+    `<figure data-shot="${A}" data-settled="false"><img src="./${A}"></figure><figure data-shot="${B}"><img src="./${B}"></figure>`,
+  );
+});
+
+/**
+ * An unsettled render is not a hole in the gallery, and must not raise the
+ * alarm that says it is.
+ *
+ * The red banner asserts one specific thing — "this gallery is not the whole
+ * matrix, or not every state in it draws its own screen" — and at least one
+ * unsettled render is the *expected* result of every full run, because
+ * `transport:playing` advances on a 100ms interval and can never reach the
+ * settle window. Counting it as a finding would light the alarm on every clean
+ * run, which is a review surface that cries wolf about itself: after the second
+ * time, the banner that means a state was never rendered is read as background.
+ */
+test("an unsettled render is noted without raising the alarm banner", () => {
+  const only = notices([], [], [A, B]);
+
+  assert.deepEqual(
+    [only.includes("not the whole matrix"), only.includes("not proved settled"), notices([], [], [])],
+    [false, true, ""],
+  );
+});
+
+/** A real finding still raises it, and carries the note alongside rather than instead. */
+test("a gallery that is missing renders raises the alarm, unsettled or not", () => {
+  const both = notices(["1 render(s) were never written by this run"], [A], [B]);
+
+  assert.deepEqual(
+    [both.includes("not the whole matrix"), both.includes(A), both.includes("not proved settled")],
+    [true, true, true],
   );
 });
