@@ -11,6 +11,9 @@
 // test can see another worker's files. `@matrix gallery index` therefore cannot
 // assert that the figures it links exist — it runs while other workers are
 // still rendering, and says so — and that is exactly the gap this closes.
+//
+// It is a gate: a finding here fails the run. `report` below records why that
+// is now safe and what had to be fixed first.
 
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,7 +26,7 @@ import { GALLERY, staging } from "./gallery-paths.mjs";
 
 const SIGNATURES = "signatures";
 
-export default async function globalTeardown() {
+export default async function globalTeardown(config) {
   const signatures = await collapseSignatures(staging());
   const published = await publishGallery(staging(), GALLERY);
   if (!published.length) {
@@ -38,7 +41,7 @@ export default async function globalTeardown() {
     console.log(`gallery: this run rendered no index; browse the files directly under ${GALLERY}`);
     return;
   }
-  await report(published, signatures);
+  await report(published, signatures, config);
 }
 
 /**
@@ -63,22 +66,38 @@ async function collapseSignatures(dir) {
  * States the gallery links but does not hold, states it holds that the registry
  * does not, and states that draw one another's screen without saying so.
  *
- * Reported into the artefact rather than thrown, and that is a measured
- * decision rather than a soft one. The signature still drifts on about an
- * eighth of the renders between two runs of one tree — some content arrives
- * after the surface has stopped changing for a poll interval, so a render is
- * occasionally captured a beat early — and a gate on a drifting signal fails
- * runs at random. This repository's own rule is that a flaky gate is worse than
- * no gate, so the audit publishes what it found where the reviewer is already
- * looking, and the drift is filed rather than papered over.
+ * This throws, and until this change it did not. The reason it did not was
+ * measured and recorded: the signature drifted on about an eighth of the
+ * renders between two runs of one tree, and a gate on a drifting signal fails
+ * runs at random, which is worse than no gate at all.
  *
- * What it publishes is still a contradiction the registry could not previously
- * face: `signatures.json` is a diffable record of what each state actually
- * drew, the index says out loud when it is not the whole matrix, and every pair
- * of states drawing one screen is either declared in `RENDER_TWINS` with a
- * reason or named here as news.
+ * The drift is gone, and it was never the late content everyone took it for.
+ * The config surface mounts its relation graph inside a `<details>` that is
+ * shut by default, and a shut disclosure is a subtree the browser stops
+ * rendering but keeps answering `getClientRects` for. So every collapsed config
+ * state was signing a description of a graph no reader can see, and React
+ * Flow's measurement race went on racing inside it — 58 of 502 renders differed
+ * across two runs, 54 of them compact config states with the relation section
+ * shut. `checks.mjs` now asks `checkVisibility()` before it describes an
+ * element, the shut graph left the signature, and two runs of this matrix agree
+ * on all 502.
+ *
+ * So the audit is a gate. `signatures.json` is still published beside the
+ * renders as the diffable record of what each state drew, the index still says
+ * out loud when it is not the whole matrix, and now a gallery that is not the
+ * whole matrix, or in which two states draw one screen without declaring it,
+ * fails the run that produced it.
+ *
+ * Except under `--shard`, where an incomplete gallery is the point. A shard
+ * runs its fraction of the renders and one of them also runs the index test, so
+ * gating there would fail every shard for hundreds of renders another shard
+ * wrote, and would report every twin split across two shards as unchecked.
+ * Nothing here can see the other shards, so a sharded run reports what it found
+ * and leaves the verdict to whatever aggregates them. Sharding is not used by
+ * this repository today; the guard is here so that turning it on is a change to
+ * the workflow rather than a morning spent on a red gate nobody can reproduce.
  */
-async function report(published, signatures) {
+async function report(published, signatures, config) {
   const names = auditNames(expectedShots(STATES, Object.values(VIEWPORTS)), published);
   const twins = auditTwins(signatures, RENDER_TWINS);
   const lines = [
@@ -94,7 +113,17 @@ async function report(published, signatures) {
   for (const line of lines) {
     console.log(`gallery: ${line}`);
   }
+  // Stamped before the throw, not instead of it: the reviewer who opens the
+  // artefact to find out what failed must see the finding on the page as well
+  // as in the log.
   await stamp(lines, names.missing);
+  if (config?.shard) {
+    console.log(`gallery: reported rather than failed — this run is shard ${config.shard.current}/${config.shard.total} of the matrix`);
+    return;
+  }
+  throw new Error(
+    `the render gallery is not the whole matrix, or not every state in it draws its own screen:\n  ${lines.join("\n  ")}`,
+  );
 }
 
 /**

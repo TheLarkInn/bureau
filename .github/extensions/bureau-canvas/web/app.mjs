@@ -1461,17 +1461,35 @@ function OrphanStrip({ state, view }) {
   );
 }
 
-/** The full relation graph, collapsed by default as a secondary section. */
+/**
+ * The full relation graph, collapsed by default as a secondary section.
+ *
+ * The graph is mounted only while the disclosure is open, and that is a
+ * correctness fix rather than an optimisation. A shut `<details>` is a subtree
+ * the browser stops rendering, so a React Flow mounted inside one measures
+ * every node and every edge label as zero — and neither measurement is retried
+ * on a box that never changes again. Opening the section then revealed a graph
+ * whose cards had been repaired by `graph-measure.mjs` but whose edge captions
+ * had not: four connecting lines with nothing written on them, permanently, on
+ * every config surface. The one thing this graph exists to say — which relation
+ * each line is — was the one thing it did not draw.
+ *
+ * Mounting on open means the first measurement is taken against a real box, so
+ * cards and captions both land, and nothing has to be repaired afterwards.
+ */
 function RelationSection({ state }) {
+  const [open, setOpen] = useState(false);
   return h(
     "details",
-    { className: "relation-section" },
+    { className: "relation-section", open, onToggle: (event) => setOpen(event.currentTarget.open) },
     h("summary", {}, "Relation graph"),
-    h(
-      "div",
-      { className: "config-flow", "aria-label": "Bureau config relation graph" },
-      h(RelationGraph, { relation: state.config?.relation }),
-    ),
+    open
+      ? h(
+        "div",
+        { className: "config-flow", "aria-label": "Bureau config relation graph" },
+        h(RelationGraph, { relation: state.config?.relation }),
+      )
+      : null,
   );
 }
 
@@ -1777,6 +1795,12 @@ function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
     h(BaseEdge, { id, path, markerEnd }),
     data.label ? h(EdgeLabelRenderer, null, h("div", {
       className: "react-flow__edge-label edge-caption",
+      // The caption names its own edge. React Flow draws every label of a graph
+      // into one portal in commit order, and that order rotates, so the
+      // captions are compared as a set — which needs each one to carry which
+      // edge it belongs to, or two graphs putting the same words on different
+      // edges describe themselves identically.
+      "data-edge-id": id,
       style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
     }, data.label)) : null,
   );

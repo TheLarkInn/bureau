@@ -41,7 +41,32 @@ export function collect(doc, request) {
   // before it. An inline run wraps into several rects, so it is enough for one
   // of them to have area; requiring all of them would fail an ordinary
   // line-broken label.
-  const boxed = (node) => [...node.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
+  // The fourth way a control measures perfectly and paints nothing: a subtree
+  // the browser is not rendering at all. A closed `<details>` is one — the
+  // engine skips its contents the way `content-visibility: hidden` does — and a
+  // skipped subtree keeps answering `getClientRects` with the boxes it held
+  // when it was last laid out.
+  //
+  // That is what made this gallery undiffable, and it was never late content.
+  // The config surface mounts the relation graph inside a `<details>` that is
+  // shut by default, so every collapsed config state was signing a description
+  // of a graph nobody can see — and React Flow's measurement race went on
+  // racing inside it, one card measured or not depending on the load. Measured:
+  // 58 of 502 renders signed differently across two runs of one tree, and 54 of
+  // those 58 were compact config states whose relation section was shut.
+  //
+  // `checkVisibility()` is the browser's own answer to "is this being
+  // rendered", and its defaults are exactly the question being asked here: it
+  // reports the collapsed graph gone while still reporting the `<summary>` that
+  // opens it present — which an ancestor walk for `details:not([open])` would
+  // get wrong, since the summary is a child of the shut disclosure too.
+  //
+  // Opacity and `visibility` deliberately stay with the walks above rather than
+  // moving into the options bag. The signature includes a `visibility: hidden`
+  // element on purpose — it is a description of the screen, not a promise about
+  // it — and folding those flags in here would quietly drop them from it.
+  const rendered = (node) => (typeof node.checkVisibility === "function" ? node.checkVisibility() : true);
+  const boxed = (node) => rendered(node) && [...node.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
   const visible = (node) =>
     boxed(node)
     && view.getComputedStyle(node).visibility !== "hidden"
@@ -131,7 +156,11 @@ export function collect(doc, request) {
   for (const selector of request.measure) {
     for (const node of doc.querySelectorAll(selector)) {
       const rect = node.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
+      // `rendered` for the same reason the signature needs it: a skipped
+      // subtree reports the boxes it last had, so a collapsed disclosure would
+      // otherwise contribute phantom geometry to the overlap and clipping
+      // rules — findings about a screen that is not on screen.
+      if (rect.width > 0 && rect.height > 0 && rendered(node)) {
         measured.push({ node, selector, rect, id: idFor(node) });
       }
     }
@@ -235,7 +264,9 @@ export function collect(doc, request) {
   //
   // `boxed` rather than `visible`: this is a description, not a promise, taken
   // over every element rather than the handful a state names. An element
-  // painted or not is still a difference between two screens.
+  // hidden or transparent is still a difference between two screens — but one
+  // the browser is not rendering at all is not a screen, which is why `boxed`
+  // now asks `checkVisibility()` and the shut relation graph left this walk.
   //
   // The harness's own address is not a property of the state, and leaving it in
   // made two states permanently undiffable. `serve.mjs` binds an ephemeral port
@@ -250,27 +281,71 @@ export function collect(doc, request) {
   const ORIGIN = /https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost):\d+/gu;
   const stable = (value) => value.replace(ORIGIN, "http://canvas.invalid");
   const GEOMETRY = new Set(["style", "transform", "d", "points", "viewBox", "x", "y", "cx", "cy", "r", "width", "height"]);
-  const signature = [];
+  // The one place document order says nothing about the screen.
+  //
+  // React Flow draws every edge label of a graph into a single portal, appends
+  // them in commit order, and then positions each one by transform. So their
+  // order in the document is bookkeeping, not layout — no reader can see it —
+  // and it rotates whenever an edge re-renders.
+  //
+  // That rotation was the last thing keeping two runs of this matrix from
+  // agreeing. The editor's four outcome captions signed `success, failure,
+  // blocked, no-work` on one run and `failure, blocked, no-work, success` on
+  // the next: identical lines, identical screen, different digest — which broke
+  // the declared twin between an unsaved rename and the tab round trip that
+  // must land back on it, at random and about one run in three.
+  //
+  // The run of lines one portal contributes is therefore sorted among itself.
+  // Sorting makes the captions a set, so each one has to say which edge it
+  // belongs to or two graphs putting the same words on different edges would
+  // describe themselves identically — which is why the caption elements carry
+  // `data-edge-id`. Only that run is sorted: document order everywhere else is
+  // a fact about the screen, and a control that moved is a difference worth
+  // reporting.
+  const LABEL_PORTAL = ".react-flow__edgelabel-renderer";
+  const portalOf = (node) => {
+    const parent = node.parentElement;
+    return parent && typeof parent.closest === "function" ? parent.closest(LABEL_PORTAL) : null;
+  };
+  const entries = [];
   for (const node of doc.querySelectorAll("body *")) {
     if (!boxed(node)) {
       continue;
     }
-    signature.push([
-      node.tagName,
-      [...node.attributes]
-        .filter((attribute) => !GEOMETRY.has(attribute.name))
-        .map((attribute) => `${attribute.name}=${attribute.value}`)
-        .sort()
-        .join(","),
-      node.childElementCount ? "" : (node.textContent ?? "").trim(),
-      // What a form control holds is not in the document's text, and it is
-      // most of what a form state *is*. Without it a typed pipeline name and
-      // an empty Name box were one screen, and so were three different runs
-      // chosen in the replay picker — the registry said six states and the
-      // renders said two.
-      typeof node.value === "string" ? node.value : "",
-      node.checked === true ? "checked" : "",
-    ].join("|"));
+    entries.push({
+      portal: portalOf(node),
+      line: [
+        node.tagName,
+        [...node.attributes]
+          .filter((attribute) => !GEOMETRY.has(attribute.name))
+          .map((attribute) => `${attribute.name}=${attribute.value}`)
+          .sort()
+          .join(","),
+        node.childElementCount ? "" : (node.textContent ?? "").trim(),
+        // What a form control holds is not in the document's text, and it is
+        // most of what a form state *is*. Without it a typed pipeline name and
+        // an empty Name box were one screen, and so were three different runs
+        // chosen in the replay picker — the registry said six states and the
+        // renders said two.
+        typeof node.value === "string" ? node.value : "",
+        node.checked === true ? "checked" : "",
+      ].join("|"),
+    });
+  }
+  const signature = [];
+  for (let index = 0; index < entries.length;) {
+    const portal = entries[index].portal;
+    if (!portal) {
+      signature.push(entries[index].line);
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < entries.length && entries[end].portal === portal) {
+      end += 1;
+    }
+    signature.push(...entries.slice(index, end).map((entry) => entry.line).sort());
+    index = end;
   }
   return {
     counts,
@@ -278,6 +353,35 @@ export function collect(doc, request) {
     boxes,
     contrast,
     labels,
+    // What a graph on screen has not finished drawing.
+    //
+    // Every graph here mounts before React Flow has measured it: a node it has
+    // not measured renders at `visibility: hidden` with no area, an edge
+    // caption the same, and the edges touching an unmeasured node are not drawn
+    // at all. That is what `graph-measure.mjs` exists to repair.
+    //
+    // A repair that does not land was invisible to this registry. No state
+    // promises a relation card or an edge caption by name — there are too many
+    // and they come from the fixture — so a graph with a hole in it satisfied
+    // every `shows` it had, and the only trace was a signature that would not
+    // repeat between two runs of one tree.
+    //
+    // Gathered only where the pane is being rendered: a graph inside a shut
+    // disclosure is not a screen, and whether it has measured itself yet is
+    // nobody's business until it opens.
+    graphHoles: [
+      ...[...doc.querySelectorAll(".react-flow__node")]
+        .filter((node) => rendered(node) && !visible(node))
+        .map((node) => `no card for ${node.getAttribute("data-id") ?? "?"}`),
+      // Two shapes of caption, because the surfaces draw them two ways: the
+      // relation graph takes React Flow's own SVG label, and the viewer and
+      // editor render their outcome captions into the label portal themselves.
+      // Checking only the first left the outcome names on every pipeline graph
+      // ungated.
+      ...[...doc.querySelectorAll(".react-flow__edge-textwrapper, .react-flow__edge-label")]
+        .filter((node) => rendered(node) && !visible(node))
+        .map((node) => `no caption on edge ${node.getAttribute("data-edge-id") ?? node.parentElement?.getAttribute("data-id") ?? "?"}`),
+    ],
     signature: stable(signature.join("\n")),
     text: doc.body ? doc.body.innerText : "",
     overflowX: root.scrollWidth - root.clientWidth,
@@ -409,9 +513,36 @@ export function verdict(state, snapshot, options = {}) {
     ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...strandedLabels(snapshot),
+    ...graphHoles(snapshot),
     ...overlaps(snapshot),
     ...clipping(snapshot, options),
   ];
+}
+
+/**
+ * A graph on screen draws every card and caption it holds.
+ *
+ * React Flow renders a node before it has measured it, at `visibility: hidden`
+ * and no area, an edge caption the same, and draws the edges touching an
+ * unmeasured node only once the measurement lands. A delivery lost on the way
+ * leaves a card invisible and its edges undrawn for good — the defect
+ * `web/graph-measure.mjs` exists to repair.
+ *
+ * Nothing could fail on it. No state promises a relation card or an edge
+ * caption by name — there are too many, and they come from the fixture — so a
+ * graph with a hole in it satisfied every `shows` it had and the only trace was
+ * that the state signed differently between two runs. That is how it stayed
+ * open long enough to be mistaken for late content and filed as harness drift.
+ *
+ * One rule states it for every graph on the surface at once, which is the only
+ * way this could be stated at all: it names no node, so it holds whatever the
+ * fixture puts in the graph.
+ */
+function graphHoles(snapshot) {
+  return (snapshot.graphHoles ?? []).map((what) => ({
+    kind: "graph-hole",
+    detail: `the graph has not finished drawing: ${what}`,
+  }));
 }
 
 /**

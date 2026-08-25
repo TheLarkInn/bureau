@@ -1526,12 +1526,15 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       label: { x: 0, y: 40, width: 60, height: 16 },
       control: { x: 70, y: 40, width: 120, height: 24 },
     }],
+    graphHoles: ["no card for assignment:docs-triage", "no caption on edge pipeline:a->b"],
     signature: [
       "BUTTON|class=btn,data-testid=draft-save|Save||",
       "DIV|class=draft-bar|||",
       "INPUT|class=field,data-testid=create-name||release-pipeline|",
       "INPUT|class=toggle,data-testid=limit-on||on|checked",
       "DETAILS|class=relation-section,open=|||",
+      "DIV|class=react-flow__edge-label|failure||",
+      "DIV|class=react-flow__edge-label|success||",
       "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
     text: "Bureau",
@@ -1588,9 +1591,13 @@ const AREA = [{ width: 100, height: 20 }];
 
 /**
  * A document shaped so that each of `collect`'s inner helpers is called at
- * least once — `visible`, `keyFor`, `idFor`, `clipper`, `channels`, `opaque`,
- * `luminance`, `backdrop` and `rectOf`. Fidelity to a browser is not the
- * point; reaching the lines is.
+ * least once — `visible`, `rendered`, `keyFor`, `idFor`, `clipper`, `channels`,
+ * `opaque`, `luminance`, `backdrop` and `rectOf`. Fidelity to a browser is not
+ * the point; reaching the lines is.
+ *
+ * `checkVisibility` is left off most stubs on purpose: it is feature-detected,
+ * so a node without it must still be described. Only the nodes that stand for a
+ * shut disclosure answer it, and they answer `false`.
  */
 function pageStub() {
   const styles = new Map();
@@ -1621,6 +1628,14 @@ function pageStub() {
   const past = element({}, { parentElement: clip, getBoundingClientRect: () => boxOf(300, 10, 50, 20) });
   // Zero-area, so the measure loop skips it and the ids stay contiguous.
   const collapsed = element({}, { parentElement: clip });
+  // Real area, real rect, and not being rendered — a measured selector inside a
+  // shut disclosure. The measure loop has to drop it too, or the overlap and
+  // clipping rules report findings about a screen that is not on screen.
+  const skippedBox = element({}, {
+    parentElement: clip,
+    checkVisibility: () => false,
+    getBoundingClientRect: () => boxOf(10, 10, 100, 20),
+  });
 
   // The two axes clipped by different ancestors, which is the ordinary shape of
   // a truncating label inside a lidded pane: the nearer wrapper hides overflow
@@ -1659,6 +1674,13 @@ function pageStub() {
   // and it is on screen. Requiring area of *every* rect would report an
   // ordinary wrapped label as missing.
   const wrapped = element({}, { innerText: "wrapped", getClientRects: () => [{ width: 0, height: 0 }, { width: 80, height: 20 }] });
+  // The fourth liar, and the one that cost the most: a node the browser is not
+  // rendering, which keeps answering `getClientRects` with the boxes it had
+  // when it was last laid out. A closed `<details>` subtree is exactly this,
+  // and the config surface keeps its relation graph in one — so a whole graph
+  // reported itself painted while React Flow's measurement race went on inside
+  // it, unseen and unrepeatable. Only `checkVisibility` can tell.
+  const skipped = element({}, { innerText: "collapsed graph", checkVisibility: () => false });
 
   // Transparent over white, so `backdrop` must walk up and `opaque` answers
   // false then true before `luminance` runs on what it settles on.
@@ -1717,13 +1739,55 @@ function pageStub() {
   const quoting = named("P", null, "fallback-error", boxOf(0, 460, 760, 20), {
     textContent: " TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:40091/app.mjs ",
   });
+  // A leaf inside the shut relation graph: an ordinary element, an ordinary
+  // rect, and no place on the screen. It must not reach the signature, because
+  // whether React Flow had measured it by the time the shot was taken is the
+  // whole of the drift that kept the twin audit from being a gate.
+  const unrendered = named("DIV", null, "relation-card", boxOf(0, 520, 240, 96), {
+    checkVisibility: () => false,
+    textContent: " agent-eligible ",
+  });
+
+  // Three graph cards, for the rule that a graph on screen draws all of them:
+  // one drawn, one that React Flow has not measured (hidden, no area), and one
+  // inside a shut disclosure. Only the middle one is a hole — the shut graph is
+  // not a screen, so whether it has measured itself is nobody's business yet.
+  const graphCard = (id, style, own = {}) => element(style, {
+    getAttribute: (name) => (name === "data-id" ? id : null),
+    ...own,
+  });
+  const drawnCard = graphCard("repo:bureau", {});
+  const holeCard = graphCard("assignment:docs-triage", { visibility: "hidden" });
+  const shutCard = graphCard("role:implementer", {}, { checkVisibility: () => false });
+  // And an edge caption React Flow has not measured, which fails the same rule
+  // for the same reason: the graph is on screen and the reader cannot see what
+  // the edge says. It names its own edge through `data-edge-id`, the way the
+  // portal captions do.
+  const holeCaption = element({ visibility: "hidden" }, {
+    getAttribute: (name) => (name === "data-edge-id" ? "pipeline:a->b" : null),
+  });
+
+  // Two edge captions inside React Flow's label portal, in the order that
+  // rotates. The signature has to sign them the same way round whichever order
+  // the commit left them in, and it may only do that for the portal — so these
+  // two are given a parent that answers `closest`, and nothing else here is.
+  const labelPortal = element({}, { getAttribute: () => "react-flow__edgelabel-renderer" });
+  labelPortal.closest = (selector) => (selector === ".react-flow__edgelabel-renderer" ? labelPortal : null);
+  const caption = (text) => named("DIV", null, "react-flow__edge-label", boxOf(0, 600, 60, 16), {
+    parentElement: labelPortal,
+    textContent: ` ${text} `,
+  });
+  const laterCaption = caption("success");
+  const earlierCaption = caption("failure");
 
   const matches = {
-    ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
-    ".b": [inside, past, collapsed, underLid],
+    ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped, skipped],
+    ".b": [inside, past, collapsed, underLid, skippedBox],
     ".c": [wording, wordless],
     "label[for]": [label],
-    "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
+    ".react-flow__node": [drawnCard, holeCard, shutCard],
+    ".react-flow__edge-textwrapper, .react-flow__edge-label": [holeCaption],
+    "body *": [leaf, parent, arealess, typed, ticked, disclosure, unrendered, laterCaption, earlierCaption, quoting],
   };
   return {
     defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },
@@ -1733,6 +1797,34 @@ function pageStub() {
     getElementById: (id) => (id === "field-1" ? control : null),
   };
 }
+
+/**
+ * A graph on screen draws every card it holds, and a graph nobody can see is
+ * not asked to.
+ *
+ * The rule names no node, because it cannot: the cards come from the fixture.
+ * That is also why the defect lived so long — a graph with a hole in it
+ * satisfied every `shows` the state had, and the only trace was a signature
+ * that would not repeat.
+ */
+test("a card a graph on screen has not drawn is a failure, one per card", () => {
+  const state = { expect: { shows: [], hides: [], copy: [] } };
+  const snapshot = (graphHoles) => ({
+    counts: {}, text: "", viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes: [], graphHoles,
+  });
+  const holes = (list) => verdict(state, snapshot(list)).filter((item) => item.kind === "graph-hole");
+
+  assert.deepStrictEqual(
+    [
+      holes([]).length,
+      holes(["no card for assignment:docs-triage", "no caption on edge a->b"]).length,
+      holes(["no card for assignment:docs-triage"])[0].detail.includes("no card for assignment:docs-triage"),
+      // A snapshot taken before this field existed must not start failing.
+      verdict(state, snapshot(undefined)).filter((item) => item.kind === "graph-hole").length,
+    ],
+    [0, 2, true, 0],
+  );
+});
 
 /**
  * Both contrast selectors, and the ratio itself.

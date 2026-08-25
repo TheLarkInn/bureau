@@ -607,3 +607,69 @@ whatever was passed; and it deliberately does not consult a clock, because a
 filesystem that records mtime more coarsely than `Date.now()` reports it dates
 a shot written after the run began as older than it. A directory is empty or it
 is not.
+
+The gallery is audited, and the audit is a gate: `global-teardown.mjs` fails the
+run when the published gallery is not the whole matrix, holds a render no state
+claims, or contains two states drawing one screen that `RENDER_TWINS` does not
+declare — and equally when a *declared* twin has stopped holding, or when a run
+rendered too few of a declared twin's screens to judge it at all, because a
+declaration is a claim in both directions.
+
+That gate was not possible until the renders repeated, and what stopped them
+repeating was not what it looked like. Two runs of one tree used to disagree on
+58 of 502 renders. The diagnosis on file was late content — a frame captured
+before some region had settled — and every attempt to wait it out failed,
+because the drift was not in the waiting. **The config surface mounts its
+relation graph inside a `<details>` that is shut by default, and a shut
+disclosure is a subtree the browser stops rendering but keeps answering
+`getClientRects` for.** So every collapsed config state signed a description of
+a graph no reader can see, and React Flow's measurement race decided what that
+description said. 54 of the 58 were compact config states with the relation
+section shut.
+
+`collect` therefore asks `checkVisibility()` before it describes an element.
+That is the browser's own answer to "is this being rendered", and its defaults
+are exactly the question — it reports the shut graph gone while still reporting
+the `<summary>` that opens it, which an ancestor walk for `details:not([open])`
+would get wrong. It is the fourth thing to have measured perfectly and painted
+nothing here, after `visibility: hidden`, `opacity: 0` and zero area, and it is
+the one that cost the most: a control inside a shut disclosure could satisfy a
+`shows`, and a whole graph could satisfy it while racing.
+
+Excluding the shut graph left six drifting renders, and five of them were the
+same graph *open* — which turned out to be a defect in the product, and a
+user-visible one. Mounting a React Flow inside a shut `<details>` measures every
+node and every edge label against a box of zero, and neither measurement is
+retried on a box that never changes again. `graph-measure.mjs` repaired the
+cards, so nobody noticed the rest: the config relation graph drew four
+connecting lines with **nothing written on them**, permanently, on every config
+surface. The one thing that graph exists to say — which relation each line is —
+was the one thing it did not draw.
+
+So the section mounts its graph only while it is open. The first measurement is
+then taken against a real box, cards and captions both land, and nothing has to
+be repaired afterwards. `MeasurementGuard` was corrected in the same direction:
+it asks the pane itself whether it is being rendered — `checkVisibility()` and
+an offset box, re-read through a `ResizeObserver` — and does not spend a repair
+it cannot land, so a graph hidden at mount still has its full budget at the
+moment it is revealed.
+
+That correction is not cosmetic, and it is not the config surface it saves. The
+guard used to read the store's `width`/`height`, which cannot answer the
+question: React Flow records a pane measuring zero as 500x500, so *every* hidden
+pane read as measurable from the moment it mounted. The editor mounts its
+Relations pane `hidden` behind the Pipeline tab, so that graph burned all five
+repairs behind the tab and retired before anyone could open it — and a lost
+delivery then left the Relations tab drawing a permanently blank graph.
+`graph-measurement.spec.mjs` pins it: with node measurements withheld, it waits
+out the whole budget before opening the tab and requires the graph to draw.
+
+And because that defect was invisible to every check — no state promises a
+relation card or an edge caption by name, so a graph with a hole in it satisfied
+every `shows` it had — `verdict` gained `graph-hole`: a card or caption a graph
+*on screen* has not drawn is a failure that names it. One rule, no node names,
+so it holds whatever the fixture puts in the graph.
+
+Two runs of the matrix now agree on 500 of 502 renders, from 444 before. What is
+left is one state, `mode: replay + transport: playing`, at both viewports: its
+scrubber is a clock reading and is meant to move.
