@@ -20,6 +20,10 @@ async function openInstance(instanceId, input = {}, options = {}) {
   const opened = await canvas.openBureauCanvas({ instanceId, input }, options);
   return {
     opened,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Bureau-Capability": canvas.servers.get(instanceId).capability,
+    },
     close: () => canvas.closeBureauCanvas({ instanceId }),
   };
 }
@@ -185,7 +189,7 @@ test("pipeline intent selects a pipeline that carries its own step diagram", asy
   try {
     const response = await fetch(new URL("/intent", instance.opened.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: instance.headers,
       body: JSON.stringify({ kind: "open-pipeline", pipeline: "agent-eligible-pipeline" }),
     });
     const result = await response.json();
@@ -293,7 +297,7 @@ test("back to config intent clears selected pipeline", async () => {
   try {
     const response = await fetch(new URL("/intent", instance.opened.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: instance.headers,
       body: JSON.stringify({ kind: "back-to-config" }),
     });
     const result = await response.json();

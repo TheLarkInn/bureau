@@ -18,6 +18,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 bureau-lifecycle = { path = "../bureau-lifecycle" }
 bureau-plugin = { path = "../bureau-plugin" }
+bureau-dashboard = { path = "../../.github/extensions/bureau-canvas" }
 clap.workspace = true
 nix = { workspace = true, features = ["fs", "process", "signal"] }
 ratatui.workspace = true

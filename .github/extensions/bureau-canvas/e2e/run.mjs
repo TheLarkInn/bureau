@@ -376,9 +376,10 @@ async function tearDownThroughUi(url, dir) {
 }
 
 async function postJson(url, body) {
+  const capability = [...canvas.servers.values()].find((entry) => entry.url === url)?.capability;
   const response = await fetch(new URL("/intent", url), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Bureau-Capability": capability },
     body: JSON.stringify(body),
   });
   return response.json();
@@ -575,9 +576,10 @@ async function checkReferenceState(url) {
 }
 
 async function postIntent(url, pipeline) {
+  const capability = [...canvas.servers.values()].find((entry) => entry.url === url)?.capability;
   const response = await fetch(new URL("/intent", url), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Bureau-Capability": capability },
     body: JSON.stringify({ kind: "open-pipeline", pipeline }),
   });
   if (!response.ok) {

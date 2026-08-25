@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,10 @@ export const inputSchema = {
         pipeline: {
             type: "string",
             description: "Pipeline drill-down selected by the caller.",
+        },
+        dev: {
+            type: "boolean",
+            description: "Reload the page when dashboard web files change.",
         },
     },
 };
@@ -115,21 +120,42 @@ export function resolveInput(input = {}) {
     };
 }
 
+function testValidationOptions(options) {
+    if (process.env.BUREAU_CANVAS_TEST !== "1" || options.savePipelineDeps) {
+        return options;
+    }
+    return {
+        ...options,
+        savePipelineDeps: {
+            validate: () => Promise.resolve({
+                findings: [],
+                ok: true,
+                state: "validated",
+            }),
+        },
+    };
+}
+
 export async function openBureauCanvas(ctx, options = {}) {
     const input = resolveInput(ctx.input ?? {});
-    const state = await buildState({ ...input, instanceId: ctx.instanceId }, options);
+    const serverOptions = testValidationOptions({
+        ...options,
+        dev: ctx.input?.dev ?? options.dev ?? false,
+    });
+    const state = await buildState({ ...input, instanceId: ctx.instanceId }, serverOptions);
     subjects.set(ctx.instanceId, subjectFromState(state));
     let entry = servers.get(ctx.instanceId);
 
     if (!entry) {
-        entry = await startServer(state, options);
+        entry = await startServer(state, serverOptions);
         servers.set(ctx.instanceId, entry);
     } else {
         entry.state = state;
+        await configureDevelopment(entry, serverOptions);
         publishState(entry);
     }
     // Kept so a later refresh rebuilds state the same way this open did.
-    entry.options = options;
+    entry.options = serverOptions;
 
     return { title: DISPLAY_NAME, status: state.status, url: entry.url };
 }
@@ -149,7 +175,10 @@ export function createBureauCanvasOptions(getWorkspacePath = () => process.cwd()
     return {
         ...canvasDeclaration,
         actions: canvasActions(),
-        open: (ctx) => openBureauCanvas(ctx, { workspacePath: getWorkspacePath() }),
+        open: (ctx) => openBureauCanvas(ctx, {
+            allowEmbedding: true,
+            workspacePath: getWorkspacePath(),
+        }),
         onClose: closeBureauCanvas,
     };
 }
@@ -245,7 +274,10 @@ function findingsOptions(options) {
     if (options.findingsOptions) {
         return options.findingsOptions;
     }
-    return process.env.BUREAU_CANVAS_TEST === "1" ? { binary: TEST_MISSING_BUREAU } : {};
+    if (process.env.BUREAU_CANVAS_TEST === "1") {
+        return { binary: TEST_MISSING_BUREAU };
+    }
+    return options.binary ? { binary: options.binary } : {};
 }
 
 async function fallbackResult(dir, reason) {
@@ -398,11 +430,25 @@ function selectedPipeline(state, name) {
 }
 
 async function startServer(state, options = {}) {
-    const entry = { clients: new Set(), runTail: undefined, server: undefined, state, url: "" };
+    const entry = {
+        capability: randomBytes(24).toString("base64url"),
+        clients: new Set(),
+        development: false,
+        host: "",
+        options,
+        origin: "",
+        reloadFingerprint: "",
+        reloadPoll: undefined,
+        reloadScanning: false,
+        runTail: undefined,
+        server: undefined,
+        state,
+        url: "",
+    };
     const server = createServer((request, response) => {
         void handleRequest(entry, request, response).catch(() => sendStatus(response, 500));
     });
-
+    entry.server = server;
     entry.server = server;
     // One resolution per server: the tail and every request must observe the
     // same root, and the WSL probe behind it should not run per request.
@@ -412,21 +458,29 @@ async function startServer(state, options = {}) {
         publish: (payload) => publishRunEvent(entry, payload),
         ...(typeof options.runTailIntervalMs === "number" ? { intervalMs: options.runTailIntervalMs } : {}),
     });
-    entry.runTail.start();
-    await listen(server);
-    const address = server.address();
-    if (!address || typeof address === "string") {
-        throw new Error("loopback server address unavailable");
+    try {
+        await listen(server, options.port ?? 0);
+        const address = server.address();
+        if (!address || typeof address === "string") {
+            throw new Error("loopback server address unavailable");
+        }
+        const origin = new URL(`http://127.0.0.1:${address.port}/`);
+        entry.host = origin.host;
+        entry.origin = origin.origin;
+        entry.url = origin.href;
+        await configureDevelopment(entry, options);
+        entry.runTail.start();
+        return entry;
+    } catch (error) {
+        await abandonServer(entry);
+        throw error;
     }
-
-    entry.url = `http://127.0.0.1:${address.port}/`;
-    return entry;
 }
 
-function listen(server) {
+function listen(server, port) {
     return new Promise((resolveListen, rejectListen) => {
         server.once("error", rejectListen);
-        server.listen(0, "127.0.0.1", () => {
+        server.listen(port, "127.0.0.1", () => {
             server.off("error", rejectListen);
             resolveListen();
         });
@@ -434,6 +488,7 @@ function listen(server) {
 }
 
 async function closeServer(entry) {
+    stopDevelopment(entry);
     entry.runTail?.stop();
     for (const client of entry.clients) {
         client.end();
@@ -442,9 +497,25 @@ async function closeServer(entry) {
     await new Promise((resolveClose) => entry.server.close(resolveClose));
 }
 
+async function abandonServer(entry) {
+    stopDevelopment(entry);
+    entry.runTail?.stop();
+    if (entry.server.listening) {
+        await new Promise((resolveClose) => entry.server.close(resolveClose));
+    }
+}
+
 async function handleRequest(entry, request, response) {
+    if (request.headers.host !== entry.host) {
+        sendStatus(response, 421);
+        return;
+    }
     const pathname = requestPath(request);
     if (request.method === "POST" && pathname === "/intent") {
+        if (!authorizedIntent(entry, request)) {
+            sendStatus(response, 403);
+            return;
+        }
         await handleIntent(entry, request, response);
         return;
     }
@@ -463,8 +534,16 @@ async function handleRequest(entry, request, response) {
         const runId = pathname.slice("/runs/".length, -"/events".length);
         await sendRunEvents(runId, entry, response, request.method === "HEAD");
     } else {
-        await sendStatic(pathname, response, request.method === "HEAD");
+        await sendStatic(entry, pathname, response, request.method === "HEAD");
     }
+}
+
+function authorizedIntent(entry, request) {
+    const type = String(request.headers["content-type"] ?? "").split(";", 1)[0].trim();
+    const origin = request.headers.origin;
+    return type === "application/json"
+        && (!origin || origin === entry.origin)
+        && request.headers["x-bureau-capability"] === entry.capability;
 }
 
 /** The runs root this server observes; overridable for tests. */
@@ -689,7 +768,11 @@ async function runSavePipelineIntent(entry, intent, response) {
 }
 
 function savePipelineOptions(entry) {
-    return entry.options?.savePipelineDeps ?? {};
+    const deps = entry.options?.savePipelineDeps ?? {};
+    return {
+        findingsOptions: findingsOptions(entry.options ?? {}),
+        ...deps,
+    };
 }
 
 async function runPlanIntent(entry, intent, response) {
@@ -708,7 +791,10 @@ async function runPlanIntent(entry, intent, response) {
 }
 
 async function refreshState(entry) {
-    const input = { dir: entry.state.dir, pipeline: entry.state.pipeline ?? undefined };
+    const input = {
+        dir: entry.state.dir,
+        pipeline: entry.state.pipeline ?? undefined,
+    };
     entry.state = await buildState({ ...input, instanceId: entry.state.instanceId }, entry.options ?? {});
     publishState(entry);
 }
@@ -761,8 +847,8 @@ function writeStateEvent(response, state) {
     response.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
 }
 
-async function sendStatic(pathname, response, headOnly) {
-    const filePath = staticPath(pathname);
+async function sendStatic(entry, pathname, response, headOnly) {
+    const filePath = staticPath(pathname, entry.options?.webDir);
     if (!filePath) {
         sendStatus(response, 404);
         return;
@@ -774,7 +860,15 @@ async function sendStatic(pathname, response, headOnly) {
         return;
     }
 
-    response.writeHead(200, { "Content-Type": contentType(filePath) });
+    if (extname(filePath) === ".html") {
+        await sendHtml(entry, filePath, response, headOnly);
+        return;
+    }
+    const headers = { "Content-Type": contentType(filePath) };
+    if (entry.development) {
+        headers["Cache-Control"] = "no-store";
+    }
+    response.writeHead(200, headers);
     if (headOnly) {
         response.end();
     } else {
@@ -782,7 +876,7 @@ async function sendStatic(pathname, response, headOnly) {
     }
 }
 
-function staticPath(pathname) {
+function staticPath(pathname, directory = WEB_DIR) {
     let decoded;
     try {
         decoded = decodeURIComponent(pathname === "/" ? "/index.html" : pathname);
@@ -790,8 +884,123 @@ function staticPath(pathname) {
         return undefined;
     }
 
-    const filePath = resolve(WEB_DIR, decoded.replace(/^\/+/, ""));
-    return filePath === WEB_DIR || filePath.startsWith(`${WEB_DIR}${sep}`) ? filePath : undefined;
+    const filePath = resolve(directory, decoded.replace(/^\/+/, ""));
+    return filePath === directory || filePath.startsWith(`${directory}${sep}`) ? filePath : undefined;
+}
+
+const DEVELOPMENT_SCRIPT = '<script type="module" src="/dev-reload.mjs"></script>';
+
+function capabilityScript(entry) {
+    return `<script>
+      (() => {
+        const token = ${JSON.stringify(entry.capability)};
+        const send = window.fetch.bind(window);
+        window.fetch = (input, init = {}) => {
+          const request = new URL(input instanceof Request ? input.url : input, window.location.href);
+          if (request.origin !== window.location.origin || request.pathname !== "/intent") {
+            return send(input, init);
+          }
+          const headers = new Headers(init.headers);
+          headers.set("X-Bureau-Capability", token);
+          return send(input, { ...init, headers });
+        };
+      })();
+    </script>`;
+}
+
+function instrumentHtml(entry, html) {
+    const secured = html.replace("</head>", `  ${capabilityScript(entry)}\n</head>`);
+    return entry.development && secured.includes("</body>")
+        ? secured.replace("</body>", `  ${DEVELOPMENT_SCRIPT}\n</body>`)
+        : secured;
+}
+
+async function sendHtml(entry, filePath, response, headOnly) {
+    const html = await readFile(filePath, "utf8");
+    const headers = { "Content-Type": "text/html; charset=utf-8" };
+    if (!entry.options?.allowEmbedding) {
+        headers["Content-Security-Policy"] = "frame-ancestors 'self'";
+        headers["X-Frame-Options"] = "SAMEORIGIN";
+    }
+    if (entry.development) {
+        headers["Cache-Control"] = "no-store";
+    }
+    response.writeHead(200, headers);
+    response.end(headOnly ? undefined : instrumentHtml(entry, html));
+}
+
+async function configureDevelopment(entry, options) {
+    const enabled = Boolean(options.dev);
+    if (entry.development === enabled) {
+        return;
+    }
+    if (!enabled) {
+        stopDevelopment(entry);
+        return;
+    }
+    const directory = options.watchDir ?? options.webDir ?? WEB_DIR;
+    const fingerprint = await developmentFingerprint(directory);
+    stopDevelopment(entry);
+    entry.development = true;
+    entry.reloadFingerprint = fingerprint;
+    const interval = options.devIntervalMs ?? 250;
+    entry.reloadPoll = setInterval(() => {
+        void pollDevelopment(entry, directory);
+    }, interval);
+}
+
+async function developmentFingerprint(root, directory = root) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const rows = [];
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        const path = resolve(directory, entry.name);
+        if (entry.isDirectory()) {
+            rows.push(await developmentFingerprint(root, path));
+        } else if (entry.isFile()) {
+            const info = await stat(path);
+            rows.push(`${relative(root, path)}:${info.size}:${info.mtimeMs}`);
+        }
+    }
+    return rows.join("\n");
+}
+
+async function pollDevelopment(entry, directory) {
+    if (!entry.development || entry.reloadScanning) {
+        return;
+    }
+    entry.reloadScanning = true;
+    try {
+        const fingerprint = await developmentFingerprint(directory);
+        if (fingerprint !== entry.reloadFingerprint) {
+            entry.reloadFingerprint = fingerprint;
+            publishReload(entry);
+        }
+    } catch (error) {
+        publishDevelopmentError(entry, error);
+        stopDevelopment(entry);
+    } finally {
+        entry.reloadScanning = false;
+    }
+}
+
+function publishReload(entry) {
+    for (const client of entry.clients) {
+        client.write("event: reload\ndata: {}\n\n");
+    }
+}
+
+function publishDevelopmentError(entry, error) {
+    const payload = JSON.stringify({ error: String(error?.message ?? error) });
+    for (const client of entry.clients) {
+        client.write(`event: reload-error\ndata: ${payload}\n\n`);
+    }
+}
+
+function stopDevelopment(entry) {
+    clearInterval(entry.reloadPoll);
+    entry.reloadPoll = undefined;
+    entry.reloadFingerprint = "";
+    entry.development = false;
 }
 
 function contentType(filePath) {

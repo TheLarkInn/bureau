@@ -1,0 +1,27 @@
+[package]
+name = "bureau-dashboard"
+categories.workspace = true
+description = "Embedded browser dashboard assets for bureau"
+edition.workspace = true
+include = [
+    "build.rs",
+    "extension.mjs",
+    "lib/**",
+    "README.md",
+    "serve.mjs",
+    "src/**",
+    "test/fixtures/committed-payload.json",
+    "web/**",
+]
+keywords.workspace = true
+license.workspace = true
+readme = "README.md"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"

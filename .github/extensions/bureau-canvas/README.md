@@ -13,12 +13,31 @@ appears in the side panel, and the agent can drive it (`describe`, `focus`,
 also runs on its own:
 
 ```sh
-node .github/extensions/bureau-canvas/serve.mjs --dir .bureau
-node .github/extensions/bureau-canvas/serve.mjs --pipeline my-pipeline --open
+bureau dashboard
+bureau dashboard --pipeline my-pipeline
+bureau dashboard --no-open
 ```
 
 It prints a `127.0.0.1` URL. Only the launcher and the agent-callable actions
 belong to the app; the view, the validation and the editing endpoints do not.
+Normal dashboard use serves the web bundle embedded in the Bureau binary.
+The source-level `node .github/extensions/bureau-canvas/serve.mjs` entry point
+remains available for server tests and debugging.
+
+### Live design
+
+```sh
+bureau dashboard --dev
+```
+
+Development mode polls `web/` and sends a reload event to every open dashboard
+page. Run it only from a source checkout you trust: this mode intentionally
+executes that checkout's server and web files rather than the embedded bundle.
+The standalone browser and a Bureau canvas opened with `{ "dev": true }` use
+the same canonical assets, disable static caching, and reload without restarting
+the server. Session storage restores the expanded assignment, graph mode,
+selected run, and selected step. `--port <port>` pins the otherwise ephemeral
+loopback port.
 
 ## What it needs
 

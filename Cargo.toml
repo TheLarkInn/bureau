@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/*"]
-default-members = ["crates/*"]
+members = [".github/extensions/bureau-canvas", "crates/*"]
+default-members = [".github/extensions/bureau-canvas", "crates/*"]
 resolver = "3"
 
 [workspace.package]

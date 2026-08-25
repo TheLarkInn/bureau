@@ -168,6 +168,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bureau-dashboard",
  "bureau-lifecycle",
  "bureau-plugin",
  "clap",
@@ -181,6 +182,10 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
 ]
+
+[[package]]
+name = "bureau-dashboard"
+version = "0.1.0"
 
 [[package]]
 name = "bureau-lifecycle"

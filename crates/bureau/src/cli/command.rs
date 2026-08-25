@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use super::reconcile;
+use super::{dashboard, reconcile};
 
 /// Fake adapter operations.
 #[derive(Debug, Subcommand)]
@@ -32,7 +32,7 @@ pub enum McpAction {
     Serve,
 }
 
-/// CLI verbs.
+/// CLI commands.
 #[derive(Debug, Subcommand)]
 pub enum Verb {
     /// Checks a config directory and reports every error in one pass.
@@ -44,8 +44,6 @@ pub enum Verb {
         #[arg(long)]
         json: bool,
     },
-    /// Prints the version.
-    Version,
     /// Runs a pipeline once for one work item.
     Run {
         /// Pipeline name from the config repo.
@@ -138,6 +136,8 @@ pub enum Verb {
     },
     /// Continuously reconciles committed config with forge state.
     Reconcile(reconcile::Args),
+    /// Opens the pipeline drafting table and run dashboard in a browser.
+    Dashboard(dashboard::DashboardArgs),
     /// Watches local state in a live terminal dashboard; piped, prints
     /// one snapshot.
     Watch {

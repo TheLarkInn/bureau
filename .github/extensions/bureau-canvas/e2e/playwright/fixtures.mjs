@@ -95,7 +95,7 @@ async function bootCanvas(dir, runs) {
     const deadline = setTimeout(() => rejectUrl(new Error(`canvas host did not print a URL; stderr: ${stderr}`)), 20_000);
     child.stdout.on("data", (chunk) => {
       output += chunk;
-      const match = output.match(/Bureau canvas: (http:\/\/127\.0\.0\.1:\d+\/)/u);
+      const match = output.match(/Bureau dashboard: (http:\/\/127\.0\.0\.1:\d+\/)/u);
       if (match) {
         clearTimeout(deadline);
         resolveUrl(match[1]);
@@ -106,12 +106,13 @@ async function bootCanvas(dir, runs) {
   return { child, url };
 }
 
-async function resetView(url) {
-  await fetch(new URL("/intent", url), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind: "back-to-config" }),
-  });
+async function resetView(page, url) {
+  await page.goto(url);
+  await page.evaluate(() => fetch("./intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "back-to-config" }),
+    }));
 }
 
 export const test = base.extend({
@@ -135,8 +136,7 @@ export const test = base.extend({
         errors.push(message.text());
       }
     });
-    await resetView(canvas.url);
-    await page.goto(canvas.url);
+    await resetView(page, canvas.url);
     await page.locator(".assignment-card").first().waitFor();
     await page.locator(".assignment-head").first().click();
     await page.locator(".assignment-detail").waitFor();
@@ -152,8 +152,7 @@ export const test = base.extend({
         errors.push(message.text());
       }
     });
-    await resetView(canvas.url);
-    await page.goto(canvas.url);
+    await resetView(page, canvas.url);
     await page.locator(".assignment-head").first().click();
     await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
     await page.getByRole("link", { name: "Edit" }).click();

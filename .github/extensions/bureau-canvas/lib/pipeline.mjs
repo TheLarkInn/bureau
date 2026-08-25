@@ -9,7 +9,7 @@
 // and step, loaded and merged into each pipeline view, and rewritten on the
 // same save so the graph a user arranged survives a reload.
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
 import { parse, render } from "./codec.mjs";
@@ -18,11 +18,27 @@ import { findings } from "./findings.mjs";
 import { pathFor } from "./files.mjs";
 
 const LAYOUT_FILE = "layout.json";
+const saves = new Map();
 
 /** Fields a decision step's view must express as an `on` map at write time. */
 const DECISION_OUTCOMES = ["success", "failure", "blocked", "no-work"];
 
-export async function savePipeline(input, deps = {}) {
+export function savePipeline(input, deps = {}) {
+  // Every pipeline in a config shares layout.json, so the transaction lock is
+  // config-wide: two different pipelines must not read and rewrite that sidecar
+  // from the same old snapshot.
+  const key = resolve(input.dir);
+  const previous = saves.get(key) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => savePipelineUnlocked(input, deps));
+  saves.set(key, pending);
+  return pending.finally(() => {
+    if (saves.get(key) === pending) {
+      saves.delete(key);
+    }
+  });
+}
+
+async function savePipelineUnlocked(input, deps) {
   const dir = resolve(input.dir);
   const name = input.pipeline;
   if (input.view?.name && input.view.name !== name) {
@@ -39,8 +55,32 @@ export async function savePipeline(input, deps = {}) {
   if (validation.findings.length > 0) {
     return { ok: false, saved: false, findings: validation.findings, path };
   }
-  await writeLayout(dir, name, input.layout ?? null, deps);
+  await commitLayout(dir, name, input.layout ?? null, path, original, deps);
   return { ok: true, saved: true, findings: [], path };
+}
+
+async function commitLayout(dir, name, positions, pipelinePath, original, deps) {
+  if (positions == null) {
+    return;
+  }
+  const path = layoutPath(dir);
+  const previous = await readText(deps, path);
+  try {
+    await writeLayout(dir, name, positions, deps);
+  } catch (error) {
+    await writeText(deps, pipelinePath, original);
+    await restoreLayout(deps, path, previous);
+    throw error;
+  }
+}
+
+async function restoreLayout(deps, path, previous) {
+  if (previous != null) {
+    await writeText(deps, path, previous);
+    return;
+  }
+  const remove = deps.removeText ?? ((candidate) => rm(candidate, { force: true }));
+  await remove(path);
 }
 
 /**
@@ -103,12 +143,25 @@ function renderView(view, original, path, dir) {
  */
 async function roundTrip(dir, path, original, text, deps) {
   await writeText(deps, path, text);
-  const result = await validator(deps)(dir);
+  const result = await validatedResult(dir, path, original, deps);
   const relevant = (result.findings ?? []).filter((finding) => touchesPipeline(finding, path, dir));
   if (relevant.length > 0) {
     await writeText(deps, path, original);
   }
   return { findings: relevant };
+}
+
+async function validatedResult(dir, path, original, deps) {
+  try {
+    const result = await validator(deps)(dir);
+    if (result.state !== "validated") {
+      throw new Error(result.message ?? "pipeline validation did not complete");
+    }
+    return result;
+  } catch (error) {
+    await writeText(deps, path, original);
+    throw error;
+  }
 }
 
 function touchesPipeline(finding, path, dir) {

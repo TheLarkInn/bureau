@@ -5,6 +5,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
+import { sessionValue, storeSessionValue } from "../session-state.js";
 import { RECONCILE_REFUSED, applyEvent, applyEvents, emptyOverlay, mergeRunEvents, newRunSince, reconcileReason, runActions } from "./overlay.js";
 
 const h = React.createElement;
@@ -77,8 +78,9 @@ function postReconcile() {
  * `toFlow(pipeline, state, selectedStep, decoration)`; `controls` renders
  * into the pipeline toolbar.
  */
-export function useLiveOverlay(activity, onOpenReplay) {
-  const [runId, setRunId] = useState(null);
+export function useLiveOverlay(activity, onOpenReplay, pipeline) {
+  const storageKey = `live-run:${pipeline}`;
+  const [runId, setRunId] = useState(() => sessionValue(storageKey));
   const [overlay, setOverlay] = useState(emptyOverlay);
   const [events, setEvents] = useState([]);
   const [collapsed, setCollapsed] = useState(new Set());
@@ -101,6 +103,8 @@ export function useLiveOverlay(activity, onOpenReplay) {
   // the report of a pass that is still perfectly true because the reader
   // switched runs while it was out.
   const reconcileTicket = useRef(0);
+
+  useEffect(() => storeSessionValue(storageKey, runId), [runId, storageKey]);
 
   useEffect(() => {
     // A refusal and a fold both belong to the run that was selected when they

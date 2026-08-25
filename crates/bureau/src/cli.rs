@@ -1,9 +1,10 @@
-//! The command line; verbs are verbs and the hard cap is 17.
+//! The command line; its hard cap is 17 top-level commands.
 //!
-//! `pause` and `resume` took the last two slots; reconcile a smaller
-//! surface before the total grows again.
+//! `dashboard` occupies the former redundant `version` slot; use the
+//! conventional `--version` flag instead.
 
 mod command;
+mod dashboard;
 mod inspect;
 mod lifecycle;
 mod mcp;
@@ -46,16 +47,6 @@ pub struct Cli {
     /// What to do.
     #[command(subcommand)]
     pub verb: Verb,
-}
-
-/// Prints the version line.
-fn version() -> i32 {
-    out::line(format_args!(
-        "{} {}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION")
-    ));
-    0
 }
 
 fn parent(path: &std::path::Path) -> PathBuf {
@@ -195,9 +186,9 @@ type CliFuture = Pin<Box<dyn Future<Output = anyhow::Result<i32>> + Send>>;
 
 fn dispatch(verb: Verb) -> CliFuture {
     match verb {
-        Verb::Version => Box::pin(async { Ok(version()) }),
         Verb::Validate { dir, json } => Box::pin(async move { validate::run(&dir, json) }),
         Verb::Reconcile(args) => Box::pin(reconcile::run(args)),
+        Verb::Dashboard(args) => Box::pin(async move { dashboard::run(&args) }),
         Verb::Watch {
             runs,
             state,
