@@ -15,6 +15,7 @@ config repository) and both forges (GitHub and Azure DevOps).
 
 - A Linux environment (a dev container is the intended sandbox boundary).
 - `git` on `PATH`.
+- Node.js on `PATH` when using the optional browser dashboard.
 - An agent CLI for agent steps: GitHub Copilot CLI (`copilot`) or Claude
   Code (`claude`). You can also try everything offline with the `fake`
   adapter — see [Try it offline first](#try-it-offline-first).
@@ -30,7 +31,7 @@ From a source checkout:
 
 ```sh
 cargo install --path crates/bureau
-bureau version
+bureau --version
 ```
 
 Local state lives in `~/.bureau` (set `BUREAU_HOME` to move it):
@@ -352,6 +353,7 @@ bureau run fix-failing-test --item acme/web#42   # one item, once, foreground
 bureau reconcile                  # the continuous loop (default 5m interval)
 bureau reconcile --now            # one pass; start eligible work and wait
 bureau watch                      # live dashboard: runs, budget, latest events
+bureau dashboard                  # browser drafting table and run visualization
 bureau list                       # every run
 bureau show <run-id>              # replayed state of one run
 bureau cancel <run-id>            # cooperative stop between steps
@@ -365,6 +367,14 @@ it doing right now": a self-refreshing terminal view of the adopted
 config commit, active leases, every run's current step and cost, and the
 per-assignment budget headroom. It reads `~/.bureau` without ever
 writing or locking it.
+
+`bureau dashboard` is the browser counterpart. It serves the same config,
+pipeline editor, run overlays, transcripts, and controls as the GitHub Copilot
+app canvas on loopback only. Use `--no-open` for SSH port forwarding or
+`--dev` from a trusted source checkout while changing
+`.github/extensions/bureau-canvas/web/`; development reloads preserve the
+selected pipeline mode, run, and step. The web bundle is embedded in the
+binary, so normal dashboard use does not depend on the source checkout.
 
 `bureau run` exit codes: `0` success or no-work, `1` failure/blocked/
 claim-lost, `2` setup errors (e.g. a missing credential, named in the

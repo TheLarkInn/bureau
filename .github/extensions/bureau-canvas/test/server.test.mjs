@@ -1,11 +1,40 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 process.env.BUREAU_CANVAS_TEST = "1";
 
 const canvas = await import("../extension.mjs");
+
+function readChunk(reader) {
+    return new Promise((resolveRead, rejectRead) => {
+        const timer = setTimeout(() => rejectRead(new Error("timed out waiting for dashboard reload")), 5000);
+        reader.read().then(
+            (result) => {
+                clearTimeout(timer);
+                resolveRead(result);
+            },
+            (error) => {
+                clearTimeout(timer);
+                rejectRead(error);
+            },
+        );
+    });
+}
+
+async function readEvent(reader, name) {
+    let text = "";
+    while (!text.includes(`event: ${name}`)) {
+        const { value, done } = await readChunk(reader);
+        if (done) {
+            break;
+        }
+        text += new TextDecoder().decode(value);
+    }
+    return text;
+}
 
 test("declares the Bureau canvas", () => {
     assert.deepStrictEqual(canvas.canvasDeclaration, {
@@ -27,9 +56,32 @@ test("serves config page and state", async () => {
     try {
         const page = await fetch(opened.url).then((response) => response.text());
         const state = await fetch(new URL("/state", opened.url)).then((response) => response.json());
-        assert.deepStrictEqual([page.includes("Bureau"), state.instanceId, state.pipeline], [true, instanceId, "smoke"]);
+        assert.deepStrictEqual(
+            [
+                page.includes("Bureau"),
+                state.instanceId,
+                state.pipeline,
+                (await fetch(opened.url)).headers.get("x-frame-options"),
+            ],
+            [true, instanceId, "smoke", "SAMEORIGIN"],
+        );
     } finally {
         await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+test("Copilot canvas host remains frameable", async () => {
+    const instanceId = "bureau-embedded-frame-test";
+    const options = canvas.createBureauCanvasOptions(() => process.cwd());
+    const opened = await options.open({ instanceId, input: {} });
+    try {
+        const response = await fetch(opened.url);
+        assert.deepStrictEqual(
+            [response.headers.get("x-frame-options"), response.headers.get("content-security-policy")],
+            [null, null],
+        );
+    } finally {
+        await options.onClose({ instanceId });
     }
 });
 
@@ -58,6 +110,72 @@ test("streams a state event", async () => {
     } finally {
         await canvas.closeBureauCanvas({ instanceId });
     }
+});
+
+test("mutation endpoint requires the page capability and same origin", async () => {
+    const instanceId = "bureau-server-security-test";
+    const opened = await canvas.openBureauCanvas({ instanceId, input: {} });
+    const capability = canvas.servers.get(instanceId).capability;
+    const intent = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: '{"kind":"back-to-config"}',
+    };
+    try {
+        const missing = await fetch(new URL("/intent", opened.url), intent);
+        const hostile = await fetch(new URL("/intent", opened.url), {
+            ...intent,
+            headers: {
+                ...intent.headers,
+                "X-Bureau-Capability": capability,
+                Origin: "https://example.invalid",
+            },
+        });
+        const wrongType = await fetch(new URL("/intent", opened.url), {
+            ...intent,
+            headers: {
+                "Content-Type": "text/plain",
+                "X-Bureau-Capability": capability,
+            },
+        });
+        const allowed = await fetch(new URL("/intent", opened.url), {
+            ...intent,
+            headers: {
+                ...intent.headers,
+                "X-Bureau-Capability": capability,
+                Origin: new URL(opened.url).origin,
+            },
+        });
+        assert.deepStrictEqual(
+            [missing.status, hostile.status, wrongType.status, allowed.status],
+            [403, 403, 403, 200],
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+test("development host reloads open pages after web changes", async (t) => {
+    const watchDir = await mkdtemp(join(tmpdir(), "bureau-dashboard-reload-"));
+    const instanceId = "bureau-development-reload-test";
+    const opened = await canvas.openBureauCanvas(
+        { instanceId, input: {} },
+        { dev: true, devIntervalMs: 20, watchDir },
+    );
+    t.after(() => rm(watchDir, { recursive: true, force: true }));
+    const pageResponse = await fetch(opened.url);
+    const page = await pageResponse.text();
+    const eventsResponse = await fetch(new URL("/events", opened.url));
+    const reader = eventsResponse.body.getReader();
+    await readEvent(reader, "state");
+    await writeFile(join(watchDir, "change.css"), "body {}\n");
+    const reload = await readEvent(reader, "reload");
+    await reader.cancel();
+    await canvas.closeBureauCanvas({ instanceId });
+    assert.deepStrictEqual(
+        [page.includes("/dev-reload.mjs"), pageResponse.headers.get("cache-control"), reload.includes("event: reload")],
+        [true, "no-store", true],
+    );
 });
 
 test("uses app theme tokens in the config page", async () => {

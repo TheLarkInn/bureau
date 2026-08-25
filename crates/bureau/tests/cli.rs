@@ -1,4 +1,4 @@
-//! Binary-level tests: `version`, `validate`, and the `fake` adapter
+//! Binary-level tests: `--version`, `validate`, and the `fake` adapter
 //! testing seam, driven through the built `bureau` binary.
 
 use std::path::{Path, PathBuf};
@@ -55,7 +55,7 @@ fn stderr(output: &Output) -> String {
 
 #[test]
 fn version_prints_name_and_version() {
-    let output = bureau(&["version"]);
+    let output = bureau(&["--version"]);
     assert!(ok(&output), "{}", stderr(&output));
     assert_eq!(stdout(&output), "bureau 0.1.0\n");
 }

@@ -38,6 +38,10 @@ async function memoryFs(extra = {}) {
         files.set(path, text);
         return Promise.resolve();
       },
+      removeText: (path) => {
+        files.delete(path);
+        return Promise.resolve();
+      },
       ...extra,
     },
   };
@@ -66,7 +70,11 @@ function pipelineFinding(pipeline, message) {
 }
 
 function inputFor(view, layout = null) {
-  return { dir: fixtureDirPath(), pipeline: "agent-eligible-pipeline", view, layout };
+  return inputForPipeline(view, "agent-eligible-pipeline", layout);
+}
+
+function inputForPipeline(view, pipeline, layout = null) {
+  return { dir: fixtureDirPath(), pipeline, view, layout };
 }
 
 test("save writes the rendered pipeline when validation is clean", async () => {
@@ -118,6 +126,23 @@ test("save reverts the file when findings name the edited pipeline", async () =>
     findings: 1,
     restored: true,
   });
+});
+
+test("save reverts the file when validation cannot run", async () => {
+  const original = await fixtureText();
+  const validate = () => Promise.resolve({
+    ok: false,
+    state: "binary-missing",
+    findings: [],
+    message: "bureau binary unavailable",
+  });
+  const { files, deps } = await memoryFs({ validate });
+  const view = editable(await fixtureView());
+  await assert.rejects(
+    () => savePipeline(inputFor(setEdge(view, "verify", "failure", "abort")), deps),
+    /binary unavailable/u,
+  );
+  assert.equal(files.get(pipelinePath()), original);
 });
 
 test("findings from another pipeline do not block the save", async () => {
@@ -185,6 +210,69 @@ test("save persists positions together with the pipeline", async () => {
   const layouts = await readLayout(fixtureDirPath(), deps);
 
   assert.deepEqual(arrangementFor(layouts, "agent-eligible-pipeline"), layout);
+});
+
+test("layout failure restores both pipeline and layout", async () => {
+  const original = await fixtureText();
+  const { files, deps } = await memoryFs({ validate: () => Promise.resolve(cleanValidation()) });
+  const path = join(fixtureDirPath(), layoutName);
+  files.set(path, '{"pipelines":{"old":{}}}\n');
+  const write = deps.writeText;
+  deps.writeText = (candidate, text) => (
+    candidate === path && text.includes("agent-eligible-pipeline")
+      ? Promise.reject(new Error("layout refused"))
+      : write(candidate, text)
+  );
+  const view = setEdge(editable(await fixtureView()), "verify", "failure", "abort");
+  await assert.rejects(() => savePipeline(inputFor(view, { verify: { x: 1, y: 2 } }), deps), /layout refused/u);
+  assert.deepEqual(
+    [files.get(pipelinePath()), files.get(path)],
+    [original, '{"pipelines":{"old":{}}}\n'],
+  );
+});
+
+test("a failed overlapping save cannot erase the later save", async () => {
+  let enter;
+  let release;
+  const entered = new Promise((resolveEnter) => { enter = resolveEnter; });
+  const firstResult = new Promise((resolveRelease) => { release = resolveRelease; });
+  let calls = 0;
+  const validate = () => {
+    if (calls++ === 0) {
+      enter();
+      return firstResult;
+    }
+    return Promise.resolve(cleanValidation());
+  };
+  const { files, deps } = await memoryFs({ validate });
+  const view = editable(await fixtureView());
+  const first = savePipeline(inputFor(setEdge(view, "verify", "failure", "abort")), deps);
+  await entered;
+  const second = savePipeline(inputFor(setEdge(view, "verify", "blocked", "escalate")), deps);
+  release({ ...cleanValidation(), findings: [pipelineFinding("agent-eligible-pipeline", "first failed")] });
+  const results = await Promise.all([first, second]);
+  assert.deepEqual(
+    [results.map((result) => result.saved), files.get(pipelinePath()).includes("on_blocked: escalate")],
+    [[false, true], true],
+  );
+});
+
+test("concurrent pipeline saves preserve both shared layouts", async () => {
+  const original = await fixtureText();
+  const { files, deps } = await memoryFs({ validate: () => Promise.resolve(cleanValidation()) });
+  const otherPath = join(fixtureDirPath(), "pipelines", "other-pipeline.yaml");
+  files.set(otherPath, original.replace("name: agent-eligible-pipeline", "name: other-pipeline"));
+  const first = editable(await fixtureView());
+  const second = { ...editable(await fixtureView()), name: "other-pipeline" };
+  await Promise.all([
+    savePipeline(inputFor(first, { implement: { x: 1, y: 2 } }), deps),
+    savePipeline(inputForPipeline(second, "other-pipeline", { verify: { x: 3, y: 4 } }), deps),
+  ]);
+  const layouts = await readLayout(fixtureDirPath(), deps);
+  assert.deepEqual(
+    [layouts["agent-eligible-pipeline"].steps.implement, layouts["other-pipeline"].steps.verify],
+    [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+  );
 });
 
 test("save refuses a view whose name does not match the target pipeline", async () => {

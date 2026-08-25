@@ -64,7 +64,7 @@ async function bootCanvas() {
     const deadline = setTimeout(() => reject(new Error(`canvas host did not print a URL; stderr: ${stderr}`)), 20_000);
     child.stdout.on("data", (chunk) => {
       output += chunk;
-      const match = output.match(/Bureau canvas: (http:\/\/127\.0\.0\.1:\d+\/)/u);
+      const match = output.match(/Bureau dashboard: (http:\/\/127\.0\.0\.1:\d+\/)/u);
       if (match) {
         clearTimeout(deadline);
         resolve(match[1]);

@@ -117,7 +117,8 @@ Violations of this section are build failures, not style notes.
 3. **Reuse the industry word that already means the thing:** `queue`, `lease`,
    `budget`, `worktree`, `step`, `run`, `role`, `adapter`, `permission`, `trust`,
    `reconcile`, `forge`.
-4. **CLI verbs are verbs:** `run`, `list`, `show`, `cancel`, `retry`, `validate`.
+4. **CLI commands name ordinary operations:** `run`, `list`, `show`, `cancel`,
+   `retry`, `validate`. `dashboard` is the one conventional surface noun.
 5. **Do not import Kubernetes vocabulary.** Take the reconcile *pattern*; refuse the
    words. `operator`, `controller`, `CRD`, `custom resource`, `namespace`,
    `reconciler manager` are all banned. `reconcile`, `desired`, `observed`, `drift`,
@@ -166,7 +167,7 @@ creep. If you find yourself building one, stop and tell me the spec is wrong.
 | A general host-capability matching engine | You are in a container. Provision the environment; do not match against the host. |
 | Self-update machinery | `git pull`. |
 | A proc-macro crate, a trait-heavy plugin system, or generics for their own sake | Concrete types until duplication proves otherwise. |
-| More than 17 CLI verbs | Hard cap; `pause` and `resume` named the last two. |
+| More than 17 CLI commands | Hard cap. `dashboard` reuses the redundant `version` command's slot; version reporting is the standard `--version` flag. |
 
 Target for the complete system, all layers: **under 15,000 lines**. The reference
 implementation is 330,000 lines and ~190 CLI verbs for the same feature set. Almost

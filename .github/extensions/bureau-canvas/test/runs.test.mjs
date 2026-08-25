@@ -51,7 +51,14 @@ async function json(url) {
 }
 
 async function openCanvas(instanceId, options) {
-  return canvas.openBureauCanvas({ instanceId, input: {} }, options);
+  const opened = await canvas.openBureauCanvas({ instanceId, input: {} }, options);
+  return {
+    ...opened,
+    intentHeaders: {
+      "Content-Type": "application/json",
+      "X-Bureau-Capability": canvas.servers.get(instanceId).capability,
+    },
+  };
 }
 
 test("lists runs with liveness and current step", async (t) => {
@@ -191,7 +198,7 @@ test("maps run control intents to bureau pause/resume/cancel", async (t) => {
     for (const [kind, verb] of [["pause-run", "pause"], ["resume-run", "resume"], ["cancel-run", "cancel"]]) {
       const response = await fetch(new URL("/intent", opened.url), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: opened.intentHeaders,
         body: JSON.stringify({ kind, run_id: "run-live" }),
       });
       const body = await response.json();
@@ -217,7 +224,7 @@ test("runs one reconcile pass in the run root this server reads", async (t) => {
   try {
     const response = await fetch(new URL("/intent", opened.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: opened.intentHeaders,
       body: JSON.stringify({ kind: "reconcile-now" }),
     });
     const body = await response.json();
@@ -237,7 +244,7 @@ test("rejects a control intent without a run id", async (t) => {
   try {
     const response = await fetch(new URL("/intent", opened.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: opened.intentHeaders,
       body: JSON.stringify({ kind: "pause-run" }),
     });
     assert.equal(response.status, 400);

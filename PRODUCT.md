@@ -36,9 +36,9 @@ graph-native control of a self-hosted reconcile loop.
 ## Operating Context
 
 Runs in a Linux dev container on one developer's machine; one process, no
-cluster. Operated through a TUI (graph designer) and a browser UI
-(`.github/extensions/bureau-canvas`, the Copilot app canvas) against the same
-`.bureau/` config. The forge (GitHub/ADO) owns work items, PRs, review
+cluster. Operated through a terminal dashboard and one browser drafting table
+hosted either by `bureau dashboard` or the GitHub Copilot app canvas against
+the same `.bureau/` config. The forge (GitHub/ADO) owns work items, PRs, review
 threads, and identity; bureau consumes them via API. Bureau's reviewed config
 runs its own agentic loop for code and design review, visual testing, and
 creation of implementation-ready GitHub issues.
@@ -67,8 +67,9 @@ palette, type, or theme; the visual world is decided per-surface in new-work.
 ## Evidence on Hand
 
 - `DESIGN.md` — authoritative engineering spec.
-- `.github/extensions/bureau-canvas/web/` — incumbent web UI (React flow
-  graph, vendored deps), with e2e screenshot harness in `e2e/`.
+- `.github/extensions/bureau-canvas/web/` — the canonical browser UI (React
+  flow graph, vendored deps), shared by the standalone dashboard and Copilot
+  app canvas, with the e2e screenshot harness in `e2e/`.
 - TUI graph designer in `crates/` (ratatui-based).
 - No marketing site, testimonials, or external proof; future work must not
   fabricate any.

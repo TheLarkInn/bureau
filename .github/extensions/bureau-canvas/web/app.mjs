@@ -14,7 +14,7 @@ import {
 } from "@xyflow/react";
 // graph-overlays: mode switcher plus live/replay overlay controllers. The
 // pipeline graph rendering below stays as-is; overlay modes only restyle it.
-import { ModeSwitcher, useRunActivity } from "./modes.js";
+import { MODES, ModeSwitcher, useRunActivity } from "./modes.js";
 import { LiveActivity, useLiveOverlay } from "./live/live.js";
 import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
@@ -24,6 +24,7 @@ import { terminalCopy } from "./terminals.js";
 import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
+import { sessionValue, storeSessionValue } from "./session-state.js";
 
 const h = React.createElement;
 const CARD_WIDTH = 240;
@@ -51,7 +52,7 @@ window.dispatchEvent(new Event("bureau-mounted"));
 
 function App() {
   const [state, setState] = useState(null);
-  const [selectedStep, setSelectedStep] = useState(null);
+  const [selectedSteps, setSelectedSteps] = useState({});
 
   useEffect(() => {
     let alive = true;
@@ -65,7 +66,8 @@ function App() {
     const events = new EventSource("./events");
     const localState = (event) => setState(event.detail);
     events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
-    events.addEventListener("focus", (event) => applyFocus(JSON.parse(event.data), setSelectedStep, setState));
+    events.addEventListener("focus", (event) =>
+      applyFocus(JSON.parse(event.data), setSelectedSteps, setState));
     window.addEventListener("bureau-state", localState);
     return () => {
       alive = false;
@@ -77,6 +79,9 @@ function App() {
   if (!state) {
     return h("main", { className: "app-shell" }, h("p", { className: "status" }, "Loading…"));
   }
+  const pipeline = state.selectedPipeline?.name;
+  const selectedStep = pipeline ? selectedStepFor(selectedSteps, pipeline) : null;
+  const selectStep = (step) => rememberStep(setSelectedSteps, pipeline, step);
 
   return h(
     "main",
@@ -85,15 +90,38 @@ function App() {
     h(DraftBar, { plan: state.plan }),
     h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
     state.selectedPipeline
-      ? h(PipelineView, { state, selectedStep, setSelectedStep })
+      ? h(PipelineView, {
+        key: state.selectedPipeline.name,
+        state,
+        selectedStep,
+        setSelectedStep: selectStep,
+      })
       : h(ConfigView, { state }),
   );
 }
 
-function applyFocus(payload, setSelectedStep, setState) {
+function rememberStep(setSelectedSteps, pipeline, step) {
+  if (!pipeline) {
+    return;
+  }
+  storeSessionValue(`selected-step:${pipeline}`, step);
+  setSelectedSteps((current) => ({ ...current, [pipeline]: step }));
+}
+
+function selectedStepFor(selectedSteps, pipeline) {
+  return Object.hasOwn(selectedSteps, pipeline)
+    ? selectedSteps[pipeline]
+    : sessionValue(`selected-step:${pipeline}`);
+}
+
+function applyFocus(payload, setSelectedSteps, setState) {
   const focus = payload?.focus;
   if (focus?.kind === "step") {
-    setSelectedStep(focus.step ?? focus.name ?? null);
+    rememberStep(
+      setSelectedSteps,
+      payload?.subject?.pipeline ?? focus.pipeline,
+      focus.step ?? focus.name ?? null,
+    );
   }
   if (focus?.kind === "pipeline") {
     postIntent({ kind: "open-pipeline", pipeline: focus.name ?? focus.pipeline }).then((result) => {
@@ -1471,16 +1499,20 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   const pipeline = state.pipelines?.[name];
   // graph-overlays: design keeps the static graph; live and replay restyle
   // it from run events via the shared reducer in web/live/overlay.js.
-  const [mode, setMode] = useState("design");
+  const [mode, setMode] = useState(() => {
+    const stored = sessionValue("pipeline-mode", "design");
+    return MODES.includes(stored) ? stored : "design";
+  });
+  useEffect(() => storeSessionValue("pipeline-mode", mode), [mode]);
   const activity = useRunActivity(name, state.config?.view?.assignments ?? []);
-  const replay = useReplayOverlay(activity);
+  const replay = useReplayOverlay(activity, name);
   // A pass started from Live produces a run that has already finished, so the
   // hand-off target is Replay. Wired here because this is where both overlays
   // and the mode itself are owned.
   const live = useLiveOverlay(activity, (runId) => {
     replay.setRunId(runId);
     leaveLive("replay");
-  });
+  }, name);
   // Leaving Live ends what this visit said: its refusal and its pass report
   // are statements about a request made here, and the hook that holds them
   // outlives the surface.

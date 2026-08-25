@@ -5,14 +5,16 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
+import { sessionValue, storeSessionValue } from "../session-state.js";
 import { emptyOverlay, stateUpTo } from "../live/overlay.js";
 
 const h = React.createElement;
 const SPEEDS = [1, 4, 16];
 const TICK_MS = 100;
 
-export function useReplayOverlay(activity) {
-  const [runId, setRunId] = useState(null);
+export function useReplayOverlay(activity, pipeline) {
+  const storageKey = `replay-run:${pipeline}`;
+  const [runId, setRunId] = useState(() => sessionValue(storageKey));
   const [events, setEvents] = useState([]);
   const [range, setRange] = useState({ start: 0, end: 0 });
   const [position, setPosition] = useState(0);
@@ -20,6 +22,8 @@ export function useReplayOverlay(activity) {
   const [speed, setSpeed] = useState(1);
   const [collapsed, setCollapsed] = useState(new Set());
   const positionRef = useRef(0);
+
+  useEffect(() => storeSessionValue(storageKey, runId), [runId, storageKey]);
 
   useEffect(() => {
     if (!runId) {

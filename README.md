@@ -100,6 +100,7 @@ Values are scrubbed from everything written to the run log.
 bureau list                  # every run
 bureau show <run-id>         # replayed state of one run
 bureau watch                 # live terminal dashboard of local state
+bureau dashboard             # browser drafting table and live/replay runs
 bureau cancel <run-id>       # write the run's CANCEL marker
 bureau pause <run-id>        # write the run's PAUSE marker
 bureau resume <run-id>       # clear it; run re-entry or reconcile continues
@@ -115,6 +116,14 @@ limit is forge state and is excluded), and the selected run's latest
 events. It refreshes once a second; `q`, `Esc`, or `Ctrl-C` quits, and
 `up`/`down` select a run. Piped instead of a terminal, it prints one
 plain-text snapshot and exits.
+
+`dashboard` serves the same drafting table used by the GitHub Copilot app on
+an ephemeral `127.0.0.1` port and opens it in a browser. The web bundle is
+embedded in the binary; Node.js is the only runtime dependency. `--no-open`
+only prints the URL. From a trusted Bureau source checkout, `--dev` serves the
+checkout instead and reloads every connected browser or development canvas
+page when files under `web/` change, restoring the selected pipeline mode,
+run, and step.
 
 The fixed home layout contains `settings.yaml`, `credentials/`, `state.db`,
 `runs/`, `checkout-cache/`, and `config-cache/`. Explicit path overrides are

@@ -97,7 +97,7 @@ test("standalone host boots and serves the shared endpoints", async (t) => {
     const deadline = setTimeout(() => rejectUrl(new Error(`standalone host did not print a URL; stderr: ${stderr}`)), 15000);
     child.stdout.on("data", (chunk) => {
       output += chunk;
-      const match = output.match(/Bureau canvas: (http:\/\/127\.0\.0\.1:\d+\/)/u);
+      const match = output.match(/Bureau dashboard: (http:\/\/127\.0\.0\.1:\d+\/)/u);
       if (match) {
         clearTimeout(deadline);
         resolveUrl(match[1]);
