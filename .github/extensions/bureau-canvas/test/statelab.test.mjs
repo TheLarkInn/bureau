@@ -153,13 +153,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 627056639793,
       matrixStates: 207,
-      probes: 44,
-      states: 251,
-      transitions: 136,
-      entryTransitions: 100,
+      probes: 49,
+      states: 256,
+      transitions: 137,
+      entryTransitions: 101,
       returnTransitions: 36,
-      roots: 151,
-      renders: 502,
+      roots: 155,
+      renders: 512,
     },
   );
 });
@@ -569,7 +569,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 90, probe: 19, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 93, probe: 20, landing: 30, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1822,6 +1822,9 @@ const PROBE_ROUTES = {
   "probe--create-refusal-dismissed": "fail-intent",
   "probe--delete-refusal-dismissed": "fail-intent",
   "probe--delete-preflight-refused": "refuse-preflight",
+  "probe--delete-preflight-checking": "stall-preflight",
+  "probe--repos-add-registering": "stall-intent",
+  "probe--repos-add-refused": "fail-intent",
   "probe--reconcile-now-reported": "pass-intent",
   "probe--reconcile-now-started-a-run": "pass-starts-run",
   "probe--replay-opened-from-a-pass": "pass-starts-run",
@@ -1868,6 +1871,6 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 95 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 98 },
   );
 });

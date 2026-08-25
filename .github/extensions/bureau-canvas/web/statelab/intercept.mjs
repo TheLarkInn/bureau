@@ -135,7 +135,7 @@ export const PASS_STARTED = { ok: true, output: "started 1 run" };
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "refuse-preflight", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "refuse-preflight", "stall-preflight", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -183,8 +183,8 @@ export function installIntercept(win, kind) {
     passStartsRun(win);
     return;
   }
-  if (kind === "refuse-preflight") {
-    refusePreflight(win);
+  if (kind === "refuse-preflight" || kind === "stall-preflight") {
+    interceptPreflight(win, kind);
     return;
   }
   if (kind) {
@@ -193,20 +193,26 @@ export function installIntercept(win, kind) {
 }
 
 /**
- * The delete preflight refused.
+ * The delete preflight, held or refused.
  *
- * Every other refusal here goes through `stallIntent`, which only ever claims a
- * request `isWrite` says is one — and the unconfirmed delete deliberately is
+ * Every other condition here goes through `stallIntent`, which only ever claims
+ * a request `isWrite` says is one — and the unconfirmed delete deliberately is
  * not, because `reachesHost` lets it through so the confirmation prompt can
- * draw the referrers the host reports. That made this the one refusal no
- * condition could stage, and so the one note `DeleteControl` draws that no
- * state ever rendered.
+ * draw the referrers the host reports. That made these the two conditions no
+ * other shim could stage, and so two of `DeleteControl`'s own screens that no
+ * state ever rendered: the refusal, and the round trip before it.
+ *
+ * The round trip matters on its own. Pressing Delete does not open a prompt, it
+ * asks the host a question, and while that question is outstanding the button
+ * says "Checking…" and stops accepting presses — which is the whole of what
+ * stops a reader queueing three preflights against one card. It is the same
+ * two-ended contract the confirmation carries, on the request that comes first.
  *
  * Only the preflight is claimed. Everything else — including the confirmed
- * delete — falls through to the floor, so this stages one failed read rather
- * than a host that has stopped answering.
+ * delete — falls through to the floor, so this stages one slow or failed read
+ * rather than a host that has stopped answering.
  */
-function refusePreflight(win) {
+function interceptPreflight(win, kind) {
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
     if (!/\/intent$/u.test(urlOf(input)) || !isPreflight(bodyOf(init))) {
@@ -215,7 +221,7 @@ function refusePreflight(win) {
     // `Promise.resolve` rather than the bare response: `postIntent` calls
     // `.then` on whatever this returns, so a shim answering with the response
     // itself is a `TypeError` on the page rather than a refusal on the card.
-    return Promise.resolve(jsonIn(win, { ok: false }));
+    return kind === "stall-preflight" ? forever() : Promise.resolve(jsonIn(win, { ok: false }));
   };
 }
 

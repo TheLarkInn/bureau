@@ -94,6 +94,29 @@ test("a refused preflight refuses the read and leaves every other intent alone",
   );
 });
 
+/**
+ * The other end of the same scoping: held rather than refused.
+ *
+ * Read by whether each request settles, because that is the difference this
+ * condition makes. `DeleteControl` clears its `busy` flag in `.then`, so a
+ * preflight that never settles is the "Checking…" screen and nothing else can
+ * produce it — and the confirmed delete must still be refused by the floor
+ * rather than quietly held here, or the state would be two screens at once.
+ */
+test("a held preflight hangs the read and leaves every other intent alone", async () => {
+  const win = windowStub();
+  installIntercept(win, "stall-preflight");
+
+  assert.deepEqual(
+    {
+      preflight: await settles(win.fetch(...del(false))),
+      confirmed: await settles(win.fetch(...del(true))),
+      read: await settles(win.fetch(...post("resolve-repo"))),
+    },
+    { preflight: false, confirmed: true, read: true },
+  );
+});
+
 test("every intercept the registry asks for is one this module names", () => {
   const asked = [...new Set(STATES.map((state) => state.intercept).filter(Boolean))].sort();
   const unservable = asked.filter((kind) => !servableInFrame(kind)).sort();
@@ -104,7 +127,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-runs", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-preflight", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],

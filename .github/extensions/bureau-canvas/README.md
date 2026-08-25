@@ -234,6 +234,38 @@ starts from a fresh session, because the assignment stack remembers its
 expanded card in `sessionStorage` and a replayed path would otherwise toggle
 it shut.
 
+### Absence, and the writes that are not a Save
+
+Two families of screen were missing from the matrix for as long as it has
+existed, and both were missing for the same reason: the axes were written from
+what a config *has* and from what a field editor's Save does.
+
+The first is what the canvas says when a field is unset. An assignment written
+but not yet filled in draws six sentences no other state produces — `no
+source`, `no pipeline`, `no filter`, `no approval label`, `branches: not set`,
+`no repos`, and the mark the pipeline row draws instead of a door into a
+pipeline that does not exist. The `bare-assignment` fixture puts one beside a
+configured card, and `probe--bare-assignment` pins the glance line as a whole
+rather than by substring, so a card that dropped one fallback and kept the rest
+fails. Rendering it is also what found the row that answered an absence with
+punctuation: work source read `? · ?`, on the field that decides whether the
+assignment does anything at all, and now says `no work source`.
+
+The second is a write that is not a field editor's Save. `fieldState` models
+both ends of every save through `FIELD_SAVE`, and two of this UI's writes have
+no entry there: the delete **preflight**, which is the question Delete asks
+before it is a prompt, and the repo **registration**. Both hold their own
+control while they are in flight — `Checking…`, `Adding…` — which is the whole
+of what stops a card queueing three preflights or writing `repos.yaml` twice,
+and neither end of either had ever been drawn. The preflight needs its own
+route in both hosts, because `reachesHost` deliberately lets an unconfirmed
+delete through, so neither `stall-intent` nor `fail-intent` can touch it.
+
+Rendering the registration's refusal is what found the sentence it was refused
+in: reordering and registering post the same `set-repos`, and both fell back to
+"could not save those repos" — telling a reader who pressed **Add to registry
+and this assignment** that a repo list they never reordered had failed to save.
+
 A third keeps it from flattering itself. The lab settles a walk by watching
 for the host's own SSE state event, and that observer has a window it can
 miss; when it does, the lab says the render was not proved settled rather than

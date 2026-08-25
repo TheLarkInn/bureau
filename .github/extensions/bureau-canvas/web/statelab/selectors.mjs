@@ -25,6 +25,31 @@ export const SELECTORS = {
   assignmentHead: ".assignment-head",
   assignmentDetail: ".assignment-detail",
   assignmentEmpty: ".view-shell--config > .muted",
+  /*
+   * The second card, addressed as a whole and in the two places that describe
+   * an absence.
+   *
+   * `bare-assignment` appends its card, so the sibling combinator is what makes
+   * "the unconfigured one" addressable without naming an assignment. The glance
+   * and the pipeline row are separate selectors because they are separate
+   * claims: the glance is a sentence built from four fallbacks at once, and the
+   * pipeline row is the one place a missing reference is drawn as a mark rather
+   * than as words.
+   */
+  bareHead: ".assignment-card + .assignment-card .assignment-head",
+  bareGlance: ".assignment-card + .assignment-card .assignment-glance",
+  bareDetail: ".assignment-card + .assignment-card .assignment-detail",
+  bareRepos: ".assignment-card + .assignment-card .repos-value",
+  bareWorkSource: ".assignment-card + .assignment-card .ws-value",
+  /*
+   * The pipeline row on a card that names no pipeline.
+   *
+   * `PipelineLink` returns the mark *instead of* the button, so asserting the
+   * mark present is the same claim as asserting the door absent — and it is the
+   * claim in the direction that can fail. A `hides` on the button would be
+   * satisfied by a card that drew nothing at all in that row.
+   */
+  barePipelineUnset: '.assignment-card + .assignment-card [data-testid="pipeline-unset"]',
   // The door from an assignment into its pipeline. It is the one control that
   // carries the assignment-first mental model — the graph is reached through a
   // card, never from a nav — and it was promised by no state, so a card that
@@ -76,6 +101,12 @@ export const SELECTORS = {
   reposSave: '[data-testid="repos-save"]',
   reposAdd: '[data-testid="repos-add"]',
   reposUrl: '[aria-label="Repository URL"]',
+  // The button that writes a new entry into repos.yaml, and the refusal it
+  // comes back with. Registering is the second of the two writes this UI
+  // performs through a control that is not a field editor's Save, so neither
+  // end of it could be reached through the `fieldState` lifecycle.
+  reposRegister: ".repos-editor .actions .btn--primary",
+  reposAddRefused: ".repos-editor > .note--err",
   // The resolved preview: the one place a `.detail-row` is drawn inside
   // another, which is why it is the render that exercises the overlap rule's
   // containment case.
@@ -120,6 +151,19 @@ export const SELECTORS = {
   pipelineBack: '[data-testid="pipeline-back"]',
   pipelineEditLink: ".editor-link",
   sidePanel: ".side-panel",
+  /*
+   * The side panel's own verdict on the pipeline it is describing, and the two
+   * shapes it takes.
+   *
+   * The panel is drawn on every pipeline-viewer state and its validation
+   * section was promised by none of them, so the sentence it says when there is
+   * nothing to report — the only place in this UI that states a *negative*
+   * result — was rendered several hundred times and asserted zero. A section
+   * that had stopped reporting findings at all would have read as clean and
+   * passed every one of them.
+   */
+  panelValidationClean: '[data-testid="panel-validation"] .muted',
+  panelValidationFinding: '[data-testid="panel-validation"] .finding--validation',
   modeSwitcher: ".mode-switcher",
   modeDesign: '[data-testid="mode-design"]',
   modeLive: '[data-testid="mode-live"]',

@@ -210,6 +210,50 @@ function twoAssignments(state) {
   return next;
 }
 
+/**
+ * A second assignment that names nothing yet.
+ *
+ * This is the only screen on which the canvas describes an absence, and there
+ * were seven such sentences — `no source`, `no pipeline`, `no filter`, `no
+ * approval label`, `branches: not set`, `no repos`, and the em dash the
+ * pipeline row draws — none of which any state rendered. The matrix enumerated
+ * what a config *contains* and never what it lacks, so every one of them
+ * shipped asserted by nothing: deleting the fallback and leaving the glance
+ * line reading `undefined · undefined` would have passed all 502 renders.
+ *
+ * It is added *beside* the configured card rather than emptying that one, and
+ * that is the truthful direction. Stripping `agent-eligible` would leave the
+ * pipeline, the roles and the repo referenced by nobody — a payload whose
+ * orphan strip and relation graph both have to move with it — whereas an
+ * assignment that names nothing takes nothing with it, which is exactly what a
+ * newly-written `assignments/*.yaml` looks like before it is filled in. It
+ * also puts the configured card and the unconfigured one on one screen, which
+ * is the comparison a reviewer wants.
+ *
+ * No relation edges: `relationEdges` in `lib/view.mjs` keeps only edges whose
+ * source and target are both nodes, so an assignment with no pipeline and no
+ * repos emits a card and no lines. Adding one here would draw a `pipeline:`
+ * edge into a node that does not exist.
+ */
+function bareAssignment(state) {
+  const next = clone(state);
+  const bare = {
+    name: "unconfigured",
+    work: { forge: null, source: null, filter: null, approvalLabel: null, abortLabel: null, escalateLabel: null },
+    pipeline: null,
+    branchPrefix: null,
+    repos: [],
+    limits: {},
+  };
+  next.config.view.assignments = [...next.config.view.assignments, bare];
+  const relation = next.config.relation ?? { nodes: [], edges: [] };
+  next.config.relation = {
+    ...relation,
+    nodes: [...relation.nodes, { id: `assignment:${bare.name}`, kind: "assignment", name: bare.name }],
+  };
+  return next;
+}
+
 /** Records `ref` as a user of `item`, in the sorted order `sortedUses` keeps. */
 function addUse(item, applies, ref) {
   return applies ? { ...item, usedBy: [...(item.usedBy ?? []), ref].sort() } : item;
@@ -404,6 +448,7 @@ export const FIXTURES = Object.fromEntries([
   entry("empty", "content", "no assignments, roles, repos or pipelines yet", empty),
   entry("orphans", "content", "a role and a repo nothing references", orphans),
   entry("two-assignments", "content", "two assignment cards in the stack", twoAssignments),
+  entry("bare-assignment", "content", "a second assignment that names nothing yet", bareAssignment),
   entry("multi-repo", "content", "two repos, so rank and reorder are meaningful", multiRepo),
   entry("read-only-primary", "content", "the primary repo is registered read-only", readOnlyPrimary),
   entry("unknown-primary", "content", "the primary repo is not in repos.yaml", unknownPrimary),

@@ -538,7 +538,7 @@ function RefLink({ kind, name }) {
 
 function PipelineLink({ state, name }) {
   if (!name) {
-    return h("span", { className: "muted" }, "—");
+    return h("span", { className: "muted", "data-testid": "pipeline-unset" }, "—");
   }
   const summary = state.pipelines?.[name]?.summary ?? {};
   const counts = summary.kindCounts ?? {};
@@ -924,7 +924,12 @@ function ReposEditor({ state, assignment, onDone }) {
         publishLocalState(result);
         onDone();
       } else {
-        setError(result?.error ?? "could not save those repos");
+        // The refusal names the action that was taken, not the intent that
+        // carried it. Registering and reordering post the same `set-repos`, so
+        // both refusals used to say "could not save those repos" — which tells
+        // a reader who pressed "Add to registry and this assignment" that their
+        // ranked list failed to save, an edit they did not make.
+        setError(result?.error ?? (register ? `could not register ${register.name}` : "could not save those repos"));
       }
     });
   };
@@ -1299,12 +1304,24 @@ function LimitRow({ field, value, busy, onToggle, onChange }) {
  * The work source value, clickable: paste the board or issues page you are
  * already looking at and the fields are derived from it. Deriving is a
  * preview — nothing is written until the derivation is accepted.
+ *
+ * An assignment that names no work source says so in words. It used to render
+ * `? · ?`, which is the one row on the card that answered an absence with
+ * punctuation while every other row — `no filter`, `no approval label`,
+ * `branches: not set`, `no repos`, and the pipeline row's mark — answered it
+ * with a sentence. Two question marks read as a rendering fault rather than as
+ * a statement, on the field that decides whether the assignment does anything
+ * at all, and no state rendered it until `probe--bare-assignment-expanded`.
+ *
+ * A half-set source keeps the separator, because that really is a config with
+ * one of the two written: `github · ?` is a forge with no source, and saying
+ * "no work source" there would describe a file that is not on disk.
  */
 function WorkSourceField({ assignment }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setOpen, trigger);
-  const label = `${assignment.work?.forge ?? "?"} · ${assignment.work?.source ?? "?"}`;
+  const label = workSourceLabel(assignment.work);
   return h(
     "div",
     { className: "field-disclosure" },
@@ -1322,6 +1339,13 @@ function WorkSourceField({ assignment }) {
     ),
     open ? h(WorkSourceEditor, { assignment, onDone: close }) : null,
   );
+}
+
+function workSourceLabel(work) {
+  if (!work?.forge && !work?.source) {
+    return "no work source";
+  }
+  return `${work.forge ?? "?"} · ${work.source ?? "?"}`;
 }
 
 function closeDisclosure(setOpen, trigger) {
@@ -1949,7 +1973,7 @@ function SidePanel({ state, pipeline, name }) {
     { className: "side-panel" },
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
     h(AgentIdentities, { state, pipeline }),
-    h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
+    h("section", { className: "panel-section", "data-testid": "panel-validation" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
   );
 }

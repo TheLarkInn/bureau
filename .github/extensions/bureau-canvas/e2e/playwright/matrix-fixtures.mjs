@@ -352,6 +352,14 @@ async function intercept(page, kind) {
     "refuse-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false }) })
       : route.continue()),
+    // The same read, held rather than refused. `stall-intent` cannot stage it
+    // for the same reason `fail-intent` cannot stage the refusal: the preflight
+    // is not a write, so both let it through. Pressing Delete is a question to
+    // the host before it is a prompt, and while the question is outstanding the
+    // button says "Checking…" and takes no second press — the contract that
+    // stops a reader queueing three preflights against one card, and the only
+    // one of this control's four screens that nothing rendered.
+    "stall-preflight": () => page.route(/\/intent$/u, (route) => (isPreflight(intentBody(route)) ? undefined : route.continue())),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.

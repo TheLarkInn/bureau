@@ -863,6 +863,126 @@ export const PROBES = [
     },
   }),
   /*
+   * The two ends of the registration itself.
+   *
+   * Registering is one of only two writes this UI performs through a control
+   * that is not a field editor's Save, so neither end of it could be reached
+   * through the `fieldState` lifecycle: `FIELD_SAVE` has no entry for the
+   * adder, and `field: repos-add` declares the single lifecycle value `n/a`.
+   * That left "Add to registry and this assignment" with a `busy` flag, an
+   * in-flight verb and a refusal that nothing in the registry had ever drawn —
+   * the same gap the draft bar's Saving… and the delete confirmation's
+   * Deleting… were closed for, on the one button still missing it.
+   *
+   * The URL resolves in both: `resolve-repo` is a `READ_INTENT`, so it reaches
+   * the host under `stall-intent` and under `fail-intent` alike, and only the
+   * `set-repos` that carries the registration is claimed. That is what makes
+   * these two screens of the adder rather than two screens of a dead host.
+   */
+  sample({
+    id: "probe--repos-add-registering",
+    covers: "the registration in flight — the second of the two writes with no field-editor Save behind it",
+    summary: "a repo being registered: the button names the work it is doing and takes no second press, so one paste cannot write repos.yaml twice",
+    fixture: "multi-repo",
+    intercept: "stall-intent",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "fill", selector: S.reposUrl, value: REPO_ADD_URL },
+      { op: "wait", selector: S.reposPreview },
+      { op: "click", selector: S.reposRegister },
+      { op: "wait", selector: withheld(S.reposRegister) },
+    ],
+    expect: {
+      shows: [S.reposUrl, S.reposPreview, withheld(S.reposRegister)],
+      hides: [S.reposAddRefused],
+      copy: [{ selector: S.reposRegister, text: "Adding…" }],
+    },
+  }),
+  /*
+   * The refusal, and the sentence it had to be given.
+   *
+   * Reordering and registering post the same `set-repos`, and `ReposEditor`
+   * answered both with one fallback — "could not save those repos". A reader
+   * who pressed "Add to registry and this assignment" was therefore told that
+   * their ranked list had failed to save, an edit they had not made and which
+   * is not what was refused. The refusal now names the action that was taken,
+   * and this is the state that holds it to that.
+   */
+  sample({
+    id: "probe--repos-add-refused",
+    covers: "a registration the host refused, and the words it is refused in",
+    summary: "a refused registration: the button comes back, the paste is still there to retry, and the failure names registering rather than a repo list nobody reordered",
+    fixture: "multi-repo",
+    intercept: "fail-intent",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "fill", selector: S.reposUrl, value: REPO_ADD_URL },
+      { op: "wait", selector: S.reposPreview },
+      { op: "click", selector: S.reposRegister },
+      { op: "wait", selector: S.reposAddRefused },
+    ],
+    expect: {
+      shows: [S.reposUrl, S.reposPreview, S.reposAddRefused, offered(S.reposRegister)],
+      copy: [{ selector: S.reposAddRefused, text: "could not register rushstack" }],
+    },
+  }),
+  /*
+   * The two screens on which the canvas describes an absence.
+   *
+   * Every other state in this registry renders a config that has something in
+   * it, so the sentences the card draws when a field is unset — `no source`,
+   * `no pipeline`, `no filter`, `no approval label`, `branches: not set`,
+   * `no repos`, and the dash `PipelineLink` draws instead of a door — were
+   * rendered by nothing and asserted by nothing. Deleting any of them and
+   * letting the glance read `undefined · undefined · 0 repos · 0 limits` would
+   * have passed all 502 renders, and that is the screen a reader lands on
+   * immediately after writing an `assignments/*.yaml` and before filling it in.
+   *
+   * The glance is asserted as the *whole* line rather than as substrings, and
+   * that is the point of scoping it: a card that dropped one fallback and kept
+   * the other three would satisfy every substring it still drew.
+   */
+  sample({
+    id: "probe--bare-assignment",
+    covers: "an assignment that names nothing yet — the one screen whose glance line is built entirely from fallbacks",
+    summary: "a newly written assignment beside a configured one: the glance says what is missing rather than reading blank",
+    fixture: "bare-assignment",
+    ops: [{ op: "wait", selector: S.bareGlance }],
+    expect: {
+      shows: [S.assignmentCardSecond, S.bareHead],
+      hides: [S.bareDetail],
+      copy: [{ selector: S.bareGlance, text: "no source · no pipeline · 0 repos · 0 limits" }],
+    },
+  }),
+  sample({
+    id: "probe--bare-assignment-expanded",
+    covers: "the unset fields inside the card — the chips and rows that have to say what is missing",
+    summary: "the unconfigured card opened: every row names what it has not been given, and it offers no door into a pipeline that does not exist",
+    fixture: "bare-assignment",
+    ops: [
+      { op: "click", selector: S.bareHead },
+      { op: "wait", selector: S.bareDetail },
+    ],
+    expect: {
+      shows: [S.bareDetail, S.bareRepos, S.bareWorkSource, S.barePipelineUnset],
+      copy: [
+        "no filter",
+        "no approval label",
+        "branches: not set",
+        // The row that used to answer with punctuation. Compared exactly and
+        // scoped, so a return to `? · ?` fails here by name rather than being
+        // absorbed by a substring of the card's own body.
+        { selector: S.bareWorkSource, text: "no work source" },
+        { selector: S.bareRepos, text: "no repos" },
+        { selector: S.barePipelineUnset, text: "—" },
+      ],
+    },
+  }),
+  /*
    * The step log with nothing selected, and with a step that produced nothing.
    *
    * The log occupies the full width below the graph on every overlay screen, so
@@ -1040,6 +1160,37 @@ export const PROBES = [
       shows: [S.assignmentDetail, S.deleteRefusedResting, offered(S.deleteStart)],
       hides: [S.preflight, S.deleteRefused],
       copy: [{ selector: S.deleteRefusedResting, text: "could not inspect agent-eligible" }],
+    },
+  }),
+  /*
+   * The same read, still outstanding.
+   *
+   * Pressing Delete is a question to the host before it is a prompt, and this
+   * is the screen between the press and the answer: the button names the work
+   * it is doing and stops accepting presses, which is the whole of what stops
+   * three preflights being queued against one card. `DeleteControl` has four
+   * screens — asking, asked, removing, refused — and the registry drew three.
+   *
+   * The prompt is asserted absent for the same reason the refusal asserts it
+   * absent: a card that drew a confirmation before the referrer report arrived
+   * would be offering to remove something on the strength of an answer it does
+   * not have.
+   */
+  sample({
+    id: "probe--delete-preflight-checking",
+    covers: "the delete preflight in flight — the round trip a confirmation is asked for through",
+    summary: "Delete pressed and the host not yet answered: the button says what it is doing and refuses a second press, so one card cannot queue three preflights",
+    fixture: "validated",
+    intercept: "stall-preflight",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: withheld(S.deleteStart) },
+    ],
+    expect: {
+      shows: [S.assignmentDetail, withheld(S.deleteStart)],
+      hides: [S.preflight, S.deleteRefusedResting],
+      copy: [{ selector: S.deleteStart, text: "Checking…" }],
     },
   }),
   sample({
