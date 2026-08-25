@@ -592,7 +592,8 @@ is not.
 The gallery is audited, and the audit is a gate: `global-teardown.mjs` fails the
 run when the published gallery is not the whole matrix, holds a render no state
 claims, or contains two states drawing one screen that `RENDER_TWINS` does not
-declare — and equally when a *declared* twin has stopped holding, because a
+declare — and equally when a *declared* twin has stopped holding, or when a run
+rendered too few of a declared twin's screens to judge it at all, because a
 declaration is a claim in both directions.
 
 That gate was not possible until the renders repeated, and what stopped them
@@ -629,8 +630,20 @@ was the one thing it did not draw.
 So the section mounts its graph only while it is open. The first measurement is
 then taken against a real box, cards and captions both land, and nothing has to
 be repaired afterwards. `MeasurementGuard` was corrected in the same direction:
-it reads the pane's own size and does not spend a repair it cannot land, so a
-graph hidden at mount still has its full budget at the moment it is revealed.
+it asks the pane itself whether it is being rendered — `checkVisibility()` and
+an offset box, re-read through a `ResizeObserver` — and does not spend a repair
+it cannot land, so a graph hidden at mount still has its full budget at the
+moment it is revealed.
+
+That correction is not cosmetic, and it is not the config surface it saves. The
+guard used to read the store's `width`/`height`, which cannot answer the
+question: React Flow records a pane measuring zero as 500x500, so *every* hidden
+pane read as measurable from the moment it mounted. The editor mounts its
+Relations pane `hidden` behind the Pipeline tab, so that graph burned all five
+repairs behind the tab and retired before anyone could open it — and a lost
+delivery then left the Relations tab drawing a permanently blank graph.
+`graph-measurement.spec.mjs` pins it: with node measurements withheld, it waits
+out the whole budget before opening the tab and requires the graph to draw.
 
 And because that defect was invisible to every check — no state promises a
 relation card or an edge caption by name, so a graph with a hole in it satisfied

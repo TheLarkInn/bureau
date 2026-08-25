@@ -65,4 +65,33 @@ test.describe("graph measurement", () => {
 
     await expect(page.locator(".relation-flow .react-flow__node").first()).toBeVisible();
   });
+
+  /**
+   * The repair budget belongs to the moment a graph is on screen, not to the
+   * moment it mounts.
+   *
+   * The editor mounts its Relations pane `hidden` behind the Pipeline tab, so
+   * that graph exists — and can spend repairs — long before anyone can see it.
+   * This waits out the whole budget (5 x 80ms, with room to spare) with the tab
+   * still shut, so every repair the guard is willing to spend on a pane nobody
+   * is looking at is already gone by the time the tab opens. A graph that draws
+   * anyway is one whose budget was held until it could land.
+   *
+   * The guard used to read the store's `width`/`height` for this, which cannot
+   * answer it: React Flow records a pane measuring zero as 500x500, so a hidden
+   * pane read as measurable from mount and burned the budget behind the tab.
+   */
+  test("a graph revealed after its budget would have burned still draws", async ({ page, canvas }) => {
+    await withholdNodeMeasurements(page);
+    await page.goto(canvas.url);
+    await page.locator(".assignment-head").first().click();
+    await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await page.getByRole("link", { name: "Edit" }).click();
+    await expect(page.locator('[data-ref="verify"]')).toBeVisible();
+
+    await page.waitForTimeout(1000);
+    await page.getByRole("button", { name: "Relations" }).click();
+
+    await expect(page.locator(".relation-flow .react-flow__node").first()).toBeVisible();
+  });
 });
