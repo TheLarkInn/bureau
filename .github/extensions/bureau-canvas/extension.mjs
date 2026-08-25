@@ -449,7 +449,6 @@ async function startServer(state, options = {}) {
         void handleRequest(entry, request, response).catch(() => sendStatus(response, 500));
     });
     entry.server = server;
-    entry.server = server;
     // One resolution per server: the tail and every request must observe the
     // same root, and the WSL probe behind it should not run per request.
     entry.runsDir = options.runsDir ?? (await resolveRunsDir({ ...options, anchor: state.dir }));
