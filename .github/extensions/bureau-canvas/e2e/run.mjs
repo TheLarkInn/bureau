@@ -304,6 +304,10 @@ async function runSuite(page) {
  * config from an empty directory, then take it away again.
  */
 async function runCrudSuite(page) {
+  // `mkdtemp` needs the parent to exist, and `target/` is gitignored — so in a
+  // fresh clone this whole suite failed on its first line, and only passed on a
+  // tree that had already built something.
+  await mkdir(CRUD_ROOT, { recursive: true });
   const dir = await mkdtemp(join(CRUD_ROOT, "e2e-"));
   await Promise.all(["roles", "assignments", "pipelines"].map((sub) => mkdir(join(dir, sub), { recursive: true })));
   try {
