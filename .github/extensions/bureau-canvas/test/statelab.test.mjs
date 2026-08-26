@@ -1569,7 +1569,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "DETAILS|class=relation-section,open=|||",
       "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
-    graphs: [{ declared: 2, drawn: 1 }],
+    graphs: [{ declared: 2, drawn: 2 }],
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1755,16 +1755,24 @@ function pageStub() {
   });
 
   // A React Flow surface, as the settle rule reads it: the count of edges the
-  // graph was handed, and the edges actually on screen. One of the two is in
-  // the document with no geometry yet, which is exactly the state React Flow
-  // leaves an edge in between putting its element there and computing its path
-  // — so counting elements answers "drawn" about a graph that has drawn
-  // nothing, and only `boxed` tells the two apart.
-  const drawnEdge = element({});
-  const pendingEdge = element({}, { getClientRects: () => [{ width: 0, height: 0 }] });
+  // graph was handed, and the paths actually laid out. One of the two has an
+  // element in the document and no geometry yet, which is exactly the state
+  // React Flow leaves an edge in between putting it there and computing its
+  // path — so counting elements answers "drawn" about a graph that has drawn
+  // nothing.
+  //
+  // Length rather than a box, because the box cannot tell them apart here: an
+  // edge between two vertically aligned handles is a straight vertical line and
+  // has no width, which is the ordinary shape of a pipeline laid out in a
+  // column. `zeroLength` is the pending one — React Flow's path before layout
+  // runs both ends from the same point — and `sideways` is a drawn edge whose
+  // rect would have failed the old test.
+  const laidOut = element({}, { getTotalLength: () => 128 });
+  const sideways = element({}, { getTotalLength: () => 64, getClientRects: () => [{ width: 90, height: 0 }] });
+  const zeroLength = element({}, { getTotalLength: () => 0 });
   const graph = element({}, {
     getAttribute: (name) => (name === "data-graph-edges" ? "2" : null),
-    querySelectorAll: () => [drawnEdge, pendingEdge],
+    querySelectorAll: () => [laidOut, sideways, zeroLength],
   });
 
   const matches = {
