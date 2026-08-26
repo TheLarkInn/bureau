@@ -1586,6 +1586,64 @@ const BASE_STYLE = {
   position: "static",
 };
 
+/** A document that holds nothing but the elements it is given. */
+function docOf(nodes) {
+  return {
+    defaultView: { getComputedStyle: () => BASE_STYLE },
+    documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
+    body: { innerText: "" },
+    querySelectorAll: (selector) => (selector === "body *" ? nodes : []),
+    getElementById: () => null,
+  };
+}
+
+/** One element, as the signature walk reads it. */
+function signed(className, text) {
+  return {
+    tagName: "DIV",
+    attributes: [{ name: "class", value: className }],
+    getAttribute: (name) => (name === "class" ? className : null),
+    childElementCount: 0,
+    textContent: text,
+    getClientRects: () => [{ width: 40, height: 16 }],
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 40, height: 16, left: 0, top: 0, right: 40, bottom: 16 }),
+    contains: () => false,
+    parentElement: null,
+  };
+}
+
+/**
+ * An edge caption's place in the document is the portal's business, not the
+ * screen's.
+ *
+ * `EdgeLabelRenderer` puts every caption in one container in mount order, and
+ * the `transform` that actually positions them is excluded from the signature
+ * on purpose. So two paths to one screen could sign differently over nothing:
+ * the tab round trip and the direct edit, declared twins and both proved
+ * settled, were reported broken because `success` and `failure` had swapped
+ * indices while both captions were on both screens.
+ *
+ * Order dropped, content kept — so a caption that is genuinely missing or
+ * renamed still parts the two, which is the second and third case here.
+ */
+test("edge captions sign as a set, so a portal's mount order is not a difference", () => {
+  const caption = (text) => signed("react-flow__edge-label edge-caption", text);
+  const sign = (nodes) => collect(docOf(nodes), { selectors: [], measure: [], contrast: [] }).signature;
+  const success = caption("success");
+  const failure = caption("failure");
+  const body = signed("step-card", "verify");
+
+  assert.deepStrictEqual(
+    [
+      sign([body, success, failure]) === sign([body, failure, success]),
+      sign([body, success, failure]) === sign([body, success]),
+      sign([body, success, failure]) === sign([body, success, caption("blocked")]),
+      sign([body, success]) === sign([signed("step-card", "review"), success]),
+    ],
+    [true, false, false, false],
+  );
+});
+
 /**
  * The claim the fold actually makes: a state signs the same whichever port the
  * harness happened to bind, and still signs differently when the words change.

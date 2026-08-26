@@ -250,12 +250,26 @@ export function collect(doc, request) {
   const ORIGIN = /https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost):\d+/gu;
   const stable = (value) => value.replace(ORIGIN, "http://canvas.invalid");
   const GEOMETRY = new Set(["style", "transform", "d", "points", "viewBox", "x", "y", "cx", "cy", "r", "width", "height"]);
+  // React Flow renders every edge caption into one portal — `EdgeLabelRenderer`
+  // puts them all in `.react-flow__edgelabel-renderer` — in the order the edges
+  // happened to mount, and their place on screen comes from a `transform` this
+  // signature deliberately ignores. So document order among them is not a
+  // property of the render, and two paths to the same screen need not agree on
+  // it: the tab round trip and the direct edit are declared twins, both settled,
+  // and were reported broken over `success` and `failure` appearing at swapped
+  // indices when both captions were on both screens.
+  //
+  // Sorting drops the order and keeps the content, which makes the claim "these
+  // are the captions drawn" — strictly more truthful than before, because a
+  // caption that is genuinely missing or renamed still parts the two lists.
+  const isCaption = (node) => (node.getAttribute?.("class") ?? "").split(/\s+/u).includes("react-flow__edge-label");
   const signature = [];
+  const captions = [];
   for (const node of doc.querySelectorAll("body *")) {
     if (!boxed(node)) {
       continue;
     }
-    signature.push([
+    const line = [
       node.tagName,
       [...node.attributes]
         .filter((attribute) => !GEOMETRY.has(attribute.name))
@@ -270,8 +284,10 @@ export function collect(doc, request) {
       // renders said two.
       typeof node.value === "string" ? node.value : "",
       node.checked === true ? "checked" : "",
-    ].join("|"));
+    ].join("|");
+    (isCaption(node) ? captions : signature).push(line);
   }
+  signature.push(...captions.sort());
   // Every React Flow surface on screen, as the number of edges it was handed
   // beside the number it has actually drawn.
   //
