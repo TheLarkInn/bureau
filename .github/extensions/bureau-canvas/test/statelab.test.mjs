@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1340,6 +1340,42 @@ test("a render is settled only once every graph on it has drawn its edges", () =
 /** A snapshot from before the rule existed reads as drawn, not as unfinished. */
 test("a snapshot that files no graphs is not held back by the rule", () => {
   assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined)], [true, true]);
+});
+
+/**
+ * Waiting for the edge pass is not the same as reporting that it never came.
+ *
+ * `graphsDrawn` decides when a render is finished, and for a while that was all
+ * the count did: a graph that would never draw held the loop to its deadline
+ * and then left with `settled: false` — an amber mark whose sentence is about
+ * the harness ("this frame may have raced"), not about the screen. Nothing
+ * failed. So the one condition the count exists to detect could hold on every
+ * run of every state and the matrix would still be green, which is the exact
+ * shape of defect this registry is written against: a mark standing in for a
+ * check that found something.
+ *
+ * The rule names the graph and both numbers, because "a graph did not finish"
+ * is not actionable and "declared 4, drew 0" is.
+ */
+test("a graph that never drew its edges is named as a failure, not a note", () => {
+  assert.deepStrictEqual(
+    undrawnGraphs({ graphs: [{ declared: 4, drawn: 4 }, { declared: 3, drawn: 1 }] }),
+    [{ kind: "undrawn-graph", detail: "a graph declared 3 edge(s) and drew 1 for the whole settle budget" }],
+  );
+});
+
+/**
+ * The states that animate by design must not fail for it.
+ *
+ * `transport:playing` advances a scrubber on an interval, so its signature
+ * never goes still and it reaches the deadline on every run — but its graph
+ * draws its edges like any other. Reporting an unsettled render as an undrawn
+ * graph would light this rule on exactly the states it has nothing to say
+ * about, so the question is asked of the graphs and never of the stability.
+ */
+test("a page that never stops moving is not accused of an undrawn graph", () => {
+  const drawn = [{ declared: 4, drawn: 4 }, { declared: 0, drawn: 0 }];
+  assert.deepStrictEqual([undrawnGraphs({ graphs: drawn }), undrawnGraphs({}), undrawnGraphs(undefined)], [[], [], []]);
 });
 
 test("a render that matches the registry produces no findings", () => {

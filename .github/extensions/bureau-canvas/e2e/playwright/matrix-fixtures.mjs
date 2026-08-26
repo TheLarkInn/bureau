@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -569,6 +569,20 @@ const SETTLE_REPEATS = 3;
  * and the audit published the difference as a finding about the UI. `graphsDrawn`
  * closes it with the surface's own count, and the loop now waits for the pass
  * rather than describing whatever it interrupted.
+ *
+ * Waiting for it is not the same as reporting it, and for a while only the
+ * first happened. A graph that would *never* draw its edges held the loop open
+ * to the deadline and then left with `settled: false` — an amber note saying
+ * the frame may have raced, which is a statement about the harness. Nothing
+ * failed. So the one condition this count was added to detect could hold
+ * permanently, on every run, and the matrix stayed green while the gallery
+ * published pipelines whose steps joined to nothing.
+ *
+ * `sawGraphs` is what parts the two. A render observed even once with its
+ * graphs complete has had the pass and is merely unstable — that is the
+ * animating states, which must never fail for it. A render that reached the
+ * deadline having never once been complete is describing a broken screen, and
+ * `undrawnGraphs` says so as an ordinary failure.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
@@ -577,14 +591,17 @@ async function judge(state, page) {
   let sustained = result.failures.length ? 1 : 0;
   let agreed = 0;
   let previous = null;
+  let sawGraphs = false;
   for (;;) {
     agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
-    const settled = agreed >= SETTLE_REPEATS && graphsDrawn(result.snapshot);
+    const drawn = graphsDrawn(result.snapshot);
+    sawGraphs ||= drawn;
+    const settled = agreed >= SETTLE_REPEATS && drawn;
     if (settled && !result.failures.length) {
       return { ...result, settled };
     }
     if (Date.now() >= deadline) {
-      return { ...atDeadline(result, clean, sustained), settled };
+      return { ...atDeadline(result, clean, sustained, sawGraphs), settled };
     }
     previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
@@ -594,12 +611,21 @@ async function judge(state, page) {
   }
 }
 
-function atDeadline(result, clean, sustained) {
+/**
+ * `sawGraphs` is folded in here rather than at the call site because the choice
+ * between the last look and the first clean one is about *flicker*, and an
+ * undrawn graph is the opposite of that: it is the condition that held for the
+ * whole budget. So it is appended to whichever look answers, including a clean
+ * one — a render cannot be clean and also have a graph that never drew.
+ */
+function atDeadline(result, clean, sustained, sawGraphs) {
   const source = deadlineVerdict(
     { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
     SETTLE_REPEATS,
   );
-  return source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
+  const undrawn = sawGraphs ? [] : undrawnGraphs(result.snapshot);
+  const answer = source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
+  return { ...answer, failures: [...answer.failures, ...undrawn] };
 }
 
 async function sample(state, page) {

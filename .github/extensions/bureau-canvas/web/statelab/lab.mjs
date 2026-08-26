@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyLabel, graphsDrawn, measureFor, selectorsFor, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
@@ -189,15 +189,28 @@ const SETTLE_POLL_MS = 50;
  * a single `page.evaluate` rather than a locator, so nothing there retries
  * either; `matrix-fixtures.mjs` runs the same loop for the same reason. Both
  * report whatever the last look found, so a genuinely wrong state still fails.
+ *
+ * Leaving on the first failure-free look was not enough, and this surface is
+ * the one where that mattered most. No expectation names a relation graph's
+ * *edges* — React Flow draws them in a pass after it has measured the nodes —
+ * so the loop could exit during the lull between the two, and the panel would
+ * report "no overlap, clipping, low contrast…" beside a picture of steps
+ * joined to nothing. That is the review surface vouching for a frame, which is
+ * exactly the fault `settled` was introduced in the matrix to stop; the lab
+ * making the opposite claim about the same registry is the contradiction.
+ *
+ * So the graph barrier is shared with the matrix, and whether it was ever
+ * reached is returned rather than kept: a render the loop could not prove is
+ * marked, not presented as verified.
  */
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
   let result = inspect(state);
-  while (result.failures.length && Date.now() < deadline) {
+  while ((result.failures.length || !graphsDrawn(result.snapshot)) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
     result = inspect(state);
   }
-  return result;
+  return { ...result, settled: graphsDrawn(result.snapshot) };
 }
 
 function inspect(state) {
@@ -314,6 +327,15 @@ function expectationList(state, result) {
   // difference between a review tool and a reassuring one.
   if (result?.channel?.observed === false) {
     box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
+  }
+  // The graph half of the same claim. A relation or pipeline surface that never
+  // finished its edge pass is a picture of steps joined to nothing, and every
+  // other line in this panel would still read green — none of them names an
+  // edge. Marked rather than failed, for the reason the matrix marks it: the
+  // lab renders one state at a time in a live frame, so a slow pass here is
+  // ordinary, and the panel's job is to say which renders may be believed.
+  if (result?.settled === false) {
+    box.append(el("p", "note note--warn", "Not proved settled: a graph on this render had not drawn all of its edges. Re-run this state before reading its graph."));
   }
   const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length

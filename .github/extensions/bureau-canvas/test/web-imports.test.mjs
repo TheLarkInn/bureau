@@ -10,16 +10,25 @@
 // simply never rendered.
 //
 // So the boundary is checked here instead, in milliseconds and offline: every
-// relative specifier under `web/` resolves to a file inside `web/`, and every
-// bare specifier is one the pages actually declare an import map entry for.
-// `vendor/` is excluded — those are third-party bundles, shipped as fetched.
+// relative specifier under `web/` resolves to a file that exists inside `web/`,
+// and every bare specifier is one the pages actually declare an import map
+// entry for. `vendor/` is excluded — those are third-party bundles, shipped as
+// fetched.
+//
+// "Exists", and not merely "stays under the root", because a typo is the same
+// 404 as a module in the wrong tree and reaches the reader the same way. And
+// the pages' own inline `<script type="module">` blocks are read alongside the
+// `.mjs` files, because that is where both surfaces start: `index.html` reaches
+// `app.mjs` and `editor.html` reaches `editor/index.mjs` through an
+// `await import(…)`, so the two specifiers whose failure this rule exists to
+// prevent were the two it did not look at.
 //
 // The host side needs no such rule: it reads files off disk, which is why the
 // one rule both trees share lives on the reachable side, in `web/step-refs.mjs`,
 // and `lib/edit.mjs` imports it rather than the other way round.
 
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -59,6 +68,38 @@ async function scriptsUnder(directory) {
   return found;
 }
 
+/**
+ * The module scripts the pages carry inline, which are where this tree's two
+ * surfaces actually start.
+ *
+ * The walk above reads `.mjs` files, and both entry points are not in one:
+ * `index.html` reaches `app.mjs` and `editor.html` reaches `editor/index.mjs`
+ * through an `await import(…)` inside a `<script type="module">`. So the two
+ * specifiers whose failure is the whole reason this file exists — the surface
+ * never mounts, and every browser spec times out on an element that was never
+ * coming — were the only two the rule did not read.
+ *
+ * `src` counts as a specifier too: a module script fetched by attribute is
+ * unreachable in exactly the same way, and `statelab.html` mounts the lab that
+ * way.
+ */
+const INLINE_MODULE = /<script\b(?<attributes>[^>]*\btype="module"[^>]*)>(?<body>[\s\S]*?)<\/script>/gu;
+const SRC_ATTRIBUTE = /\bsrc="([^"]+)"/u;
+
+async function pagesUnder(directory) {
+  return (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".html"))
+    .map((entry) => join(directory, entry.name));
+}
+
+function inlineSpecifiers(source) {
+  const found = [];
+  for (const { groups } of source.matchAll(INLINE_MODULE)) {
+    found.push(...specifiersIn(groups.body), ...(groups.attributes.match(SRC_ATTRIBUTE)?.slice(1) ?? []));
+  }
+  return found;
+}
+
 function specifiersIn(source) {
   const found = new Set();
   for (const pattern of SPECIFIERS) {
@@ -71,11 +112,9 @@ function specifiersIn(source) {
 
 /** The bare specifiers the pages map, which are the only ones a module may use. */
 async function mappedSpecifiers() {
-  const pages = (await readdir(WEB, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".html"));
   const mapped = new Set();
-  for (const page of pages) {
-    const source = await readFile(join(WEB, page.name), "utf8");
+  for (const page of await pagesUnder(WEB)) {
+    const source = await readFile(page, "utf8");
     const map = source.match(/<script type="importmap">([\s\S]*?)<\/script>/u);
     for (const name of Object.keys(JSON.parse(map?.[1] ?? "{}").imports ?? {})) {
       mapped.add(name);
@@ -102,15 +141,47 @@ function unreachableReason(file, specifier, mapped) {
 async function unreachable() {
   const mapped = await mappedSpecifiers();
   const escaped = [];
-  for (const file of await scriptsUnder(WEB)) {
-    for (const specifier of specifiersIn(await readFile(file, "utf8"))) {
-      const reason = unreachableReason(file, specifier, mapped);
+  for (const [file, specifiers] of await sources()) {
+    for (const specifier of specifiers) {
+      const reason = unreachableReason(file, specifier, mapped) ?? await missingReason(file, specifier);
       if (reason) {
         escaped.push(`${relative(WEB, file)} → ${specifier} (${reason})`);
       }
     }
   }
   return escaped;
+}
+
+/** Every file the browser parses as a module, and the specifiers it names. */
+async function sources() {
+  const found = [];
+  for (const file of await scriptsUnder(WEB)) {
+    found.push([file, specifiersIn(await readFile(file, "utf8"))]);
+  }
+  for (const page of await pagesUnder(WEB)) {
+    found.push([page, inlineSpecifiers(await readFile(page, "utf8"))]);
+  }
+  return found;
+}
+
+/**
+ * The other way a relative specifier is a 404: it stays inside the served root
+ * and names nothing.
+ *
+ * Staying under `web/` was the whole of the rule, which catches a module in the
+ * wrong tree and misses a typo — and both arrive at the reader identically,
+ * as a surface that never mounts. `./relaton.mjs` resolves neatly under the
+ * root, and the only thing that would have noticed is a five-minute Playwright
+ * run reporting that every spec timed out.
+ *
+ * Only for relative specifiers: a bare one is answered by the import map, and
+ * its target is a vendored file this rule deliberately does not walk.
+ */
+async function missingReason(file, specifier) {
+  if (!specifier.startsWith(".")) {
+    return undefined;
+  }
+  return access(resolve(dirname(file), specifier)).then(() => undefined, () => "no such file under web/");
 }
 
 /**
@@ -171,5 +242,50 @@ test("the pages map every bare specifier the modules import", async () => {
   assert.deepStrictEqual(
     ["react", "react-dom/client", "@xyflow/react"].filter((name) => !mapped.has(name)),
     [],
+  );
+});
+
+/**
+ * The two specifiers this whole rule is about live in HTML, not in a module.
+ *
+ * `index.html` reaches `app.mjs` and `editor.html` reaches `editor/index.mjs`
+ * through an `await import(…)` inside a `<script type="module">`, and
+ * `statelab.html` mounts the lab through a `src`. Those are the entry points:
+ * if one of them is wrong, nothing mounts at all. The file walk reads `.mjs`
+ * and so read none of them, which left the rule strongest everywhere except
+ * the three places where it decides whether a page exists.
+ */
+test("the scanner reads the module scripts the pages carry inline", () => {
+  const page = [
+    '<script type="importmap">{"imports":{"react":"./vendor/react.mjs"}}</script>',
+    '<script type="module" src="./statelab/lab.mjs"></script>',
+    '<script type="module">',
+    '  const boot = async () => { await import("./app.mjs"); };',
+    "</script>",
+    '<script>const legacy = "./not-a-module.mjs";</script>',
+  ].join("\n");
+
+  assert.deepStrictEqual(inlineSpecifiers(page).sort(), ["./app.mjs", "./statelab/lab.mjs"]);
+});
+
+/**
+ * A typo is the same 404 as a module in the wrong tree.
+ *
+ * `./relaton.mjs` resolves under the served root and names nothing, so the
+ * root rule passed it. The reader gets the identical failure either way — the
+ * import throws, the surface never mounts — so the guard owes both answers.
+ */
+test("a relative specifier that names nothing is reported as the 404 it is", async () => {
+  const editor = join(WEB, "editor", "editor.mjs");
+  const cases = [
+    ["./relation.mjs", undefined],
+    ["./relaton.mjs", "no such file under web/"],
+    ["../step-refs.mjs", undefined],
+    ["react", undefined],
+  ];
+
+  assert.deepStrictEqual(
+    await Promise.all(cases.map(([specifier]) => missingReason(editor, specifier))),
+    cases.map(([, expected]) => expected),
   );
 });

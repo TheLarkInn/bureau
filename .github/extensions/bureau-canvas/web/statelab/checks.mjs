@@ -488,6 +488,41 @@ export function graphsDrawn(snapshot) {
   return (snapshot?.graphs ?? []).every((graph) => graph.drawn >= graph.declared);
 }
 
+/**
+ * A graph that never drew its edges, reported as the defect it is.
+ *
+ * `graphsDrawn` above decides when a render is *finished*, and that was the
+ * whole of what the count was used for: a graph still mid-draw held the settle
+ * loop open, and a graph that would never finish held it open until the budget
+ * ran out and then left with an amber note on its figure. The note says "this
+ * frame may have raced", which is a claim about the harness — so a surface that
+ * permanently draws none of the edges it declared produced no failure anywhere,
+ * and the matrix stayed green while the gallery quietly published pipelines
+ * whose steps joined to nothing.
+ *
+ * That is the same shape as every other defect this registry exists to catch,
+ * and the one this harness kept making about itself: an amber mark standing in
+ * for a check that found something. `settled` and "the state passed" are still
+ * two questions — a page that animates by design never settles and is not
+ * failing — but "a graph declared four edges and drew none, for the entire
+ * budget" is not an unfinished frame, it is a broken screen.
+ *
+ * Only asked once, at the deadline, and only of a render that was *never*
+ * observed with its graphs complete. Mid-draw is the ordinary case on the way
+ * through, and a single late sample under a contended worker is the flake the
+ * rest of this module is written to avoid.
+ *
+ * Pure, so the offline suite holds the rule without a browser.
+ */
+export function undrawnGraphs(snapshot) {
+  return (snapshot?.graphs ?? [])
+    .filter((graph) => graph.drawn < graph.declared)
+    .map((graph) => ({
+      kind: "undrawn-graph",
+      detail: `a graph declared ${graph.declared} edge(s) and drew ${graph.drawn} for the whole settle budget`,
+    }));
+}
+
 export function verdict(state, snapshot, options = {}) {
   return [
     ...missing(state, snapshot),
