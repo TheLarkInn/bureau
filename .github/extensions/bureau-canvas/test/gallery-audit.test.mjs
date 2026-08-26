@@ -305,6 +305,23 @@ test("a drift finding is noted in amber and never raises the alarm banner", () =
   );
 });
 
+/**
+ * A group is not all one claim.
+ *
+ * One unsettled render joining a signature group used to take the group's whole
+ * news with it. Here `a` never settled and `b` and `c` both did, all three
+ * collide, and `b`/`c` is undeclared — a finding this harness owes a reviewer.
+ * Answering it only with "a never stopped changing" drops a defect on the
+ * floor, so both sentences are said.
+ */
+test("an unsettled render does not silence a proved undeclared pair beside it", () => {
+  const same = { [A]: "digest-1", [B]: "digest-1", [C]: "digest-1" };
+
+  const kinds = auditTwins(drew(same, { [A]: false, [B]: true, [C]: true }), []).map((finding) => finding.kind);
+
+  assert.deepEqual(kinds.sort(), ["undeclared-twin", "unproven-match"]);
+});
+
 test("the audit names every render this run could not prove had settled", () => {
   assert.deepEqual(auditSettled(drew({ [B]: "s", [A]: "s", [C]: "s" }, { [B]: true, [A]: false, [C]: false })), [A, C].sort());
 });

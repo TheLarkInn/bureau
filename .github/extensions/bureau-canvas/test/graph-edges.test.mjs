@@ -26,10 +26,12 @@ import test from "node:test";
 
 import { drawableEdges } from "../web/graph-edges.mjs";
 import { withoutReferencesTo } from "../web/step-refs.mjs";
+import { parse, render } from "../lib/codec.mjs";
 import { editable, removeStep } from "../lib/edit.mjs";
 import { pipelineView } from "../lib/view.mjs";
 
 const committedUrl = new URL("./fixtures/committed-payload.json", import.meta.url);
+const referenceUrl = new URL("./fixtures/codec-reference-pipeline.yaml", import.meta.url);
 
 async function fixtureView() {
   const payload = JSON.parse(await readFile(committedUrl, "utf8"));
@@ -79,11 +81,18 @@ test("deleting a step takes the field references that named it", async () => {
 });
 
 /**
- * All four fields a rename retargets, dropped rather than blanked.
+ * All four fields a rename retargets, dropped rather than blanked — except
+ * `over`, which is blanked on purpose.
  *
- * An outcome with no route and an outcome routed to nothing are different
- * states to this editor — the first is a gap the decision panel offers to fill,
- * the second is a value — and the reader deleted a step, not an outcome.
+ * The codec reads `undefined` as "this edit says nothing about that field", so
+ * deleting `over` outright wrote nothing and left the file naming the departed
+ * step. `null` is the codec's word for "remove the key", and every reader takes
+ * it exactly as it takes an absent one.
+ *
+ * For `on`, dropping is the point: an outcome with no route and an outcome
+ * routed to nothing are different states to this editor — the first is a gap
+ * the decision panel offers to fill, the second is a value — and the reader
+ * deleted a step, not an outcome.
  */
 test("a delete drops every kind of reference a rename would have retargeted", () => {
   const step = {
@@ -93,7 +102,7 @@ test("a delete drops every kind of reference a rename would have retargeted", ()
 
   assert.deepStrictEqual(
     withoutReferencesTo(step, "verify").fields,
-    { on: { failure: "escalate" }, members: ["review"], inputsFrom: [] },
+    { over: null, on: { failure: "escalate" }, members: ["review"], inputsFrom: [] },
   );
 });
 
@@ -102,4 +111,36 @@ test("a delete leaves a step that never named the departed one alone", () => {
   const fields = { over: "apply", on: { success: "done" }, inputsFrom: ["apply"] };
 
   assert.deepStrictEqual(withoutReferencesTo({ name: "keep", fields }, "verify").fields, fields);
+});
+
+/** The reference fixture, re-rendered with one change applied to its steps. */
+async function renderWith(change) {
+  const parsed = parse(await readFile(referenceUrl, "utf8"), { path: "codec-reference-pipeline.yaml" });
+  const next = structuredClone(parsed.view);
+  next.steps = next.steps.map(change);
+  return render(next, parsed.doc, parsed.style);
+}
+
+/**
+ * The write, not only the view — which is the half `over` was missing.
+ *
+ * The codec reads `undefined` as "this edit says nothing about that field" and
+ * `null` as "remove the key". So dropping `over` produced a view with no
+ * observation and a *file* that still said `over: propose`, naming the step
+ * that had just been deleted. Nothing on screen shows it, and the report comes
+ * back later out of a validation with nothing to connect it to the click.
+ *
+ * Both directions in one assertion, because the defect is exactly the
+ * difference between them: the fixture's `review` observes `propose`, and the
+ * two renders differ only in how its removal was expressed.
+ */
+test("deleting an observed step takes `over` out of the file, not just the view", async () => {
+  const dropped = await renderWith((step) =>
+    (step.name === "review" ? { ...step, fields: { ...step.fields, over: undefined } } : step));
+  const nulled = await renderWith((step) => withoutReferencesTo(step, "propose"));
+
+  assert.deepStrictEqual(
+    [dropped.includes("over: propose"), nulled.includes("over: propose")],
+    [true, false],
+  );
 });

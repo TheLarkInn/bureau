@@ -154,31 +154,50 @@ function pairKey([one, other]) {
  * neither of them will still have a moment later. Left alone, that path
  * published the harness's own contention as "declare the twins and say why" —
  * the same false finding this audit stopped making in the other direction.
+ *
+ * Read per pair rather than per group, because a group is not all one claim.
+ * One unsettled render joining a group would otherwise take the whole group's
+ * news with it: with `a` unsettled and `b` and `c` both proved and both
+ * undeclared, the real finding about `b` and `c` is one this harness owes a
+ * reviewer, and answering it with "a never stopped changing" drops a defect on
+ * the floor. Each half is still reported once, so the quadratic group stays a
+ * single line.
  */
 function undeclared(groups, declared, byName) {
   const findings = [];
   for (const group of groups.values()) {
-    const names = group.sort();
-    const undeclaredPairs = pairsOf(names).filter((pair) => !declared.has(pairKey(pair)));
-    if (!undeclaredPairs.length) {
-      continue;
+    const undeclaredPairs = pairsOf(group.sort()).filter((pair) => !declared.has(pairKey(pair)));
+    const held = undeclaredPairs.filter((pair) => pair.every((name) => proved(byName.get(name))));
+    const framed = undeclaredPairs.filter((pair) => !pair.every((name) => proved(byName.get(name))));
+    if (held.length) {
+      findings.push(matched(namesIn(held)));
     }
-    const unproved = names.filter((name) => !proved(byName.get(name)));
-    if (unproved.length) {
-      findings.push({
-        kind: "unproven-match",
-        detail: `${names.join(" and ")} drew the same screen, but ${unproved.join(" and ")} never stopped changing inside the settle budget, so the match is a frame rather than a finding`,
-      });
-      continue;
+    if (framed.length) {
+      findings.push(framedMatch(namesIn(framed), namesIn(framed).filter((name) => !proved(byName.get(name)))));
     }
-    findings.push({
-      kind: "undeclared-twin",
-      detail: names.length > 2
-        ? `${names.length} renders draw the same screen (${names.slice(0, 4).join(", ")}${names.length > 4 ? ", …" : ""}); declare the twins and say why, or make the states differ`
-        : `${names[0]} and ${names[1]} draw the same screen; declare the twin and say why, or make the states differ`,
-    });
   }
   return findings;
+}
+
+/** Every render a set of pairs names, once each, in a stable order. */
+function namesIn(pairs) {
+  return [...new Set(pairs.flat())].sort();
+}
+
+function matched(names) {
+  return {
+    kind: "undeclared-twin",
+    detail: names.length > 2
+      ? `${names.length} renders draw the same screen (${names.slice(0, 4).join(", ")}${names.length > 4 ? ", …" : ""}); declare the twins and say why, or make the states differ`
+      : `${names[0]} and ${names[1]} draw the same screen; declare the twin and say why, or make the states differ`,
+  };
+}
+
+function framedMatch(names, unproved) {
+  return {
+    kind: "unproven-match",
+    detail: `${names.join(" and ")} drew the same screen, but ${unproved.join(" and ")} never stopped changing inside the settle budget, so the match is a frame rather than a finding`,
+  };
 }
 
 function broken(twins, byName) {

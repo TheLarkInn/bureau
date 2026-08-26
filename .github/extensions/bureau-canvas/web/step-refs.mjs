@@ -25,15 +25,27 @@
  * connect it to the click that caused it. `renameStep` has always retargeted
  * all four; a delete has the same obligation.
  *
- * Dropping rather than blanking: an outcome with no route and an outcome routed
- * to nothing are different states in this editor — the first is a gap the
- * decision panel offers to fill, the second is a value — and the reader deleted
- * a step, not an outcome.
+ * Dropping rather than blanking, except for `over`, which is written as an
+ * explicit `null`. The codec reads `undefined` as "this edit says nothing about
+ * that field" and `null` as "remove the key" — the convention a limit already
+ * uses when it is turned off — so deleting `over` outright left `over:` in the
+ * file still naming the departed step, which is the exact defect this is here
+ * to prevent. `on`, `members` and `inputsFrom` need no such mark because a
+ * filtered map or array is still a value, and the codec writes it.
+ *
+ * Every reader of `over` takes `null` and `undefined` the same way — `?? ""`,
+ * `?? "not set"`, and a `present()` that demands a non-empty string — so the
+ * screen is unchanged and only the write differs.
+ *
+ * For `on`, dropping is the point: an outcome with no route and an outcome
+ * routed to nothing are different states in this editor — the first is a gap
+ * the decision panel offers to fill, the second is a value — and the reader
+ * deleted a step, not an outcome.
  */
 export function withoutReferencesTo(step, name) {
   const fields = { ...step.fields };
   if (fields.over === name) {
-    delete fields.over;
+    fields.over = null;
   }
   if (fields.on && typeof fields.on === "object") {
     fields.on = Object.fromEntries(Object.entries(fields.on).filter(([, target]) => target !== name));

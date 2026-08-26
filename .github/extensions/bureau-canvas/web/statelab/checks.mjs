@@ -287,15 +287,31 @@ export function collect(doc, request) {
   // comparison rather than a guess about how long that pass takes. Hidden
   // graphs are skipped: a relation graph inside a shut disclosure has drawn no
   // edges and never will, and waiting on one would be a wait with no end.
+  //
+  // An edge counts as drawn when its path has length, not when its box has
+  // area. React Flow puts an edge's element into the DOM before it has a path
+  // to draw, so presence answered "drawn: 4" about a graph the signature was
+  // describing with no edges on it at all — but a client rect cannot replace
+  // it, because an edge between two vertically aligned handles is a straight
+  // vertical line whose box is zero pixels wide. That is the ordinary shape
+  // here: `layoutPipeline` stacks a sequential pipeline in a column, so the
+  // rect test would have held back the graphs it was written to wait for and
+  // marked their renders unsettled for the whole budget. Length is the
+  // question actually being asked — has the layout pass produced geometry —
+  // and it is the same answer whichever direction the line runs.
+  const drawnPath = (path) => {
+    try {
+      return path.getTotalLength() > 0;
+    } catch {
+      return false;
+    }
+  };
   const graphs = [];
   for (const node of doc.querySelectorAll("[data-graph-edges]")) {
     if (boxed(node)) {
       graphs.push({
         declared: Number(node.getAttribute("data-graph-edges")),
-        // `boxed`, not presence. React Flow puts an edge's element into the DOM
-        // before it has a path to draw, so counting elements answered "drawn: 4"
-        // about a graph the signature was describing with no edges on it at all.
-        drawn: [...node.querySelectorAll(".react-flow__edge")].filter(boxed).length,
+        drawn: [...node.querySelectorAll(".react-flow__edge-path")].filter(drawnPath).length,
       });
     }
   }
