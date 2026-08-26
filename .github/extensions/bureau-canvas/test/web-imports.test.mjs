@@ -110,17 +110,76 @@ function specifiersIn(source) {
   return [...found].sort();
 }
 
-/** The bare specifiers the pages map, which are the only ones a module may use. */
-async function mappedSpecifiers() {
-  const mapped = new Set();
+/**
+ * Each page's own import map, which is the only one its modules may draw on.
+ *
+ * Unioning every page's map and checking every module against the union was the
+ * weaker rule it looks like: a dependency mapped in `editor.html` answered for a
+ * module only `index.html` loads, so dropping `react` from one page's map left
+ * this rule green and that page 404-ing on the very import whose failure means
+ * nothing mounts at all. A map belongs to a page, so the question does too.
+ */
+async function pageMaps() {
+  const maps = new Map();
   for (const page of await pagesUnder(WEB)) {
     const source = await readFile(page, "utf8");
     const map = source.match(/<script type="importmap">([\s\S]*?)<\/script>/u);
-    for (const name of Object.keys(JSON.parse(map?.[1] ?? "{}").imports ?? {})) {
-      mapped.add(name);
+    maps.set(page, new Set(Object.keys(JSON.parse(map?.[1] ?? "{}").imports ?? {})));
+  }
+  return maps;
+}
+
+/** The bare specifiers some page maps, for modules no page reaches. */
+async function mappedSpecifiers() {
+  return new Set([...await pageMaps()].flatMap(([, mapped]) => [...mapped]));
+}
+
+/**
+ * Every module a page can actually reach, and the specifiers each one names.
+ *
+ * Walked from the page's own inline scripts through its relative imports, so a
+ * module is judged against the map of the page that loads it. A specifier that
+ * names nothing is simply not followed — `missingReason` is what reports that,
+ * and reporting it twice in two voices helps nobody.
+ */
+async function graphOf(page) {
+  const modules = new Map();
+  const queued = new Set([page]);
+  const pending = [[page, inlineSpecifiers(await readFile(page, "utf8"))]];
+  while (pending.length) {
+    const [file, specifiers] = pending.pop();
+    modules.set(file, specifiers);
+    for (const specifier of specifiers.filter((name) => name.startsWith("."))) {
+      const target = resolve(dirname(file), specifier);
+      if (!queued.has(target) && await readable(target)) {
+        queued.add(target);
+        pending.push([target, specifiersIn(await readFile(target, "utf8"))]);
+      }
     }
   }
-  return mapped;
+  return modules;
+}
+
+async function readable(path) {
+  return access(path).then(() => true, () => false);
+}
+
+/**
+ * Bare specifiers no page that loads them has an import map entry for.
+ *
+ * Reported with the page as well as the module, because the same module can be
+ * reachable from two pages and the fix — which map gains the entry — depends on
+ * which of them is missing it.
+ */
+async function unmapped() {
+  const escaped = [];
+  for (const [page, mapped] of await pageMaps()) {
+    for (const [file, specifiers] of await graphOf(page)) {
+      const strays = specifiers.filter((name) => !name.startsWith(".") && !mapped.has(name));
+      escaped.push(...strays.map((name) => `${relative(WEB, page)} → ${relative(WEB, file)} → ${name} (no import map entry)`));
+    }
+  }
+  return escaped.sort();
 }
 
 /**
@@ -241,6 +300,50 @@ test("the pages map every bare specifier the modules import", async () => {
 
   assert.deepStrictEqual(
     ["react", "react-dom/client", "@xyflow/react"].filter((name) => !mapped.has(name)),
+    [],
+  );
+});
+
+/**
+ * The same rule asked of one page at a time, which is how the browser asks it.
+ *
+ * An import map belongs to the page that carries it. Unioning all three and
+ * checking every module against the union answered for a page with what a
+ * different page had declared, so the rule was strongest exactly where it
+ * needed no strength and silent where a page maps nothing at all.
+ */
+test("every page maps the bare specifiers the modules it loads name", async () => {
+  assert.deepStrictEqual(await unmapped(), []);
+});
+
+/**
+ * The union really was a weaker question, and this is the pair that proves it.
+ *
+ * `statelab.html` carries no import map: it mounts the lab, which drives the
+ * product pages inside a frame rather than importing their dependencies. So a
+ * bare specifier reachable from the lab was answered by `index.html`'s map and
+ * would have 404'd at runtime. A rule that cannot tell these two maps apart is
+ * not asking about a page.
+ */
+test("a page is judged by its own import map and not by another page's", async () => {
+  const maps = await pageMaps();
+
+  assert.deepStrictEqual(
+    [maps.get(join(WEB, "statelab.html")).has("react"), maps.get(join(WEB, "index.html")).has("react")],
+    [false, true],
+  );
+});
+
+/**
+ * The per-page rule is only worth anything if the walk actually reaches past
+ * the page's own inline script. `index.html` names `app.mjs` and nothing else;
+ * every dependency it has to answer for is somewhere below that.
+ */
+test("a page's graph is walked through its relative imports, not just its inline scripts", async () => {
+  const held = new Set([...await graphOf(join(WEB, "index.html"))].map(([file]) => relative(WEB, file)));
+
+  assert.deepStrictEqual(
+    ["index.html", "app.mjs", "graph-edges.mjs"].filter((name) => !held.has(name)),
     [],
   );
 });

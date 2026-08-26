@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, graphsSeenDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnFor, undrawnGraphs, undrawnLooks, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1369,7 +1369,8 @@ test("a graph that never drew its edges is named as a failure, not a note", () =
     }),
     [{
       kind: "undrawn-graph",
-      detail: "Config relation graph declared 3 edge(s) and drew 1 for the whole settle budget",
+      name: "Config relation graph",
+      detail: "Config relation graph declared 3 edge(s) and drew 1",
     }],
   );
 });
@@ -1377,36 +1378,122 @@ test("a graph that never drew its edges is named as a failure, not a note", () =
 /** A snapshot from before graphs carried a name still reads as a sentence. */
 test("an unnamed graph is still reported", () => {
   assert.deepStrictEqual(
-    undrawnGraphs({ graphs: [{ declared: 2, drawn: 0 }] }),
-    [{ kind: "undrawn-graph", detail: "a graph declared 2 edge(s) and drew 0 for the whole settle budget" }],
+    undrawnGraphs({ graphs: [{ declared: 2, drawn: 0 }] }).map((finding) => finding.detail),
+    ["a graph declared 2 edge(s) and drew 0"],
   );
 });
 
 /**
- * The barrier and the observation are two questions over one count.
+ * The barrier and the report are two questions over one count.
  *
  * `graphsDrawn` is an `every`, so a render with no graph on it yet answers
  * "nothing is behind" — correct for deciding whether to keep waiting, and wrong
- * for deciding whether the draw pass was ever seen. The look that parts them is
+ * for deciding whether the draw pass ever happened. The look that parts them is
  * the one taken between a `<details>` toggle and React committing the graph,
- * and it is reachable on every state that opens one. Read through the barrier,
- * that look latched "seen" and switched the undrawn-graph failure off for the
- * whole budget on exactly the states the failure was written for.
+ * and it is reachable on every state that opens one.
+ *
+ * Counted per graph, because a render's graph set changes while it is being
+ * sampled and the thing being excused is a graph. A render carrying none
+ * contributes no runs, so it still costs nothing.
  */
-test("a render with no graph yet is not an observation of a drawn one", () => {
+test("a look is counted per graph, and carried across one it is absent from", () => {
+  const first = undrawnLooks(new Map(), { graphs: [{ name: "a", declared: 4, drawn: 0 }, { name: "b", declared: 2, drawn: 2 }] });
+  const second = undrawnLooks(first, { graphs: [{ name: "a", declared: 4, drawn: 4 }, { name: "b", declared: 2, drawn: 0 }] });
+  const gone = undrawnLooks(second, { graphs: [] });
+
+  assert.deepStrictEqual(
+    [first.get("a"), second.get("a"), gone.get("a"), gone.get("b"), [...undrawnLooks(new Map(), undefined)]],
+    [
+      { looks: 1, missed: 1, run: 1 },
+      { looks: 2, missed: 1, run: 0 },
+      { looks: 2, missed: 1, run: 0 },
+      { looks: 2, missed: 1, run: 1 },
+      [],
+    ],
+  );
+});
+
+/**
+ * A graph that drew does not excuse a different graph that never did, does not
+ * excuse *itself* forever, and cannot buy the exemption back by flashing or by
+ * unmounting.
+ *
+ * Every simpler shape had the defect somewhere else in it. A flag per render
+ * let `.editor-flow` answer for the `.relation-flow` that mounted behind it. A
+ * run of consecutive looks was reset by any complete look, so a graph flashing
+ * on and off never reached the threshold. A bare total was never reset, and so
+ * was spent by two harmless early relayouts — turning one ordinary late miss
+ * into a hard failure on the animating states that must never fail for it. So
+ * two questions are asked of three numbers: did it break and stay broken, and
+ * was it broken for a material share of the time it was on screen.
+ */
+test("a graph is failed for breaking and staying broken, or for breaking chronically", () => {
+  const broken = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
   const cases = [
-    [{ graphs: [] }, false],
-    [{}, false],
-    [undefined, false],
-    [{ graphs: [{ declared: 4, drawn: 0 }] }, false],
-    [{ graphs: [{ declared: 4, drawn: 4 }, { declared: 2, drawn: 1 }] }, false],
-    [{ graphs: [{ declared: 4, drawn: 4 }] }, true],
-    [{ graphs: [{ declared: 0, drawn: 0 }] }, true],
+    [{ looks: 9, missed: 3, run: 3 }, 1],
+    [{ looks: 50, missed: 25, run: 1 }, 1],
+    [{ looks: 50, missed: 3, run: 1 }, 0],
+    [{ looks: 3, missed: 2, run: 2 }, 0],
+    [undefined, 0],
   ];
 
   assert.deepStrictEqual(
-    cases.map(([snapshot]) => graphsSeenDrawn(snapshot)),
+    cases.map(([tally]) => undrawnFor(broken, new Map(tally ? [["g", tally]] : []), 3).length),
     cases.map(([, expected]) => expected),
+  );
+});
+
+/**
+ * The two sequences the rule exists to tell apart, folded rather than asserted
+ * as tallies, so the fold and the verdict are held together.
+ *
+ * A graph blinking on and off for the whole budget is the case a run could not
+ * reach; two early relayouts and one late miss is the case a bare total called
+ * broken. Both end incomplete, and only the first is a screen.
+ */
+test("flashing all budget fails where a few scattered relayouts do not", () => {
+  const on = { graphs: [{ name: "g", declared: 4, drawn: 4 }] };
+  const off = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
+  const fold = (pick) => {
+    let looks = new Map();
+    for (let index = 0; index < 50; index += 1) {
+      looks = undrawnLooks(looks, pick(index) ? off : on);
+    }
+    return undrawnFor(off, looks, 3).length;
+  };
+
+  assert.deepStrictEqual(
+    [fold((index) => index % 2 === 1), fold((index) => index < 2 || index === 49)],
+    [1, 0],
+  );
+});
+
+/**
+ * Unmounting is not a reset either. A graph alternating between absent and
+ * incomplete accumulated nothing while the tally was rebuilt from each look,
+ * so a surface blinking in and out of the document for the whole budget was
+ * exempt — the same escape as the others, through the one door left open.
+ */
+test("a graph that blinks in and out of the document is not exempt", () => {
+  const off = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
+  let looks = new Map();
+  for (let index = 0; index < 50; index += 1) {
+    looks = undrawnLooks(looks, index % 2 === 0 ? { graphs: [] } : off);
+  }
+
+  assert.deepStrictEqual([looks.get("g"), undrawnFor(off, looks, 3).length], [{ looks: 25, missed: 25, run: 25 }, 1]);
+});
+
+/**
+ * And the tolerance all of this exists to preserve. A graph complete on the
+ * final look is reported by nothing, whatever its history — which is what keeps
+ * a healthy surface caught mid-relayout on the way past from being an
+ * accusation, and what lets the thresholds be strict without being flaky.
+ */
+test("a graph that finished is not accused of how raggedly it got there", () => {
+  assert.deepStrictEqual(
+    undrawnFor({ graphs: [{ name: "g", declared: 4, drawn: 4 }] }, new Map([["g", { looks: 50, missed: 40, run: 0 }]]), 3),
+    [],
   );
 });
 

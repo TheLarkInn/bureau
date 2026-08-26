@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditNames, auditSettled, auditTwins, expectedShots, isDrift } from "./gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift } from "./gallery-audit.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
@@ -124,14 +124,22 @@ function stringify(records, pick) {
  * named here as news.
  */
 async function report(published, records, unreadable) {
-  const names = auditNames(expectedShots(STATES, Object.values(VIEWPORTS)), published);
+  const expected = expectedShots(STATES, Object.values(VIEWPORTS));
+  const names = auditNames(expected, published);
   const twins = auditTwins(records, RENDER_TWINS);
   const unsettled = auditSettled(records);
+  const unaudited = auditUnaudited(expected, published, records, unreadable);
+  // The two ways a render ends up with no usable record read differently to
+  // whoever has to fix them, and identically to whoever has to review the
+  // gallery: nothing is known about the screen either way. So they are reported
+  // apart and marked together.
+  const unknown = [...new Set([...unreadable, ...unaudited])].sort();
   const drift = twins.filter(isDrift).map((finding) => `${finding.kind}: ${finding.detail}`);
   const lines = [
     ...(names.missing.length ? [`${names.missing.length} render(s) were never written by this run`] : []),
     ...(names.stray.length ? [`${names.stray.length} render(s) belong to no state in the registry`] : []),
     ...(unreadable.length ? [`${unreadable.length} render(s) filed a record this run could not read, so nothing is known about them: ${unreadable.slice(0, 5).join(", ")}`] : []),
+    ...(unaudited.length ? [`${unaudited.length} render(s) were published without a record, so nothing is known about them: ${unaudited.slice(0, 5).join(", ")}`] : []),
     ...twins.filter((finding) => !isDrift(finding)).map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
   console.log(`gallery: ${Object.keys(records).length} render(s) audited`);
@@ -144,7 +152,7 @@ async function report(published, records, unreadable) {
   if (!lines.length && !drift.length) {
     console.log("gallery: complete, and every state draws its own screen or a declared twin's");
   }
-  await stamp(lines, names.missing, unsettled, drift);
+  await stamp(lines, names.missing, unsettled, drift, unknown);
 }
 
 /**
@@ -164,14 +172,14 @@ async function report(published, records, unreadable) {
  * on a five-hundred-state page does not travel with them, and the whole point
  * of the mark is that it is attached to the screen being judged.
  */
-async function stamp(lines, missing, unsettled, drift) {
+async function stamp(lines, missing, unsettled, drift, unknown = []) {
   const index = join(GALLERY, "index.html");
   const written = await readFile(index, "utf8").catch(() => null);
   if (!written) {
     return;
   }
-  const page = written.replace("<main>", `${notices(lines, missing, unsettled, drift)}<main>`);
-  await writeFile(index, markUnsettled(page, unsettled), "utf8");
+  const page = written.replace("<main>", `${notices(lines, missing, unsettled, drift, unknown)}<main>`);
+  await writeFile(index, markUnsettled(page, [...unsettled, ...unknown]), "utf8");
 }
 
 /**
@@ -202,19 +210,27 @@ async function stamp(lines, missing, unsettled, drift) {
  * carrying all of them unabridged is megabytes of text at the top of the page a
  * reviewer came to read — the run where the gallery most needs to stay legible
  * is exactly the run that would make it unreadable.
+ *
+ * `unknown` renders are marked on their figures with the same attribute, so the
+ * count here is the number of marks a reviewer will actually meet. They are a
+ * different sentence from an unsettled render — one was still moving, the other
+ * has no record this run could read — so the opening line says only what is
+ * true of both, and the difference is named in its own clause.
  */
-export function notices(lines, missing, unsettled, drift = []) {
+export function notices(lines, missing, unsettled, drift = [], unknown = []) {
   const shown = lines.slice(0, 20);
+  const marked = unsettled.length + unknown.length;
   const alarm = lines.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#ffebe9;color:#cf222e;font-weight:700">'
       + `This gallery is not the whole matrix, or not every state in it draws its own screen: ${shown.join("; ")}`
       + `${lines.length > shown.length ? `; and ${lines.length - shown.length} more` : ""}. `
       + `${missing.length ? `Missing: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`
     : "";
-  const note = unsettled.length || drift.length
+  const note = marked || drift.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:#9a6700">'
-      + `${unsettled.length} render(s) below are marked <strong>not proved settled</strong>: the page was still changing when the shot was taken, `
+      + `${marked} render(s) below are marked <strong>not proved settled</strong>: this run could not vouch for them, `
       + "so read those as a frame rather than as a screen. A state that animates by design is expected here."
+      + `${unknown.length ? ` ${unknown.length} of them filed no record this run could read, so nothing at all is known about those.` : ""}`
       + `${drift.length ? ` ${drift.slice(0, 20).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`
     : "";
   return `${alarm}${note}`;

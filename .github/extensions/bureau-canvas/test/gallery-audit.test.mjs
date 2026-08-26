@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditNames, auditSettled, auditTwins, expectedShots, isDrift, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { markUnsettled, notices } from "../e2e/playwright/global-teardown.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
@@ -324,6 +324,62 @@ test("an unsettled render does not silence a proved undeclared pair beside it", 
 
 test("the audit names every render this run could not prove had settled", () => {
   assert.deepEqual(auditSettled(drew({ [B]: "s", [A]: "s", [C]: "s" }, { [B]: true, [A]: false, [C]: false })), [A, C].sort());
+});
+
+/**
+ * A render with no record is one nothing in this audit can see.
+ *
+ * The screenshot is written before the record, so a worker killed between the
+ * two leaves a PNG and no record — the same accident `unreadable` already
+ * exists for, one instruction earlier. But `unreadable` only sees a record that
+ * exists and will not parse. A record never written is absent from `records`,
+ * and therefore from `auditSettled`, from the twin groups, and from every mark
+ * on the page: the reviewer meets a figure captioned exactly like a proved one,
+ * for a render this run cannot say anything at all about.
+ *
+ * Partitioned against the other two answers rather than overlapping them: a
+ * render the run never published is `missing`, one belonging to no state is
+ * `stray`, and only a published, expected render with no record is unaudited.
+ */
+test("a render published without a record is named rather than believed", () => {
+  const expected = [A, B, C];
+  const published = [A, B, "index.html"];
+
+  assert.deepEqual(
+    [
+      auditUnaudited(expected, published, drew({ [A]: "s" }, { [A]: true })),
+      auditUnaudited(expected, published, drew({ [A]: "s", [B]: "s" }, { [A]: true, [B]: true })),
+    ],
+    [[B], []],
+  );
+});
+
+/**
+ * A render is answered once, not twice in two voices.
+ *
+ * A record that exists and will not parse is already reported as unreadable and
+ * is absent from `records` — so the no-record rule saw it too, and the same
+ * render was told both "this run could not read its record" and "this was
+ * published without a record". A partition that contradicts itself is worse
+ * than either sentence alone.
+ */
+test("an unreadable record is not also reported as no record at all", () => {
+  assert.deepEqual(auditUnaudited([A, B], [A, B], drew({ [A]: "s" }, { [A]: true }), [B]), []);
+});
+
+/**
+ * The mark has to be a mark. A render with no usable record carries the same
+ * attribute an unsettled one does — it is the same instruction to the reader,
+ * "do not read this as evidence" — and the amber note counts it, so the number
+ * at the top matches the number of marks below it.
+ */
+test("a render with no usable record is marked on its figure and counted in the note", () => {
+  const note = notices([`1 render(s) were published without a record, so nothing is known about them: ${B}`], [], [A], [], [B]);
+
+  assert.deepEqual(
+    [note.includes("2 render(s) below are marked"), note.includes("filed no record this run could read"), markUnsettled(`<figure data-shot="${B}">`, [B])],
+    [true, true, `<figure data-shot="${B}" data-settled="false">`],
+  );
 });
 
 /**

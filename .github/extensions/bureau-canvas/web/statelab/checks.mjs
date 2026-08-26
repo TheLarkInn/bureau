@@ -497,29 +497,94 @@ export function graphsDrawn(snapshot) {
 }
 
 /**
- * Whether this look found the graphs *present* and complete.
+ * How many consecutive looks it takes for something to have stopped being
+ * flicker.
  *
- * `graphsDrawn` is an `every` over a list, so it answers `true` about a render
- * carrying no graphs at all — which is right for a barrier, because a page with
- * no graph on it has nothing to wait for. It is wrong for the other question a
- * caller asks of the same count: "was the draw pass ever observed to happen?"
+ * One number, because the two places that ask it are asking one question about
+ * one registry: the matrix decides when a signature has stopped changing and
+ * when a graph has been undrawn long enough to be a broken screen, and the
+ * State Lab decides the second of those about the same render. Two constants
+ * that must be equal are a drift waiting to happen, and this module is the one
+ * both surfaces can reach — the browser cannot import from `e2e/`.
+ */
+export const SETTLE_REPEATS = 3;
+
+/**
+ * How much of the budget each graph has spent with its edges missing.
  *
- * The two differ on exactly one look — the one taken before the graph has
- * mounted — and that look is reachable. A `<details>` dispatches `toggle` in a
- * queued task and React commits the subtree after that, so between the click
- * returning and the graph existing there is a window with no `[data-graph-edges]`
- * node on the page. Read through `graphsDrawn`, that window says "the pass has
- * happened" and latches, which turned the undrawn-graph failure off for the
- * whole budget on precisely the states that open a graph.
+ * The observation this replaces was a latch: a graph seen complete once was
+ * exempt for the rest of the budget. That was written to tolerate the one thing
+ * worth tolerating — a graph caught mid-relayout on the way past — and bought
+ * it by exempting the graph *permanently*, which is a much larger claim. Every
+ * simpler shape tried since had the same defect somewhere else in it:
  *
- * So the observation demands a graph to have observed. A render that genuinely
- * carries none never satisfies it and never needs to: `undrawnGraphs` has
- * nothing to report about an empty list either way.
+ *   a flag per render — a graph that drew excused a *different* graph that
+ *     never did, which is `.editor-flow` complete while `.relation-flow` mounts
+ *     behind it and draws nothing;
+ *   a run of consecutive looks — reset by any complete look, so a graph
+ *     flashing its edges on and off all budget never reached the threshold;
+ *   a bare total — never reset, and so spent by two harmless relayouts early,
+ *     turning one ordinary late miss into a hard failure on exactly the
+ *     animating states that must never fail for it.
+ *
+ * So each graph keeps three numbers and the caller asks two questions of them.
+ * `run` answers "did it break and stay broken"; `missed` against `looks`
+ * answers "was it chronically broken", which is the one a run cannot ask
+ * because a run is reset by the very samples that make it chronic. Neither is
+ * derivable from the other, and both are wrong on the case the other catches.
+ *
+ * Carried across a look the graph is absent from, rather than dropped. Dropping
+ * was a third reset: a graph alternating between unmounted and incomplete never
+ * accumulated anything. Nothing stale escapes, because `undrawnFor` only ever
+ * asks about a graph that is present *and* incomplete on the final look.
+ *
+ * Keyed by name, which is the surface's identity and what the failure speaks
+ * in.
  *
  * Pure, so the offline suite holds the rule without a browser.
  */
-export function graphsSeenDrawn(snapshot) {
-  return (snapshot?.graphs ?? []).length > 0 && graphsDrawn(snapshot);
+export function undrawnLooks(previous, snapshot) {
+  const looks = new Map(previous);
+  for (const graph of snapshot?.graphs ?? []) {
+    const before = looks.get(graph.name) ?? { looks: 0, missed: 0, run: 0 };
+    const behind = graph.drawn < graph.declared;
+    looks.set(graph.name, { looks: before.looks + 1, missed: before.missed + (behind ? 1 : 0), run: behind ? before.run + 1 : 0 });
+  }
+  return looks;
+}
+
+/**
+ * The share of its looks a graph has to have spent incomplete before that is a
+ * property of the screen rather than of the machine the run is on.
+ *
+ * A third, which is far above what a contended worker produces — the whole
+ * matrix reports two unsettled renders on a clean run — and far below the half
+ * a graph alternating drawn and undrawn produces. It is only ever consulted
+ * about a graph that is *also* incomplete at the deadline and has missed at
+ * least `SETTLE_REPEATS` looks, so it cannot fire on a render that merely
+ * blinked.
+ */
+const CHRONIC_SHARE = 3;
+
+/**
+ * The graphs whose edges were missing enough of the time to be a screen rather
+ * than a frame, reported as failures.
+ *
+ * Asked only of graphs still incomplete on this look, which is what keeps a
+ * late relayout from becoming an accusation: a graph that finished, however
+ * raggedly, has nothing reported about it at all.
+ *
+ * Pure, so the offline suite holds the rule without a browser.
+ */
+export function undrawnFor(snapshot, looks, sustained) {
+  return undrawnGraphs(snapshot).filter((finding) => chronic(looks.get(finding.name), sustained));
+}
+
+function chronic(tally, sustained) {
+  if (!tally) {
+    return false;
+  }
+  return tally.run >= sustained || (tally.missed >= sustained && tally.missed * CHRONIC_SHARE >= tally.looks);
 }
 
 /**
@@ -541,10 +606,15 @@ export function graphsSeenDrawn(snapshot) {
  * failing — but "a graph declared four edges and drew none, for the entire
  * budget" is not an unfinished frame, it is a broken screen.
  *
- * Only asked once, at the deadline, and only of a render that was *never*
- * observed with its graphs complete. Mid-draw is the ordinary case on the way
- * through, and a single late sample under a contended worker is the flake the
- * rest of this module is written to avoid.
+ * Asked of a graph that has spent enough of the budget incomplete to be a
+ * screen rather than a frame, and never of one that finished. Mid-relayout is
+ * the ordinary case on the way through, and a single late sample under a
+ * contended worker is the flake the rest of this module is written to avoid —
+ * but a surface that spends the budget with its edges missing is broken, and
+ * `undrawnLooks` is what tells those apart.
+ *
+ * Carries the graph's name as well as the sentence, so `undrawnFor` can match a
+ * finding to the run it belongs to without re-deriving it.
  *
  * Pure, so the offline suite holds the rule without a browser.
  */
@@ -553,7 +623,8 @@ export function undrawnGraphs(snapshot) {
     .filter((graph) => graph.drawn < graph.declared)
     .map((graph) => ({
       kind: "undrawn-graph",
-      detail: `${graph.name ?? "a graph"} declared ${graph.declared} edge(s) and drew ${graph.drawn} for the whole settle budget`,
+      name: graph.name,
+      detail: `${graph.name ?? "a graph"} declared ${graph.declared} edge(s) and drew ${graph.drawn}`,
     }));
 }
 

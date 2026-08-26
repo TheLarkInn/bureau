@@ -282,6 +282,48 @@ it, so a graph nobody could see was measuring nodes and laying out edges — and
 losing that race sometimes, which made two renders of one state describe
 different documents.
 
+Waiting for the edge pass is not the same as reporting that it never came, and
+for a while only the first happened: a graph that would never draw held the loop
+to its deadline and then left an amber note about the frame. That is a mark
+standing in for a check, so a graph still incomplete at the deadline is now an
+ordinary failure naming the surface — `Config relation graph declared 3 edge(s)
+and drew 1` — rather than two numbers and no screen to go and look at.
+
+What counts as "never came" is **two questions asked of three numbers per
+graph**, and every layer of that was learned by finding the escape in the
+simpler shape. A single flag over the whole render answered `true` for a render
+carrying no graph *yet*, so one sample taken between a `<details>` toggle and
+React committing the subtree switched the failure off for the rest of the
+budget — on precisely the states that open a graph. Keying to the graph's own
+name closed that. A *run* of consecutive incomplete looks closed the next
+layer, a latch being permanent — but a run is reset by any complete look, so a
+graph flashing its edges on and off all budget was exempt again. A bare
+cumulative total closed that and opened another: never being reset, it was
+spent by two harmless early relayouts, turning one ordinary late miss into a
+hard failure on exactly the animating states that must never fail for it. And
+rebuilding the tally from each look made unmounting a third reset, so a graph
+blinking in and out of the document accumulated nothing.
+
+So each graph keeps how many looks it was on screen, how many it was missing
+edges for, and its current run — and a graph is failed if it broke and *stayed*
+broken (`run >= SETTLE_REPEATS`) or was missing edges for a material share of
+the looks it was present for. Neither question is derivable from the other, and
+each is wrong on the case the other catches. The tolerance that matters lives
+somewhere else entirely: nothing is reported about a graph that is complete on
+the final look, whatever its history, so a healthy surface caught mid-relayout
+on the way past is never accused. `web/statelab/checks.mjs` owns the threshold
+and both rules, so the State Lab and the matrix cannot answer the question
+differently. The lab marks where the matrix fails, because it renders one state
+into a live frame a human is watching rather than gating a run.
+
+A render the gallery published and holds no record for is marked too. The
+screenshot is written before its record, so a worker killed between the two
+leaves a PNG that is absent from every audit that reads records — not counted as
+unsettled, not compared as a twin, and presented to a reviewer captioned exactly
+like a proved render. `auditUnaudited` names those, and a record that exists and
+will not parse is excluded from it, so each render is answered once rather than
+told both "could not read its record" and "filed no record at all".
+
 An undeclared match is read the same way in the other direction. A pair that
 *matches* is evidence of sameness only when both sides were proved, exactly as
 a pair that differs is evidence of a difference only then: two renders each
@@ -658,8 +700,15 @@ Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
   reachable side (`web/step-refs.mjs`, imported by `lib/edit.mjs`, so the
   editor's draft delete and the host's saved-view delete cannot drift the way
   three separate `removeStep`s did). `test/web-imports.test.mjs` holds the
-  boundary offline: every relative specifier under `web/` resolves inside
-  `web/`, and every bare one is declared in the pages' import map.
+  boundary offline: every relative specifier under `web/` resolves to a file
+  that exists inside `web/`, and every bare one is declared in the import map of
+  **the page that loads it**. Per page, because an import map belongs to a page:
+  unioning all three and checking every module against the union let
+  `editor.html`'s declarations answer for a module only `index.html` loads, and
+  answered for `statelab.html` — which carries no import map at all — with
+  another page's. The rule now walks each page's own module graph, starting from
+  the `src` and `await import(…)` inside its inline `<script type="module">`,
+  which is where both surfaces actually begin.
 - **The pipeline editor never leaves an unloadable config.** `save-pipeline`
   renders the edited step graph, writes the file, and re-runs
   `bureau validate --json`; findings that name the edited pipeline revert the

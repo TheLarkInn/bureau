@@ -120,6 +120,35 @@ export function auditSettled(records) {
   return Object.keys(records).filter((name) => records[name]?.settled === false).sort();
 }
 
+/**
+ * Renders the gallery published and knows nothing about.
+ *
+ * A render files its record *after* its screenshot, so a worker killed between
+ * the two leaves a PNG with no record at all — the same accident `unreadable`
+ * already exists for, one instruction earlier. `unreadable` only sees a record
+ * that exists and will not parse; a record that was never written is invisible
+ * to it, and a render absent from `records` is absent from every audit that
+ * reads them: it is not in `auditSettled`, so nothing marks its figure, and it
+ * is not in the twin groups, so nothing compares it.
+ *
+ * The reviewer therefore gets a figure indexed and captioned exactly like a
+ * proved one, for a render this run cannot say anything about — which is the
+ * one claim this gallery is not allowed to make. Named here so it can be
+ * reported and marked like any other render that may not be believed.
+ *
+ * Only over renders the registry expects and this run published: a PNG that is
+ * missing is `auditNames().missing`, and one belonging to no state is
+ * `.stray`. `unreadable` is excluded too — a record that exists and will not
+ * parse is already reported, in its own words, and a render answered twice with
+ * "could not read its record" and "filed no record at all" is a partition that
+ * contradicts itself. Each render lands in exactly one of the four.
+ */
+export function auditUnaudited(expected, published, records, unreadable = []) {
+  const held = new Set(published);
+  const known = new Set([...Object.keys(records), ...unreadable]);
+  return expected.filter((name) => held.has(name) && !known.has(name)).sort();
+}
+
 function proved(record) {
   return record?.settled !== false;
 }

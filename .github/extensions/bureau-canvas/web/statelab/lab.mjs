@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyLabel, graphsDrawn, measureFor, selectorsFor, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyLabel, graphsDrawn, measureFor, selectorsFor, SETTLE_REPEATS, undrawnFor, undrawnLooks, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
@@ -202,15 +202,32 @@ const SETTLE_POLL_MS = 50;
  * So the graph barrier is shared with the matrix, and whether it was ever
  * reached is returned rather than kept: a render the loop could not prove is
  * marked, not presented as verified.
+ *
+ * The count of looks a graph spent incomplete is shared too, so the note can
+ * say *which* graph did not finish. "A graph on this render" is the same dead
+ * end the matrix's own failure was rewritten to remove: three surfaces publish
+ * the count, more than one can be on a render at once, and a reviewer told only
+ * that one of them is behind has nothing to go and look at.
+ *
+ * Still a mark here and a failure in the matrix, and that difference is
+ * deliberate rather than left over. The matrix renders into a controlled budget
+ * and gates a run; the lab renders one state at a time into a live frame a
+ * human is already watching, where a slow pass is ordinary and the panel's job
+ * is to say which renders may be believed. What the two must not do is disagree
+ * about the *fact*, and they no longer can: the barrier, the count, the
+ * threshold and the sentence all come from `checks.mjs`.
  */
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
+  let looks = new Map();
   let result = inspect(state);
+  looks = undrawnLooks(looks, result.snapshot);
   while ((result.failures.length || !graphsDrawn(result.snapshot)) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
     result = inspect(state);
+    looks = undrawnLooks(looks, result.snapshot);
   }
-  return { ...result, settled: graphsDrawn(result.snapshot) };
+  return { ...result, settled: graphsDrawn(result.snapshot), undrawn: undrawnFor(result.snapshot, looks, SETTLE_REPEATS) };
 }
 
 function inspect(state) {
@@ -331,11 +348,21 @@ function expectationList(state, result) {
   // The graph half of the same claim. A relation or pipeline surface that never
   // finished its edge pass is a picture of steps joined to nothing, and every
   // other line in this panel would still read green — none of them names an
-  // edge. Marked rather than failed, for the reason the matrix marks it: the
-  // lab renders one state at a time in a live frame, so a slow pass here is
-  // ordinary, and the panel's job is to say which renders may be believed.
+  // edge. Marked rather than failed, because the lab renders one state at a
+  // time in a live frame, so a slow pass here is ordinary and the panel's job
+  // is to say which renders may be believed; the matrix, which gates a run
+  // inside a controlled budget, fails on the same fact.
+  //
+  // Named, because three surfaces publish the count and more than one can be on
+  // a render at once. An empty `undrawn` beside `settled: false` says only that
+  // the graph has been behind for fewer looks than the threshold — it is not a
+  // claim that the graph was ever complete, which is a thing this loop does not
+  // record and must not imply.
   if (result?.settled === false) {
-    box.append(el("p", "note note--warn", "Not proved settled: a graph on this render had not drawn all of its edges. Re-run this state before reading its graph."));
+    const detail = result.undrawn?.length
+      ? result.undrawn.map((item) => item.detail).join("; ")
+      : "a graph on this render has not drawn all of its edges, for too few looks yet to tell a late pass from a broken one";
+    box.append(el("p", "note note--warn", `Not proved settled: ${detail}. Re-run this state before reading its graph.`));
   }
   const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length

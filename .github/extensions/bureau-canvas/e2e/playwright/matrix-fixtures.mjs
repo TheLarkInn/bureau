@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, graphsSeenDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, SETTLE_REPEATS, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -500,8 +500,11 @@ const SETTLE_POLL_MS = 100;
  * never reaches this window is filed as unsettled, so the audit can tell a
  * screen that differs from a frame that had not finished, and the gallery marks
  * it rather than offering it for review as though it had.
+ *
+ * Defined in `checks.mjs` and imported, because the State Lab decides the same
+ * question about the same registry with the same number, and two constants that
+ * must be equal are one constant.
  */
-const SETTLE_REPEATS = 3;
 
 /**
  * Judges the render once it has settled, and settles on the render itself.
@@ -578,11 +581,23 @@ const SETTLE_REPEATS = 3;
  * permanently, on every run, and the matrix stayed green while the gallery
  * published pipelines whose steps joined to nothing.
  *
- * `sawGraphs` is what parts the two. A render observed even once with its
- * graphs complete has had the pass and is merely unstable — that is the
- * animating states, which must never fail for it. A render that reached the
- * deadline having never once been complete is describing a broken screen, and
- * `undrawnGraphs` says so as an ordinary failure.
+ * A count of looks spent incomplete is what parts the two. A graph caught
+ * incomplete on one look is mid-relayout and merely unstable — that is the
+ * animating states, which must never fail for it. A graph that spent a
+ * meaningful part of the budget with its edges missing, and still has them
+ * missing at the end, is describing a broken screen, and `undrawnFor` says so
+ * as an ordinary failure.
+ *
+ * Counted per graph and as a total, and both halves were learned the hard way.
+ * A flag answered for the whole render, so a graph that drew excused a
+ * different graph that never did — `.editor-flow` complete, the click to
+ * Relations lands, `.relation-flow` mounts behind it and draws nothing. Keying
+ * by name fixed that. Making it a *run* of consecutive looks fixed the next
+ * layer, a latch being permanent, and left one more: a run is reset by any
+ * complete look, so a graph flashing its edges on and off for the whole budget
+ * never reached the threshold either. A total cannot be reset, and the
+ * tolerance that matters survives elsewhere — nothing is reported about a graph
+ * that is complete on the final look, whatever its history.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
@@ -591,25 +606,24 @@ async function judge(state, page) {
   let sustained = result.failures.length ? 1 : 0;
   let agreed = 0;
   let previous = null;
-  let sawGraphs = false;
+  let looks = new Map();
   for (;;) {
     agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
     const drawn = graphsDrawn(result.snapshot);
-    // Asked of `graphsSeenDrawn` rather than of `drawn`, because the two part
-    // on the one look that matters here. `drawn` is a barrier — "is anything on
-    // this render still behind?" — and a render with no graph on it yet answers
-    // no. Latching that as "the pass has been observed" meant a single sample
-    // taken between the click and React committing the graph turned the
-    // undrawn-graph failure off for the rest of the budget, on exactly the
-    // states that open a graph. That is this PR's own subject, made about its
-    // newest check: a gate that cannot fire where it was aimed.
-    sawGraphs ||= graphsSeenDrawn(result.snapshot);
+    // Folded on every look rather than read once at the deadline, because the
+    // question is how much of the budget a graph spent behind and the deadline
+    // sees only the last look. `graphsDrawn` is the barrier — "is anything on
+    // this render still behind?" — and it answers `true` about a render
+    // carrying no graph at all, which is correct for deciding whether to keep
+    // waiting and was wrong for deciding whether anything had been observed. A
+    // render with no graph contributes no counts, so it still costs nothing.
+    looks = undrawnLooks(looks, result.snapshot);
     const settled = agreed >= SETTLE_REPEATS && drawn;
     if (settled && !result.failures.length) {
       return { ...result, settled };
     }
     if (Date.now() >= deadline) {
-      return { ...atDeadline(result, clean, sustained, sawGraphs), settled };
+      return { ...atDeadline(result, clean, sustained, looks), settled };
     }
     previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
@@ -620,18 +634,18 @@ async function judge(state, page) {
 }
 
 /**
- * `sawGraphs` is folded in here rather than at the call site because the choice
- * between the last look and the first clean one is about *flicker*, and an
- * undrawn graph is the opposite of that: it is the condition that held for the
- * whole budget. So it is appended to whichever look answers, including a clean
- * one — a render cannot be clean and also have a graph that never drew.
+ * `looks` is folded in here rather than at the call site because the choice
+ * between the last look and the first clean one is about *flicker*, and a graph
+ * that spent the budget undrawn is the opposite of that. So it is appended to
+ * whichever look answers, including a clean one — a render cannot be clean and
+ * also have a graph whose edges never arrived.
  */
-function atDeadline(result, clean, sustained, sawGraphs) {
+function atDeadline(result, clean, sustained, looks) {
   const source = deadlineVerdict(
     { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
     SETTLE_REPEATS,
   );
-  const undrawn = sawGraphs ? [] : undrawnGraphs(result.snapshot);
+  const undrawn = undrawnFor(result.snapshot, looks, SETTLE_REPEATS);
   const answer = source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
   return { ...answer, failures: [...answer.failures, ...undrawn] };
 }
