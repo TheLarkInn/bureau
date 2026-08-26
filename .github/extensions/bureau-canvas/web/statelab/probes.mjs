@@ -865,14 +865,14 @@ export const PROBES = [
   /*
    * The two ends of the registration itself.
    *
-   * Registering is one of only two writes this UI performs through a control
-   * that is not a field editor's Save, so neither end of it could be reached
-   * through the `fieldState` lifecycle: `FIELD_SAVE` has no entry for the
-   * adder, and `field: repos-add` declares the single lifecycle value `n/a`.
-   * That left "Add to registry and this assignment" with a `busy` flag, an
-   * in-flight verb and a refusal that nothing in the registry had ever drawn —
-   * the same gap the draft bar's Saving… and the delete confirmation's
-   * Deleting… were closed for, on the one button still missing it.
+   * Registering writes through a control that is not a field editor's Save, so
+   * neither end of it could be reached through the `fieldState` lifecycle:
+   * `FIELD_SAVE` has no entry for the adder, and `field: repos-add` declares
+   * the single lifecycle value `n/a`. That left "Add to registry and this
+   * assignment" with a `busy` flag, an in-flight verb and a refusal that
+   * nothing in the registry had ever drawn — the last of that family still
+   * missing it, after the draft bar's Saving… and the delete confirmation's
+   * Deleting…
    *
    * The URL resolves in both: `resolve-repo` is a `READ_INTENT`, so it reaches
    * the host under `stall-intent` and under `fail-intent` alike, and only the
@@ -881,7 +881,7 @@ export const PROBES = [
    */
   sample({
     id: "probe--repos-add-registering",
-    covers: "the registration in flight — the second of the two writes with no field-editor Save behind it",
+    covers: "the registration in flight — the last write with no field-editor Save behind it left undrawn",
     summary: "a repo being registered: the button names the work it is doing and takes no second press, so one paste cannot write repos.yaml twice",
     fixture: "multi-repo",
     intercept: "stall-intent",

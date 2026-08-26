@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditNames, auditSettled, auditTwins, expectedShots } from "./gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, expectedShots, isDrift } from "./gallery-audit.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
@@ -127,23 +127,24 @@ async function report(published, records, unreadable) {
   const names = auditNames(expectedShots(STATES, Object.values(VIEWPORTS)), published);
   const twins = auditTwins(records, RENDER_TWINS);
   const unsettled = auditSettled(records);
+  const drift = twins.filter(isDrift).map((finding) => `${finding.kind}: ${finding.detail}`);
   const lines = [
     ...(names.missing.length ? [`${names.missing.length} render(s) were never written by this run`] : []),
     ...(names.stray.length ? [`${names.stray.length} render(s) belong to no state in the registry`] : []),
     ...(unreadable.length ? [`${unreadable.length} render(s) filed a record this run could not read, so nothing is known about them: ${unreadable.slice(0, 5).join(", ")}`] : []),
-    ...twins.map((finding) => `${finding.kind}: ${finding.detail}`),
+    ...twins.filter((finding) => !isDrift(finding)).map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
   console.log(`gallery: ${Object.keys(records).length} render(s) audited`);
   if (unsettled.length) {
     console.log(`gallery: ${unsettled.length} render(s) were not proved settled and are marked on their own figures`);
   }
-  for (const line of lines) {
+  for (const line of [...lines, ...drift]) {
     console.log(`gallery: ${line}`);
   }
-  if (!lines.length) {
+  if (!lines.length && !drift.length) {
     console.log("gallery: complete, and every state draws its own screen or a declared twin's");
   }
-  await stamp(lines, names.missing, unsettled);
+  await stamp(lines, names.missing, unsettled, drift);
 }
 
 /**
@@ -163,13 +164,13 @@ async function report(published, records, unreadable) {
  * on a five-hundred-state page does not travel with them, and the whole point
  * of the mark is that it is attached to the screen being judged.
  */
-async function stamp(lines, missing, unsettled) {
+async function stamp(lines, missing, unsettled, drift) {
   const index = join(GALLERY, "index.html");
   const written = await readFile(index, "utf8").catch(() => null);
   if (!written) {
     return;
   }
-  const page = written.replace("<main>", `${notices(lines, missing, unsettled)}<main>`);
+  const page = written.replace("<main>", `${notices(lines, missing, unsettled, drift)}<main>`);
   await writeFile(index, markUnsettled(page, unsettled), "utf8");
 }
 
@@ -179,13 +180,30 @@ async function stamp(lines, missing, unsettled) {
  * Pure, so the rule that an unsettled render never raises the alarm is decided
  * here and held by the offline suite rather than by reading a written file.
  *
- * Both lists are capped. A run in which every state drew one screen produces a
- * finding per group and a missing entry per render, and a banner carrying all
- * of them unabridged is megabytes of text at the top of the page a reviewer
- * came to read — the run where the gallery most needs to stay legible is
- * exactly the run that would make it unreadable.
+ * Two notices, because they are two different sentences and only one of them is
+ * an alarm. "This gallery is not the whole matrix" has to keep meaning that:
+ * an unsettled render is not a hole in the gallery, and at least one is the
+ * *expected* result of any full run — `transport:playing` advances on a 100ms
+ * interval, so its two renders can never reach the settle window. Folding the
+ * count into the red banner would have lit it on every clean run, which is a
+ * gallery that cries wolf about itself in a change whose whole subject is
+ * saying only what is true.
+ *
+ * `drift` is the rest of that same sentence, and leaving it out was the hole in
+ * the first version of this rule. The count was kept from the alarm but the
+ * findings *about* those renders were not: an `unproven-twin` went into `lines`
+ * with everything else, so the banner announced "not every state in it draws its
+ * own screen" above a finding whose own words say the difference is a frame.
+ * The two halves are separated by kind, in `isDrift`, so a finding cannot reach
+ * the alarm by being added to the wrong list here.
+ *
+ * All three lists are capped. A run in which every state drew one screen
+ * produces a finding per group and a missing entry per render, and a banner
+ * carrying all of them unabridged is megabytes of text at the top of the page a
+ * reviewer came to read — the run where the gallery most needs to stay legible
+ * is exactly the run that would make it unreadable.
  */
-export function notices(lines, missing, unsettled) {
+export function notices(lines, missing, unsettled, drift = []) {
   const shown = lines.slice(0, 20);
   const alarm = lines.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#ffebe9;color:#cf222e;font-weight:700">'
@@ -193,10 +211,11 @@ export function notices(lines, missing, unsettled) {
       + `${lines.length > shown.length ? `; and ${lines.length - shown.length} more` : ""}. `
       + `${missing.length ? `Missing: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`
     : "";
-  const note = unsettled.length
+  const note = unsettled.length || drift.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:#9a6700">'
       + `${unsettled.length} render(s) below are marked <strong>not proved settled</strong>: the page was still changing when the shot was taken, `
-      + "so read those as a frame rather than as a screen. A state that animates by design is expected here.</p>"
+      + "so read those as a frame rather than as a screen. A state that animates by design is expected here."
+      + `${drift.length ? ` ${drift.slice(0, 20).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`
     : "";
   return `${alarm}${note}`;
 }

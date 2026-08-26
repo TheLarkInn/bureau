@@ -230,8 +230,8 @@ export function collect(doc, request) {
   // rather than a chosen few, because the chosen few were wrong: reading only
   // `data-testid` and `class` could not see a `<details open>`, so opening the
   // relation graph produced the identical signature to leaving it shut — on
-  // eight pairs of states at once — and the registry's own note says presence
-  // cannot tell those apart, which is why `relationOpen` reads the attribute.
+  // eight pairs of states at once — which is why `relationOpen` reads the
+  // attribute.
   //
   // `boxed` rather than `visible`: this is a description, not a promise, taken
   // over every element rather than the handful a state names. An element
@@ -272,12 +272,40 @@ export function collect(doc, request) {
       node.checked === true ? "checked" : "",
     ].join("|"));
   }
+  // Every React Flow surface on screen, as the number of edges it was handed
+  // beside the number it has actually drawn.
+  //
+  // React Flow draws edges in a pass after it has measured the nodes, and that
+  // pass can land after the rest of the page has stopped changing — so a
+  // signature can go still on a graph of disconnected boxes, and a settle rule
+  // built on stability alone calls that finished. Measured on this tree, the
+  // two states declared twins over the draft bar's refusal each rendered 89
+  // elements on some runs and 111 on others, the difference being four edges
+  // and their labels, and every one of those frames was filed as settled.
+  //
+  // The graph publishes what it was asked to draw, so the answer is a
+  // comparison rather than a guess about how long that pass takes. Hidden
+  // graphs are skipped: a relation graph inside a shut disclosure has drawn no
+  // edges and never will, and waiting on one would be a wait with no end.
+  const graphs = [];
+  for (const node of doc.querySelectorAll("[data-graph-edges]")) {
+    if (boxed(node)) {
+      graphs.push({
+        declared: Number(node.getAttribute("data-graph-edges")),
+        // `boxed`, not presence. React Flow puts an edge's element into the DOM
+        // before it has a path to draw, so counting elements answered "drawn: 4"
+        // about a graph the signature was describing with no edges on it at all.
+        drawn: [...node.querySelectorAll(".react-flow__edge")].filter(boxed).length,
+      });
+    }
+  }
   return {
     counts,
     texts,
     boxes,
     contrast,
     labels,
+    graphs,
     signature: stable(signature.join("\n")),
     text: doc.body ? doc.body.innerText : "",
     overflowX: root.scrollWidth - root.clientWidth,
@@ -399,6 +427,33 @@ export function deadlineVerdict({ lastFailed, sustained, sawClean }, repeats) {
     return "last";
   }
   return "clean";
+}
+
+/**
+ * Whether every visible graph on the render has drawn the edges it declared.
+ *
+ * The other half of settling. A signature going still says the page stopped
+ * changing *for a while*, which a graph mid-draw satisfies — React Flow lays
+ * its edges out in a pass of its own, and between the nodes landing and that
+ * pass starting there is a genuine lull. So stability alone filed edgeless
+ * graphs as settled renders, the gallery published them for review, and the
+ * twin audit compared them as evidence: the two states declared twins over the
+ * draft bar's refusal were reported as "no longer draw the same screen" on runs
+ * where one of them had drawn its four relation edges and the other had not.
+ *
+ * This is a claim the surface makes about itself rather than a list of
+ * selectors to wait for, so it cannot fall out of date when a graph gains an
+ * edge — `data-graph-edges` is the count handed to React Flow, at the one place
+ * that knows it.
+ *
+ * "No edge is still missing" rather than an exact count: the question being
+ * asked is whether the draw pass has happened, and a surface that puts one more
+ * element through that selector than it declared has plainly had it.
+ *
+ * Pure, so the offline suite holds the rule without a browser.
+ */
+export function graphsDrawn(snapshot) {
+  return (snapshot?.graphs ?? []).every((graph) => graph.drawn >= graph.declared);
 }
 
 export function verdict(state, snapshot, options = {}) {

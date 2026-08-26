@@ -21,6 +21,7 @@ import { stepOutput } from "./live/transcript.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
+import { drawableEdges } from "./graph-edges.mjs";
 import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
@@ -1485,17 +1486,34 @@ function OrphanStrip({ state, view }) {
   );
 }
 
-/** The full relation graph, collapsed by default as a secondary section. */
+/**
+ * The full relation graph, collapsed by default as a secondary section.
+ *
+ * The graph is mounted when the section is opened rather than kept behind a
+ * shut disclosure. A closed `<details>` keeps its subtree in the document and
+ * Chromium reports client rects for parts of it, so a React Flow instance
+ * nobody can see was still measuring nodes and laying out edges — and losing
+ * that race sometimes, which made two renders of one state describe different
+ * documents. The state matrix caught it as a twin that had stopped matching,
+ * over four edges inside a section that was shut on both screens.
+ *
+ * Reading `open` from the event rather than owning it: the disclosure is still
+ * the browser's, so `relationOpen` keeps reading the attribute, which is the
+ * only thing that can tell a shut section from an open one.
+ */
 function RelationSection({ state }) {
+  const [open, setOpen] = useState(false);
   return h(
     "details",
-    { className: "relation-section" },
+    { className: "relation-section", onToggle: (event) => setOpen(event.currentTarget.open) },
     h("summary", {}, "Relation graph"),
-    h(
-      "div",
-      { className: "config-flow", "aria-label": "Bureau config relation graph" },
-      h(RelationGraph, { relation: state.config?.relation }),
-    ),
+    open
+      ? h(
+        "div",
+        { className: "config-flow", "aria-label": "Bureau config relation graph" },
+        h(RelationGraph, { relation: state.config?.relation }),
+      )
+      : null,
   );
 }
 
@@ -1576,7 +1594,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       ),
       h(
         "div",
-        { className: "pipeline-flow" },
+        { className: "pipeline-flow", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
         h(ReactFlow, {
           nodes: flow.nodes,
           edges: flow.edges,

@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditNames, auditSettled, auditTwins, expectedShots, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, expectedShots, isDrift, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { markUnsettled, notices } from "../e2e/playwright/global-teardown.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
@@ -247,6 +247,61 @@ test("settle-proof changes nothing about a twin that holds, or one with no recor
       auditTwins(drew(parted), [TWIN]).map((finding) => finding.kind),
     ],
     [[], ["broken-twin"]],
+  );
+});
+
+/**
+ * The rule read in the other direction, which was missing.
+ *
+ * A pair that *matches* is evidence of sameness only when both sides were
+ * proved, exactly as a pair that differs is evidence of a difference only then.
+ * A render captured a beat early is missing whatever had not arrived yet, so
+ * two states each missing the same late region collide on a signature neither
+ * will still have a moment later — and the audit told a reviewer to go and
+ * declare a twin between two states that do not draw the same screen at all.
+ */
+test("an undeclared match on a render nothing could settle is unproven, not a twin", () => {
+  const same = { [A]: "digest-1", [B]: "digest-1" };
+
+  assert.deepEqual(
+    [
+      auditTwins(drew(same, { [A]: true, [B]: false }), []).map((finding) => finding.kind),
+      auditTwins(drew(same, { [A]: true, [B]: true }), []).map((finding) => finding.kind),
+    ],
+    [["unproven-match"], ["undeclared-twin"]],
+  );
+});
+
+/**
+ * Which findings are news about the product, and which are news about this
+ * harness. Named by kind rather than by which list a caller put them in, so a
+ * finding cannot reach the alarm by being appended to the wrong array.
+ */
+test("the drift findings are exactly the unproven ones", () => {
+  const kinds = ["broken-twin", "unproven-twin", "undeclared-twin", "unproven-match", "unchecked-twin"];
+
+  assert.deepEqual(kinds.filter((kind) => isDrift({ kind })), ["unproven-twin", "unproven-match"]);
+});
+
+/**
+ * The alarm's headline is a claim, and drift may not make it.
+ *
+ * "Not every state in it draws its own screen" asserts a defect in the UI. An
+ * unproven finding's own words say the opposite — that the difference is a
+ * frame rather than a finding — so routing one through the red banner prints a
+ * headline contradicted by the sentence underneath it, at the top of the page a
+ * reviewer came to trust. Keeping the *count* out of the alarm while letting
+ * the *findings* in was the hole in the first version of this rule, so the
+ * partition is asserted here rather than assumed.
+ */
+test("a drift finding is noted in amber and never raises the alarm banner", () => {
+  const drift = ["unproven-twin: a and b are declared to draw the same screen and differ"];
+
+  const only = notices([], [], [B], drift);
+
+  assert.deepEqual(
+    [only.includes("not the whole matrix"), only.includes("unproven-twin"), only.includes("not proved settled")],
+    [false, true, true],
   );
 });
 

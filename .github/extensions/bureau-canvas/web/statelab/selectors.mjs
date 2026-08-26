@@ -102,9 +102,9 @@ export const SELECTORS = {
   reposAdd: '[data-testid="repos-add"]',
   reposUrl: '[aria-label="Repository URL"]',
   // The button that writes a new entry into repos.yaml, and the refusal it
-  // comes back with. Registering is the second of the two writes this UI
-  // performs through a control that is not a field editor's Save, so neither
-  // end of it could be reached through the `fieldState` lifecycle.
+  // comes back with. Registering writes through a control that is not a field
+  // editor's Save, so neither end of it could be reached through the
+  // `fieldState` lifecycle.
   reposRegister: ".repos-editor .actions .btn--primary",
   reposAddRefused: ".repos-editor > .note--err",
   // The resolved preview: the one place a `.detail-row` is drawn inside
@@ -140,9 +140,10 @@ export const SELECTORS = {
   relationSummary: ".relation-section > summary",
   relationFlow: ".relation-flow",
   // Collapsed is read from the disclosure's own `open`, not from the graph's
-  // presence: a closed `<details>` keeps its subtree mounted and still reports
-  // client rects for it, so counting `.relation-flow` cannot tell the two
-  // apart. This can, and it fails the moment the section ships `open`.
+  // absence. The graph is now mounted only when the section is opened, so
+  // presence would answer too — but `open` is the claim that fails the moment
+  // the section ships open, which is the thing worth catching, and it does not
+  // depend on how the contents happen to be mounted.
   relationOpen: ".relation-section[open]",
 
   pipelineView: ".view-shell--pipeline",

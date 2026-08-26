@@ -98,7 +98,21 @@ export function auditTwins(records, twins) {
     const key = `${viewportOf(name)}::${record.signature}`;
     groups.set(key, [...(groups.get(key) ?? []), name]);
   }
-  return [...undeclared(groups, declared), ...broken(twins, byName)];
+  return [...undeclared(groups, declared, byName), ...broken(twins, byName)];
+}
+
+/**
+ * Whether a finding describes this harness's own drift rather than the product.
+ *
+ * The two kinds of news this audit produces read the same in a list and mean
+ * opposite things: one asks a reviewer to go and look at the UI, the other says
+ * there is nothing in the UI to look at. Splitting them by name here — rather
+ * than at each of the places that reports — is what lets `global-teardown.mjs`
+ * keep the alarm for claims about the product and put drift in the note beside
+ * the unsettled count, where it belongs and where it cannot cry wolf.
+ */
+export function isDrift(finding) {
+  return finding.kind.startsWith("unproven-");
 }
 
 /** Every render this run could not prove had stopped changing. */
@@ -131,13 +145,30 @@ function pairKey([one, other]) {
  * "Loading…" screen produces C(250,2) = 31,125 findings per viewport, and the
  * banner carrying them into `index.html` is megabytes of unreadable text. A
  * group states the same fact once and stays legible.
+ *
+ * Settle-proof is read here as well as in `parted`, and the reason is symmetry:
+ * a pair that *matches* is evidence of sameness only when both sides were
+ * proved, exactly as a pair that differs is evidence of a difference only then.
+ * A render captured a beat early is missing whatever had not arrived yet, and
+ * two states that are each missing the same late region collide on a signature
+ * neither of them will still have a moment later. Left alone, that path
+ * published the harness's own contention as "declare the twins and say why" —
+ * the same false finding this audit stopped making in the other direction.
  */
-function undeclared(groups, declared) {
+function undeclared(groups, declared, byName) {
   const findings = [];
   for (const group of groups.values()) {
     const names = group.sort();
     const undeclaredPairs = pairsOf(names).filter((pair) => !declared.has(pairKey(pair)));
     if (!undeclaredPairs.length) {
+      continue;
+    }
+    const unproved = names.filter((name) => !proved(byName.get(name)));
+    if (unproved.length) {
+      findings.push({
+        kind: "unproven-match",
+        detail: `${names.join(" and ")} drew the same screen, but ${unproved.join(" and ")} never stopped changing inside the settle budget, so the match is a frame rather than a finding`,
+      });
       continue;
     }
     findings.push({

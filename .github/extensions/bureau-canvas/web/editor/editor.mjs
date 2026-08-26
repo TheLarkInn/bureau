@@ -20,7 +20,9 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 
+import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
+import { withoutReferencesTo } from "../step-refs.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -141,7 +143,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       { className: "editor-main" },
       h(
         "div",
-        { className: "editor-flow" },
+        { className: "editor-flow", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
         h(
           ReactFlow,
           {
@@ -265,10 +267,22 @@ function addStep(name, view, kind, edit, setSelected) {
   setSelected(candidate);
 }
 
+/**
+ * The step gone, its edges gone, and every reference to it in another step's
+ * fields gone with them.
+ *
+ * The field rule is `web/step-refs.mjs`, shared with `lib/edit.mjs`, because
+ * dangling on delete is one defect however it is reached: a decision routes
+ * through its `on:` map and an agent step through `inputs_from`, neither of
+ * which is in `view.edges`, so dropping edges alone left the pipeline naming a
+ * step that no longer exists. React Flow draws nothing for an edge whose
+ * endpoint is missing, so the graph looked clean either way — this is the case
+ * the screen cannot show, which is why it has to be true by construction.
+ */
 function removeStep(view, stepName) {
   return {
     ...view,
-    steps: view.steps.filter((step) => step.name !== stepName),
+    steps: view.steps.filter((step) => step.name !== stepName).map((step) => withoutReferencesTo(step, stepName)),
     edges: view.edges.filter((edge) => edge.source !== stepName && edge.target !== stepName),
   };
 }

@@ -9,6 +9,8 @@
 // Nothing here decides whether a pipeline is legal. `problems()` reports
 // hints for the editor chrome; the save path owns the final verdict.
 
+import { withoutReferencesTo } from "../web/step-refs.mjs";
+
 export const TERMINALS = ["done", "abort", "escalate"];
 export const OUTCOMES = ["success", "failure", "blocked", "no-work"];
 export const STEP_KINDS = ["deterministic", "agent", "decision", "concurrent"];
@@ -61,11 +63,21 @@ function decisionOn() {
   return Object.fromEntries(OUTCOMES.map((outcome) => [outcome, "abort"]));
 }
 
-/** Removes a step and every edge that touches it. */
+/**
+ * Removes a step, every edge that touches it, and every reference to it left in
+ * another step's fields.
+ *
+ * The fields are the half this used to miss, and they are the half a rename has
+ * always handled: `renamedFields` below retargets `over`, `on`, `members` and
+ * `inputsFrom` precisely so a rename never dangles, and a delete has the same
+ * obligation. The rule itself lives in `web/step-refs.mjs`, on the side of the
+ * served root the browser can reach, so the editor's draft delete and this one
+ * are the same rule rather than two copies of it.
+ */
 export function removeStep(view, name) {
   return {
     ...view,
-    steps: view.steps.filter((step) => step.name !== name),
+    steps: view.steps.filter((step) => step.name !== name).map((step) => withoutReferencesTo(step, name)),
     edges: view.edges.filter((edge) => edge.source !== name && edge.target !== name && edge.target !== `${TERMINAL_PREFIX}${name}`),
   };
 }

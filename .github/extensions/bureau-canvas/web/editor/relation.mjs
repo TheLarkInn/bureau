@@ -6,6 +6,7 @@
 import React from "react";
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";
 
+import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
 
 const h = React.createElement;
@@ -19,7 +20,7 @@ export function RelationGraph({ relation }) {
   const flow = toFlow(relation ?? { nodes: [], edges: [] });
   return h(
     "div",
-    { className: "relation-flow", "aria-label": "Config relation graph" },
+    { className: "relation-flow", "aria-label": "Config relation graph", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
     h(
       ReactFlow,
       {

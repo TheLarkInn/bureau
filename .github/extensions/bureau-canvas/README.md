@@ -260,6 +260,40 @@ unsettled render as verified; this is the browser suite keeping the same rule,
 and the two consumers of one registry no longer disagree about what a render is
 worth.
 
+Stability alone turned out not to be the whole of "settled". React Flow lays
+its edges out in a pass after it has measured the nodes, and the lull in
+between is long enough to satisfy three agreeing samples — so a render could be
+filed as settled on a graph of disconnected boxes. The mark introduced to tell
+a screen from a frame was vouching for frames, and the twin audit published the
+difference as a finding about the UI: two states declared twins were reported
+as no longer drawing the same screen on runs where one had drawn its four
+relation edges and the other had not. Each graph now publishes what it was
+handed as `data-graph-edges`, and a render is finished only once every visible
+graph has drawn at least that many — a claim the surface makes about itself, at
+the one place that knows the number, rather than a list of selectors that falls
+out of date the next time a graph gains an edge. Drawable rather than declared,
+because React Flow draws nothing for an edge whose endpoint is missing, and
+waiting on a line that was never coming is a wait with no end.
+
+The same pass is why the relation disclosure now mounts its graph on open
+instead of keeping it behind a shut `<details>`. A closed disclosure keeps its
+subtree in the document and Chromium still reports client rects for parts of
+it, so a graph nobody could see was measuring nodes and laying out edges — and
+losing that race sometimes, which made two renders of one state describe
+different documents.
+
+An undeclared match is read the same way in the other direction. A pair that
+*matches* is evidence of sameness only when both sides were proved, exactly as
+a pair that differs is evidence of a difference only then: two renders each
+captured a beat early are each missing whatever had not arrived yet, and they
+collide on a signature neither will still have a moment later. That is an
+`unproven-match`, and it goes in the amber note with the unsettled count rather
+than the red banner, because its own words say the difference is a frame.
+Keeping the count out of the alarm while letting the findings in was the hole
+in the first version of the rule, so the two halves are now split by kind, in
+`isDrift`, where a finding cannot reach the alarm by being appended to the
+wrong list.
+
 The first thing the rule found is the one it should: on a clean run the only
 renders it marks are the two for `transport:playing`, the replay state whose
 scrubber advances on a 100ms interval. That state is animating by design — the
@@ -300,15 +334,16 @@ fails. Rendering it is also what found the row that answered an absence with
 punctuation: work source read `? · ?`, on the field that decides whether the
 assignment does anything at all, and now says `no work source`.
 
-The second is a write that is not a field editor's Save. `fieldState` models
-both ends of every save through `FIELD_SAVE`, and two of this UI's writes have
-no entry there: the delete **preflight**, which is the question Delete asks
-before it is a prompt, and the repo **registration**. Both hold their own
-control while they are in flight — `Checking…`, `Adding…` — which is the whole
-of what stops a card queueing three preflights or writing `repos.yaml` twice,
-and neither end of either had ever been drawn. The preflight needs its own
-route in both hosts, because `reachesHost` deliberately lets an unconfirmed
-delete through, so neither `stall-intent` nor `fail-intent` can touch it.
+The second is a request whose control is not a field editor's Save. `fieldState`
+models both ends of every save through `FIELD_SAVE`, and two of this UI's
+in-flight requests have no entry there: the delete **preflight** — a read, the
+question Delete asks before it is a prompt — and the repo **registration**,
+which is a write. Both hold their own control while they are in flight —
+`Checking…`, `Adding…` — which is the whole of what stops a card queueing three
+preflights or writing `repos.yaml` twice, and neither end of either had ever
+been drawn. That the preflight is a read is also why it needs its own route in
+both hosts: `reachesHost` deliberately lets an unconfirmed delete through, so
+neither `stall-intent` nor `fail-intent` can touch it.
 
 Rendering the registration's refusal is what found the sentence it was refused
 in: reordering and registering post the same `set-repos`, and both fell back to
@@ -615,6 +650,16 @@ Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
   renders `MeasurementGuard` as a child, which re-drives measurement from inside
   the store. `specs/graph-measurement.spec.mjs` withholds node measurements from
   the observer entirely and requires all three surfaces to draw anyway.
+- **The page can only load what the page can fetch.** The dashboard serves
+  `web/` and nothing above it, so a module under `web/` that imports `../../lib/…`
+  is a 404 at runtime rather than a build error — the import throws, the surface
+  never mounts, and every browser spec that needed it times out on an element
+  that was never coming. That is why a rule both trees must obey lives on the
+  reachable side (`web/step-refs.mjs`, imported by `lib/edit.mjs`, so the
+  editor's draft delete and the host's saved-view delete cannot drift the way
+  three separate `removeStep`s did). `test/web-imports.test.mjs` holds the
+  boundary offline: every relative specifier under `web/` resolves inside
+  `web/`, and every bare one is declared in the pages' import map.
 - **The pipeline editor never leaves an unloadable config.** `save-pipeline`
   renders the edited step graph, writes the file, and re-runs
   `bureau validate --json`; findings that name the edited pipeline revert the

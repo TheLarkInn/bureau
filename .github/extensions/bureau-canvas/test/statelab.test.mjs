@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1307,6 +1307,41 @@ test("a render that never settled is answered by the look that is telling the tr
   );
 });
 
+/**
+ * The other half of settling: a still page whose graph has not drawn yet.
+ *
+ * Stability alone was not enough. React Flow lays its edges out in a pass after
+ * it has measured the nodes, and between the nodes landing and that pass
+ * starting there is a real lull — long enough for three agreeing samples. So a
+ * render could be filed settled on a graph of disconnected boxes, the gallery
+ * published it for review, and the twin audit compared it as evidence: two
+ * states declared twins were reported as no longer drawing the same screen when
+ * one had drawn its four relation edges and the other had not.
+ *
+ * Table-driven over what a graph declared against what it has drawn. The empty
+ * row is the one that keeps this usable: a state with no graph on screen, or a
+ * graph with nothing to join, settles on stability alone as before.
+ */
+test("a render is settled only once every graph on it has drawn its edges", () => {
+  const cases = [
+    [[], true],
+    [[{ declared: 0, drawn: 0 }], true],
+    [[{ declared: 4, drawn: 4 }], true],
+    [[{ declared: 4, drawn: 0 }], false],
+    [[{ declared: 4, drawn: 4 }, { declared: 2, drawn: 1 }], false],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([graphs]) => graphsDrawn({ graphs })),
+    cases.map(([, expected]) => expected),
+  );
+});
+
+/** A snapshot from before the rule existed reads as drawn, not as unfinished. */
+test("a snapshot that files no graphs is not held back by the rule", () => {
+  assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined)], [true, true]);
+});
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {
@@ -1534,6 +1569,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "DETAILS|class=relation-section,open=|||",
       "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
+    graphs: [{ declared: 2, drawn: 1 }],
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1718,11 +1754,25 @@ function pageStub() {
     textContent: " TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:40091/app.mjs ",
   });
 
+  // A React Flow surface, as the settle rule reads it: the count of edges the
+  // graph was handed, and the edges actually on screen. One of the two is in
+  // the document with no geometry yet, which is exactly the state React Flow
+  // leaves an edge in between putting its element there and computing its path
+  // — so counting elements answers "drawn" about a graph that has drawn
+  // nothing, and only `boxed` tells the two apart.
+  const drawnEdge = element({});
+  const pendingEdge = element({}, { getClientRects: () => [{ width: 0, height: 0 }] });
+  const graph = element({}, {
+    getAttribute: (name) => (name === "data-graph-edges" ? "2" : null),
+    querySelectorAll: () => [drawnEdge, pendingEdge],
+  });
+
   const matches = {
     ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
     ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
     "label[for]": [label],
+    "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
   };
   return {

@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -290,6 +290,18 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * merely blocked: aborting alone would surface as some unrelated control
  * failing its checks, which is a bug report nobody can read. `judge` turns each
  * recorded kind into a named failure against the state that provoked it.
+ *
+ * Unconditional needs the intercepts above to defer rather than to continue.
+ * Playwright runs handlers newest-first, and `route.continue()` goes to the
+ * network without consulting the ones underneath — so an intercept whose own
+ * predicate is narrower than `writes` had a hole exactly the width of the
+ * difference. `stall-intent` and its siblings key on `writes`, whose false
+ * branch is this floor's own read branch, so they were safe by coincidence;
+ * the two preflight conditions key on `isPreflight`, which is strictly
+ * narrower, and a confirmed delete falls on the other side of it. They all use
+ * `route.fallback()` instead, which is what makes "the floor is the last word"
+ * a property of the construction rather than of the predicates that happen to
+ * sit above it.
  */
 async function holdWrites(page) {
   page[UNGUARDED] = [];
@@ -338,10 +350,10 @@ async function intercept(page, kind) {
           : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) });
       });
     },
-    "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
+    "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.fallback()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
-      : route.continue()),
+      : route.fallback()),
     // The one refusal `fail-intent` cannot stage, because the request it is
     // about is deliberately not a write. `reachesHost` lets the unconfirmed
     // delete through to the host so the confirmation prompt has referrers to
@@ -351,7 +363,7 @@ async function intercept(page, kind) {
     // still answers normally: the state is one refused read, not a dead host.
     "refuse-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false }) })
-      : route.continue()),
+      : route.fallback()),
     // The same read, held rather than refused. `stall-intent` cannot stage it
     // for the same reason `fail-intent` cannot stage the refusal: the preflight
     // is not a write, so both let it through. Pressing Delete is a question to
@@ -359,7 +371,7 @@ async function intercept(page, kind) {
     // button says "Checking…" and takes no second press — the contract that
     // stops a reader queueing three preflights against one card, and the only
     // one of this control's four screens that nothing rendered.
-    "stall-preflight": () => page.route(/\/intent$/u, (route) => (isPreflight(intentBody(route)) ? undefined : route.continue())),
+    "stall-preflight": () => page.route(/\/intent$/u, (route) => (isPreflight(intentBody(route)) ? undefined : route.fallback())),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.
@@ -367,7 +379,7 @@ async function intercept(page, kind) {
     // listing the report re-reads is unchanged and "claimed no work" is exact.
     "pass-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) })
-      : route.continue()),
+      : route.fallback()),
     // The other end of a pass: it started a run, and said which. Both halves
     // are one condition — the listing withholds that run until the write has
     // answered, so `newRunSince` can attribute it to this click and the report
@@ -379,7 +391,7 @@ async function intercept(page, kind) {
       return Promise.all([
         page.route(/\/intent$/u, (route) => {
           if (!writes(route)) {
-            return route.continue();
+            return route.fallback();
           }
           answered = Date.now();
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PASS_STARTED) });
@@ -399,7 +411,7 @@ async function intercept(page, kind) {
     // whether the page cleared its `busy` flag.
     "abort-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.abort("failed")
-      : route.continue()),
+      : route.fallback()),
   };
   await routes[kind]();
 }
@@ -547,6 +559,16 @@ const SETTLE_REPEATS = 3;
  * `settled` closes. It is stability alone, deliberately: "the DOM stopped
  * changing" is the property the audit needs, and a state that settles on a
  * wrong render is still a settled render — the failure is what reports that.
+ *
+ * Stability alone turned out not to be the whole of it. A still signature says
+ * the page stopped changing for three polls, and a React Flow surface between
+ * its node measurement and its edge pass satisfies that while showing a graph of
+ * disconnected boxes. Both states of one declared twin were filed settled on
+ * some runs with their four relation edges and on others without them — so the
+ * mark introduced to tell a screen from a frame was itself vouching for frames,
+ * and the audit published the difference as a finding about the UI. `graphsDrawn`
+ * closes it with the surface's own count, and the loop now waits for the pass
+ * rather than describing whatever it interrupted.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
@@ -557,7 +579,7 @@ async function judge(state, page) {
   let previous = null;
   for (;;) {
     agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
-    const settled = agreed >= SETTLE_REPEATS;
+    const settled = agreed >= SETTLE_REPEATS && graphsDrawn(result.snapshot);
     if (settled && !result.failures.length) {
       return { ...result, settled };
     }

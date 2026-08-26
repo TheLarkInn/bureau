@@ -347,12 +347,12 @@ const disclosure = {
     {
       id: "none",
       summary: "every secondary region closed",
-      // Collapsed is a state the disclosure itself records. The create form is
-      // absent from the DOM until it is opened; the relation graph is not — a
-      // closed `<details>` keeps its subtree mounted and still reports client
-      // rects for it, so `.relation-flow` cannot tell open from closed. Its
-      // own `open` can, and saying nothing at all here let a section that
-      // shipped `open` pass in every one of these states.
+      // Collapsed is a state the disclosure itself records, and both regions
+      // are now absent from the DOM until they are opened. `relationOpen`
+      // still reads the disclosure's own `open` rather than the graph's
+      // absence: `open` is what a section shipping open would contradict, and
+      // saying nothing at all here let exactly that pass in every one of
+      // these states.
       hides: [S.createBar, S.relationOpen],
     },
     {
