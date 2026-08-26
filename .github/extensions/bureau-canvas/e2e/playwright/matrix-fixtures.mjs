@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, graphsSeenDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -595,7 +595,15 @@ async function judge(state, page) {
   for (;;) {
     agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
     const drawn = graphsDrawn(result.snapshot);
-    sawGraphs ||= drawn;
+    // Asked of `graphsSeenDrawn` rather than of `drawn`, because the two part
+    // on the one look that matters here. `drawn` is a barrier — "is anything on
+    // this render still behind?" — and a render with no graph on it yet answers
+    // no. Latching that as "the pass has been observed" meant a single sample
+    // taken between the click and React committing the graph turned the
+    // undrawn-graph failure off for the rest of the budget, on exactly the
+    // states that open a graph. That is this PR's own subject, made about its
+    // newest check: a gate that cannot fire where it was aimed.
+    sawGraphs ||= graphsSeenDrawn(result.snapshot);
     const settled = agreed >= SETTLE_REPEATS && drawn;
     if (settled && !result.failures.length) {
       return { ...result, settled };

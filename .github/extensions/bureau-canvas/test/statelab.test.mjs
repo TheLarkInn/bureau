@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, graphsSeenDrawn, measureFor, selectorsFor, undrawnGraphs, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1355,12 +1355,58 @@ test("a snapshot that files no graphs is not held back by the rule", () => {
  * check that found something.
  *
  * The rule names the graph and both numbers, because "a graph did not finish"
- * is not actionable and "declared 4, drew 0" is.
+ * is not actionable and "the relation graph declared 3, drew 1" is. Three
+ * surfaces publish the count and the editor can have two of them on one render,
+ * so the numbers alone do not say which screen to go and look at.
  */
 test("a graph that never drew its edges is named as a failure, not a note", () => {
   assert.deepStrictEqual(
-    undrawnGraphs({ graphs: [{ declared: 4, drawn: 4 }, { declared: 3, drawn: 1 }] }),
-    [{ kind: "undrawn-graph", detail: "a graph declared 3 edge(s) and drew 1 for the whole settle budget" }],
+    undrawnGraphs({
+      graphs: [
+        { name: "editor-flow", declared: 4, drawn: 4 },
+        { name: "Config relation graph", declared: 3, drawn: 1 },
+      ],
+    }),
+    [{
+      kind: "undrawn-graph",
+      detail: "Config relation graph declared 3 edge(s) and drew 1 for the whole settle budget",
+    }],
+  );
+});
+
+/** A snapshot from before graphs carried a name still reads as a sentence. */
+test("an unnamed graph is still reported", () => {
+  assert.deepStrictEqual(
+    undrawnGraphs({ graphs: [{ declared: 2, drawn: 0 }] }),
+    [{ kind: "undrawn-graph", detail: "a graph declared 2 edge(s) and drew 0 for the whole settle budget" }],
+  );
+});
+
+/**
+ * The barrier and the observation are two questions over one count.
+ *
+ * `graphsDrawn` is an `every`, so a render with no graph on it yet answers
+ * "nothing is behind" — correct for deciding whether to keep waiting, and wrong
+ * for deciding whether the draw pass was ever seen. The look that parts them is
+ * the one taken between a `<details>` toggle and React committing the graph,
+ * and it is reachable on every state that opens one. Read through the barrier,
+ * that look latched "seen" and switched the undrawn-graph failure off for the
+ * whole budget on exactly the states the failure was written for.
+ */
+test("a render with no graph yet is not an observation of a drawn one", () => {
+  const cases = [
+    [{ graphs: [] }, false],
+    [{}, false],
+    [undefined, false],
+    [{ graphs: [{ declared: 4, drawn: 0 }] }, false],
+    [{ graphs: [{ declared: 4, drawn: 4 }, { declared: 2, drawn: 1 }] }, false],
+    [{ graphs: [{ declared: 4, drawn: 4 }] }, true],
+    [{ graphs: [{ declared: 0, drawn: 0 }] }, true],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([snapshot]) => graphsSeenDrawn(snapshot)),
+    cases.map(([, expected]) => expected),
   );
 });
 
@@ -1374,7 +1420,7 @@ test("a graph that never drew its edges is named as a failure, not a note", () =
  * about, so the question is asked of the graphs and never of the stability.
  */
 test("a page that never stops moving is not accused of an undrawn graph", () => {
-  const drawn = [{ declared: 4, drawn: 4 }, { declared: 0, drawn: 0 }];
+  const drawn = [{ name: "pipeline-flow", declared: 4, drawn: 4 }, { name: "editor-flow", declared: 0, drawn: 0 }];
   assert.deepStrictEqual([undrawnGraphs({ graphs: drawn }), undrawnGraphs({}), undrawnGraphs(undefined)], [[], [], []]);
 });
 
@@ -1605,7 +1651,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "DETAILS|class=relation-section,open=|||",
       "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
-    graphs: [{ declared: 2, drawn: 2 }],
+    graphs: [{ name: "relation-flow", declared: 2, drawn: 2 }],
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1865,7 +1911,7 @@ function pageStub() {
   const sideways = element({}, { getTotalLength: () => 64, getClientRects: () => [{ width: 90, height: 0 }] });
   const zeroLength = element({}, { getTotalLength: () => 0 });
   const graph = element({}, {
-    getAttribute: (name) => (name === "data-graph-edges" ? "2" : null),
+    getAttribute: (name) => ({ "data-graph-edges": "2", class: "relation-flow" })[name] ?? null,
     querySelectorAll: () => [laidOut, sideways, zeroLength],
   });
 

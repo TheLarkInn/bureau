@@ -326,6 +326,14 @@ export function collect(doc, request) {
   for (const node of doc.querySelectorAll("[data-graph-edges]")) {
     if (boxed(node)) {
       graphs.push({
+        // Which surface this is. Three of them publish the attribute — the
+        // assignment's pipeline, the editor's canvas and the shared relation
+        // graph — and the editor keeps its canvas mounted behind the Relations
+        // tab, so more than one can be on a render at once. Without a name the
+        // failure reads "a graph declared 4 edges and drew 0", which is two
+        // numbers and no screen to go and look at: the same dead end
+        // `difference()` was added to the twin audit to remove.
+        name: node.getAttribute("aria-label") ?? node.getAttribute("class") ?? "a graph",
         declared: Number(node.getAttribute("data-graph-edges")),
         drawn: [...node.querySelectorAll(".react-flow__edge-path")].filter(drawnPath).length,
       });
@@ -489,6 +497,32 @@ export function graphsDrawn(snapshot) {
 }
 
 /**
+ * Whether this look found the graphs *present* and complete.
+ *
+ * `graphsDrawn` is an `every` over a list, so it answers `true` about a render
+ * carrying no graphs at all — which is right for a barrier, because a page with
+ * no graph on it has nothing to wait for. It is wrong for the other question a
+ * caller asks of the same count: "was the draw pass ever observed to happen?"
+ *
+ * The two differ on exactly one look — the one taken before the graph has
+ * mounted — and that look is reachable. A `<details>` dispatches `toggle` in a
+ * queued task and React commits the subtree after that, so between the click
+ * returning and the graph existing there is a window with no `[data-graph-edges]`
+ * node on the page. Read through `graphsDrawn`, that window says "the pass has
+ * happened" and latches, which turned the undrawn-graph failure off for the
+ * whole budget on precisely the states that open a graph.
+ *
+ * So the observation demands a graph to have observed. A render that genuinely
+ * carries none never satisfies it and never needs to: `undrawnGraphs` has
+ * nothing to report about an empty list either way.
+ *
+ * Pure, so the offline suite holds the rule without a browser.
+ */
+export function graphsSeenDrawn(snapshot) {
+  return (snapshot?.graphs ?? []).length > 0 && graphsDrawn(snapshot);
+}
+
+/**
  * A graph that never drew its edges, reported as the defect it is.
  *
  * `graphsDrawn` above decides when a render is *finished*, and that was the
@@ -519,7 +553,7 @@ export function undrawnGraphs(snapshot) {
     .filter((graph) => graph.drawn < graph.declared)
     .map((graph) => ({
       kind: "undrawn-graph",
-      detail: `a graph declared ${graph.declared} edge(s) and drew ${graph.drawn} for the whole settle budget`,
+      detail: `${graph.name ?? "a graph"} declared ${graph.declared} edge(s) and drew ${graph.drawn} for the whole settle budget`,
     }));
 }
 
