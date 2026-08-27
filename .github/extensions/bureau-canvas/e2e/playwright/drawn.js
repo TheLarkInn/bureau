@@ -117,13 +117,34 @@ window.bureauDrawn = {
   },
 
   /**
-   * Which of `regions` carry `ink`, read from one shot of the whole page.
+   * Which of `regions` carry `ink` — and how much of that ink the page draws
+   * where no region is.
    *
    * One screenshot rather than one per region, because the question is asked of
    * every figure on the page and a mark drawn on the wrong screens is worse
    * than one drawn on none — a rule keyed on position rather than on the
    * attribute is invisible to any check that samples. Regions are fractions of
    * this shot, as everywhere else here.
+   *
+   * `stray` is the other half of that question, and the regions alone cannot
+   * answer it, because a region is a *box* and a mark can be painted where no
+   * box is:
+   *
+   *   .shots figure:last-of-type { outline:2px solid #9a6700; outline-offset:2px }
+   *   .shots figure:last-of-type::after { content:""; height:4px; background:#9a6700 }
+   *
+   * The first lands entirely outside the border box it is drawn on; the second
+   * sits below the caption whose box was measured. Both put the mark's exact
+   * ink on figures nothing stamped, and every sampled rectangle stays clean. So
+   * every pixel no region covers is read too: ink there is a mark on a screen
+   * that was never marked.
+   *
+   * Coverage is rounded outwards — floor to the left and top, ceil to the right
+   * and bottom — because a box measured in CSS pixels and a shot measured in
+   * device pixels disagree at the edge by less than a pixel, and a sliver of a
+   * genuine border left uncovered would be reported as a mark drawn nowhere.
+   * Sub-pixel slop is the whole of that tolerance: anything drawn a pixel
+   * clear of every channel is still stray.
    */
   async sweep(base64, regions, ink) {
     const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob();
@@ -131,20 +152,32 @@ window.bureauDrawn = {
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext("2d", { willReadFrequently: true });
     context.drawImage(bitmap, 0, 0);
-    return regions.map((region) => {
-      const { data } = context.getImageData(
-        Math.floor(region.x * bitmap.width),
-        Math.floor(region.y * bitmap.height),
-        Math.max(1, Math.round(region.width * bitmap.width)),
-        Math.max(1, Math.round(region.height * bitmap.height)),
-      );
-      for (let at = 0; at < data.length; at += 4) {
-        if (`${data[at]},${data[at + 1]},${data[at + 2]},${data[at + 3]}` === ink) {
-          return true;
+    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
+    const inked = new Uint8Array(bitmap.width * bitmap.height);
+    for (let at = 0; at < inked.length; at += 1) {
+      const pixel = at * 4;
+      inked[at] = `${data[pixel]},${data[pixel + 1]},${data[pixel + 2]},${data[pixel + 3]}` === ink ? 1 : 0;
+    }
+    const covered = new Uint8Array(inked.length);
+    const found = regions.map((region) => {
+      const left = Math.max(0, Math.floor(region.x * bitmap.width));
+      const top = Math.max(0, Math.floor(region.y * bitmap.height));
+      const right = Math.min(bitmap.width, Math.ceil((region.x + region.width) * bitmap.width));
+      const bottom = Math.min(bitmap.height, Math.ceil((region.y + region.height) * bitmap.height));
+      let seen = false;
+      for (let y = top; y < bottom; y += 1) {
+        for (let x = left; x < right; x += 1) {
+          covered[y * bitmap.width + x] = 1;
+          seen = seen || inked[y * bitmap.width + x] === 1;
         }
       }
-      return false;
+      return seen;
     });
+    let stray = 0;
+    for (let at = 0; at < inked.length; at += 1) {
+      stray += inked[at] === 1 && covered[at] === 0 ? 1 : 0;
+    }
+    return { found, stray };
   },
 
   /** Every figure's channels as fractions of a full-page shot, in page order. */

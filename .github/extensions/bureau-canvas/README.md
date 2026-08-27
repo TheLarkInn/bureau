@@ -405,6 +405,20 @@ than all of it, which is what makes "every figure" affordable: what is under
 test is the marker and the stylesheet, and neither has any idea which states it
 was handed.
 
+Both channels are asked **separately**, and the sweep reports the ink it finds
+**outside all of them**. Collapsing the two to "either one carries ink" approves
+`border-style:none` on the mark's own border — a rule still present, still
+correctly spelled, still interpolating the ink, painting nothing on the render
+it judges — on the strength of the caption alone. And a channel is a *box*,
+while a mark can be drawn where no box is: an `outline` at an `outline-offset`
+lands wholly outside the border box it belongs to, and a generated block sits
+below the caption whose box was measured. Both put the mark's exact colour on
+figures nothing stamped while every sampled rectangle stays clean, so ink found
+where no channel is is a mark on a screen that was never marked. Coverage is
+rounded outwards by less than a pixel, because a box measured in CSS pixels and
+a shot measured in device pixels disagree at the edge, and a sliver of a genuine
+border left uncovered would be reported as a mark drawn nowhere.
+
 The words themselves are asked of the region they occupy rather than of the box
 that holds them, and asked five things: they are in the render tree, there is a
 region, the ink is in it, it is not one flat colour, and the ink does not fill
@@ -473,11 +487,18 @@ input to `paths:` and letting an unrelated later step carry a block of the right
 shape. It also reads the step's `if:` **at the step's own key indent**, because
 `with:` is a map of inputs and an input may be called anything at all: an input
 named `if: always()` over a step condition of `if: 0 == 1` reads as `always()` to
-any scan that trims indentation away first. And it reads the enclosing job's
+any scan that trims indentation away first. That indent comes from the step's own
+dash — the first key on the dash line, which is where YAML says a sequence
+entry's mapping begins — and not from the first line inside the step, which any
+deeper line moves: a folded `name: >-` continuation, or an over-indented comment,
+carries the reading straight down into `with:`. And it reads the enclosing job's
 condition too — a step that says `always()` inside a job that never starts
-publishes exactly as much as a step that says nothing. `always()` is required of
-the step rather than merely something truthy, since the run a reviewer most
-needs the gallery from is the one that failed.
+publishes exactly as much as a step that says nothing. Both conditions are read
+by matching `if:` as a **key** rather than as a prefix of a trimmed line: `if :`
+and `"if"` are the same key to YAML and neither begins `if:`, which matters most
+for the job, where the claim is an *absence* and so a scanner's miss fails open.
+`always()` is required of the step rather than merely something truthy, since
+the run a reviewer most needs the gallery from is the one that failed.
 
 **The teardown was proved only through the seam tests use.** `globalTeardown`
 forwards `audit` and `resolve` so the offline suite can watch the hand-over, and

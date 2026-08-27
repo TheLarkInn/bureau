@@ -290,6 +290,65 @@ function blockUnder(step, key) {
 }
 
 /**
+ * The indent a block's own keys are written at: the shallowest line in it that
+ * is neither blank nor a comment.
+ *
+ * Not "whatever the first line happens to be indented by". Any line deeper than
+ * the keys — a folded scalar's continuation, or an over-indented comment —
+ * moves that reading down into `with:`, which is exactly where the input this
+ * rule exists to reject lives:
+ *
+ *   - name: >-
+ *       Upload state gallery
+ *     if: 0 == 1
+ *     with:
+ *       if: always()
+ *
+ * Comments are excluded because they belong to no mapping and can be written at
+ * any indent at all; `#` inside a block scalar is a literal pattern, and those
+ * lines are deeper than the key they hang under, so they are never the
+ * shallowest.
+ */
+function keyIndentOf(lines) {
+  const keys = lines.filter((line) => line.trim() && !line.trim().startsWith("#"));
+  return keys.length ? Math.min(...keys.map((line) => line.search(/\S/u))) : 0;
+}
+
+/**
+ * The indent a step's keys sit at, read from the step's own dash.
+ *
+ * A block mapping in a sequence entry begins where the first key sits on the
+ * dash line itself, so this is decided before any line below it is read and no
+ * line added below can move it. A bare `-` with its keys on the following lines
+ * has no such key, and falls back to the shallowest of them.
+ */
+function stepIndent(step) {
+  const dash = step[0].search(/\S/u);
+  const first = step[0].slice(dash + 1).search(/\S/u);
+  return first === -1 ? keyIndentOf(step.slice(1)) : dash + 1 + first;
+}
+
+/**
+ * `if:` as a key, not as a prefix of a trimmed line.
+ *
+ * `if : false` and `"if": false` are the same key to YAML, and neither begins
+ * `if:`. Reading the key by prefix therefore reports them as *no condition at
+ * all* — which matters most where the claim being made is an absence, because
+ * there a miss fails open: a job that never starts reads as a job with nothing
+ * standing in its way.
+ */
+const IF_KEY = /^(?<quote>['"]?)if\k<quote>\s*:(?<value>.*)$/u;
+
+/** The condition written at exactly `indent` among `lines`, as written. */
+function conditionAt(lines, indent) {
+  const found = lines
+    .filter((line) => line.search(/\S/u) === indent)
+    .map((line) => IF_KEY.exec(line.trim()))
+    .find(Boolean);
+  return found ? found.groups.value.trim() : "";
+}
+
+/**
  * The condition a step runs under, as written — read at the step's own key
  * indent and nowhere deeper.
  *
@@ -302,13 +361,11 @@ function blockUnder(step, key) {
  *
  * as `always()`: an input GitHub hands to the action, approved as the condition
  * GitHub evaluates. Indentation is the only thing that separates them, so it is
- * not thrown away before the search.
+ * not thrown away before the search — and the indent it is compared against
+ * comes from the step's own dash rather than from a line inside it.
  */
 function conditionOf(step) {
-  const keys = step.slice(1).filter((line) => line.trim());
-  const indent = keys.length ? keys[0].search(/\S/u) : 0;
-  const line = step.find((entry) => entry.search(/\S/u) === indent && entry.trim().startsWith("if:"));
-  return line ? line.trim().slice("if:".length).trim() : "";
+  return conditionAt(step, stepIndent(step));
 }
 
 /**
@@ -328,8 +385,7 @@ function jobConditionOf(workflow) {
   const after = lines.slice(job + 1);
   const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= 2);
   const body = after.slice(0, ends === -1 ? after.length : ends);
-  const line = body.find((entry) => entry.search(/\S/u) === 4 && entry.trim().startsWith("if:"));
-  return line ? line.trim().slice("if:".length).trim() : "";
+  return conditionAt(body, keyIndentOf(body));
 }
 
 test("the gallery a run resolves to is the directory CI publishes for a reviewer", async () => {
@@ -352,6 +408,74 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
     ],
     [true, true, [], "always()", ""],
   );
+});
+
+/**
+ * …and the two readers above, held against the workflows they must refuse.
+ *
+ * Both are scanners over text, and a scanner that misses is not neutral: the
+ * step's condition is asserted to be `always()`, so a miss there fails closed,
+ * but the *job's* is asserted to be absent, so a miss there fails open. A
+ * spelling neither one recognises reads as "nothing stands in the way of this
+ * run" over a job that never starts.
+ *
+ * Every case below is valid YAML whose path patterns are exactly right and
+ * which publishes nothing at all, and each was green against the reader this
+ * fixture was written to hold.
+ */
+const HOSTILE_WORKFLOWS = [
+  {
+    id: "an input named `if:`, over a step condition that is false",
+    job: "", step: "        if: 0 == 1\n", input: "          if: always()\n", name: "Upload state gallery",
+    reads: ["0 == 1", ""],
+  },
+  {
+    id: "…and the step's name folded, so its first line is deeper than its keys",
+    job: "", step: "        if: 0 == 1\n", input: "          if: always()\n", name: ">-\n          Upload state gallery",
+    reads: ["0 == 1", ""],
+  },
+  {
+    id: "…and an over-indented comment in that line's place",
+    job: "", step: "        if: 0 == 1\n", input: "          if: always()\n",
+    name: "Upload state gallery\n          # the run a reviewer needs this from is the one that failed",
+    reads: ["0 == 1", ""],
+  },
+  {
+    id: "a job condition spaced away from its colon",
+    job: "    if : false\n", step: "        if: always()\n", input: "", name: "Upload state gallery",
+    reads: ["always()", "false"],
+  },
+  {
+    id: "…and one written as a quoted key",
+    job: '    "if": false\n', step: "        if: always()\n", input: "", name: "Upload state gallery",
+    reads: ["always()", "false"],
+  },
+];
+
+function hostileWorkflow(found) {
+  return `on: [push]
+jobs:
+  matrix:
+    name: Exhaustive UI state coverage
+${found.job}    runs-on: ubuntu-latest
+    steps:
+      - name: ${found.name}
+${found.step}        uses: actions/upload-artifact@v4.4.3
+        with:
+${found.input}          name: canvas-state-gallery
+          path: |
+            ${REVIEWER_GALLERY}
+`;
+}
+
+test("a step that never runs, and a job that never starts, are read as written", () => {
+  const read = HOSTILE_WORKFLOWS.map((found) => {
+    const workflow = hostileWorkflow(found);
+    const step = uploadStep(workflow);
+    return [conditionOf(step), jobConditionOf(workflow), blockUnder(step, "path").includes(REVIEWER_GALLERY)];
+  });
+
+  assert.deepEqual(read, HOSTILE_WORKFLOWS.map((found) => [...found.reads, true]));
 });
 
 /**

@@ -342,6 +342,17 @@ test("@matrix gallery index", async () => {
  * both pseudo-elements of each — and the ink is swept across *every* figure's
  * two channels from a single full-page shot, rather than sampled from two.
  *
+ * Both channels are asked separately, because a mark half drawn is a mark that
+ * lies: collapsing them to "either one carries ink" approves
+ *
+ *   figure[data-settled="false"] img { border-color:#9a6700; border-style:none }
+ *
+ * on the strength of the caption alone, with no amber anywhere near the render
+ * it judges. And a box is not the only place ink can land, so the sweep also
+ * reports the ink it finds *outside* every channel: an `outline` at an offset,
+ * or a generated block below the caption, paints the mark's own colour on
+ * unstamped figures without touching a single sampled rectangle.
+ *
  * The page is built from a slice of the registry rather than all of it, which
  * is what makes "every figure" affordable: what is under test is the marker and
  * the stylesheet, and neither has any idea which states it was handed.
@@ -366,15 +377,16 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
     ([data, regions, colour]) => window.bureauDrawn.sweep(data, regions, colour),
     [full.toString("base64"), figures.flatMap((figure) => figure.regions), inkOf(SETTLED_INK)],
   );
-  const wrong = figures.filter((figure, at) => swept.slice(at * 2, at * 2 + 2).some(Boolean) !== figure.marked);
+  const wrong = figures.filter((figure, at) => swept.found.slice(at * 2, at * 2 + 2).some((seen) => seen !== figure.marked));
   const read = [];
   for (const name of [target, shot(MARKED_PAGE[1], VIEWPORT_LIST[0])]) {
     read.push(await legible(page, markSlot(page, name), inkOf(SETTLED_INK)));
   }
 
-  expect([said, wrong.map((figure) => figure.shot), read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
+  expect([said, wrong.map((figure) => figure.shot), swept.stray, read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
     [[target], 1, MARKED_PAGE.length * VIEWPORT_LIST.length],
     [],
+    0,
     [[true, true, true, true, true], [false, false, false, false, false]],
   ]);
 });
