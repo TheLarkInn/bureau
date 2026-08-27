@@ -465,9 +465,52 @@ someone has Edge. Both directions were measured on the same sabotage — a
 
 Independence is a property of the *call site*, and nothing inside `drawableEdges`
 can enforce it, so `test/graph-edges.test.mjs` holds it offline by reading how
-each of the three surfaces computes the attribute. That test was mutation-checked
-in both directions too: it fails when any one surface is reverted to counting
-`flow.nodes, flow.edges`.
+each of the three surfaces computes the attribute.
+
+### The rule against self-reporting was itself only a mark
+
+That test asked its question as a *ban*. It collected the lines containing
+`drawableEdges(`, and failed a surface whose line matched `flow.(nodes|edges)`.
+Mutation-checked in one direction it looked convincing: revert a surface to
+`drawableEdges(flow.nodes, flow.edges)` and it fails.
+
+It fails for the one spelling it was shown. The same projection under any other
+name passes, and so does the same projection under the *same* name written
+across two lines, because the line holding the call name then holds no argument
+at all:
+
+| the pipeline viewer's count, mutated | old rule | now |
+|---|---|---|
+| `drawableEdges(flow.nodes, flow.edges)` | **fails** | **fails** |
+| `drawableEdges(projection.nodes, projection.edges)` | passes | **fails** |
+| the same call across three lines | passes | **fails** |
+| `drawableEdges(nodesOut, edgesOut)` | passes | **fails** |
+
+So the defect this round exists to remove could walk back in under a rename or a
+line break, beneath a green test written to prevent exactly that. A ban answers
+"is this one known-wrong shape present", which is a question about the shapes
+someone thought of.
+
+The rule is now an allowlist, and reads the complete call expression by scanning
+balanced parentheses rather than by reading a line. Each surface's approved
+model-side argument is recorded in the test:
+
+| surface | approved argument |
+|---|---|
+| relation graph | `source.nodes, source.edges` |
+| pipeline editor | `[...view.steps.map((step) => ({ id: step.name })), ...terminals], edges` |
+| pipeline viewer | `sources, planned.map((item) => item.remapped)` |
+
+Whitespace is collapsed before comparing, so reformatting an approved expression
+is not a finding while changing what it reads is. That inverts the default: an
+unreviewed counting expression fails whether or not anyone predicted its shape,
+and the only way to change how a surface counts is to edit the table where a
+reviewer is asked the question.
+
+What it holds is the counting expression, not the provenance of every name
+inside it — a surface that rebound `sources` to the projection elsewhere in the
+same function would still read as approved. Recorded here rather than implied,
+because the weaker claim is the true one.
 
 ### Absence, and the writes that are not a Save
 

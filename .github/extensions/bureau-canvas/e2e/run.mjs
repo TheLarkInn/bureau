@@ -462,15 +462,14 @@ async function checkConfigView(page, url) {
     assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
   await record("the relation graph draws one edge per reference the config holds", async () => {
-    // Against `relationView`'s own edges, not against what the renderer handed
-    // React Flow. `data-graph-edges` is derived from the same projection the
-    // surface draws, which makes it exactly the right barrier for "has the edge
-    // pass happened" and no evidence at all for "are the right edges there": a
-    // projection that dropped every edge would declare zero, draw zero, and
-    // satisfy it. The pipeline graph has been checked against its layout since
-    // the first version of this harness (see the edge-path count below); the
-    // relation graph, which draws the assignment-first mental model this canvas
-    // is built around, was only ever asked whether it had drawn *some* edge.
+    // Against `relationView`'s own edges, and independently of the in-page
+    // `data-graph-edges` attribute — which the surface now also derives from
+    // the config, so reading it here would be asking one source two ways. This
+    // counts drawn `.react-flow__edge-path` elements against the config, which
+    // is the end-to-end version of the claim `undrawn-graph` makes per render:
+    // the relation graph draws the assignment-first mental model this canvas is
+    // built around, and it was once only ever asked whether it had drawn *some*
+    // edge.
     await waitForRender(page, ".relation-section .react-flow__edge-path", "relation graph edges");
     const drawn = await evaluate(page, `document.querySelectorAll(".relation-section .react-flow__edge-path").length`);
     assert.equal(drawn, state.config.relation.edges.length);

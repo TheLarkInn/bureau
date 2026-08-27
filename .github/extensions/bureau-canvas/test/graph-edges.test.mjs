@@ -12,7 +12,9 @@
 // number into a claim about the screen, and a projection that dropped every
 // edge answered that claim by lowering the bar — declaring 0, drawing 0, and
 // passing. Independence is a property of the call site, so it is asserted here
-// against all three surfaces that publish the attribute.
+// against all three surfaces that publish the attribute — as an allowlist of
+// the expression each is approved to count from, not as a ban on the one wrong
+// spelling anyone happened to predict.
 //
 // The second is the reason such an edge can exist at all. A step's references
 // to another step live in its fields, not only in `view.edges`: `inputs_from`,
@@ -41,8 +43,24 @@ import { pipelineView } from "../lib/view.mjs";
 const committedUrl = new URL("./fixtures/committed-payload.json", import.meta.url);
 const referenceUrl = new URL("./fixtures/codec-reference-pipeline.yaml", import.meta.url);
 
-/** The three surfaces that publish `data-graph-edges` about themselves. */
-const SURFACES = ["app.mjs", "editor/editor.mjs", "editor/relation.mjs"];
+/**
+ * The three surfaces that publish `data-graph-edges`, and the arguments each is
+ * approved to count from.
+ *
+ * Recorded positively — the model-side expression each surface passes — rather
+ * than as a list of projection spellings to ban. A ban answers "is this one
+ * known wrong shape present", which a rename or a line break walks straight
+ * past; this asks "is this the counting that was reviewed", so every other
+ * shape, including ones nobody thought to forbid, is a failure by default.
+ *
+ * Whitespace is collapsed before comparing, so reformatting an approved
+ * expression is not a finding. Changing what it reads is.
+ */
+const SURFACES = [
+  ["app.mjs", "sources, planned.map((item) => item.remapped)"],
+  ["editor/editor.mjs", "[...view.steps.map((step) => ({ id: step.name })), ...terminals], edges"],
+  ["editor/relation.mjs", "source.nodes, source.edges"],
+];
 
 async function fixtureView() {
   const payload = JSON.parse(await readFile(committedUrl, "utf8"));
@@ -73,6 +91,37 @@ test("a graph declares the edges it can draw, not the ones it was handed", () =>
 });
 
 /**
+ * The text between `open`'s parenthesis and the one that closes it, whitespace
+ * collapsed.
+ *
+ * A paren scan rather than a line read, because the argument that matters spans
+ * lines at one of the three surfaces already and would span them at any of the
+ * three after a reformat. Reading the line that happens to hold the call name
+ * makes the rule depend on where the author put a line break, which is the
+ * defect this replaced: a multiline call showed the rule nothing at all.
+ */
+function argumentsAt(code, open) {
+  let depth = 0;
+  for (let at = open; at < code.length; at += 1) {
+    depth += Number(code[at] === "(") - Number(code[at] === ")");
+    if (depth === 0) {
+      return code.slice(open + 1, at).replace(/\s+/gu, " ").trim();
+    }
+  }
+  return "unterminated";
+}
+
+/** Every `drawableEdges(...)` call in a source, as its complete argument text. */
+function callsIn(source) {
+  const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+  const calls = [];
+  for (let at = code.indexOf("drawableEdges("); at !== -1; at = code.indexOf("drawableEdges(", at + 1)) {
+    calls.push(argumentsAt(code, at + "drawableEdges".length));
+  }
+  return calls;
+}
+
+/**
  * The number a graph publishes about itself is not read off the array it handed
  * the renderer.
  *
@@ -85,24 +134,36 @@ test("a graph declares the edges it can draw, not the ones it was handed", () =>
  * the *call site* — nothing inside `drawableEdges` can enforce it, so it is
  * asserted here, offline, by reading how each surface computes the attribute.
  *
+ * Held as an allowlist of the approved expression, which is the difference
+ * between this and the version it replaced. That one banned `flow.nodes` and
+ * `flow.edges` on the line carrying the call, and so passed for the same
+ * projection under any other name and for the same names written across two
+ * lines — a mark that read like a check while the defect it names could return
+ * underneath it. Naming what each surface *may* count from inverts the default:
+ * an unreviewed source is a failure whether or not anyone predicted its shape.
+ *
+ * What it holds is the counting expression, not the provenance of every name
+ * inside it — a surface that rebound `sources` to the projection elsewhere in
+ * the function would still read as approved. The guarantee is that no surface's
+ * count can change without editing the table above, which is where a reviewer
+ * is asked the question.
+ *
  * Checked for all three at once rather than only the relation graph, because
  * the same shape was on the pipeline and the editor, and a rule held at one of
  * three call sites is the kind of half-measure this whole registry exists to
  * remove. `publishes` and `counts` guard the rule against going vacuous if a
  * surface stops publishing or stops counting altogether.
  */
-test("no surface counts its edges from the arrays it handed React Flow", async () => {
-  const sources = await Promise.all(SURFACES.map((path) => readFile(new URL(`../web/${path}`, import.meta.url), "utf8")));
-  const calls = sources.map((source) =>
-    source.split("\n").filter((line) => line.includes("drawableEdges(") && !line.trimStart().startsWith("*")));
+test("every surface counts its edges from the model it was reviewed against", async () => {
+  const sources = await Promise.all(
+    SURFACES.map(([path]) => readFile(new URL(`../web/${path}`, import.meta.url), "utf8")));
 
   assert.deepStrictEqual(
-    sources.map((source, index) => ({
+    sources.map((source) => ({
       publishes: source.includes("data-graph-edges"),
-      counts: calls[index].length > 0,
-      fromProjection: calls[index].some((line) => /\bflow\.(nodes|edges)\b/u.test(line)),
+      counts: callsIn(source),
     })),
-    SURFACES.map(() => ({ publishes: true, counts: true, fromProjection: false })),
+    SURFACES.map(([, approved]) => ({ publishes: true, counts: [approved] })),
   );
 });
 

@@ -30,9 +30,9 @@
  * satisfied both `graphsDrawn` and `undrawnGraphs`. Counting the config instead
  * makes the two numbers independent, so the same failure that was written to
  * catch a graph mid-draw now catches a graph projected wrong. `test/graph-edges.
- * test.mjs` holds the independence at each of the three surfaces by reading how
- * they compute the attribute, because it is a property of the call site and
- * nothing inside this function can enforce it.
+ * test.mjs` holds the independence at each of the three surfaces by recording
+ * the expression each is approved to count from, because it is a property of
+ * the call site and nothing inside this function can enforce it.
  */
 export function drawableEdges(nodes, edges) {
   const present = new Set(nodes.map((node) => node.id));
