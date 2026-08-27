@@ -111,20 +111,33 @@ const surface = {
  * two directions: the panel reports findings exactly when there are findings
  * for this pipeline, and says so out loud when there are none.
  *
+ * `verdict` is the sentence it says when there are none, and there are two of
+ * them, because an empty findings list means two different things. Under
+ * `validated` the CLI ran and returned nothing, which is a pass. Under
+ * `fixture` there is no binary, nothing ever ran, and the list is empty for
+ * want of anyone to fill it. Wiring both to "clean — bureau validate would
+ * pass" made this registry certify, on fourteen renders, a verdict no
+ * validator ever gave — the same shape of mark-standing-in-for-a-check this
+ * branch exists to refuse, sitting inside the branch's own expectations.
+ *
  * Only on the surface that draws the panel, and only on the three `data` values
  * that reach it. `advisory` and `invalid-advisory` are not among them —
  * `an-advisory-sits-on-the-item-it-names` confines both to the config surface,
  * because `advisoryNote` targets the assignment — so wiring this to them would
  * be a callback that can never run, claiming coverage the matrix does not have.
  */
-function panelVerdict(combo, clean) {
+function panelVerdict(combo, verdict) {
   if (combo.surface !== "pipeline") {
     return {};
   }
-  return clean
-    ? { shows: [S.panelValidationClean], hides: [S.panelValidationFinding], copy: [{ selector: S.panelValidationClean, text: "clean — bureau validate would pass" }] }
+  return verdict
+    ? { shows: [S.panelValidationClean], hides: [S.panelValidationFinding], copy: [{ selector: S.panelValidationClean, text: verdict }] }
     : { shows: [S.panelValidationFinding], hides: [S.panelValidationClean] };
 }
+
+/** The two sentences an empty findings list can honestly carry. */
+const PANEL_CLEAN = "clean — bureau validate would pass";
+const PANEL_UNCHECKED = "not checked — bureau validate did not run";
 
 /**
  * D2 — where the config payload came from and whether the CLI accepted it.
@@ -151,14 +164,14 @@ const data = {
       // editor.html installs a different fallback, which `boot-editor` derives.
       only: ["boot"],
     },
-    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"], derive: (combo) => panelVerdict(combo, true) },
-    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], derive: (combo) => panelVerdict(combo, true) },
+    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud — and the panel says it was not checked rather than that it passed", copy: ["bundled sample"], derive: (combo) => panelVerdict(combo, PANEL_UNCHECKED) },
+    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], derive: (combo) => panelVerdict(combo, PANEL_CLEAN) },
     {
       id: "invalid",
       summary: "bureau validate rejected it; findings sit on what they name",
       copy: ["Validation findings"],
       shows: [".finding--validation"],
-      derive: (combo) => panelVerdict(combo, false),
+      derive: (combo) => panelVerdict(combo, null),
     },
     {
       id: "advisory",

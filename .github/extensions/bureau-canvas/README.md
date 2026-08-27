@@ -234,6 +234,52 @@ starts from a fresh session, because the assignment stack remembers its
 expanded card in `sessionStorage` and a replayed path would otherwise toggle
 it shut.
 
+### A verdict is a result, and a result requires a run
+
+The pipeline side panel is headed `Validation (0)` when it has no findings for
+the pipeline it describes, and says a sentence about it. An empty findings list
+arrives two different ways, and the panel said the same thing about both:
+
+```
+clean — bureau validate would pass
+```
+
+Under `data:validated` that is true — the CLI ran and returned nothing. Under
+`data:fixture` there is **no bureau binary**: `extension.mjs` reads the bundled
+payload, which carries no `findings` key at all, so the list is empty for want
+of anyone to fill it. Nothing ran, and the panel reported a pass. Two feet
+above it the header reads *"Showing bundled sample; bureau binary not
+available."* — the two statements cannot both be true, and the one under the
+heading "Validation" is the one a reader takes as the verdict.
+
+`state.validation.state` has always distinguished them; the panel simply never
+consulted it. It does now, and says `not checked — bureau validate did not run`
+when nothing ran.
+
+The registry is the more interesting half. This branch did not introduce the
+sentence — it introduced the **assertion** of it, wiring both `data` values to
+the same `panelVerdict(combo, true)`, so seven states and fourteen renders
+certified a verdict no validator ever gave. That is a mark standing in for a
+check that was never made, which is the defect this branch exists to refuse,
+found inside the branch's own expectations. `data:fixture` is also the state a
+user lands on *precisely because* the binary is missing, so it is where an
+unearned "would pass" is most likely to be believed.
+
+The offline test asks the two values' own derivations whether they disagree,
+rather than comparing each against a literal — a test naming both sentences
+goes on agreeing with itself once someone makes them one sentence again — and
+pins which of the two is the unrun one, because "they differ" alone is
+satisfied by swapping them.
+
+| mutation | offline | browser |
+|---|---|---|
+| `data:fixture` wired back to the clean sentence | **1 failed** | — |
+| `emptyVerdict` returning the clean sentence unconditionally | — | **14 failed** |
+| restored | **422 passed** | **653 passed** |
+
+The fourteen are the seven `surface:pipeline+data:fixture` states at both
+viewports, which is exactly the set the registry certifies.
+
 ### A render that was not proved settled says so
 
 The matrix waits for a state's own signature to stop changing before it judges

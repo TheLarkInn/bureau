@@ -17,7 +17,7 @@ import { CONSTRAINT_IDS, CONSTRAINTS, harnessNotes, violations } from "../web/st
 import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
-import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
+import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
 import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
@@ -1366,6 +1366,39 @@ test("every selector the vocabulary defines is promised by a state, or exempt by
 function selectorsOf(ops) {
   return (ops ?? []).map((op) => op.selector).filter(Boolean);
 }
+
+/**
+ * A verdict is a result, and a result requires a run.
+ *
+ * The pipeline panel says a sentence when it has no findings for this
+ * pipeline, and an empty findings list arrives two different ways. Under
+ * `data:validated` the CLI ran and returned nothing, which is a pass. Under
+ * `data:fixture` there is no bureau binary, nothing ever ran, and the list is
+ * empty for want of anyone to fill it — on the same screen whose header says
+ * "Showing bundled sample; bureau binary not available."
+ *
+ * Both were wired to "clean — bureau validate would pass", so this registry
+ * certified a verdict no validator gave, across seven states and fourteen
+ * renders, in the state a user lands on precisely when the binary is missing.
+ * That is a mark standing in for a check that was never made — the shape this
+ * branch exists to refuse — sitting inside the branch's own expectations.
+ *
+ * Asked of the two values' own derivations rather than against a pair of
+ * literals, because what is under test is that they *disagree*: a test naming
+ * both sentences goes on agreeing with itself after someone makes them one
+ * sentence again. The direction is pinned too — which of the two is the unrun
+ * one — since a check for "they differ" alone is satisfied by swapping them,
+ * and swapped is the same overclaim with the labels exchanged.
+ */
+test("a state where validate never ran does not claim the verdict of one where it did", () => {
+  const said = (id) => (valueOf("data", id).derive({ surface: "pipeline" }).copy ?? []).map((phrase) => phrase.text);
+  const [unchecked, clean] = [said("fixture"), said("validated")];
+
+  assert.deepStrictEqual(
+    [unchecked.length, clean.length, unchecked[0] === clean[0], /^not checked\b/u.test(unchecked[0]), /^clean\b/u.test(clean[0])],
+    [1, 1, false, true, true],
+  );
+});
 
 /**
  * Which look answers when the settle window runs out.
