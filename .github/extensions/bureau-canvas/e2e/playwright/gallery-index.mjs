@@ -46,6 +46,19 @@ export const SETTLED_MARK = 'data-settled="false"';
  */
 export const SETTLED_PHRASE = "not proved settled";
 
+/**
+ * The ink a mark is drawn in. One string, for the same reason the phrase is —
+ * and here the second spelling would have been in the check rather than in the
+ * product.
+ *
+ * `@matrix an unsettled figure is drawn unlike a settled one` requires this
+ * exact colour to appear in the pixels of the stamped figure's border, which is
+ * the only question a rule that paints nothing cannot pass. Spelled separately
+ * there, restyling the mark would have left the check hunting a colour the sheet
+ * had stopped drawing — green about ink that is on no page.
+ */
+export const SETTLED_INK = "#9a6700";
+
 export function escape(value) {
   return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 }
@@ -144,8 +157,8 @@ export function indexPage(rows, states, viewports) {
      is about that screen. The selector is interpolated from the same constant
      applyMarks writes, so a mark can never land under an attribute this sheet
      does not draw. */
-  figure[${SETTLED_MARK}] img { border-color:#9a6700; border-width:2px; }
-  figure[${SETTLED_MARK}] figcaption::after { content:" · ${SETTLED_PHRASE}"; color:#9a6700; font-weight:700; }
+  figure[${SETTLED_MARK}] img { border-color:${SETTLED_INK}; border-width:2px; }
+  figure[${SETTLED_MARK}] figcaption::after { content:" · ${SETTLED_PHRASE}"; color:${SETTLED_INK}; font-weight:700; }
 </style></head>
 <body>
 <header><h1>Bureau Canvas state gallery</h1><p class="muted">${states.length} states × ${viewports.length} viewports, rendered by the production page.</p></header>

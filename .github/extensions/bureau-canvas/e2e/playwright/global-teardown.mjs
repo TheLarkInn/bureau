@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
-import { applyMarks, escape, SETTLED_PHRASE } from "./gallery-index.mjs";
+import { applyMarks, escape, SETTLED_INK, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
@@ -378,7 +378,7 @@ export function notices(lines, missing, unsettled, drift = [], unknown = []) {
       + `${missing.length ? `Missing: ${missing.slice(0, 20).map(escape).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`
     : "";
   const note = marked || drift.length
-    ? '<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:#9a6700">'
+    ? `<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:${SETTLED_INK}">`
       + `${marked} render(s) below are marked <strong>${SETTLED_PHRASE}</strong>: this run could not vouch for them, `
       + "so read those as a frame rather than as a screen. A state that animates by design is expected here."
       + `${unknown.length ? ` ${unknown.length} of them filed no record this run could read, so nothing at all is known about those.` : ""}`

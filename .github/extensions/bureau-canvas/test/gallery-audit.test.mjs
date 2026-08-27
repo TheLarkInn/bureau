@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
-import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
+import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -629,6 +629,32 @@ test("the attribute a figure is stamped with is the one the page's styling draws
 });
 
 /**
+ * …and the ink it is drawn in is the ink the browser check hunts for.
+ *
+ * `@matrix an unsettled figure is drawn unlike a settled one` no longer reads a
+ * computed property, because every property is one of an endless list of ways to
+ * be invisible. It reads the pixels and requires the mark's own colour to be
+ * among them, which nothing silent can pass — but that turns the colour into a
+ * value two files have to agree on, and this branch's whole subject is what
+ * happens when they are two spellings instead of one. Restyle the sheet alone
+ * and the check hunts an ink that is on no page: green, over marks a reviewer
+ * cannot see, which is precisely the defect the pixel read was written to close.
+ *
+ * So the sheet draws `SETTLED_INK` and the amber notice is written in it too —
+ * they are one mark and its caption, and a reviewer who meets them apart has
+ * been told two things. Both are read back here.
+ */
+test("the ink a mark is drawn in is the ink its own notice is written in", () => {
+  const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
+  const banner = notices([], [], ["desktop--one.png"], [], []);
+
+  assert.deepEqual(
+    [/^#[0-9a-f]{6}$/u.test(SETTLED_INK), page.split(SETTLED_INK).length - 1, banner.includes(`color:${SETTLED_INK}`)],
+    [true, 2, true],
+  );
+});
+
+/**
  * The mark is *added to* the tag the page writes, never a second spelling of it.
  *
  * `applyMarks` searches for `figureTag(shot)` and then rebuilt the opening tag
@@ -724,20 +750,40 @@ test("the marker stamps attributes the page carries that it never wrote", () => 
  * reading a page nobody will ever see, so the disagreement is closed in the
  * renderer's favour and the duplicate itself is a finding: a row is malformed
  * output whether or not the winning value happens to be right.
+ *
+ * Names are folded to lower case for the same reason, and it is the same defect
+ * one notch along. HTML attribute names are ASCII case-insensitive, so
+ * `SRC="./broken.png" src="./real.png"` is *one* attribute to Chromium, which
+ * keeps the first and loads the broken one. Keyed by the name as written, this
+ * saw two different attributes, reported no repeat, and agreed with the second —
+ * green over a gallery of broken images. Case-folding closes the disagreement
+ * and makes the collision a repeat, which is what it is.
+ *
+ * `unparsed` is what the parser could not account for, and it is the guard on
+ * the parser's own competence. This understands double-quoted values and
+ * nothing else, which is enough because every attribute a row writes goes
+ * through `escape`; but a value written single-quoted or bare would simply not
+ * match, and an attribute this cannot see is one it silently reports as absent.
+ * So everything between the tag name and its `>` must be consumed by the
+ * matches, and whatever is left over is returned to be asserted empty rather
+ * than quietly dropped.
  */
 function attributesOf(row, tag) {
   const opens = row.indexOf(`<${tag}`);
   const text = row.slice(opens, row.indexOf(">", opens) + 1);
   const attributes = new Map();
   const repeated = [];
-  for (const [, name, value] of text.matchAll(/([\w-]+)="([^"]*)"/gu)) {
+  let rest = text.slice(`<${tag}`.length, -1);
+  for (const match of text.matchAll(/([^\s"'=<>/]+)="([^"]*)"/gu)) {
+    const name = match[1].toLowerCase();
+    rest = rest.replace(match[0], " ");
     if (attributes.has(name)) {
       repeated.push(name);
     } else {
-      attributes.set(name, value);
+      attributes.set(name, match[2]);
     }
   }
-  return { attributes: Object.fromEntries(attributes), repeated };
+  return { attributes: Object.fromEntries(attributes), repeated, unparsed: rest.replace(/\/\s*$/u, "").trim() };
 }
 
 /**
@@ -780,8 +826,9 @@ test("a state's own text cannot break out of the attribute it is written into", 
       figure.attributes["data-shot"],
       image.attributes.src,
       [...figure.repeated, ...image.repeated],
+      [figure.unparsed, image.unparsed],
       row.includes(`data-shot="${shot}"`),
     ],
-    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, [], false],
+    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, [], ["", ""], false],
   );
 });

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { shotName, twinParticipants } from "../gallery-audit.mjs";
-import { indexPage, rowsFor, applyMarks, SETTLED_PHRASE } from "../gallery-index.mjs";
+import { indexPage, rowsFor, applyMarks, SETTLED_INK, SETTLED_PHRASE } from "../gallery-index.mjs";
 import { notices } from "../global-teardown.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
@@ -23,6 +23,29 @@ const TWIN_SHOTS = twinParticipants(RENDER_TWINS);
 
 /** What counts as drawn, spelled once, for both of the checks below. */
 const DRAWN = fileURLToPath(new URL("../drawn.js", import.meta.url));
+
+/** `#rrggbb` as the opaque `"r,g,b,a"` a screenshot of it reads back as. */
+function inkOf(hex) {
+  return `${[1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)).join(",")},255`;
+}
+
+/**
+ * The colours Chromium actually painted in one region of the page.
+ *
+ * The screenshot is handed straight back into the page it came from, because
+ * the decision about what is in it belongs in `drawn.js` with the rest of what
+ * "drawn" means, and reading pixels is the one question a rule that is present,
+ * correctly spelled and silent cannot answer its way out of.
+ */
+async function colours(page, locator) {
+  const png = await locator.screenshot();
+  return page.evaluate((data) => window.bureauDrawn.colours(data), png.toString("base64"));
+}
+
+/** Whether the mark's own ink is among the pixels of one figure's channel. */
+async function carriesInk(page, name, part) {
+  return (await colours(page, page.locator(`figure[data-shot="${name}"] ${part}`))).includes(inkOf(SETTLED_INK));
+}
 
 function shot(state, viewport) {
   return shotName(state.id, viewport.id);
@@ -183,45 +206,51 @@ test("@matrix gallery index", async () => {
  *
  * And every channel it reads was still only being read for its *value*. A rule
  * that is present, correctly spelled and matching the stamped figure can paint
- * nothing at all — `border-color:transparent` beside `border-width:2px`, and
- * `color:transparent` on the caption's `::after`, leave the border string
- * different from every neighbour's and the phrase present in `content`, and
- * this returned the expected tuple over a page where not one mark was visible.
- * So the mark is asked whether it is *painted*: the stamped figure has to be
- * visible, its border opaque, and every channel that says the words has to say
- * them in a colour with alpha. `drawn.js` decides that once, for this check and
- * for the notices below, so the two cannot drift into asking different
- * questions about the same page.
+ * nothing at all, and an alpha channel is only the first of the ways: beside
+ * `border-color:transparent` sit `border-style:none`, which computes the width
+ * to zero, and `display:none`, `font-size:0` and `clip-path:inset(100%)` on the
+ * caption's `::after`, each of which leaves the phrase present in `content` at
+ * full alpha and draws not one pixel. The list of ways to be invisible has no
+ * end, so no list of properties closes it.
+ *
+ * So the mark is asked of the render instead. Each of the two channels the
+ * stylesheet paints is screenshotted and read back for the colours Chromium
+ * actually put there, and `SETTLED_INK` — the one the sheet interpolates — has
+ * to be among them: on the stamped figure's border, on its caption, and on
+ * neither channel of any figure that was not stamped. That is a question a rule
+ * painting nothing cannot pass, whichever property it was silenced with, and it
+ * is per-channel because a mark half drawn is a mark that lies.
+ *
+ * Comparing the stamped render against an unstamped one is deliberately *not*
+ * the question. The mark changes the border's width, so the geometry moves and
+ * the pixels differ whether or not anything was painted — `font-size:0` on the
+ * `::after` still nudges the caption's line box, and a difference check reads
+ * that as a mark. Ink present is about paint alone.
+ *
+ * `drawn.js` decides what reading the render means, once, for this check and for
+ * the notices below, so the two cannot drift into asking different questions
+ * about the same page.
  */
 test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
   const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
+  const bare = shot(STATES[1], VIEWPORT_LIST[0]);
   const marked = applyMarks(indexPage(rowsFor(STATES, VIEWPORT_LIST, shot), STATES, VIEWPORT_LIST), "", [target]);
 
   await page.setContent(marked.html);
   await page.addScriptTag({ path: DRAWN });
 
-  const drawn = await page.evaluate((phrase) => {
-    const { alpha, saying, visible } = window.bureauDrawn;
-    const border = (figure) => {
-      const style = getComputedStyle(figure.querySelector("img"));
-      return `${style.borderTopColor} ${style.borderTopWidth}`;
-    };
+  const said = await page.evaluate((phrase) => {
     const stamped = document.querySelector("figure[data-settled]");
     const plain = [...document.querySelectorAll("figure:not([data-settled])")];
-    const alike = new Set(plain.map(border));
-    const said = saying(stamped, phrase);
     return [
+      window.bureauDrawn.saying(stamped, phrase) > 0,
       plain.length > 1,
-      alike.size,
-      [...alike].every((drawing) => drawing !== border(stamped)),
-      said.length > 0 && said.every((value) => value > 0),
-      plain.filter((figure) => saying(figure, phrase).length).length,
-      visible(stamped),
-      alpha(getComputedStyle(stamped.querySelector("img")).borderTopColor) > 0,
+      plain.filter((figure) => window.bureauDrawn.saying(figure, phrase)).length,
     ];
   }, SETTLED_PHRASE);
+  const inked = await Promise.all([target, bare].flatMap((name) => ["img", "figcaption"].map((part) => carriesInk(page, name, part))));
 
-  expect(drawn, "every unstamped figure is drawn alike, unlike the stamped one, and only it visibly says so").toEqual([true, 1, true, true, 0, true, true]);
+  expect([said, inked], "only the stamped figure says it, and says it in ink a reviewer can see").toEqual([[true, true, 0], [true, true, false, false]]);
 });
 
 /**
@@ -246,6 +275,20 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
  * the phrase it must carry is `SETTLED_PHRASE` for the same reason the mark's
  * is: spelled separately, this would keep hunting for a sentence the product
  * had stopped writing.
+ *
+ * And, like the mark, being *present* was still all that was asked of the words
+ * themselves. A notice at `color:transparent`, or one whose foreground is set to
+ * its own background — `background:#ffebe9;color:#ffebe9` — is in the render
+ * tree, passes `checkVisibility`, serializes identically, and cannot be read.
+ * So each notice is screenshotted and its pixels are asked three things: it is
+ * rendered at all, its own computed ink is among the colours actually painted,
+ * and the region is not one flat colour.
+ *
+ * The three are needed together, and each closes what the others do not. `hidden`
+ * and `opacity:0` are caught by the first alone. `color:transparent` never
+ * appears in an opaque screenshot, so the second catches it. A foreground equal
+ * to its background *is* painted — it is the background — so only the third,
+ * flatness, can tell that one from a banner with words on it.
  */
 const NOTICE_CASES = [
   { id: "an advisory alone", lines: [], missing: [], drawn: 1 },
@@ -260,12 +303,18 @@ test("@matrix a run's notices are drawn where a reviewer will read them", async 
   for (const found of NOTICE_CASES) {
     await page.setContent(applyMarks(page1, notices(found.lines, found.missing, [target], [], []), [target]).html);
     await page.addScriptTag({ path: DRAWN });
-    read.push(await page.evaluate((phrase) => {
-      const { visible } = window.bureauDrawn;
+    const said = await page.evaluate((phrase) => {
       const notes = [...document.querySelectorAll("body > p")];
-      return [notes.length, notes.every((note) => visible(note)), notes.filter((note) => note.textContent.includes(phrase)).length];
-    }, SETTLED_PHRASE));
+      return [
+        notes.length,
+        notes.every((note) => window.bureauDrawn.rendered(note)),
+        notes.filter((note) => note.textContent.includes(phrase)).length,
+        notes.map((note) => `${getComputedStyle(note).color.match(/[\d.]+/gu).slice(0, 3).join(",")},255`),
+      ];
+    }, SETTLED_PHRASE);
+    const seen = await Promise.all(said[3].map((_, at) => colours(page, page.locator("body > p").nth(at))));
+    read.push([...said.slice(0, 3), seen.every((was, at) => was.includes(said[3][at]) && was.length > 1)]);
   }
 
-  expect(read, "every notice a run writes is visible, and says what it promises").toEqual(NOTICE_CASES.map((found) => [found.drawn, true, 1]));
+  expect(read, "every notice a run writes is painted in ink a reviewer can read, and says what it promises").toEqual(NOTICE_CASES.map((found) => [found.drawn, true, 1, true]));
 });

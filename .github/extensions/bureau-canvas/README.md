@@ -371,18 +371,66 @@ the notice a bad run depends on, and the offline suite cannot tell, because it
 holds `notices` as a string and a hidden banner serializes exactly like a shown
 one.
 
-So both are asked whether they are painted, by a browser: the stamped figure has
-to be visible, its border opaque, and every channel that says the words has to
-say them in a colour with alpha. The notices are asked the same question, and
-the advisory is asked *alone* as well as beside the alarm — an advisory-only run
-is the ordinary result of a full matrix, so the notice a reviewer meets on
-almost every good run was the one with no browser check at all. What counts as
-drawn is decided once, in `e2e/playwright/drawn.js`, and injected into the page
-by both checks, so the two cannot drift into asking different questions about
-the same artefact.
+So both are asked whether they are painted, by a browser — and asked of the
+pixels rather than of the properties. An alpha channel was only the first of the
+ways to be silent: `border-style:none` computes the border's width to zero,
+`font-size:0` and `clip-path:inset(100%)` on the caption's `::after` leave the
+phrase present in `content` at full alpha, and a foreground set to its own
+background is painted and unreadable. That list has no end, so no list of
+properties closes it.
+
+Each channel the stylesheet paints is therefore screenshotted and read back for
+the colours Chromium actually put there. The mark's own ink — `SETTLED_INK`, the
+one the sheet interpolates and the amber notice is written in — has to be among
+them on the stamped figure's border *and* on its caption, and on neither channel
+of any figure that was not stamped. Each notice has to be rendered, to carry its
+own computed ink among its pixels, and to be more than one flat colour; the three
+are needed together, because `opacity:0` is caught only by the first,
+`color:transparent` only by the second, and a foreground equal to its background
+only by the third. The advisory is asked *alone* as well as beside the alarm — an
+advisory-only run is the ordinary result of a full matrix, so the notice a
+reviewer meets on almost every good run was the one with no browser check at all.
+
+Comparing a stamped render against an unstamped one is deliberately not the
+question: the mark changes the border's width, so the geometry moves and the
+pixels differ whether or not anything was painted. Ink present is about paint
+alone. What counts as drawn is decided once, in `e2e/playwright/drawn.js`, and
+injected into the page by both checks, so the two cannot drift into asking
+different questions about the same artefact.
+
+### Three checks that read something other than what a reviewer gets
+
+Painting is not the only place a check can agree with a page nobody will see.
+Three more sat one step to the side of what they claimed.
+
+**The row parser disagreed with the browser about case.** `attributesOf` already
+took the *first* of a repeated attribute, because that is what Chromium takes.
+It keyed them by the name as written, so `SRC="./broken.png"` and
+`src="./real.png"` were two attributes to the check and one to the browser: no
+repeat reported, the second value read and approved, and a gallery of broken
+images. Names are folded to lower case now, which makes the collision a repeat —
+which is what it is. The parser also returns what it could not account for, and
+that has to be empty: it understands double-quoted values and nothing else, and
+an attribute it cannot see is one it silently reports absent.
+
+**The CI-publication check read a line, not the step.** The gallery path was
+required to appear as some trimmed line of the workflow. `upload-artifact` reads
+a leading `!` as an exclusion, so a `path:` block that lists the gallery and then
+excludes it keeps the line, uploads an artefact, stays green, and publishes
+nothing. The check now finds the `actions/upload-artifact` step, reads that
+step's own `path:` block, and requires the gallery to be among the patterns and
+none of them to be an exclusion.
+
+**The teardown was proved only through the seam tests use.** `globalTeardown`
+forwards `audit` and `resolve` so the offline suite can watch the hand-over, and
+both of its tests injected a stand-in. The un-injected path — the only one
+Playwright ever takes, because it calls a global teardown with the config and
+nothing else — was never walked, so a guard returning early when no seam is
+passed left every offline test, every identity check and the whole browser suite
+green while a real run's teardown did nothing. It is now called the way
+Playwright calls it and required to have really audited.
 
 ### The audit could not be found among the run's checks
-
 Every rule above produced a *finding*, and nothing was answerable for any of
 them. A full matrix could publish `This gallery is not the whole matrix` in red
 at the top of the artefact, and the only things carrying that news were a
