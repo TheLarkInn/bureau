@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
-import { applyMarks, figureTag, indexPage, NOTICE_ANCHOR, rowsFor } from "../e2e/playwright/gallery-index.mjs";
+import { applyMarks, escape, figureTag, indexPage, NOTICE_ANCHOR, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -571,5 +571,62 @@ test("a notice containing a dollar pattern is inserted literally", () => {
   assert.deepEqual(
     [marked.unmarked, marked.html.includes("attr=$& and $` and $'")],
     [[], true],
+  );
+});
+
+/**
+ * A mark that lands and is not drawn is not a mark.
+ *
+ * Stamping the figure is only half of the amber mark; the other half is the
+ * stylesheet selecting what was stamped. Those were separate spellings of one
+ * attribute, so renaming the selector alone left every mark landing correctly,
+ * `unmarked` empty and the gate green — with not one mark visible on the page a
+ * reviewer opens. It is the same defect as an anchor that drifted, one layer
+ * further down: the attachment was held and the *rendering* of it was not.
+ *
+ * So the attribute is read back out of a stamped figure and the page is
+ * required to draw exactly that, rather than both being compared against a
+ * third spelling written here — which is the shape of agreement that failed.
+ */
+test("the attribute a figure is stamped with is the one the page's styling draws", () => {
+  const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
+  const target = shotName(STATES[0].id, VIEWPORTS[0].id);
+  const literal = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+  const marked = applyMarks(page, "", [target]);
+  const stamped = new RegExp(`<figure data-shot="${literal}"\\s+([^>]+)>`, "u").exec(marked.html)?.[1];
+
+  assert.deepEqual(
+    [typeof stamped, page.includes(`figure[${stamped}] img`), page.includes(`figure[${stamped}] figcaption::after`)],
+    ["string", true, true],
+  );
+});
+
+/**
+ * A state's own text is written into `alt`, `data-shot`, the heading, the
+ * summary, the meta line and the fixture list, and nothing stops any of them
+ * from containing a quote. No state carries one today, so `escape` doing
+ * nothing at all was invisible: `@matrix gallery index` looks only for
+ * `src="./…"` substrings, which survive an attribute broken open three
+ * characters earlier.
+ *
+ * The fixture is hostile in *every* field a row interpolates, because a
+ * fixture hostile in two of them proved only those two: dropping the escape
+ * from `summary`, `kind` and the fixture join left the suite green.
+ */
+test("a state's own text cannot break out of the attribute it is written into", () => {
+  const hostile = {
+    id: 'probe--"><script>x</script>',
+    summary: "<em>tea</em> & toast",
+    kind: "<b>probe</b>",
+    covers: "<i>a card</i>",
+    fixture: ["<u>one</u>"],
+  };
+
+  const row = rowsFor([hostile], VIEWPORTS, () => 'desktop--"x.png');
+
+  assert.deepEqual(
+    [escape('a "b" <c> & d'), ["<script>", "<em>", "<b>", "<i>", "<u>"].filter((tag) => row.includes(tag))],
+    ["a &quot;b&quot; &lt;c&gt; &amp; d", []],
   );
 });

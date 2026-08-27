@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { shotName, twinParticipants } from "../gallery-audit.mjs";
-import { indexPage, rowsFor } from "../gallery-index.mjs";
+import { indexPage, rowsFor, applyMarks } from "../gallery-index.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
@@ -132,4 +132,36 @@ test("@matrix gallery index", async () => {
       .filter((viewport) => !written.includes(`src="./${shot(state, viewport)}"`))
       .map((viewport) => `${state.id} @ ${viewport.id}`));
   expect(missing, "states the gallery index does not link").toEqual([]);
+});
+
+/**
+ * The amber mark is asked whether it is *drawn*, by a browser.
+ *
+ * The offline suite can hold the marker and the stylesheet to one attribute,
+ * but a selector is only half a mark: emptying both declaration blocks leaves
+ * every rule present, spelled correctly, matching the stamped figure — and
+ * changing nothing a reviewer can see. That is the same defect as an anchor
+ * that drifted, asserted one notch further down, and no amount of reading the
+ * sheet as text can settle it. So the page is loaded and the two figures are
+ * compared as rendered: a stamped one must not be drawn like its neighbour, and
+ * the words the mark promises must actually be in the caption.
+ */
+test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
+  const target = shot(STATES[0], VIEWPORT_LIST[0]);
+  const marked = applyMarks(indexPage(rowsFor(STATES, VIEWPORT_LIST, shot), STATES, VIEWPORT_LIST), "", [target]);
+
+  await page.setContent(marked.html);
+
+  const drawn = await page.evaluate(() => {
+    const border = (figure) => {
+      const style = getComputedStyle(figure.querySelector("img"));
+      return `${style.borderTopColor} ${style.borderTopWidth}`;
+    };
+    const after = (figure) => getComputedStyle(figure.querySelector("figcaption"), "::after").content;
+    const stamped = document.querySelector("figure[data-settled]");
+    const plain = document.querySelector("figure:not([data-settled])");
+    return [border(stamped) !== border(plain), after(stamped).includes("not proved settled"), after(plain).includes("not proved settled")];
+  });
+
+  expect(drawn, "a stamped figure is drawn unlike an unstamped one, and says so").toEqual([true, true, false]);
 });

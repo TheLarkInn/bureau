@@ -29,6 +29,19 @@ export default async function globalTeardown() {
 }
 
 /**
+ * The directory pair a run works over: this run's, unless a caller names another.
+ *
+ * Exported so the offline suite can assert that an absent `dirs` still resolves
+ * to the real pair. Without that, the two bindings that matter in production —
+ * `staging()` and `GALLERY` — were reachable only from a 651-test browser run,
+ * and swapping either for something else left the offline suite green: the seam
+ * the tests use would be proved and the path a real run takes would not.
+ */
+export function resolveDirs(dirs = {}) {
+  return { staging: dirs.staging ?? staging(), gallery: dirs.gallery ?? GALLERY };
+}
+
+/**
  * Publishes this run's renders, says what the gallery holds, and hands back the
  * findings a run may be failed for.
  *
@@ -50,23 +63,35 @@ export default async function globalTeardown() {
  * no-op that discards a staging directory nobody published. After the spec has
  * run, staging has already been renamed over the gallery, so this second call
  * finds nothing and returns without touching a reviewer's artefact.
+ *
+ * `dirs` is how the offline suite runs this whole chain against a temporary
+ * pair. It defaults to the real ones, so no caller in the suite passes it and
+ * nothing about a run changes. Before it existed, `stamp`'s composition —
+ * apply the marks, write the marked page, fold what did not land into the
+ * findings — was reachable only through a 651-test browser run, and each of its
+ * three links could be cut with the offline suite still green. The worst of
+ * them wrote the *unmarked* page back to disk: the marks were computed
+ * correctly, `unmarked` was legitimately empty, the gate passed, and the
+ * artefact a reviewer opens was clean and silent. That is the exact defect this
+ * file exists to remove, so it is now decided here rather than in a comment.
  */
-export async function auditGallery() {
-  const { records, unreadable } = await collapseSignatures(staging());
-  const published = await publishGallery(staging(), GALLERY);
+export async function auditGallery(dirs = {}) {
+  const { staging: stageDir, gallery: outDir } = resolveDirs(dirs);
+  const { records, unreadable } = await collapseSignatures(stageDir);
+  const published = await publishGallery(stageDir, outDir);
   if (!published.length) {
     return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] };
   }
-  console.log(`gallery: published ${published.length} file(s) to ${GALLERY}`);
+  console.log(`gallery: published ${published.length} file(s) to ${outDir}`);
   // A full matrix run always writes the index, including a failing one — it is
   // an ordinary test and nothing short-circuits the run. A narrower `--grep`
   // can leave it out, and the renders are still worth keeping, so this says so
   // rather than withholding them.
   if (!published.includes("index.html")) {
-    console.log(`gallery: this run rendered no index; browse the files directly under ${GALLERY}`);
+    console.log(`gallery: this run rendered no index; browse the files directly under ${outDir}`);
     return { ran: false, reason: "this run rendered states but no index, so the gallery is not a matrix to audit", incomplete: [] };
   }
-  return { ...await report(published, records, unreadable), reason: null };
+  return { ...await report(published, records, unreadable, outDir), reason: null };
 }
 
 /**
@@ -163,7 +188,7 @@ function stringify(records, pick) {
  * drawing one screen is either declared in `RENDER_TWINS` with a reason or
  * named here as news.
  */
-async function report(published, records, unreadable) {
+async function report(published, records, unreadable, outDir) {
   const expected = expectedShots(STATES, Object.values(VIEWPORTS));
   const names = auditNames(expected, published);
   const twins = auditTwins(records, RENDER_TWINS);
@@ -203,7 +228,7 @@ async function report(published, records, unreadable) {
   // by `indexOf` over a file this run wrote, not by comparing two renders, so it
   // cannot come out differently on a contended machine and belongs where the
   // audit spec can gate on it.
-  const unmarked = await stamp(lines, names.missing, unsettled, drift, unknown);
+  const unmarked = await stamp(lines, names.missing, unsettled, drift, unknown, outDir);
   for (const line of unmarked) {
     console.log(`gallery: ${line}`);
   }
@@ -234,9 +259,15 @@ async function report(published, records, unreadable) {
  * counted at the top. A reviewer scrolls to the state they care about; a number
  * on a five-hundred-state page does not travel with them, and the whole point
  * of the mark is that it is attached to the screen being judged.
+ * `outDir` is required rather than defaulted. A default here is not a
+ * convenience: it turns a caller that forgot to pass one — an offline test
+ * working over a temporary directory, say — from a loud failure into a silent
+ * rewrite of the real published gallery, which then carries a red banner about
+ * a run that never touched it. An artefact that lies about its own extent is
+ * the one thing this file exists to prevent.
  */
-async function stamp(lines, missing, unsettled, drift, unknown = []) {
-  const index = join(GALLERY, "index.html");
+async function stamp(lines, missing, unsettled, drift, unknown, outDir) {
+  const index = join(outDir, "index.html");
   const written = await readFile(index, "utf8").catch(() => null);
   if (!written) {
     return ["index.html could not be read, so none of this run's findings are marked on it"];

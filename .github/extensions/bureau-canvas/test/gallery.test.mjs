@@ -11,13 +11,18 @@
 // the run began as older than it.
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { auditGallery, resolveDirs } from "../e2e/playwright/global-teardown.mjs";
+import { shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
-import { stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
+import { GALLERY, stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
+import { STATES } from "../web/statelab/registry.mjs";
+import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 /** A staging and a gallery directory, with the gallery already populated. */
 async function pair(t, published) {
@@ -85,5 +90,125 @@ test("each run stages under its own process, and a worker without one refuses", 
   assert.deepEqual(
     [stagingFor(1) === stagingFor(2), refused?.includes(STAGING_ENV) === true],
     [false, true],
+  );
+});
+
+const VIEWPORT_LIST = Object.values(VIEWPORTS);
+const SHOT = (state, viewport) => shotName(state.id, viewport.id);
+
+/** The index page the matrix really writes, over the real registry. */
+function realIndex() {
+  return indexPage(rowsFor(STATES, VIEWPORT_LIST, SHOT), STATES, VIEWPORT_LIST);
+}
+
+/**
+ * A staging directory holding one render, the record it filed, and an index.
+ *
+ * Deliberately one render out of the registry's several hundred, so the audit
+ * has something to report and the alarm banner is raised — which is the only
+ * condition under which a banner is written at all, and therefore the only way
+ * to ask whether the written one reaches disk.
+ */
+async function staged(t, index, shot) {
+  const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stage = join(root, "staging");
+  await mkdir(join(stage, "signatures"), { recursive: true });
+  await writeFile(join(stage, "index.html"), index, "utf8");
+  await writeFile(join(stage, shot), "png", "utf8");
+  await writeFile(join(stage, "signatures", `${shot}.json`), JSON.stringify({ signature: "one", settled: false }), "utf8");
+  return { staging: stage, gallery: join(root, "gallery") };
+}
+
+/** The audit, with its console quiet: what it prints is not what is under test. */
+async function audited(dirs) {
+  const spoke = console.log;
+  console.log = () => {};
+  try {
+    return await auditGallery(dirs);
+  } finally {
+    console.log = spoke;
+  }
+}
+
+/**
+ * The marks a run computes are the marks a reviewer meets.
+ *
+ * Every other test of the marking works on strings in memory. That left the
+ * composition — apply the marks, write the marked page, fold what did not land
+ * into the findings — reachable only through a full browser matrix, and each of
+ * its three links could be cut with the offline suite still green. The worst
+ * wrote the *unmarked* page back to disk: the banner and every amber figure
+ * were computed correctly, `unmarked` was legitimately empty, the gate passed,
+ * and the artefact a reviewer opens was clean and silent about a gallery
+ * missing all but one of its renders.
+ *
+ * So this runs the real `auditGallery` over a real directory pair and reads the
+ * published file back, because what is being asked is whether the mark reached
+ * the page — not whether a function returned a string containing it.
+ */
+test("the marks a run computes are the ones its published gallery carries", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const dirs = await staged(t, realIndex(), shot);
+
+  const audit = await audited(dirs);
+  const written = await readFile(join(dirs.gallery, "index.html"), "utf8");
+
+  assert.deepEqual(
+    [
+      written.includes("This gallery is not the whole matrix"),
+      written.includes(`data-shot="${shot}" data-settled="false"`),
+      audit.incomplete.some((line) => line.includes("found no anchor")),
+    ],
+    [true, true, false],
+  );
+});
+
+/**
+ * And an index the marks cannot attach to fails the run.
+ *
+ * The other half of the same statement, from the side that used to be silent:
+ * an index whose anchors have drifted still renders perfectly, and looks exactly
+ * like a clean one. It must therefore be a finding the audit spec can gate on,
+ * rather than a page published without comment.
+ */
+test("an index whose anchors have drifted is a finding, not a quiet publish", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const drifted = realIndex().replace("<main>", '<main class="grid">').replaceAll("<figure data-shot=", '<figure class="shot" data-shot=');
+  const dirs = await staged(t, drifted, shot);
+
+  const audit = await audited(dirs);
+  const written = await readFile(join(dirs.gallery, "index.html"), "utf8");
+
+  assert.deepEqual(
+    [
+      audit.incomplete.some((line) => line.includes("found no anchor")),
+      written.includes("This gallery is not the whole matrix"),
+      written.includes(`data-shot="${shot}" data-settled="false"`),
+    ],
+    [true, false, false],
+  );
+});
+
+/**
+ * The pair a run with no arguments works over is the real one.
+ *
+ * Both tests above hand `auditGallery` explicit directories, which is what
+ * makes them offline — and what leaves the two bindings that matter in
+ * production untested by them. Swapping `GALLERY` for the staging directory, or
+ * `staging()` for a constant, kept the whole offline suite green: the seam the
+ * tests use was proved and the path a real run takes was not.
+ */
+test("a run given no directories works over this run's staging and the real gallery", () => {
+  const before = process.env[STAGING_ENV];
+  process.env[STAGING_ENV] = "/tmp/bureau-staging-under-test";
+
+  const resolved = resolveDirs();
+  const named = resolveDirs({ staging: "/tmp/a", gallery: "/tmp/b" });
+
+  process.env[STAGING_ENV] = before ?? "";
+  assert.deepEqual(
+    [resolved, named],
+    [{ staging: "/tmp/bureau-staging-under-test", gallery: GALLERY }, { staging: "/tmp/a", gallery: "/tmp/b" }],
   );
 });

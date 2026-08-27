@@ -20,6 +20,20 @@
 /** Where the notices are inserted. Both the writer and the marker use this. */
 export const NOTICE_ANCHOR = "<main>";
 
+/**
+ * The attribute an unsettled figure is stamped with, and the one the page's
+ * styling selects. One string, for the same reason the anchors are exported.
+ *
+ * Co-location in this file is not a binding: while the attribute was spelled out
+ * once in `applyMarks` and twice in the stylesheet, renaming it in the sheet
+ * alone left every mark landing correctly, `unmarked` empty, the gate green —
+ * and not one of the marks visible to the reviewer they are drawn for. The mark
+ * was anchored; its *rendering* was not. `gallery-audit.test.mjs` reads the
+ * attribute back out of a stamped figure and requires the stylesheet to select
+ * that, so the two ends cannot be renamed apart.
+ */
+export const SETTLED_MARK = 'data-settled="false"';
+
 export function escape(value) {
   return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 }
@@ -57,10 +71,12 @@ export function rowsFor(states, viewports, shot) {
 /**
  * The whole index page.
  *
- * The shell is here with `NOTICE_ANCHOR` and `figureTag` because it carries
+ * The shell is here with `NOTICE_ANCHOR` and `SETTLED_MARK` because it carries
  * both of their counterparts: the `<main>` a banner is inserted before, and the
- * `figure[data-settled="false"]` rules that draw a mark once one is attached. A
- * mark whose CSS lived in another file could land and still be invisible.
+ * rules that draw a mark once one is attached. Being in one file is not what
+ * holds them together — the stylesheet interpolates the same constant the
+ * marker writes, so there is one attribute rather than three spellings of it.
+ * A mark whose selector had drifted would land and still be invisible.
  */
 export function indexPage(rows, states, viewports) {
   return `<!doctype html>
@@ -82,9 +98,11 @@ export function indexPage(rows, states, viewports) {
   /* Stamped by global-teardown.mjs on renders whose DOM never stopped changing
      inside the settle budget. The marker sits on the figure a reviewer is
      looking at rather than only in the banner, because the judgement being made
-     is about that screen. */
-  figure[data-settled="false"] img { border-color:#9a6700; border-width:2px; }
-  figure[data-settled="false"] figcaption::after { content:" · not proved settled"; color:#9a6700; font-weight:700; }
+     is about that screen. The selector is interpolated from the same constant
+     applyMarks writes, so a mark can never land under an attribute this sheet
+     does not draw. */
+  figure[${SETTLED_MARK}] img { border-color:#9a6700; border-width:2px; }
+  figure[${SETTLED_MARK}] figcaption::after { content:" · not proved settled"; color:#9a6700; font-weight:700; }
 </style></head>
 <body>
 <header><h1>Bureau Canvas state gallery</h1><p class="muted">${states.length} states × ${viewports.length} viewports, rendered by the production page.</p></header>
@@ -128,7 +146,7 @@ export function applyMarks(html, notice, unsettled) {
   }
   for (const shot of unsettled) {
     const tag = figureTag(shot);
-    const marked = replaceOnce(page, tag, `<figure data-shot="${escape(shot)}" data-settled="false">`);
+    const marked = replaceOnce(page, tag, `<figure data-shot="${escape(shot)}" ${SETTLED_MARK}>`);
     if (marked === null) {
       unmarked.push(shot);
     } else {
