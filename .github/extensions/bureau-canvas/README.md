@@ -481,24 +481,30 @@ required to appear as some trimmed line of the workflow. `upload-artifact` reads
 a leading `!` as an exclusion, so a `path:` block that lists the gallery and then
 excludes it keeps the line, uploads an artefact, stays green, and publishes
 nothing. The check finds the `actions/upload-artifact` step and reads that step's
-own `path:` block, bounded by the step's list-item indent — "anything after the
-`uses:` line" was the same defect one notch along, satisfied by renaming the
-input to `paths:` and letting an unrelated later step carry a block of the right
-shape. It also reads the step's `if:` **at the step's own key indent**, because
-`with:` is a map of inputs and an input may be called anything at all: an input
-named `if: always()` over a step condition of `if: 0 == 1` reads as `always()` to
-any scan that trims indentation away first. That indent comes from the step's own
-dash — the first key on the dash line, which is where YAML says a sequence
-entry's mapping begins — and not from the first line inside the step, which any
-deeper line moves: a folded `name: >-` continuation, or an over-indented comment,
-carries the reading straight down into `with:`. And it reads the enclosing job's
-condition too — a step that says `always()` inside a job that never starts
-publishes exactly as much as a step that says nothing. Both conditions are read
-by matching `if:` as a **key** rather than as a prefix of a trimmed line: `if :`
-and `"if"` are the same key to YAML and neither begins `if:`, which matters most
-for the job, where the claim is an *absence* and so a scanner's miss fails open.
-`always()` is required of the step rather than merely something truthy, since
-the run a reviewer most needs the gallery from is the one that failed.
+own `with.path`, its own `if:`, and the `if:` of the job that holds it — a step
+that says `always()` inside a job that never starts publishes exactly as much as
+a step that says nothing, and `always()` is required of the step rather than
+merely something truthy, since the run a reviewer most needs the gallery from is
+the one that failed.
+
+Those four readers were hand-rolled scans over the file's text, and each round
+found another spelling that walked past one of them: an input named `if:` under
+`with:`, a folded `name: >-` continuation sitting deeper than the keys it was
+measured against, an over-indented comment in that line's place, `if :` spaced
+away from its colon, `"if"` in quotes. Two more closed the argument. `"\u0069f"`
+is the key `if` — a double-quoted scalar is escape-decoded, so those letters are
+not in the file at all — and a comment written shallower than a job's own keys
+ends no mapping, though a scan for "the next line no deeper than this" reads it
+as the end of the job. Both defeat the reader that fails **open**: the job's
+condition is asserted to be *absent*, so a job that never starts reads as a job
+with nothing in its way.
+
+So the workflow is parsed now, by the same vendored YAML the extension itself
+ships, and spelling stops being a variable: the step is the one whose `uses:`
+names the action, the job is the mapping it is genuinely inside, and a key is a
+key however it is written. The seven hostile workflows are kept as a fixture
+rather than run once and thrown away, because what defeated these readers five
+times over was never the case anyone thought to write a test for.
 
 **The teardown was proved only through the seam tests use.** `globalTeardown`
 forwards `audit` and `resolve` so the offline suite can watch the hand-over, and

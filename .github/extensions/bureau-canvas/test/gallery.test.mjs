@@ -22,6 +22,7 @@ import { shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
 import { GALLERY, stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
+import { parse as parseYaml } from "../lib/vendor/yaml.mjs";
 import { STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -233,159 +234,66 @@ test("a run given no directories works over this run's staging and the real gall
 const REVIEWER_GALLERY = ".github/extensions/bureau-canvas/e2e/gallery/";
 
 /**
- * The path patterns the workflow's `actions/upload-artifact` step publishes.
+ * The `upload-artifact` step, and the job that holds it, as YAML itself reads
+ * them.
  *
- * Read as that step's own `path:` block rather than as a line anywhere in the
- * file, because a line search cannot tell a published path from a mention of
- * one — a comment, an `on.push.paths` filter, or a different step's input all
- * satisfy it — and, more to the point, it cannot see the one thing that decides
- * whether a reviewer receives the artefact. `upload-artifact` reads a leading
- * `!` as an *exclusion*, so
+ * These were four hand-rolled scanners over the file's text, and every round
+ * found another spelling that walked past one of them: an input named `if:`, a
+ * folded `>-` name whose continuation sat deeper than the keys it was read
+ * against, an over-indented comment in that line's place, `if :` spaced away
+ * from its colon, `"if"` in quotes. Each fix was right about the case in front
+ * of it and the next case was still there, because "which key is this, and
+ * whose mapping is it in" is a question about the parse, and it was being
+ * answered by looking at characters.
  *
- *   path: |
- *     .github/extensions/bureau-canvas/e2e/gallery/
- *     !.github/extensions/bureau-canvas/e2e/gallery/**
- *     .github/extensions/bureau-canvas/e2e/playwright/playwright-report/
+ * Two more arrived this round and settle the argument. `"\u0069f": false` is
+ * the key `if` — a double-quoted scalar is escape-decoded, so the letters are
+ * not in the file at all — and a comment written at the job's own indent ends
+ * no mapping, though a scan for "the next line no deeper than this" reads it
+ * as the end of the job. Both defeat the reader that fails *open*: the job's
+ * condition is asserted to be absent, so a job that never starts, and
+ * therefore publishes nothing, reads as a job with nothing in its way.
  *
- * still contains the line the check was looking for, still uploads an artefact,
- * still goes green — and publishes a gallery with nothing in it. The positive
- * line being present was never the claim; the gallery being *selected* is.
- *
- * "That step's own block" is meant literally, and reading it as "anything after
- * the `uses:` line" was the same defect one notch along: renaming the input to
- * `paths:` and adding an unrelated later step carrying a `path:` block of the
- * right shape satisfied the check while `upload-artifact` received no path at
- * all. The step is bounded by its own list-item indent, so a key belonging to
- * another step is not a key of this one.
- *
- * Its `if:` is read for the same reason. Every path pattern can be correct and
- * the step still never run: `if: 0 == 1` publishes nothing, and a check that
- * reads inputs alone approves it. `always()` is required rather than merely
- * something truthy, because the run a reviewer most needs the gallery from is
- * the run that failed.
+ * So the workflow is parsed, by the same vendored YAML the extension itself
+ * ships. Spelling stops being a variable: the step is the one whose `uses:`
+ * names the action, the job is the mapping it is genuinely inside, and a key
+ * is a key however it is written.
  */
-function uploadStep(workflow) {
-  const lines = workflow.split("\n");
-  const uses = lines.findIndex((line) => line.trim().startsWith("uses: actions/upload-artifact@"));
-  const start = uses === -1 ? -1 : lines.slice(0, uses + 1).findLastIndex((line) => line.trimStart().startsWith("- "));
-  if (start === -1) {
-    return [];
+function publication(workflow) {
+  for (const job of Object.values(parseYaml(workflow)?.jobs ?? {})) {
+    const step = (job?.steps ?? []).find((entry) => typeof entry?.uses === "string" && entry.uses.startsWith("actions/upload-artifact@"));
+    if (step) {
+      return { step, job };
+    }
   }
-  const indent = lines[start].search(/\S/u);
-  const after = lines.slice(start + 1);
-  const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= indent);
-  return [lines[start], ...after.slice(0, ends === -1 ? after.length : ends)];
-}
-
-/** The patterns under one key of a step, as that key's own indented block. */
-function blockUnder(step, key) {
-  const at = step.findIndex((line) => line.trim() === `${key}: |`);
-  if (at === -1) {
-    return [];
-  }
-  const indent = step[at].search(/\S/u);
-  const after = step.slice(at + 1);
-  const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= indent);
-  return after.slice(0, ends === -1 ? after.length : ends).map((line) => line.trim()).filter(Boolean);
+  return { step: {}, job: {} };
 }
 
 /**
- * The indent a block's own keys are written at: the shallowest line in it that
- * is neither blank nor a comment.
+ * A condition as GitHub would evaluate it, or `""` when the key is absent.
  *
- * Not "whatever the first line happens to be indented by". Any line deeper than
- * the keys — a folded scalar's continuation, or an over-indented comment —
- * moves that reading down into `with:`, which is exactly where the input this
- * rule exists to reject lives:
- *
- *   - name: >-
- *       Upload state gallery
- *     if: 0 == 1
- *     with:
- *       if: always()
- *
- * Comments are excluded because they belong to no mapping and can be written at
- * any indent at all; `#` inside a block scalar is a literal pattern, and those
- * lines are deeper than the key they hang under, so they are never the
- * shallowest.
+ * `if: false` is a boolean to YAML and a false condition to GitHub, so the
+ * value is stringified rather than tested for truth: the distinction each
+ * assertion needs is present-and-false against absent, and only the second of
+ * those is `""`.
  */
-function keyIndentOf(lines) {
-  const keys = lines.filter((line) => line.trim() && !line.trim().startsWith("#"));
-  return keys.length ? Math.min(...keys.map((line) => line.search(/\S/u))) : 0;
+function conditionOf(holder) {
+  return holder?.if === undefined ? "" : String(holder.if).trim();
 }
 
 /**
- * The indent a step's keys sit at, read from the step's own dash.
+ * The path patterns the step hands `upload-artifact`.
  *
- * A block mapping in a sequence entry begins where the first key sits on the
- * dash line itself, so this is decided before any line below it is read and no
- * line added below can move it. A bare `-` with its keys on the following lines
- * has no such key, and falls back to the shallowest of them.
+ * `upload-artifact` reads a leading `!` as an *exclusion*, so a `path:` block
+ * that still contains the gallery's own line can still publish an artefact
+ * with nothing in it — the positive line being present was never the claim,
+ * the gallery being *selected* is. The patterns are read from this step's own
+ * `with.path`, so an input belonging to another step, a comment, or an
+ * `on.push.paths` filter is not one of them.
  */
-function stepIndent(step) {
-  const dash = step[0].search(/\S/u);
-  const first = step[0].slice(dash + 1).search(/\S/u);
-  return first === -1 ? keyIndentOf(step.slice(1)) : dash + 1 + first;
-}
-
-/**
- * `if:` as a key, not as a prefix of a trimmed line.
- *
- * `if : false` and `"if": false` are the same key to YAML, and neither begins
- * `if:`. Reading the key by prefix therefore reports them as *no condition at
- * all* — which matters most where the claim being made is an absence, because
- * there a miss fails open: a job that never starts reads as a job with nothing
- * standing in its way.
- */
-const IF_KEY = /^(?<quote>['"]?)if\k<quote>\s*:(?<value>.*)$/u;
-
-/** The condition written at exactly `indent` among `lines`, as written. */
-function conditionAt(lines, indent) {
-  const found = lines
-    .filter((line) => line.search(/\S/u) === indent)
-    .map((line) => IF_KEY.exec(line.trim()))
-    .find(Boolean);
-  return found ? found.groups.value.trim() : "";
-}
-
-/**
- * The condition a step runs under, as written — read at the step's own key
- * indent and nowhere deeper.
- *
- * `with:` is a map of *inputs*, and an input may be called anything at all. A
- * scan for the first line beginning `if:` after trimming therefore reads
- *
- *   with:
- *     if: always()
- *   if: 0 == 1
- *
- * as `always()`: an input GitHub hands to the action, approved as the condition
- * GitHub evaluates. Indentation is the only thing that separates them, so it is
- * not thrown away before the search — and the indent it is compared against
- * comes from the step's own dash rather than from a line inside it.
- */
-function conditionOf(step) {
-  return conditionAt(step, stepIndent(step));
-}
-
-/**
- * The condition the job containing the upload step runs under.
- *
- * A step that says `always()` inside a job that never starts publishes exactly
- * as much as a step that says nothing. `if:` at the job's own key indent is the
- * one that decides whether any of this runs at all.
- */
-function jobConditionOf(workflow) {
-  const lines = workflow.split("\n");
-  const uses = lines.findIndex((line) => line.trim().startsWith("uses: actions/upload-artifact@"));
-  const job = uses === -1 ? -1 : lines.slice(0, uses + 1).findLastIndex((line) => /^ {2}\S.*:\s*$/u.test(line));
-  if (job === -1) {
-    return "";
-  }
-  const after = lines.slice(job + 1);
-  const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= 2);
-  const body = after.slice(0, ends === -1 ? after.length : ends);
-  return conditionAt(body, keyIndentOf(body));
+function publishedBy(step) {
+  const path = step?.with?.path;
+  return typeof path === "string" ? path.split("\n").map((line) => line.trim()).filter(Boolean) : [];
 }
 
 test("the gallery a run resolves to is the directory CI publishes for a reviewer", async () => {
@@ -394,8 +302,8 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
 
   const resolved = resolveDirs().gallery;
   const workflow = await readFile(new URL("../../../workflows/canvas-state-matrix.yml", import.meta.url), "utf8");
-  const step = uploadStep(workflow);
-  const published = blockUnder(step, "path");
+  const { step, job } = publication(workflow);
+  const published = publishedBy(step);
 
   process.env[STAGING_ENV] = before ?? "";
   assert.deepEqual(
@@ -404,24 +312,26 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
       published.includes(REVIEWER_GALLERY),
       published.filter((pattern) => pattern.startsWith("!")),
       conditionOf(step),
-      jobConditionOf(workflow),
+      conditionOf(job),
     ],
     [true, true, [], "always()", ""],
   );
 });
 
 /**
- * …and the two readers above, held against the workflows they must refuse.
+ * …and the readers above, held against the workflows they must refuse.
  *
- * Both are scanners over text, and a scanner that misses is not neutral: the
- * step's condition is asserted to be `always()`, so a miss there fails closed,
- * but the *job's* is asserted to be absent, so a miss there fails open. A
- * spelling neither one recognises reads as "nothing stands in the way of this
- * run" over a job that never starts.
+ * A miss is not neutral: the step's condition is asserted to be `always()`, so
+ * a miss there fails closed, but the *job's* is asserted to be absent, so a
+ * miss there fails open. A spelling the reader does not recognise then reads
+ * as "nothing stands in the way of this run" over a job that never starts.
  *
  * Every case below is valid YAML whose path patterns are exactly right and
- * which publishes nothing at all, and each was green against the reader this
- * fixture was written to hold.
+ * which publishes nothing at all, and each was green against the reader it was
+ * written to hold. They are kept rather than run once and thrown away, because
+ * what defeated these readers five times over was never the case anyone
+ * thought to write a test for — and the last two are the reason the readers
+ * are a parse now rather than a scan.
  */
 const HOSTILE_WORKFLOWS = [
   {
@@ -450,6 +360,24 @@ const HOSTILE_WORKFLOWS = [
     job: '    "if": false\n', step: "        if: always()\n", input: "", name: "Upload state gallery",
     reads: ["always()", "false"],
   },
+  {
+    // A double-quoted scalar is escape-decoded, so the key is `if` and the
+    // letters `i` and `f` are nowhere in the file. Nothing that compares
+    // characters can see this one at all.
+    id: "…and one whose letters are written as escapes",
+    job: '    "\\u0069f": false\n', step: "        if: always()\n", input: "", name: "Upload state gallery",
+    reads: ["always()", "false"],
+  },
+  {
+    // A comment belongs to no mapping and may sit at any indent, including one
+    // shallower than the keys around it. It does not end the job; a scan for
+    // "the next line no deeper than this" believes it does, and then reads the
+    // condition below it as belonging to nothing.
+    id: "…and one below a comment written shallower than the job's own keys",
+    job: "  # a comment closes no mapping, whatever column it starts in\n    if: false\n",
+    step: "        if: always()\n", input: "", name: "Upload state gallery",
+    reads: ["always()", "false"],
+  },
 ];
 
 function hostileWorkflow(found) {
@@ -471,8 +399,8 @@ ${found.input}          name: canvas-state-gallery
 test("a step that never runs, and a job that never starts, are read as written", () => {
   const read = HOSTILE_WORKFLOWS.map((found) => {
     const workflow = hostileWorkflow(found);
-    const step = uploadStep(workflow);
-    return [conditionOf(step), jobConditionOf(workflow), blockUnder(step, "path").includes(REVIEWER_GALLERY)];
+    const { step, job } = publication(workflow);
+    return [conditionOf(step), conditionOf(job), publishedBy(step).includes(REVIEWER_GALLERY)];
   });
 
   assert.deepEqual(read, HOSTILE_WORKFLOWS.map((found) => [...found.reads, true]));

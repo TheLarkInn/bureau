@@ -373,18 +373,29 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
   ], SETTLED_PHRASE);
   const figures = await page.evaluate(() => window.bureauDrawn.channels("figure"));
   const full = await page.screenshot({ fullPage: true });
+  const regions = figures.flatMap((figure) => figure.regions);
   const swept = await page.evaluate(
-    ([data, regions, colour]) => window.bureauDrawn.sweep(data, regions, colour),
-    [full.toString("base64"), figures.flatMap((figure) => figure.regions), inkOf(SETTLED_INK)],
+    ([data, boxes, colour]) => window.bureauDrawn.sweep(data, boxes, colour),
+    [full.toString("base64"), regions, inkOf(SETTLED_INK)],
   );
+  // Absent evidence is not clean evidence. `wrong` reads each figure's verdicts
+  // by position, so a `channels` that returns one figure fewer, or a `sweep`
+  // that returns fewer verdicts than it was given regions, leaves the tail
+  // comparing an empty slice — and `.some` of nothing is `false`, which is
+  // indistinguishable here from a figure that was checked and found right.
+  // Both are instruments this very test exists to hold, so what they owe is
+  // counted before any of it is believed.
+  const drawn = MARKED_PAGE.length * VIEWPORT_LIST.length;
+  const counted = [figures.length, regions.length, swept.found.length];
   const wrong = figures.filter((figure, at) => swept.found.slice(at * 2, at * 2 + 2).some((seen) => seen !== figure.marked));
   const read = [];
   for (const name of [target, shot(MARKED_PAGE[1], VIEWPORT_LIST[0])]) {
     read.push(await legible(page, markSlot(page, name), inkOf(SETTLED_INK)));
   }
 
-  expect([said, wrong.map((figure) => figure.shot), swept.stray, read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
-    [[target], 1, MARKED_PAGE.length * VIEWPORT_LIST.length],
+  expect([said, counted, wrong.map((figure) => figure.shot), swept.stray, read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
+    [[target], 1, drawn],
+    [drawn, drawn * 2, drawn * 2],
     [],
     0,
     [[true, true, true, true, true], [false, false, false, false, false]],
