@@ -18,14 +18,34 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
-import { applyMarks, escape } from "./gallery-index.mjs";
+import { applyMarks, escape, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
 const SIGNATURES = "signatures";
 
 export default async function globalTeardown() {
-  await auditGallery();
+  await runAudit();
+}
+
+/**
+ * The audit a real run performs.
+ *
+ * This exists so `auditGallery` needs no default resolver. A default is a place
+ * the rule can be written a second time: `resolve = (dirs) => ({ staging:
+ * dirs.staging ?? staging(), gallery: dirs.gallery ?? GALLERY })` behaves
+ * identically to `resolve = resolveDirs` in every test — the ones that pass a
+ * resolver override it, and the one that passes nothing cannot tell a faithful
+ * copy from the original, because no behavioural test ever can. So the rule is
+ * spelled once and *handed over* once, and which function is handed over is a
+ * question with an answer: `strictEqual` against `resolveDirs` distinguishes a
+ * use of the rule from a copy of it, where behaviour cannot.
+ *
+ * `audit` is a parameter for the same reason: it is how that hand-over is
+ * observed without running a real audit.
+ */
+export async function runAudit(audit = auditGallery, resolve = resolveDirs) {
+  return audit({}, resolve);
 }
 
 /**
@@ -75,16 +95,19 @@ export function resolveDirs(dirs = {}) {
  * artefact a reviewer opens was clean and silent. That is the exact defect this
  * file exists to remove, so it is now decided here rather than in a comment.
  *
- * `resolve` is a parameter for the same reason `dirs` is. Calling this with no
- * arguments proves the defaulting path is *taken*, but not that the defaults
- * come from one place: writing `{ staging: dirs.staging ?? staging(), gallery:
- * dirs.gallery ?? GALLERY }` inline here behaved identically and left every
- * test green, restoring the duplicate spelling of the rule that `resolveDirs`
- * exists to be. As a seam it is answerable — a resolver that returns a pair
- * unrelated to `dirs` must be the pair audited, which an inline copy reading
- * `dirs` directly cannot satisfy.
+ * `resolve` is a parameter, and deliberately has no default. Calling this with
+ * no arguments proved the defaulting path was *taken*, but not that the defaults
+ * came from one place: writing `{ staging: dirs.staging ?? staging(), gallery:
+ * dirs.gallery ?? GALLERY }` inline here behaved identically and left every test
+ * green, restoring the duplicate spelling of the rule that `resolveDirs` exists
+ * to be. Giving `resolve` a default only moved that hiding place into the
+ * parameter list, where a faithful copy is equally invisible. There is now
+ * nowhere in this function to write the rule at all: `runAudit` hands it in, and
+ * the offline suite asks which function was handed. As a seam it is answerable
+ * twice over — a resolver that returns a pair unrelated to `dirs` must be the
+ * pair audited, which an inline copy reading `dirs` directly cannot satisfy.
  */
-export async function auditGallery(dirs = {}, resolve = resolveDirs) {
+export async function auditGallery(dirs, resolve) {
   const { staging: stageDir, gallery: outDir } = resolve(dirs);
   const { records, unreadable } = await collapseSignatures(stageDir);
   const published = await publishGallery(stageDir, outDir);
@@ -220,7 +243,7 @@ async function report(published, records, unreadable, outDir) {
   const lines = [...incomplete, ...parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`)];
   console.log(`gallery: ${Object.keys(records).length} render(s) audited`);
   if (unsettled.length) {
-    console.log(`gallery: ${unsettled.length} render(s) were not proved settled and are marked on their own figures`);
+    console.log(`gallery: ${unsettled.length} render(s) were ${SETTLED_PHRASE} and are marked on their own figures`);
   }
   for (const line of [...lines, ...drift]) {
     console.log(`gallery: ${line}`);
@@ -342,7 +365,7 @@ export function notices(lines, missing, unsettled, drift = [], unknown = []) {
     : "";
   const note = marked || drift.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:#9a6700">'
-      + `${marked} render(s) below are marked <strong>not proved settled</strong>: this run could not vouch for them, `
+      + `${marked} render(s) below are marked <strong>${SETTLED_PHRASE}</strong>: this run could not vouch for them, `
       + "so read those as a frame rather than as a screen. A state that animates by design is expected here."
       + `${unknown.length ? ` ${unknown.length} of them filed no record this run could read, so nothing at all is known about those.` : ""}`
       + `${drift.length ? ` ${drift.slice(0, 20).map(escape).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { shotName, twinParticipants } from "../gallery-audit.mjs";
-import { indexPage, rowsFor, applyMarks } from "../gallery-index.mjs";
+import { indexPage, rowsFor, applyMarks, SETTLED_PHRASE } from "../gallery-index.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
@@ -162,6 +162,19 @@ test("@matrix gallery index", async () => {
  * everything inside it are read. And the unstamped figures are required to be
  * drawn like *each other* rather than merely unlike the stamped one — a rule
  * that restyles some of them differs from the stamped border just as well.
+ *
+ * Pseudo-elements were themselves only two more channels. The sentence is CSS
+ * content *here*, but nothing stops it being ordinary markup: a `<span>` added
+ * to `figcaption` puts the same words on all 512 renders, in the one channel a
+ * pseudo-element read cannot see, and this check stayed green while every
+ * figure on the page told a reviewer it was not proved settled. What is being
+ * asked is whether a figure *says* it, so the figure's own text is read
+ * alongside its pseudo-elements.
+ *
+ * The words come from `SETTLED_PHRASE`, which is what the stylesheet draws and
+ * what the notice names. Spelled separately here, this hunted for a sentence
+ * the product had stopped writing, and would have gone green over a page where
+ * no mark said anything at all.
  */
 test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
   const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
@@ -169,14 +182,15 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
 
   await page.setContent(marked.html);
 
-  const drawn = await page.evaluate(() => {
+  const drawn = await page.evaluate((phrase) => {
     const border = (figure) => {
       const style = getComputedStyle(figure.querySelector("img"));
       return `${style.borderTopColor} ${style.borderTopWidth}`;
     };
-    const says = (figure) => [figure, ...figure.querySelectorAll("*")]
-      .some((node) => ["::before", "::after"]
-        .some((pseudo) => getComputedStyle(node, pseudo).content.includes("not proved settled")));
+    const says = (figure) => figure.textContent.includes(phrase)
+      || [figure, ...figure.querySelectorAll("*")]
+        .some((node) => ["::before", "::after"]
+          .some((pseudo) => getComputedStyle(node, pseudo).content.includes(phrase)));
     const stamped = document.querySelector("figure[data-settled]");
     const plain = [...document.querySelectorAll("figure:not([data-settled])")];
     const alike = new Set(plain.map(border));
@@ -187,7 +201,7 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
       says(stamped),
       plain.filter(says).length,
     ];
-  });
+  }, SETTLED_PHRASE);
 
   expect(drawn, "every unstamped figure is drawn alike, unlike the stamped one, and only it says so").toEqual([true, 1, true, true, 0]);
 });

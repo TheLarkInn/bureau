@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { auditGallery, resolveDirs } from "../e2e/playwright/global-teardown.mjs";
+import { auditGallery, resolveDirs, runAudit } from "../e2e/playwright/global-teardown.mjs";
 import { shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
@@ -125,7 +125,7 @@ async function audited(dirs, resolve) {
   const spoke = console.log;
   console.log = () => {};
   try {
-    return resolve ? await auditGallery(dirs, resolve) : await auditGallery(dirs);
+    return dirs ? await auditGallery(dirs, resolve ?? resolveDirs) : await runAudit();
   } finally {
     console.log = spoke;
   }
@@ -240,6 +240,45 @@ test("the audit a teardown really runs asks resolveDirs for its directories", as
   });
 
   assert.deepEqual([audit.ran, audit.reason], [false, "this run rendered no states, so there is no gallery to audit"]);
+});
+
+/**
+ * …and the resolver it is handed is `resolveDirs` itself, not a copy of it.
+ *
+ * Every test here is behavioural, and a faithful copy of a rule is behaviourally
+ * indistinguishable from the rule — that is what makes a second spelling
+ * survivable in the first place. While `auditGallery` carried `resolve =
+ * resolveDirs` as a default, writing that default out inline instead left the
+ * whole suite green, including the test above: the run with no arguments cannot
+ * tell which of two identical functions answered it, and every other test passes
+ * its own resolver and overrides the default entirely.
+ *
+ * Identity is the one question that separates them. `runAudit` is the single
+ * place the rule is handed over, so this asks what it hands over, and gets a
+ * function rather than a directory pair back. An inline copy is a different
+ * function object and fails here while behaving identically everywhere else.
+ *
+ * Both directions of that hand-over are asked, because the first alone is held
+ * by construction: a `runAudit` that ignored its parameter and wrote
+ * `audit({}, resolveDirs)` in its body would satisfy an identity check made
+ * against the default, and its seam would be decoration. So the second call
+ * names a resolver of its own and requires *that* one to arrive.
+ *
+ * The audit itself is a stand-in, so nothing is published and no directory is
+ * read: what is under test is the wiring, and running a real audit to observe it
+ * would put a reviewer's gallery in the path of a test about a parameter.
+ */
+test("the teardown hands the audit resolveDirs itself, not a second spelling of it", async () => {
+  const handed = [];
+  const spy = (dirs, resolve) => (handed.push({ dirs, resolve }), "audited");
+  const named = () => ({ staging: "/tmp/a", gallery: "/tmp/b" });
+
+  const returned = [await runAudit(spy), await runAudit(spy, named)];
+
+  assert.deepEqual(
+    [returned, handed.map((call) => call.dirs), handed[0]?.resolve === resolveDirs, handed[1]?.resolve === named],
+    [["audited", "audited"], [{}, {}], true, true],
+  );
 });
 
 /**

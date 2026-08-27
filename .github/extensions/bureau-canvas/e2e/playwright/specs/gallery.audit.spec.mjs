@@ -26,7 +26,7 @@
 
 import { expect, test } from "@playwright/test";
 
-import { auditGallery } from "../global-teardown.mjs";
+import { runAudit } from "../global-teardown.mjs";
 
 /**
  * Tagged `@matrix` for the reporter's sake, not for filtering: Playwright does
@@ -44,7 +44,7 @@ import { auditGallery } from "../global-teardown.mjs";
  * mistaken for the other in a run's record.
  */
 test("@matrix the published gallery is the whole matrix", async () => {
-  const audit = await auditGallery();
+  const audit = await runAudit();
 
   test.skip(!audit.ran, audit.reason ?? "no gallery was published by this run");
   expect(audit.incomplete, "renders the gallery claims and does not hold").toEqual([]);

@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
-import { applyMarks, escape, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
+import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -545,9 +545,14 @@ test("both of the gallery's marks land in the page the suite really writes", () 
  * name what it could not attach rather than returning the page unchanged and
  * letting the run look clean. `stamp` folds this list into the audit's
  * deterministic findings, so the gate fires.
+ *
+ * The drift is an attribute inserted *before* `data-shot`. Appending one after
+ * it is deliberately not a drift — the marker anchors on the tag's opening and
+ * stamps whatever it finds, which is what lets the test below hand it a tag
+ * carrying attributes this module never wrote.
  */
 test("a mark with nothing to attach to is reported rather than dropped", () => {
-  const drifted = `<main class="grid">${figureTag(A).replace(">", ' class="shot">')}</figure></main>`;
+  const drifted = `<main class="grid">${figureTag(A).replace("<figure ", '<figure class="shot" ')}</figure></main>`;
 
   const marked = applyMarks(drifted, notices(["a hole"], [], [A], [], []), [A]);
 
@@ -654,9 +659,11 @@ test("stamping adds the mark to a figure tag and drops nothing it already carrie
 /**
  * …and the page's stamped figures are that function over that tag.
  *
- * The binding between the two, which is what makes the property above reach the
- * gallery: a marker that went back to rebuilding still passes today and fails
- * the moment `figureTag` gains anything, which is exactly when it must.
+ * The binding between the two, over the page the suite really writes. It cannot
+ * on its own tell insertion from rebuilding — for the tag `figureTag` writes
+ * today the two produce the identical string — which is what the test below is
+ * for. What it does hold is that whatever `applyMarks` writes is what `markTag`
+ * would write, on the real index rather than on a fixture.
  */
 test("the figures a marked page carries are the page's own tags, stamped", () => {
   const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
@@ -667,6 +674,37 @@ test("the figures a marked page carries are the page's own tags, stamped", () =>
   const stamped = new RegExp(`<figure[^>]*data-shot="${literal}"[^>]*>`, "u").exec(marked.html)?.[0];
 
   assert.equal(stamped, markTag(figureTag(target)));
+});
+
+/**
+ * …and it stamps the tag the page carries, not one it rebuilds from the shot.
+ *
+ * This is the question `markTag` was extracted to make askable and could not,
+ * until now, actually be asked. While `applyMarks` searched for the whole of
+ * `figureTag(shot)`, a page whose figure carried an attribute this module never
+ * wrote was *unfindable*: the search could only ever match tags of exactly the
+ * shape written today, so every fixture that could have distinguished insertion
+ * from rebuilding was rejected before either happened. `markTag` was proved
+ * alone, `applyMarks` was proved to agree with it on the one tag for which
+ * every implementation agrees, and reverting the marker to
+ * `` `<figure data-shot="${escape(shot)}" ${SETTLED_MARK}>` `` passed both.
+ *
+ * The marker anchors on the tag's opening instead, so a real page's figure can
+ * carry anything after `data-shot` and still be found — and what comes back has
+ * to be that tag with the mark added. A rebuild drops the two attributes it was
+ * never told about.
+ */
+test("the marker stamps attributes the page carries that it never wrote", () => {
+  const carried = `${figurePrefix(A)} class="shot" id="first"`;
+  const page = `<main>${carried}><img src="./${A}"></figure></main>`;
+
+  const marked = applyMarks(page, "", [A]);
+  const stamped = /<figure[^>]*>/u.exec(marked.html)?.[0];
+
+  assert.deepEqual(
+    [marked.unmarked, stamped?.includes('class="shot"'), stamped?.includes('id="first"'), stamped],
+    [[], true, true, markTag(`${carried}>`)],
+  );
 });
 
 /**

@@ -3,7 +3,7 @@
 // It lives here rather than in `specs/state-matrix.spec.mjs` because two
 // modules have to agree on it and only one of them writes it. The spec builds
 // the index; `global-teardown.mjs` marks findings into the index afterwards,
-// by replacing `NOTICE_ANCHOR` and each render's `figureTag(...)`. While the
+// by replacing `NOTICE_ANCHOR` and each render's `figurePrefix(...)`. While the
 // template was private to the spec, that agreement was a coincidence of two
 // string literals in different files: an attribute added to `<figure>`, or a
 // `<main>` that gained one, turned both replacements into silent no-ops. The
@@ -34,29 +34,53 @@ export const NOTICE_ANCHOR = "<main>";
  */
 export const SETTLED_MARK = 'data-settled="false"';
 
+/**
+ * The words a mark promises. One string, for the same reason the attribute is.
+ *
+ * It is drawn by the stylesheet below, named in the amber notice, and looked for
+ * by `@matrix an unsettled figure is drawn unlike a settled one`. While it was
+ * spelled separately in all three, the browser check was hunting for a sentence
+ * the sheet no longer wrote: renaming the mark's wording in one place left the
+ * check green about a phrase that appears nowhere, which is a check that has
+ * stopped reading the product.
+ */
+export const SETTLED_PHRASE = "not proved settled";
+
 export function escape(value) {
   return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 }
 
+/**
+ * The part of a figure's opening tag that identifies it, up to and including the
+ * closing quote of `data-shot`. This is the anchor a mark is found by.
+ *
+ * It stops before the tag's `>` so the marker can find a figure whose tag
+ * carries attributes beyond the one it is named by. Searching for the whole tag
+ * meant the marker could only ever be handed tags of exactly the shape
+ * `figureTag` writes today, so "does the marker preserve what it did not write"
+ * was not a question this suite could ask at all — every fixture that could have
+ * asked it was unfindable by construction.
+ *
+ * The quote is part of the anchor deliberately: without it, a shot name that is
+ * a prefix of another would mark the wrong figure.
+ */
+export function figurePrefix(shot) {
+  return `<figure data-shot="${escape(shot)}"`;
+}
+
 /** The opening tag a mark is attached to. The single source of that shape. */
 export function figureTag(shot) {
-  return `<figure data-shot="${escape(shot)}">`;
+  return `${figurePrefix(shot)}>`;
 }
 
 /**
  * An opening tag, stamped with the mark.
  *
  * The mark is *inserted* before the tag's `>`, so whatever attributes the tag
- * already carried survive it. `applyMarks` used to rebuild the tag it wrote
- * back instead, which bound producer and marker in the *search* direction only:
- * give `figureTag` another attribute — a class, an id, a `loading` hint — and
- * the marker still found the figure, then silently dropped that attribute from
- * every figure it rewrote. Marked figures would lose it while unmarked ones
- * kept it, `unmarked` would stay empty, and the gate would stay green.
- *
- * It is a function of the tag rather than of the shot so the property can be
- * asked of a tag carrying attributes `figureTag` does not have today, instead
- * of holding only for the one shape that happens to be written now.
+ * already carried survive it. It is a function of the tag rather than of the
+ * shot because `applyMarks` hands it the tag as it stands on the page, which
+ * may carry attributes this module never wrote — a rebuilt tag would drop
+ * exactly those, silently, on the marked figures alone.
  */
 export function markTag(tag) {
   return `${tag.slice(0, -1)} ${SETTLED_MARK}>`;
@@ -121,7 +145,7 @@ export function indexPage(rows, states, viewports) {
      applyMarks writes, so a mark can never land under an attribute this sheet
      does not draw. */
   figure[${SETTLED_MARK}] img { border-color:#9a6700; border-width:2px; }
-  figure[${SETTLED_MARK}] figcaption::after { content:" · not proved settled"; color:#9a6700; font-weight:700; }
+  figure[${SETTLED_MARK}] figcaption::after { content:" · ${SETTLED_PHRASE}"; color:#9a6700; font-weight:700; }
 </style></head>
 <body>
 <header><h1>Bureau Canvas state gallery</h1><p class="muted">${states.length} states × ${viewports.length} viewports, rendered by the production page.</p></header>
@@ -152,13 +176,22 @@ function replaceOnce(html, find, replacement) {
  * figure was not found — which is what a reviewer needs to know, because the
  * page still renders perfectly well without them and looks clean while doing it.
  *
- * The stamped tag is `figureTag`'s own output with the mark inserted by
- * `markTag`, never a second spelling of that tag. Rebuilding it here bound the
- * two ends in the *search* direction only: an attribute added to `figureTag`
- * was still found, and then dropped from every figure the marker rewrote — so
- * the marked page silently lost it while the unmarked figures kept it,
- * `unmarked` stayed empty and the gate stayed green. Insertion cannot drop what
- * it never re-spells.
+ * A figure is found by `figurePrefix` and stamped by `markTag` over the tag as
+ * it was actually read off the page — never a second spelling of that tag.
+ * While the search was for the whole of `figureTag(shot)`, the two ends were
+ * bound in the *search* direction only: an attribute added to `figureTag` was
+ * still found, and then dropped from every figure the marker rewrote, so the
+ * marked page silently lost it while the unmarked figures kept it, `unmarked`
+ * stayed empty and the gate stayed green. Rebuilding was undetectable even
+ * after `markTag` existed, because a tag carrying an unknown attribute could
+ * not be handed to `applyMarks` at all: the whole-tag search could never find
+ * one. Searching by prefix is what makes the question askable, and insertion
+ * over the read tag is what answers it — insertion cannot drop what it never
+ * re-spells.
+ *
+ * Scanning to the tag's first `>` is exact because every attribute a figure
+ * carries is written through `escape`, which leaves no raw `>` in a value. Any
+ * attribute added to `figureTag` must keep that true.
  */
 export function applyMarks(html, notice, unsettled) {
   const unmarked = [];
@@ -172,8 +205,7 @@ export function applyMarks(html, notice, unsettled) {
     }
   }
   for (const shot of unsettled) {
-    const tag = figureTag(shot);
-    const marked = replaceOnce(page, tag, markTag(tag));
+    const marked = markFigure(page, figurePrefix(shot));
     if (marked === null) {
       unmarked.push(shot);
     } else {
@@ -181,4 +213,17 @@ export function applyMarks(html, notice, unsettled) {
     }
   }
   return { html: page, unmarked };
+}
+
+/** Stamps the first figure whose tag opens with `prefix`, as that tag stands. */
+function markFigure(html, prefix) {
+  const at = html.indexOf(prefix);
+  if (at === -1) {
+    return null;
+  }
+  const end = html.indexOf(">", at + prefix.length);
+  if (end === -1) {
+    return null;
+  }
+  return `${html.slice(0, at)}${markTag(html.slice(at, end + 1))}${html.slice(end + 1)}`;
 }
