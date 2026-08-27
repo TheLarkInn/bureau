@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
+import { CONSTRAINT_IDS, CONSTRAINTS, harnessNotes, violations } from "../web/statelab/constraints.mjs";
 import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
@@ -721,6 +721,38 @@ test("every harness rule names its limit, stands next to the screen it hides, an
       unknownKind: CONSTRAINTS.filter((rule) => !["structural", "scoping", "harness"].includes(rule.kind)).map((rule) => rule.id),
     },
     { unnamed: [], unstood: [], unadjacent: [], costless: [], mislabelled: [], unknownKind: [] },
+  );
+});
+
+/**
+ * And that the lab tells the reviewer the claim above, not a stronger one.
+ *
+ * The test above is careful that `stands` promises adjacency and not sameness —
+ * "these screens differ by one axis on purpose, because the axis is what the
+ * harness cannot reach". The lab said the opposite, in both places it printed a
+ * harness rule: *"The same screen is rendered by …"*. The suite held the weaker,
+ * true claim while the review surface handed a reviewer the stronger, false one,
+ * which is the worst place for it: someone told two screens match has been given
+ * a reason not to look at the difference, and looking is the whole job.
+ *
+ * Held here rather than in the browser spec because the sentence is data now:
+ * one function, read by both call sites, so neither can drift and the offline
+ * suite can ask what it says without a lab to render it.
+ */
+test("the lab's harness note names the limit and the nearest state, and claims no more", () => {
+  const harness = CONSTRAINTS.filter((rule) => rule.kind === "harness");
+  const said = harness.map((rule) => ({ rule: rule.id, notes: harnessNotes(rule).join(" ") }));
+
+  assert.deepStrictEqual(
+    {
+      silent: said.filter(({ notes }) => !notes.includes("Harness limit —")).map(({ rule }) => rule),
+      unattributed: said.filter(({ rule, notes }) => !notes.includes(CONSTRAINTS.find((item) => item.id === rule).stands)).map(({ rule }) => rule),
+      // The overclaim itself, named rather than described, because a sentence
+      // that asserts the two renders match is the one thing nothing here holds.
+      overclaiming: said.filter(({ notes }) => /the same screen is rendered/iu.test(notes)).map(({ rule }) => rule),
+      unqualified: said.filter(({ notes }) => !notes.includes("not the same screen")).map(({ rule }) => rule),
+    },
+    { silent: [], unattributed: [], overclaiming: [], unqualified: [] },
   );
 });
 

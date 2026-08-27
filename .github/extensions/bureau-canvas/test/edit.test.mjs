@@ -41,7 +41,7 @@ test("a fresh decision step covers all four outcomes out of the box", async () =
 test("createStep refuses duplicate names and unknown kinds", async () => {
   const view = await fixtureView();
 
-  assert.throws(() => createStep(view, "implement", "agent"), /already has a step/u);
+  assert.throws(() => createStep(view, "implement", "agent"), /already exists/u);
   assert.throws(() => createStep(view, "x", "mystery"), /unknown step kind/u);
 });
 

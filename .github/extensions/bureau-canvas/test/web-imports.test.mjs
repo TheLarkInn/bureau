@@ -35,12 +35,33 @@ import test from "node:test";
 
 const WEB = fileURLToPath(new URL("../web/", import.meta.url));
 
-/** Every specifier a module names, however it names it. */
+/**
+ * Every specifier a module names, however it names it.
+ *
+ * Backticks included, and not for completeness: a no-substitution template is a
+ * legal specifier for `import()`, so ``import(`../../lib/edit.mjs`)`` reaches a
+ * module outside this tree — the one thing this file exists to forbid — and read
+ * only for quotes the rule saw nothing at all. A comment claiming "however it
+ * names it" over three patterns that cover two of the three ways to write a
+ * string is the shape of check this suite keeps finding: exhaustive in its
+ * wording and partial in its reach.
+ *
+ * An *interpolated* template is caught by the same patterns and deliberately not
+ * resolved. `${…}` means the specifier is not knowable from the source, so no
+ * rule reading source can say whether it stays in this tree; it is reported as a
+ * finding of its own rather than silently skipped, which is how the quoted
+ * patterns would have treated it.
+ */
 const SPECIFIERS = [
-  /\bfrom\s*["']([^"'\n]+)["']/gu,
-  /\bimport\s*\(\s*["']([^"'\n]+)["']/gu,
-  /\bimport\s*["']([^"'\n]+)["']/gu,
+  /\bfrom\s*["'`]([^"'`\n]+)["'`]/gu,
+  /\bimport\s*\(\s*["'`]([^"'`\n]+)["'`]/gu,
+  /\bimport\s*["'`]([^"'`\n]+)["'`]/gu,
 ];
+
+/** Whether a specifier read from source is knowable at all. */
+function interpolated(specifier) {
+  return specifier.includes("${");
+}
 
 /**
  * The source with its commentary removed.
@@ -187,9 +208,16 @@ async function unmapped() {
  *
  * The two reasons read differently to whoever has to fix them: a relative path
  * that climbs out of the served root is a module in the wrong tree, and a bare
- * name with no import map entry is a dependency the pages never declared.
+ * name with no import map entry is a dependency the pages never declared. A
+ * third reads differently again: a specifier assembled at runtime is one this
+ * rule cannot judge either way, which is a finding rather than a pass, because
+ * the alternative is a module in this tree reaching wherever it likes behind a
+ * `${…}` no source-reading rule can follow.
  */
 function unreachableReason(file, specifier, mapped) {
+  if (interpolated(specifier)) {
+    return "built at runtime, so no rule reading source can say where it points";
+  }
   if (!specifier.startsWith(".")) {
     return mapped.has(specifier) ? undefined : "no import map entry";
   }
@@ -292,6 +320,39 @@ test("the scanner reads imports and not the commentary around them", () => {
   ].join("\n");
 
   assert.deepStrictEqual(specifiersIn(source), ["./local.mjs", "./real.mjs", "nowhere"]);
+});
+
+/**
+ * And it reads the third way to write a string.
+ *
+ * The patterns took `"` and `'` under a comment that said "however it names
+ * it". A no-substitution template is a legal specifier for `import()`, so
+ * ``import(`../../lib/edit.mjs`)`` reached out of this tree past a rule whose
+ * only job is to stop exactly that — and it did so silently, because a
+ * specifier the scanner never captures is one no later rule is ever asked
+ * about.
+ *
+ * An interpolated specifier is captured too and answered differently on
+ * purpose. `${…}` means the target is not knowable from source at all, so
+ * "stays under the served root" has no answer rather than a good one; reported
+ * as its own reason, it is a finding instead of a gap.
+ */
+test("the scanner reads a template specifier, and refuses to guess an interpolated one", () => {
+  const editor = join(WEB, "editor", "editor.mjs");
+  const source = [
+    "const a = await import(`../../lib/edit.mjs`);",
+    "const b = await import(`./built-${kind}.mjs`);",
+    "import { c } from `./templated.mjs`;",
+  ].join("\n");
+  const found = specifiersIn(source);
+
+  assert.deepStrictEqual(
+    [found, found.map((specifier) => unreachableReason(editor, specifier, new Set()))],
+    [
+      ["../../lib/edit.mjs", "./built-${kind}.mjs", "./templated.mjs"],
+      ["outside the served root", "built at runtime, so no rule reading source can say where it points", undefined],
+    ],
+  );
 });
 
 /** Every page that mounts a module declares the vendored specifiers it uses. */

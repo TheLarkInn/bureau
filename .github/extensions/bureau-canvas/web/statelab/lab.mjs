@@ -9,7 +9,7 @@
 import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unsettledReason, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
-import { violations } from "./constraints.mjs";
+import { harnessNotes, violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
 import { servableInFrame } from "./intercept.mjs";
 import { runPath } from "./driver.mjs";
@@ -496,10 +496,11 @@ function renderConstraints() {
     item.append(el("p", null, rule.why));
     if (rule.kind === "harness") {
       // A harness rule hides a screen a user really reaches, so it owes the
-      // reviewer both halves: what stops the harness, and where the same screen
-      // is rendered instead.
-      item.append(el("p", "note", `Harness limit — ${rule.limit}`));
-      item.append(el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+      // reviewer both halves: what stops the harness, and the nearest state
+      // this harness can reach instead. `harnessNotes` words both, once.
+      for (const note of harnessNotes(rule)) {
+        item.append(el("p", "note", note));
+      }
     }
     item.append(el("p", "muted", "“Pruned here” counts the tuples this rule was the first to reject, in walk order — not every tuple it forbids. Ask the picker below about a specific combination to see every rule that rejects it."));
     const example = counts[rule.id]?.example;
@@ -574,7 +575,7 @@ function renderPicker() {
       const entry = el("details");
       entry.append(el("summary", null, `${rule.id} · ${rule.kind}`), el("p", null, rule.why));
       if (rule.kind === "harness") {
-        entry.append(el("p", "note", `Harness limit — ${rule.limit}`), el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+        entry.append(...harnessNotes(rule).map((note) => el("p", "note", note)));
       }
       parts.push(entry);
     }

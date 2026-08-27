@@ -22,13 +22,13 @@ import {
 
 import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
-import { withReferencesRetargeted, withoutReferencesTo } from "../step-refs.mjs";
+import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../step-refs.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
 const h = React.createElement;
 const OUTCOMES = ["success", "failure", "blocked", "no-work"];
-const TERMINALS = ["done", "abort", "escalate"];
+const TERMINALS = TERMINAL_NAMES;
 const STEP_KINDS = ["deterministic", "agent", "decision", "concurrent"];
 const CONTROL_FIELDS = [
   ["next", "success"],
@@ -619,11 +619,12 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
   const [name, setName] = useState(step.name);
   useEffect(() => setName(step.name), [step.name]);
   const set = (field, value) => onChange(setField(view, step.name, field, value));
-  const nameProblem = !name.trim()
-    ? "A step name cannot be empty."
-    : view.steps.some((candidate) => candidate.name !== step.name && candidate.name === name.trim())
-      ? `A step named \`${name.trim()}\` already exists.`
-      : null;
+  // The whole name rule, from the module both trees share, so the sentence the
+  // reader sees is the one the transform refuses on. Before this the field knew
+  // only "empty" and "taken", so a terminal's name passed the field, reached a
+  // rename that returned the view unchanged, and left the input showing a name
+  // the step had not taken with nothing saying why.
+  const nameProblem = stepNameProblem(view.steps, name, step.name)?.message ?? null;
   const commitName = () => {
     if (!nameProblem && name.trim() !== step.name) {
       onRename(name.trim());
@@ -696,11 +697,13 @@ function numberInput(value) {
 /**
  * The draft rename, whose field half is `web/step-refs.mjs` — the same rule the
  * host's saved-view rename uses, so the two cannot drift the way the delete
- * once did. A step may not take a terminal's name, or `on: abort` would stop
- * meaning the terminal it means everywhere it is read.
+ * once did. The name rule is shared from there too: a step may not take a
+ * terminal's name, or `on: abort` would stop meaning the terminal it means
+ * everywhere it is read, and `StepEditor` reads the same rule so the refusal is
+ * explained rather than silent.
  */
 function renameStep(view, from, to) {
-  if (!to || to === from || TERMINALS.includes(to) || view.steps.some((step) => step.name === to)) {
+  if (to === from || stepNameProblem(view.steps, to, from)) {
     return view;
   }
   const steps = view.steps.map((step) => {

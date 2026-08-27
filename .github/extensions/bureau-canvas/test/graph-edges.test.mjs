@@ -35,7 +35,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { drawableEdges } from "../web/graph-edges.mjs";
-import { withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+import { stepNameProblem, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
 import { parse, render } from "../lib/codec.mjs";
 import { createStep, editable, removeStep, renameStep } from "../lib/edit.mjs";
 import { pipelineView } from "../lib/view.mjs";
@@ -318,6 +318,67 @@ test("a step cannot be given a terminal's name", () => {
       refused(() => renameStep(view, "build", "done")),
       refused(() => createStep(view, "cleanup", "deterministic")),
     ],
-    ["`abort` is a terminal, so a step cannot take that name", "`done` is a terminal, so a step cannot take that name", null],
+    ["`abort` is a terminal, so a step cannot take that name.", "`done` is a terminal, so a step cannot take that name.", null],
+  );
+});
+
+/**
+ * The name rule itself, which the host throws and the field editor prints.
+ *
+ * Written out three times before this: once in `createStep`, once in each
+ * `renameStep`, and — not at all — in the one place a person can see, the field
+ * editor's `nameProblem`. That fourth absence is what made the refusal silent.
+ * The field reported no problem for a terminal's name, so `commitName` fired,
+ * the editor's `renameStep` returned the view unchanged, `step.name` therefore
+ * never changed, and the effect that syncs the input never re-ran: the reviewer
+ * was left looking at an input reading `abort` on a step still called something
+ * else, with nothing on screen saying why.
+ *
+ * Table-driven over the four verdicts, so the rule is held as a rule rather than
+ * through whichever caller happened to be asserted.
+ */
+test("one rule decides what a step may be called, and says why not", () => {
+  const steps = [{ name: "build" }, { name: "verify" }];
+  const cases = [
+    ["", null, "empty"],
+    ["   ", null, "empty"],
+    ["abort", null, "terminal"],
+    ["done", "build", "terminal"],
+    ["escalate", null, "terminal"],
+    ["verify", null, "taken"],
+    ["verify", "verify", null],
+    ["  cleanup  ", null, null],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([name, current]) => stepNameProblem(steps, name, current)?.reason ?? null),
+    cases.map(([, , reason]) => reason),
+  );
+});
+
+/**
+ * And that the browser editor reads that rule rather than keeping its own.
+ *
+ * A property of the call site, so it is asserted by reading source, exactly as
+ * the `drawableEdges` allowlist above and `test/web-imports.test.mjs` are: the
+ * module imports React and `@xyflow/react`, so nothing offline can import it and
+ * ask it. What is held is the shape that made the two copies possible — a second
+ * literal terminal list, and a `nameProblem` computed from anything but the
+ * shared rule. Both of the previous copies satisfied every other test in this
+ * repository, which is why the shape is what gets asserted.
+ */
+test("the editor's name refusal comes from the shared rule, not a second copy", async () => {
+  const source = await readFile(new URL("../web/editor/editor.mjs", import.meta.url), "utf8");
+  const collapsed = source.replace(/\s+/gu, " ");
+
+  assert.deepStrictEqual(
+    {
+      imports: collapsed.includes("stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from \"../step-refs.mjs\""),
+      terminals: collapsed.includes("const TERMINALS = TERMINAL_NAMES;"),
+      ownList: /const TERMINALS = \[/u.test(collapsed),
+      field: collapsed.includes("const nameProblem = stepNameProblem(view.steps, name, step.name)?.message ?? null;"),
+      rename: collapsed.includes("if (to === from || stepNameProblem(view.steps, to, from)) {"),
+    },
+    { imports: true, terminals: true, ownList: false, field: true, rename: true },
   );
 });

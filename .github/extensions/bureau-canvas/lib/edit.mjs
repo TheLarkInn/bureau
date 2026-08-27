@@ -9,7 +9,7 @@
 // Nothing here decides whether a pipeline is legal. `problems()` reports
 // hints for the editor chrome; the save path owns the final verdict.
 
-import { TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
 
 export const TERMINALS = TERMINAL_NAMES;
 export const OUTCOMES = ["success", "failure", "blocked", "no-work"];
@@ -31,11 +31,9 @@ export function createStep(view, name, kind) {
   if (!STEP_KINDS.includes(kind)) {
     throw new Error(`unknown step kind \`${kind}\``);
   }
-  if (view.steps.some((step) => step.name === name)) {
-    throw new Error(`pipeline already has a step named \`${name}\``);
-  }
-  if (TERMINALS.includes(name)) {
-    throw new Error(`\`${name}\` is a terminal, so a step cannot take that name`);
+  const problem = stepNameProblem(view.steps, name);
+  if (problem) {
+    throw new Error(problem.message);
   }
   return {
     ...view,
@@ -97,17 +95,17 @@ export function removeStep(view, name) {
  *
  * The field half is `web/step-refs.mjs`, shared with the editor's draft rename,
  * for the same reason the delete is: written out twice, the two copies were
- * free to disagree, and one of them did.
+ * free to disagree, and one of them did. The *name* rule is shared from there
+ * too, so the host and the field editor refuse the same names for the same
+ * stated reason.
  */
 export function renameStep(view, from, to) {
   if (!to || to === from) {
     return view;
   }
-  if (view.steps.some((step) => step.name === to)) {
-    throw new Error(`pipeline already has a step named \`${to}\``);
-  }
-  if (TERMINALS.includes(to)) {
-    throw new Error(`\`${to}\` is a terminal, so a step cannot take that name`);
+  const problem = stepNameProblem(view.steps, to, from);
+  if (problem) {
+    throw new Error(problem.message);
   }
   const steps = view.steps.map((step) => renamedStep(step, from, to));
   return { ...view, steps, edges: view.edges.map((edge) => renamedEdge(edge, from, to)) };

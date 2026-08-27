@@ -40,6 +40,42 @@ function routesToTerminal(name) {
 }
 
 /**
+ * Why a step may not be called `name`, or `null` when it may.
+ *
+ * One rule, because there were three: `lib/edit.mjs` refused the name on the
+ * way in and on a rename, the editor's `renameStep` refused it again, and the
+ * field editor's own `nameProblem` — the only one of the four a person can
+ * see — knew nothing about it. So the browser refused a terminal's name
+ * *silently*: the field reported no problem, `commitName` fired, the rename
+ * returned the view unchanged, `step.name` therefore never changed, and the
+ * effect that syncs the input never re-ran. The reviewer was left looking at an
+ * input reading `abort` on a step still called something else, with nothing on
+ * screen saying why. A refusal a surface will not explain is the same defect as
+ * a write it will not show, told the other way round.
+ *
+ * Returns the problem rather than a boolean so the sentence is written once
+ * too. The host throws it and the field editor prints it under the input; a
+ * rule whose two readers word it differently is a rule a reviewer cannot check
+ * one against the other.
+ *
+ * `current` is the name the step already has, which is never a collision with
+ * itself. Pure, and untrimmed input is trimmed here rather than at each caller.
+ */
+export function stepNameProblem(steps, name, current = null) {
+  const trimmed = (name ?? "").trim();
+  if (!trimmed) {
+    return { reason: "empty", message: "A step name cannot be empty." };
+  }
+  if (TERMINAL_NAMES.includes(trimmed)) {
+    return { reason: "terminal", message: `\`${trimmed}\` is a terminal, so a step cannot take that name.` };
+  }
+  if (steps.some((step) => step.name !== current && step.name === trimmed)) {
+    return { reason: "taken", message: `A step named \`${trimmed}\` already exists.` };
+  }
+  return null;
+}
+
+/**
  * A step with every reference to a departed step dropped, in the same four
  * fields a rename retargets.
  *

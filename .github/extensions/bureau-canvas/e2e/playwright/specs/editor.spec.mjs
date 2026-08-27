@@ -162,6 +162,23 @@ test.describe("pipeline editor", () => {
     await expect(editor.page.locator('[data-ref="verify"]')).toBeVisible();
   });
 
+  // A terminal's name is refused everywhere it is written, and the field was
+  // the one place that did not say so: `nameProblem` knew "empty" and "taken",
+  // the rename returned the view unchanged, `step.name` never changed, so the
+  // effect that syncs the input never re-ran. Pressing Enter left an input
+  // reading `abort` on a step still called `verify`, with nothing on screen
+  // explaining the refusal — a silent refusal reading exactly like a rename
+  // that worked. Asserted on both halves: the reason is shown, and the graph
+  // still carries the old name.
+  test("a terminal's name is refused in words, not in silence", async ({ editor }) => {
+    await editor.page.locator('[data-ref="verify"]').click();
+    await editor.page.getByLabel("name").fill("abort");
+    await editor.page.getByLabel("name").press("Enter");
+
+    await expect(editor.page.locator(".editor-hints")).toContainText("is a terminal, so a step cannot take that name");
+    await expect(editor.page.locator('[data-ref="verify"]')).toBeVisible();
+  });
+
   test("an agent step chooses from configured roles", async ({ editor }) => {
     await editor.page.locator('[data-ref="implement"]').click();
     const role = editor.page.getByLabel("Step role");
