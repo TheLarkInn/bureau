@@ -93,28 +93,80 @@ async function census(base64, region) {
 
 window.bureauDrawn = {
   /**
-   * The distinct colours of a PNG, as `"r,g,b,a"` strings.
-   *
-   * The image is a screenshot Playwright took of this page and handed straight
-   * back, so what is measured is what Chromium painted rather than what the
-   * cascade says it should have. A mark that paints nothing leaves its own ink
-   * out of the answer entirely.
-   */
-  async colours(base64, region) {
-    return [...(await census(base64, region)).counted.keys()];
-  },
-
-  /**
-   * How varied one region is, and how much of it `ink` covers.
+   * How varied one region is, how much of it `ink` covers, and a value that
+   * changes whenever any of its pixels do.
    *
    * The share is what tells words from a block. A region of solid ink is not
    * one colour — its edges blend into whatever is behind it — so counting
    * colours calls it varied and passes it. Glyphs leave most of their own line
    * box unpainted; a block leaves none of it.
+   *
+   * `signature` is the whole census rather than a summary of it, so that "these
+   * pixels changed" is a question with an exact answer. It is what makes the
+   * words' own colour answerable: read once as written and once with that
+   * colour taken away, an unchanged signature means nothing in the region was
+   * ever drawn in it.
    */
   async paint(base64, region, ink) {
     const { counted, total } = await census(base64, region);
-    return { distinct: counted.size, share: (counted.get(ink) ?? 0) / total };
+    return {
+      distinct: counted.size,
+      share: (counted.get(ink) ?? 0) / total,
+      signature: [...counted].sort().map(([colour, count]) => `${colour}=${count}`).join(" "),
+    };
+  },
+
+  /**
+   * Which of `regions` carry `ink`, read from one shot of the whole page.
+   *
+   * One screenshot rather than one per region, because the question is asked of
+   * every figure on the page and a mark drawn on the wrong screens is worse
+   * than one drawn on none — a rule keyed on position rather than on the
+   * attribute is invisible to any check that samples. Regions are fractions of
+   * this shot, as everywhere else here.
+   */
+  async sweep(base64, regions, ink) {
+    const blob = await (await fetch(`data:image/png;base64,${base64}`)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0);
+    return regions.map((region) => {
+      const { data } = context.getImageData(
+        Math.floor(region.x * bitmap.width),
+        Math.floor(region.y * bitmap.height),
+        Math.max(1, Math.round(region.width * bitmap.width)),
+        Math.max(1, Math.round(region.height * bitmap.height)),
+      );
+      for (let at = 0; at < data.length; at += 4) {
+        if (`${data[at]},${data[at + 1]},${data[at + 2]},${data[at + 3]}` === ink) {
+          return true;
+        }
+      }
+      return false;
+    });
+  },
+
+  /** Every figure's channels as fractions of a full-page shot, in page order. */
+  channels(selector) {
+    const width = document.documentElement.scrollWidth;
+    const height = document.documentElement.scrollHeight;
+    return [...document.querySelectorAll(selector)].map((figure) => {
+      const parts = [figure.querySelector("img"), figure.querySelector("figcaption")];
+      return {
+        shot: figure.dataset.shot,
+        marked: figure.hasAttribute("data-settled"),
+        regions: parts.map((part) => {
+          const box = part.getBoundingClientRect();
+          return {
+            x: (box.left + window.scrollX) / width,
+            y: (box.top + window.scrollY) / height,
+            width: box.width / width,
+            height: box.height / height,
+          };
+        }),
+      };
+    });
   },
 
   /**

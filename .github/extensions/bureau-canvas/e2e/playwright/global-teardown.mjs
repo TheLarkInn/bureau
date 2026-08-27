@@ -126,7 +126,12 @@ export async function auditGallery(dirs, resolve) {
   const { records, unreadable } = await collapseSignatures(stageDir);
   const published = await publishGallery(stageDir, outDir);
   if (!published.length) {
-    return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] };
+    // The directory is part of the answer, not decoration: for an empty staging
+    // directory the whole of what this function does is resolve a path, discard
+    // it and say so, and a stand-in that reports the sentence without the path
+    // never had to resolve anything. Saying where it looked is also what a
+    // person reading "this run rendered no states" wants to know next.
+    return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [], staging: stageDir };
   }
   console.log(`gallery: published ${published.length} file(s) to ${outDir}`);
   // A full matrix run always writes the index, including a failing one — it is

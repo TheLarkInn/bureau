@@ -393,27 +393,52 @@ out of the control group: stamping every compact render — one line in
 and half the gallery telling a reviewer it was not proved settled. Exactly the
 shots handed to `applyMarks` carry the attribute, and no others.
 
-The words themselves are asked of the region they occupy rather than of the box
-that holds them, and asked four things: there is a region at all, the ink is in
-it, it is not one flat colour, and the ink does not fill it. A box is bigger
-than its words, and both of the gaps that opens were real. `font-size:0` leaves
-a notice its padding, so a two-pixel stripe of its own ink painted there passes
-ink-present and not-flat over a blank bar. And a phrase painted over its own
-background is unreadable but not flat — a block of solid ink blends into what is
-behind it at its own edges and answers with two colours — so only the ink's
-*share* of the region separates words from a block: glyphs leave most of their
-line box unpainted and a block leaves none of it.
+The attribute being exact is still not the mark being exact, because the mark is
+what a reviewer *sees*. Two rules keyed on position rather than on the attribute
+leave the set perfectly correct — `.card::after` says the phrase outside every
+figure, where a figure-scoped read cannot see it, and
+`.shots figure:last-of-type:not([data-settled]) img` draws the amber border on a
+figure no sample happened to take. So the phrase is counted over the whole
+document, and the ink is swept across **every** figure's two channels from a
+single full-page shot. That page is built from a slice of the registry rather
+than all of it, which is what makes "every figure" affordable: what is under
+test is the marker and the stylesheet, and neither has any idea which states it
+was handed.
 
-That is why each caption carries an otherwise empty element for the mark to be
-written into. The phrase is CSS `content`, and pseudo-content has no box
+The words themselves are asked of the region they occupy rather than of the box
+that holds them, and asked five things: they are in the render tree, there is a
+region, the ink is in it, it is not one flat colour, and the ink does not fill
+it. A box is bigger than its words, and both of the gaps that opens were real.
+`font-size:0` leaves a notice its padding, so a two-pixel stripe of its own ink
+painted there passes ink-present and not-flat over a blank bar. And a phrase
+painted over its own background is unreadable but not flat — a block of solid
+ink blends into what is behind it at its own edges and answers with two
+colours — so only the ink's *share* of the region separates words from a block:
+glyphs leave most of their line box unpainted and a block leaves none of it.
+
+All of those are statistics about colour, and colour statistics can be
+manufactured without drawing a glyph: transparent type over a one-pixel
+repeating gradient of the expected ink has the ink, several colours, and a small
+share, and says nothing. So the last question is whether the ink is *the
+words'*. Their colour is taken away — `color:transparent` on the element under
+test, which changes no geometry, so this is not the comparison of two layouts
+this suite rejects elsewhere — and the region is read again. Real type
+disappears and the pixels move; a decoy painted behind it is unmoved, because it
+never depended on the colour the words are written in.
+
+That is also why each caption carries an otherwise empty element for the mark to
+be written into. The phrase is CSS `content`, and pseudo-content has no box
 anything can measure; the caption's own box is shared with the viewport name, so
 flatness measured over it is satisfied by a neighbour of the thing under test.
 The slot is a box that holds the phrase and nothing else.
 
-The notices are asked the same four things, over the rectangles their text
-occupies. The advisory is asked *alone* as well as beside the alarm — an
-advisory-only run is the ordinary result of a full matrix, so the notice a
-reviewer meets on almost every good run was the one with no browser check at all.
+The notices are asked the same five things, over the rectangles their text
+occupies — and so is the promised phrase inside them, on its own, because
+`strong { visibility:hidden }` hides exactly the words the notice exists to say
+while leaving the sentence around them perfectly readable. The advisory is asked
+*alone* as well as beside the alarm — an advisory-only run is the ordinary
+result of a full matrix, so the notice a reviewer meets on almost every good run
+was the one with no browser check at all.
 
 Comparing a stamped render against an unstamped one is deliberately not the
 question: the mark changes the border's width, so the geometry moves and the
@@ -445,10 +470,14 @@ nothing. The check finds the `actions/upload-artifact` step and reads that step'
 own `path:` block, bounded by the step's list-item indent — "anything after the
 `uses:` line" was the same defect one notch along, satisfied by renaming the
 input to `paths:` and letting an unrelated later step carry a block of the right
-shape. It also reads the step's `if:`, because every pattern can be correct and
-the step still never run; `always()` is required rather than merely something
-truthy, since the run a reviewer most needs the gallery from is the one that
-failed.
+shape. It also reads the step's `if:` **at the step's own key indent**, because
+`with:` is a map of inputs and an input may be called anything at all: an input
+named `if: always()` over a step condition of `if: 0 == 1` reads as `always()` to
+any scan that trims indentation away first. And it reads the enclosing job's
+condition too — a step that says `always()` inside a job that never starts
+publishes exactly as much as a step that says nothing. `always()` is required of
+the step rather than merely something truthy, since the run a reviewer most
+needs the gallery from is the one that failed.
 
 **The teardown was proved only through the seam tests use.** `globalTeardown`
 forwards `audit` and `resolve` so the offline suite can watch the hand-over, and
@@ -457,10 +486,12 @@ Playwright ever takes, because it calls a global teardown with the config and
 nothing else — was never walked, so a guard returning early when no seam is
 passed left every offline test, every identity check and the whole browser suite
 green while a real run's teardown did nothing. It is now called the way
-Playwright calls it, over a staging directory the test owns, and required to have
-left an *effect*: that directory is discarded by the audit and has to be gone
-afterwards. The returned sentence alone is a literal, and a guard that returns it
-without looking at anything answers correctly.
+Playwright calls it, over a staging directory the test owns, and required to
+produce that audit's whole observable behaviour for an empty one: the directory
+is discarded, and the answer names the directory it looked in. The returned
+sentence alone is a literal a guard can write out without looking at anything,
+and the discard alone is only the destructive half — a stand-in that deletes
+staging and reports has thrown a run's renders away without publishing them.
 
 ### The audit could not be found among the run's checks
 Every rule above produced a *finding*, and nothing was answerable for any of

@@ -40,54 +40,93 @@ function inkOf(hex) {
 const SOLID = 0.75;
 
 /**
- * The colours Chromium actually painted in one region of the page.
+ * Whether the words in `locator` are painted where a reviewer can read them.
  *
- * The screenshot is handed straight back into the page it came from, because
- * the decision about what is in it belongs in `drawn.js` with the rest of what
- * "drawn" means, and reading pixels is the one question a rule that is present,
- * correctly spelled and silent cannot answer its way out of.
- */
-async function colours(page, locator, region) {
-  const png = await locator.screenshot();
-  return page.evaluate(([data, part]) => window.bureauDrawn.colours(data, part), [png.toString("base64"), region]);
-}
-
-/** Whether the mark's own ink is among the pixels of one figure's channel. */
-async function carriesInk(page, name, part) {
-  return (await colours(page, page.locator(`figure[data-shot="${name}"] ${part}`))).includes(inkOf(SETTLED_INK));
-}
-
-/**
- * Whether the words in `locator` are painted where a reviewer can read them:
- * they occupy a region at all, their own ink is in it, it is not one flat
- * colour, and the ink does not fill it.
+ * Five questions, and each closes what the others do not. It is in the render
+ * tree at all — `hidden`, `display:none` and `opacity:0` leave a phrase nothing
+ * can be read from, and this is asked first so that such a phrase names its own
+ * failure rather than timing out on a screenshot of a box that is not there.
+ * There is a region — `font-size:0` and a collapsed slot have none. The ink is
+ * in it — `color:transparent` never appears in an opaque screenshot. It is not
+ * one flat colour. The ink does not fill it, because a foreground equal to its
+ * background *is* painted and is not flat either: a block of solid ink blends
+ * into what is behind it at its own edges and answers with two colours, so only
+ * the share separates words, which leave most of their line box unpainted, from
+ * a block, which leaves none of it.
  *
- * The four are needed together and each closes what the others do not.
- * `hidden`, `opacity:0` and `font-size:0` are caught by the first — a phrase
- * with no area is one nothing can be read from. `color:transparent` never
- * appears in an opaque screenshot, so the second catches it. A foreground equal
- * to its background *is* painted — it is the background — and it is not flat
- * either, because a block of solid ink blends into whatever is behind it at its
- * own edges and answers with two colours; only the share separates words from a
- * block, because glyphs leave most of their line box unpainted and a block
- * leaves none of it.
+ * And the ink in the region has to be *the words'*. All four of those are
+ * statistics about colour, and colour statistics can be manufactured without
+ * drawing a single glyph:
  *
- * The region is the words' own, not the element's, which is what makes the last
- * two answerable: measured over a whole box, flatness is satisfied by anything
- * else the box happens to contain, and ink-present is satisfied by a stripe of
- * the right colour painted anywhere in the padding.
+ *   <p style="-webkit-text-fill-color:transparent;
+ *             background:repeating-linear-gradient(#9a6700 0 1px,#fff8c5 1px 4px)">
+ *
+ * The expected ink is there, in several colours, over well under three quarters
+ * of the region — and there are no words. So the words' own colour is taken
+ * away and the region is read again: `color:transparent` on the very element
+ * under test changes nothing about the layout, so this is not the geometry
+ * comparison this suite rejects elsewhere. Real type disappears and the pixels
+ * move; a decoy painted behind it is unmoved, because it never depended on the
+ * colour the words are written in.
+ *
+ * The region is the words' own, not the element's, which is what makes the
+ * middle three answerable: measured over a whole box, flatness is satisfied by
+ * anything else the box happens to contain, and ink-present by a stripe of the
+ * right colour painted anywhere in the padding.
  */
 async function legible(page, locator, ink) {
-  const region = await locator.evaluate((node) => window.bureauDrawn.inkRegion(node));
-  if (region === null) {
-    return [false, false, false, false];
+  const seen = await locator.evaluate((node) => [
+    window.bureauDrawn.rendered(node),
+    window.bureauDrawn.inkRegion(node),
+  ]);
+  const [rendered, region] = seen;
+  if (!rendered || region === null) {
+    return [false, false, false, false, false];
   }
+  const inked = await census(page, locator, region, ink);
+  const muted = await withoutInk(page, locator, () => census(page, locator, region, ink));
+  return [true, inked.share > 0, inked.distinct > 1, inked.share < SOLID, muted.signature !== inked.signature];
+}
+
+/** One region of `locator`, as Chromium painted it. */
+async function census(page, locator, region, ink) {
   const png = await locator.screenshot();
-  const paint = await page.evaluate(
+  return page.evaluate(
     ([data, part, colour]) => window.bureauDrawn.paint(data, part, colour),
     [png.toString("base64"), region, ink],
   );
-  return [true, paint.share > 0, paint.distinct > 1, paint.share < SOLID];
+}
+
+/**
+ * Runs `read` with the words in `locator` written in nothing.
+ *
+ * The rule is `!important` and set on the element itself and its two
+ * pseudo-elements, because the phrase this is asked of is CSS `content` and the
+ * notices' is markup — one sheet has to reach both. It is removed afterwards
+ * whatever happens, so a failure here cannot leave the page altered for the
+ * next question asked of it.
+ */
+async function withoutInk(page, locator, read) {
+  const sheet = await locator.evaluate((node) => {
+    node.dataset.muted = "";
+    const style = document.createElement("style");
+    style.textContent = "[data-muted],[data-muted] *,[data-muted]::before,[data-muted]::after,[data-muted] *::before,[data-muted] *::after"
+      + "{ color:transparent !important; -webkit-text-fill-color:transparent !important; }";
+    document.head.append(style);
+    return true;
+  });
+  try {
+    return await read();
+  } finally {
+    await locator.evaluate((node) => {
+      delete node.dataset.muted;
+      document.head.querySelectorAll("style").forEach((style) => {
+        if (style.textContent.includes("[data-muted]")) {
+          style.remove();
+        }
+      });
+    }, sheet);
+  }
 }
 
 /** The element a figure's mark is written into, empty until one is. */
@@ -290,35 +329,53 @@ test("@matrix gallery index", async () => {
  * telling a reviewer it was not proved settled. A set is the claim: exactly the
  * shots handed to `applyMarks`, and no others.
  *
- * Ink is then asked of one stamped figure and one bare one, and that is the
- * whole page's answer rather than a sample of it, because the drawing is one
- * stylesheet rule keyed on the attribute: with the marked set proved exact,
- * a figure is painted if and only if it is in it.
+ * The attribute being exact is still not the mark being exact, because the mark
+ * is what a reviewer *sees*. Two rules keyed on position rather than on the
+ * attribute leave the set perfectly correct:
+ *
+ *   .card::after { content:"not proved settled"; color:#9a6700 }
+ *   .shots figure:last-of-type:not([data-settled]) img { border-color:#9a6700 }
+ *
+ * The first says it outside every figure, where a figure-scoped read cannot
+ * see it; the second draws the amber border on a figure no sample happened to
+ * take. So the phrase is counted over the whole document — every element and
+ * both pseudo-elements of each — and the ink is swept across *every* figure's
+ * two channels from a single full-page shot, rather than sampled from two.
+ *
+ * The page is built from a slice of the registry rather than all of it, which
+ * is what makes "every figure" affordable: what is under test is the marker and
+ * the stylesheet, and neither has any idea which states it was handed.
  */
+const MARKED_PAGE = STATES.slice(0, 8);
+
 test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
-  const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
-  const bare = shot(STATES[1], VIEWPORT_LIST[0]);
-  const marked = applyMarks(indexPage(rowsFor(STATES, VIEWPORT_LIST, shot), STATES, VIEWPORT_LIST), "", [target]);
+  const target = shot(MARKED_PAGE[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
+  const marked = applyMarks(indexPage(rowsFor(MARKED_PAGE, VIEWPORT_LIST, shot), MARKED_PAGE, VIEWPORT_LIST), "", [target]);
 
   await page.setContent(marked.html);
   await page.addScriptTag({ path: DRAWN });
 
-  const said = await page.evaluate((phrase) => {
-    const stamped = [...document.querySelectorAll("figure[data-settled]")];
-    const plain = [...document.querySelectorAll("figure:not([data-settled])")];
-    return [
-      stamped.map((figure) => figure.dataset.shot),
-      plain.length > 1,
-      plain.filter((figure) => window.bureauDrawn.saying(figure, phrase)).length,
-    ];
-  }, SETTLED_PHRASE);
-  const inked = await Promise.all([target, bare].flatMap((name) => ["img", "figcaption"].map((part) => carriesInk(page, name, part))));
-  const read = await Promise.all([target, bare].map((name) => legible(page, markSlot(page, name), inkOf(SETTLED_INK))));
+  const said = await page.evaluate((phrase) => [
+    [...document.querySelectorAll("figure[data-settled]")].map((figure) => figure.dataset.shot),
+    window.bureauDrawn.saying(document.body, phrase),
+    document.querySelectorAll("figure").length,
+  ], SETTLED_PHRASE);
+  const figures = await page.evaluate(() => window.bureauDrawn.channels("figure"));
+  const full = await page.screenshot({ fullPage: true });
+  const swept = await page.evaluate(
+    ([data, regions, colour]) => window.bureauDrawn.sweep(data, regions, colour),
+    [full.toString("base64"), figures.flatMap((figure) => figure.regions), inkOf(SETTLED_INK)],
+  );
+  const wrong = figures.filter((figure, at) => swept.slice(at * 2, at * 2 + 2).some(Boolean) !== figure.marked);
+  const read = [];
+  for (const name of [target, shot(MARKED_PAGE[1], VIEWPORT_LIST[0])]) {
+    read.push(await legible(page, markSlot(page, name), inkOf(SETTLED_INK)));
+  }
 
-  expect([said, inked, read], "only the stamped figure says it, and says it in ink a reviewer can read").toEqual([
-    [[target], true, 0],
-    [true, true, false, false],
-    [[true, true, true, true], [false, false, false, false]],
+  expect([said, wrong.map((figure) => figure.shot), read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
+    [[target], 1, MARKED_PAGE.length * VIEWPORT_LIST.length],
+    [],
+    [[true, true, true, true, true], [false, false, false, false, false]],
   ]);
 });
 
@@ -374,8 +431,8 @@ const NOTICE_CASES = [
 ];
 
 test("@matrix a run's notices are drawn where a reviewer will read them", async ({ page }) => {
-  const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
-  const page1 = indexPage(rowsFor(STATES, VIEWPORT_LIST, shot), STATES, VIEWPORT_LIST);
+  const target = shot(MARKED_PAGE[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
+  const page1 = indexPage(rowsFor(MARKED_PAGE, VIEWPORT_LIST, shot), MARKED_PAGE, VIEWPORT_LIST);
   const read = [];
 
   for (const found of NOTICE_CASES) {
@@ -390,9 +447,16 @@ test("@matrix a run's notices are drawn where a reviewer will read them", async 
         notes.map((note) => `${getComputedStyle(note).color.match(/[\d.]+/gu).slice(0, 3).join(",")},255`),
       ];
     }, SETTLED_PHRASE);
-    const seen = await Promise.all(said[3].map((ink, at) => legible(page, page.locator("body > p").nth(at), ink)));
-    read.push([...said.slice(0, 3), seen.every((note) => note.every(Boolean))]);
+    const seen = [];
+    for (const [at, ink] of said[3].entries()) {
+      // Serial, not `Promise.all`: `legible` takes the words' colour away
+      // while it reads, and two of these overlapping would each be reading the
+      // page the other had muted.
+      seen.push(await legible(page, page.locator("body > p").nth(at), ink));
+    }
+    const promise = await legible(page, page.getByText(SETTLED_PHRASE, { exact: true }), inkOf(SETTLED_INK));
+    read.push([...said.slice(0, 3), seen.every((note) => note.every(Boolean)), promise.every(Boolean)]);
   }
 
-  expect(read, "every notice a run writes is painted in ink a reviewer can read, and says what it promises").toEqual(NOTICE_CASES.map((found) => [found.drawn, true, 1, true]));
+  expect(read, "every notice a run writes is painted in ink a reviewer can read, and says what it promises").toEqual(NOTICE_CASES.map((found) => [found.drawn, true, 1, true, true]));
 });

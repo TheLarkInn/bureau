@@ -289,10 +289,47 @@ function blockUnder(step, key) {
   return after.slice(0, ends === -1 ? after.length : ends).map((line) => line.trim()).filter(Boolean);
 }
 
-/** The condition a step runs under, as written. */
+/**
+ * The condition a step runs under, as written — read at the step's own key
+ * indent and nowhere deeper.
+ *
+ * `with:` is a map of *inputs*, and an input may be called anything at all. A
+ * scan for the first line beginning `if:` after trimming therefore reads
+ *
+ *   with:
+ *     if: always()
+ *   if: 0 == 1
+ *
+ * as `always()`: an input GitHub hands to the action, approved as the condition
+ * GitHub evaluates. Indentation is the only thing that separates them, so it is
+ * not thrown away before the search.
+ */
 function conditionOf(step) {
-  const line = step.map((entry) => entry.trim().replace(/^-\s*/u, "")).find((entry) => entry.startsWith("if:"));
-  return line ? line.slice("if:".length).trim() : "";
+  const keys = step.slice(1).filter((line) => line.trim());
+  const indent = keys.length ? keys[0].search(/\S/u) : 0;
+  const line = step.find((entry) => entry.search(/\S/u) === indent && entry.trim().startsWith("if:"));
+  return line ? line.trim().slice("if:".length).trim() : "";
+}
+
+/**
+ * The condition the job containing the upload step runs under.
+ *
+ * A step that says `always()` inside a job that never starts publishes exactly
+ * as much as a step that says nothing. `if:` at the job's own key indent is the
+ * one that decides whether any of this runs at all.
+ */
+function jobConditionOf(workflow) {
+  const lines = workflow.split("\n");
+  const uses = lines.findIndex((line) => line.trim().startsWith("uses: actions/upload-artifact@"));
+  const job = uses === -1 ? -1 : lines.slice(0, uses + 1).findLastIndex((line) => /^ {2}\S.*:\s*$/u.test(line));
+  if (job === -1) {
+    return "";
+  }
+  const after = lines.slice(job + 1);
+  const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= 2);
+  const body = after.slice(0, ends === -1 ? after.length : ends);
+  const line = body.find((entry) => entry.search(/\S/u) === 4 && entry.trim().startsWith("if:"));
+  return line ? line.trim().slice("if:".length).trim() : "";
 }
 
 test("the gallery a run resolves to is the directory CI publishes for a reviewer", async () => {
@@ -306,8 +343,14 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
 
   process.env[STAGING_ENV] = before ?? "";
   assert.deepEqual(
-    [resolved.endsWith(`/${REVIEWER_GALLERY}`), published.includes(REVIEWER_GALLERY), published.filter((pattern) => pattern.startsWith("!")), conditionOf(step)],
-    [true, true, [], "always()"],
+    [
+      resolved.endsWith(`/${REVIEWER_GALLERY}`),
+      published.includes(REVIEWER_GALLERY),
+      published.filter((pattern) => pattern.startsWith("!")),
+      conditionOf(step),
+      jobConditionOf(workflow),
+    ],
+    [true, true, [], "always()", ""],
   );
 });
 
@@ -341,7 +384,7 @@ test("the audit a teardown really runs asks resolveDirs for its directories", as
     process.env[STAGING_ENV] = before ?? "";
   });
 
-  assert.deepEqual([audit.ran, audit.reason, existsSync(stage)], [false, "this run rendered no states, so there is no gallery to audit", false]);
+  assert.deepEqual([audit.ran, audit.reason, audit.staging, existsSync(stage)], [false, "this run rendered no states, so there is no gallery to audit", stage, false]);
 });
 
 /**
@@ -472,7 +515,12 @@ test("the teardown Playwright loads audits for real when it is handed nothing", 
 
   assert.deepEqual(
     [audit, existsSync(stage)],
-    [{ ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] }, false],
+    [{
+      ran: false,
+      reason: "this run rendered no states, so there is no gallery to audit",
+      incomplete: [],
+      staging: stage,
+    }, false],
   );
 });
 
