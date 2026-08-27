@@ -43,6 +43,25 @@ export function figureTag(shot) {
   return `<figure data-shot="${escape(shot)}">`;
 }
 
+/**
+ * An opening tag, stamped with the mark.
+ *
+ * The mark is *inserted* before the tag's `>`, so whatever attributes the tag
+ * already carried survive it. `applyMarks` used to rebuild the tag it wrote
+ * back instead, which bound producer and marker in the *search* direction only:
+ * give `figureTag` another attribute — a class, an id, a `loading` hint — and
+ * the marker still found the figure, then silently dropped that attribute from
+ * every figure it rewrote. Marked figures would lose it while unmarked ones
+ * kept it, `unmarked` would stay empty, and the gate would stay green.
+ *
+ * It is a function of the tag rather than of the shot so the property can be
+ * asked of a tag carrying attributes `figureTag` does not have today, instead
+ * of holding only for the one shape that happens to be written now.
+ */
+export function markTag(tag) {
+  return `${tag.slice(0, -1)} ${SETTLED_MARK}>`;
+}
+
 /** A crossing names the rule it breaks; a content sample names what it covers. */
 function describeProbe(state) {
   if (state.rule) {
@@ -52,7 +71,7 @@ function describeProbe(state) {
 }
 
 function figureFor(state, viewport, shot) {
-  return `${figureTag(shot)}<img loading="lazy" src="./${shot}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${escape(viewport.id)}</figcaption></figure>`;
+  return `${figureTag(shot)}<img loading="lazy" src="./${escape(shot)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${escape(viewport.id)}</figcaption></figure>`;
 }
 
 /** One state's card, linking its render at every viewport. */
@@ -132,6 +151,14 @@ function replaceOnce(html, find, replacement) {
  * missing — `notices` when the banner had nowhere to go, or the shot whose
  * figure was not found — which is what a reviewer needs to know, because the
  * page still renders perfectly well without them and looks clean while doing it.
+ *
+ * The stamped tag is `figureTag`'s own output with the mark inserted by
+ * `markTag`, never a second spelling of that tag. Rebuilding it here bound the
+ * two ends in the *search* direction only: an attribute added to `figureTag`
+ * was still found, and then dropped from every figure the marker rewrote — so
+ * the marked page silently lost it while the unmarked figures kept it,
+ * `unmarked` stayed empty and the gate stayed green. Insertion cannot drop what
+ * it never re-spells.
  */
 export function applyMarks(html, notice, unsettled) {
   const unmarked = [];
@@ -146,7 +173,7 @@ export function applyMarks(html, notice, unsettled) {
   }
   for (const shot of unsettled) {
     const tag = figureTag(shot);
-    const marked = replaceOnce(page, tag, `<figure data-shot="${escape(shot)}" ${SETTLED_MARK}>`);
+    const marked = replaceOnce(page, tag, markTag(tag));
     if (marked === null) {
       unmarked.push(shot);
     } else {

@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
-import { applyMarks, escape, figureTag, indexPage, NOTICE_ANCHOR, rowsFor } from "../e2e/playwright/gallery-index.mjs";
+import { applyMarks, escape, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -603,6 +603,52 @@ test("the attribute a figure is stamped with is the one the page's styling draws
 });
 
 /**
+ * The mark is *added to* the tag the page writes, never a second spelling of it.
+ *
+ * `applyMarks` searches for `figureTag(shot)` and then rebuilt the opening tag
+ * it wrote back, which bound the two ends in the *search* direction only. Give
+ * `figureTag` another attribute — a class, a `loading` hint, an id — and the
+ * marker still finds the figure, and then silently drops that attribute from
+ * every figure it rewrites. The marked figures lose it while the unmarked ones
+ * keep it, `unmarked` stays empty, and the gate stays green: the same drift as
+ * an anchor that moved, in the one direction nothing was looking.
+ *
+ * Rebuilding and inserting produce the identical string for the tag written
+ * today, so asking this of `figureTag`'s current shape would prove nothing —
+ * the test would hold by construction, which is the defect, not the check. It
+ * is therefore asked of `markTag` over a tag carrying attributes no figure has
+ * yet: what must be true is that the mark is added and nothing else changes.
+ */
+test("stamping adds the mark to a figure tag and drops nothing it already carried", () => {
+  const tag = '<figure class="shot" id="first" data-shot="a.png">';
+
+  const stamped = markTag(tag);
+
+  assert.deepEqual(
+    [stamped.startsWith(tag.slice(0, -1)), stamped.includes(SETTLED_MARK), stamped.endsWith(">"), stamped.length],
+    [true, true, true, tag.length + SETTLED_MARK.length + 1],
+  );
+});
+
+/**
+ * …and the page's stamped figures are that function over that tag.
+ *
+ * The binding between the two, which is what makes the property above reach the
+ * gallery: a marker that went back to rebuilding still passes today and fails
+ * the moment `figureTag` gains anything, which is exactly when it must.
+ */
+test("the figures a marked page carries are the page's own tags, stamped", () => {
+  const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
+  const target = shotName(STATES[0].id, VIEWPORTS[0].id);
+  const literal = target.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+  const marked = applyMarks(page, "", [target]);
+  const stamped = new RegExp(`<figure[^>]*data-shot="${literal}"[^>]*>`, "u").exec(marked.html)?.[0];
+
+  assert.equal(stamped, markTag(figureTag(target)));
+});
+
+/**
  * A state's own text is written into `alt`, `data-shot`, the heading, the
  * summary, the meta line and the fixture list, and nothing stops any of them
  * from containing a quote. No state carries one today, so `escape` doing
@@ -613,6 +659,13 @@ test("the attribute a figure is stamped with is the one the page's styling draws
  * The fixture is hostile in *every* field a row interpolates, because a
  * fixture hostile in two of them proved only those two: dropping the escape
  * from `summary`, `kind` and the fixture join left the suite green.
+ *
+ * Looking only for leaked tags is the same half-check one layer along: a shot
+ * name written raw breaks `data-shot` and `src` open three characters early
+ * without introducing a single `<`, so the tag filter stays empty and the marker
+ * then hunts for an anchor the page never wrote. The two attributes a mark and a
+ * reviewer's eye depend on are therefore read exactly, and the raw spelling is
+ * required to be absent.
  */
 test("a state's own text cannot break out of the attribute it is written into", () => {
   const hostile = {
@@ -622,11 +675,18 @@ test("a state's own text cannot break out of the attribute it is written into", 
     covers: "<i>a card</i>",
     fixture: ["<u>one</u>"],
   };
+  const shot = 'desktop--"x.png';
 
-  const row = rowsFor([hostile], VIEWPORTS, () => 'desktop--"x.png');
+  const row = rowsFor([hostile], VIEWPORTS, () => shot);
 
   assert.deepEqual(
-    [escape('a "b" <c> & d'), ["<script>", "<em>", "<b>", "<i>", "<u>"].filter((tag) => row.includes(tag))],
-    ["a &quot;b&quot; &lt;c&gt; &amp; d", []],
+    [
+      escape('a "b" <c> & d'),
+      ["<script>", "<em>", "<b>", "<i>", "<u>"].filter((tag) => row.includes(tag)),
+      row.includes(`data-shot="${escape(shot)}"`),
+      row.includes(`src="./${escape(shot)}"`),
+      row.includes(`data-shot="${shot}"`),
+    ],
+    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], true, true, false],
   );
 });

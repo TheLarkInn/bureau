@@ -142,12 +142,20 @@ test("@matrix gallery index", async () => {
  * every rule present, spelled correctly, matching the stamped figure — and
  * changing nothing a reviewer can see. That is the same defect as an anchor
  * that drifted, asserted one notch further down, and no amount of reading the
- * sheet as text can settle it. So the page is loaded and the two figures are
- * compared as rendered: a stamped one must not be drawn like its neighbour, and
- * the words the mark promises must actually be in the caption.
+ * sheet as text can settle it. So the page is loaded and the figures are
+ * compared as rendered: a stamped one must not be drawn like its neighbours,
+ * and the words the mark promises must actually be in the caption.
+ *
+ * The stamped figure is deliberately *not* the first on the page, and every
+ * unstamped figure is checked rather than one of them. While it was the first,
+ * and its single neighbour the only control, a positional rule — say
+ * `.shots figure:first-of-type figcaption::after` beside the real one — kept
+ * this green while telling a reviewer that the first render of all 256 cards
+ * was not proved settled. A mark drawn on the wrong screens is worse than one
+ * drawn on none, so the question is asked of the whole page.
  */
 test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
-  const target = shot(STATES[0], VIEWPORT_LIST[0]);
+  const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
   const marked = applyMarks(indexPage(rowsFor(STATES, VIEWPORT_LIST, shot), STATES, VIEWPORT_LIST), "", [target]);
 
   await page.setContent(marked.html);
@@ -158,10 +166,16 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
       return `${style.borderTopColor} ${style.borderTopWidth}`;
     };
     const after = (figure) => getComputedStyle(figure.querySelector("figcaption"), "::after").content;
+    const says = (figure) => after(figure).includes("not proved settled");
     const stamped = document.querySelector("figure[data-settled]");
-    const plain = document.querySelector("figure:not([data-settled])");
-    return [border(stamped) !== border(plain), after(stamped).includes("not proved settled"), after(plain).includes("not proved settled")];
+    const plain = [...document.querySelectorAll("figure:not([data-settled])")];
+    return [
+      plain.length > 1,
+      plain.every((figure) => border(figure) !== border(stamped)),
+      says(stamped),
+      plain.filter(says).length,
+    ];
   });
 
-  expect(drawn, "a stamped figure is drawn unlike an unstamped one, and says so").toEqual([true, true, false]);
+  expect(drawn, "a stamped figure is drawn unlike every unstamped one, and only it says so").toEqual([true, true, true, 0]);
 });

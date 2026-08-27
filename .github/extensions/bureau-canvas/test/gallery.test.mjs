@@ -212,3 +212,32 @@ test("a run given no directories works over this run's staging and the real gall
     [{ staging: "/tmp/bureau-staging-under-test", gallery: GALLERY }, { staging: "/tmp/a", gallery: "/tmp/b" }],
   );
 });
+
+/**
+ * …and `auditGallery` is the thing that asks for it.
+ *
+ * The test above proves `resolveDirs` alone, which is one binding short of the
+ * statement. Drop the call — `const { staging: stageDir, gallery: outDir } =
+ * dirs` — and it stays green, along with every other test here, because they
+ * all pass both directories explicitly and never take the defaulting path. A
+ * real teardown, which passes none, would then audit `undefined`.
+ *
+ * So the production entry point is called exactly as `globalTeardown` calls it,
+ * with no arguments, over a staging directory that this test owns and left
+ * empty. Empty is the safe way to ask: `publishGallery` discards an empty
+ * staging directory and returns before it can touch `GALLERY`, so a reviewer's
+ * gallery is never at risk, and the run still had to resolve a staging path to
+ * discover there was nothing in it.
+ */
+test("the audit a teardown really runs asks resolveDirs for its directories", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const before = process.env[STAGING_ENV];
+  process.env[STAGING_ENV] = join(root, "staging");
+
+  const audit = await audited().finally(() => {
+    process.env[STAGING_ENV] = before ?? "";
+  });
+
+  assert.deepEqual([audit.ran, audit.reason], [false, "this run rendered no states, so there is no gallery to audit"]);
+});
