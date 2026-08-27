@@ -359,6 +359,84 @@ on one element — the thing a person cannot find by eye and a diff finds at onc
 A render missing a settle record reads as proved, so a gallery published before
 this rule existed is not retroactively cast into doubt.
 
+### The audit could not be found among the run's checks
+
+Every rule above produced a *finding*, and nothing was answerable for any of
+them. A full matrix could publish `This gallery is not the whole matrix` in red
+at the top of the artefact, and the only things carrying that news were a
+console line and a banner nobody is gated on — which is the same defect this
+whole branch is about, an amber mark standing in for a check that found
+something, made by the instrument whose job is to find it.
+
+Gating on everything the audit produces was not the answer, and the reason is
+worth keeping. The findings are two different kinds of statement. Some are
+arithmetic over a file list: did this run write every render the registry asked
+for, does every published render belong to a state, did every published render
+file a record that can be read, and did a declared twin get both of its sides
+rendered. None of those compares one render against another, so none of them can
+come out differently on a contended machine. The rest — two states drawing one
+screen, a declared twin that parted — *are* comparisons, and the signature still
+drifts on some renders because content occasionally arrives after a surface has
+held still for a poll interval. A gate on a drifting signal fails runs at random,
+and a flaky gate is worse than no gate.
+
+So the line is drawn at what the finding is computed from, not at how bad it
+sounds. `partitionFindings` splits the three ways once, the deterministic half
+is asserted, the comparisons stay reported in the banner where a reviewer is
+already looking, and drift stays in the amber note. `unchecked-twin` moved
+across into the asserted half, because "this run rendered one side or neither"
+is not a comparison at all — it is the same arithmetic as a missing render.
+
+Where it is asserted matters too. A throwing `globalTeardown` does fail a run —
+that was measured rather than assumed — but it fails it as an error belonging to
+no test: the reporter says "1 error was not a part of any test", and the run's
+own record of what it checked does not contain the check. So the audit is a
+teardown *project* — `specs/gallery.audit.spec.mjs`, which runs from the same
+vantage point once every worker has finished — and it is a named check that
+fails by name. It also asserts that it *ran*: a run that published no index
+produces no findings, and without that guard the check would be green for a run
+that never looked. Its project sets `retries: 0` deliberately, because
+publishing is a rename: a retry finds staging already gone, reads that as "this
+run rendered nothing", and would turn a real finding green by asking twice.
+
+### The lab certified frames the matrix rejected
+
+Settling is two claims — the DOM has stopped changing, and every graph has
+finished its edge pass — and for a round only the second was shared. Both
+surfaces imported `graphsDrawn`, so they agreed about a graph mid-draw, and the
+stability half stayed written out at each call site where the two copies were
+not the same rule at all: `matrix-fixtures.mjs` required `SETTLE_REPEATS`
+consecutive looks with an unchanged signature, and `lab.mjs` required nothing,
+leaving on the first failure-free look.
+
+`transport:playing` is what that costs. Its scrubber advances every 100ms, so
+its signature never holds still; the matrix records it as not proved settled and
+the lab handed a reviewer its first frame with every line green. Two consumers
+of one registry answering the same question differently is the contradiction
+this registry exists to remove, and sharing only the half that had already been
+caught left it standing in the other half. Leaving on the first clean look is
+also what made a *late* failure invisible — an error that arrives a beat after
+first paint was never sampled, because nothing looked again.
+
+`settleStep` is now the whole rule, both halves, in one place. And the note had
+to change with it: "a graph on this render has not drawn all of its edges" was
+true while `settled` meant the edge pass alone and became a false sentence the
+moment stability joined it, because a playing replay has drawn every edge it
+declared. `unsettledReason` picks between the three causes, and an offline test
+holds each to its own words.
+
+### The relation graph's edge count answered for itself
+
+`data-graph-edges` is derived from the same projection React Flow renders, which
+is exactly right for the barrier it serves — *has the edge pass happened* — and
+is no evidence at all for *are the right edges there*: a projection that dropped
+every edge would declare zero, draw zero, and satisfy it. The pipeline graph has
+been checked against its own layout since the first version of the Edge harness.
+The relation graph — which draws the assignment-first mental model this canvas
+is built around — was only ever asked whether it had drawn *some* edge. It is
+now counted against `relationView`'s own edges, which are derived from the
+config rather than from the render.
+
 ### Absence, and the writes that are not a Save
 
 Two families of screen were missing from the matrix for as long as it has
@@ -522,6 +600,28 @@ step reaches both screens with no mutation at all; only this bundle cannot. Both
 are `harness` rules now, each naming its limit and the state that stands for it,
 and re-enumerating without either one keeps two further combinations, which is
 the `costless` check confirming they were hiding something.
+
+`stands` was, for a while, checked for nothing but *existence* — any state id in
+the registry satisfied it — so the field that says "here is where a reviewer can
+go and look at the screen this rule removed" could name something unrelated and
+still read green. That is a label that reads as evidence and is not, which is
+the defect `unbroken` already removes from crossings, left standing on the rule
+kind where the cost is highest.
+
+It is held to two properties instead, and it is worth being exact about why they
+are not "renders the same screen". The two screens differ by one axis on
+purpose, because that axis is the thing the harness cannot reach: the *clean*
+selection of a decision step stands on a **created** one, which carries a dirty
+bar the excluded screen would not have, and claiming the renders match would be
+the same overclaim in the other direction. So the standing state must satisfy
+the rule — a state the rule itself excludes is not somewhere the harness can get
+to — and changing exactly one of the axes the rule reads must produce a
+combination the rule rejects. A reviewer looking at `stands` is one named axis
+away from the screen the rule removed, rather than somewhere else entirely, and
+that is now a check rather than a promise. It is asked against the rule's own
+predicate, not against `enumerate`'s worked example, because which tuple that
+example is depends on the walk order — a check that passed or failed on `ORDER`
+would be a mark by another route.
 
 Kinding is a judgement, and the check that catches this one is narrower than the
 judgement: a rule whose verdict is computed from `SAMPLE_STEPS` is deciding from

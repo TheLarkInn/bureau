@@ -90,6 +90,12 @@ test("the compact control resizes the stage and re-runs the entry path", async (
   await expect(stage).toHaveJSProperty("offsetWidth", VIEWPORTS.compact.width);
   await expect(page.locator("#viewport-note")).toContainText(`${VIEWPORTS.compact.width}`);
   await page.locator("#detail .expectations").waitFor();
+  // The state the reviewer selected, not whichever one was still on screen. The
+  // button re-runs `current`, and while that was set when a walk *started*
+  // rather than when it was requested, a click landing during a walk re-ran the
+  // previous state and relabelled the panel with it. Nothing caught it because
+  // walks used to finish faster than a second click could arrive.
+  await expect(page.locator("#detail h2")).toHaveText(target.id);
   await expect(page.frameLocator("#stage-frame").locator(".assignment-detail")).toBeVisible();
   expect(errors).toEqual([]);
 });

@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, undrawnFor, undrawnGraphs, undrawnLooks, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -674,12 +674,34 @@ test("every scoping rule is held to account by a crossing probe that really brea
 
 /**
  * A `harness` rule is the one kind that excludes a screen a user really
- * reaches, so it is the one kind that can quietly cost coverage. Three claims
- * are checked, and the third is the one that cannot be talked around: enumerate
+ * reaches, so it is the one kind that can quietly cost coverage. Four claims
+ * are checked. The third is the one that cannot be talked around: enumerate
  * again without the rule, and if the kept set does not grow then the rule hides
  * nothing of its own and is claiming a cost it does not impose.
+ *
+ * The fourth closes the hole the other three left. `stands` was asked for
+ * nothing but *existence* — any state id in the registry satisfied it — so the
+ * field that is supposed to say "here is the excluded screen, reached from
+ * somewhere this harness can get to" could name a state with no relation to the
+ * exclusion at all, and the check would still read green. A name that reads as
+ * evidence and is not is the exact defect `unbroken` was written to remove from
+ * crossings, left standing on the rule kind where the cost is highest.
+ *
+ * So the standing state is held to two properties instead. It must satisfy the
+ * rule — a state the rule itself excludes is not somewhere the harness can
+ * reach — and it must sit *adjacent* to the excluded region: changing exactly
+ * one of the axes the rule reads must produce a combination the rule rejects.
+ * That is the strongest thing that is actually true here, and it is worth being
+ * exact about why it is not "renders the same screen". These screens differ by
+ * one axis on purpose, because the axis is what the harness cannot reach: the
+ * clean selection of a decision step stands on a *created* one, which carries a
+ * dirty bar the excluded screen would not have. Claiming the two renders match
+ * would be the same overclaim in the other direction. What `stands` promises,
+ * and what this now holds it to, is that a reviewer looking at it is one named
+ * axis away from the screen the rule removed, rather than somewhere else
+ * entirely.
  */
-test("every harness rule names its limit, stands on a rendered screen, and really hides one", () => {
+test("every harness rule names its limit, stands next to the screen it hides, and really hides one", () => {
   const harness = CONSTRAINTS.filter((rule) => rule.kind === "harness");
   const rendered = new Set(STATES.map((state) => state.id));
   const base = enumerate(ORDER, valuesOf).kept.length;
@@ -689,15 +711,37 @@ test("every harness rule names its limit, stands on a rendered screen, and reall
     {
       unnamed: harness.filter((rule) => !rule.limit?.trim()).map((rule) => rule.id),
       unstood: harness.filter((rule) => !rendered.has(rule.stands)).map((rule) => rule.id),
+      // Reported only for a rule whose standing state exists, so a bad name is
+      // one finding rather than two.
+      unadjacent: harness.filter((rule) => rendered.has(rule.stands) && !standsNextTo(rule)).map((rule) => rule.id),
       costless: harness.filter((rule) => withoutRule(rule) <= base).map((rule) => rule.id),
       // The obligations belong to the kind. A structural or scoping rule
       // carrying them reads as a harness limit that was never re-kinded.
       mislabelled: CONSTRAINTS.filter((rule) => rule.kind !== "harness" && (rule.limit || rule.stands)).map((rule) => rule.id),
       unknownKind: CONSTRAINTS.filter((rule) => !["structural", "scoping", "harness"].includes(rule.kind)).map((rule) => rule.id),
     },
-    { unnamed: [], unstood: [], costless: [], mislabelled: [], unknownKind: [] },
+    { unnamed: [], unstood: [], unadjacent: [], costless: [], mislabelled: [], unknownKind: [] },
   );
 });
+
+/**
+ * Whether a rule's standing state is reachable past that rule and one axis away
+ * from a combination the rule rejects.
+ *
+ * Asked against the rule's own predicate rather than against an enumerated
+ * example, because `enumerate` keeps one worked example per rule and which
+ * tuple that is depends on `ORDER`. A check that compared `stands` against that
+ * example would pass or fail on the walk order rather than on the registry,
+ * which is a mark rather than a check by a different route.
+ */
+function standsNextTo(rule) {
+  const stands = STATES.find((state) => state.id === rule.stands);
+  if (!stands?.dimensions || !rule.holds(stands.dimensions)) {
+    return false;
+  }
+  return rule.reads.some((axis) =>
+    valuesOf(axis).some((value) => !rule.holds({ ...stands.dimensions, [axis]: value.id })));
+}
 
 /**
  * The blind spot the check above leaves, closed from the other side.
@@ -1340,6 +1384,71 @@ test("a render is settled only once every graph on it has drawn its edges", () =
 /** A snapshot from before the rule existed reads as drawn, not as unfinished. */
 test("a snapshot that files no graphs is not held back by the rule", () => {
   assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined)], [true, true]);
+});
+
+/**
+ * Settling is stability *and* a finished edge pass, and both halves belong to
+ * both consumers.
+ *
+ * Only the second half was ever shared. The matrix required `SETTLE_REPEATS`
+ * consecutive looks with an unchanged signature; the lab required nothing and
+ * left on the first failure-free look, so the surface a human reviews certified
+ * renders the run that gates CI marked. `transport:playing` is the case that
+ * makes it concrete: its scrubber advances every 100ms, its signature never
+ * holds still, and the two surfaces gave a reviewer opposite answers about the
+ * same render.
+ *
+ * Table-driven over one run of looks, because what is under test is a fold: an
+ * unchanged signature has to accumulate, a changed one has to reset the count
+ * to zero rather than decrement it, and the threshold is reached on the look
+ * where agreement — not sampling — reaches `SETTLE_REPEATS`.
+ */
+test("a render is settled once its signature has held still and its graphs have drawn", () => {
+  const looks = ["a", "a", "a", "a", "b", "b"];
+  const walked = [];
+  let settle = null;
+  for (const signature of looks) {
+    settle = settleStep(settle, { signature, graphs: [{ name: "g", declared: 2, drawn: 2 }] });
+    walked.push([settle.agreed, settle.settled]);
+  }
+
+  assert.deepStrictEqual(walked, [[0, false], [1, false], [2, false], [3, true], [0, false], [1, false]]);
+});
+
+/** A held signature over a graph still drawing is not settled either. */
+test("a still signature does not settle a render whose graph has not finished", () => {
+  const drawing = { signature: "a", graphs: [{ name: "g", declared: 2, drawn: 0 }] };
+  let settle = null;
+  for (let index = 0; index < 6; index += 1) {
+    settle = settleStep(settle, drawing);
+  }
+
+  assert.deepStrictEqual([settle.agreed >= 3, settle.settled], [true, false]);
+});
+
+/**
+ * Why a render was not proved settled, said in words that are true of it.
+ *
+ * The note read "a graph on this render has not drawn all of its edges"
+ * whenever `settled` was false. That was accurate while `settled` meant the
+ * edge pass alone, and became a false statement the moment stability joined it:
+ * a replay whose scrubber is advancing has drawn every edge it declared, and
+ * sending a reviewer to inspect its graph sends them after a defect that is not
+ * there. Three causes, three sentences.
+ */
+test("an unsettled render is told the reason that actually applies to it", () => {
+  const drawn = { graphs: [{ name: "g", declared: 2, drawn: 2 }] };
+  const behind = { graphs: [{ name: "g", declared: 2, drawn: 0 }] };
+  const named = [{ kind: "undrawn-graph", name: "g", detail: "g declared 2 edge(s) and drew 0" }];
+
+  assert.deepStrictEqual(
+    [
+      unsettledReason(behind, named),
+      unsettledReason(behind, []).includes("too few looks"),
+      unsettledReason(drawn, []).includes("never stopped changing"),
+    ],
+    ["g declared 2 edge(s) and drew 0", true, true],
+  );
 });
 
 /**

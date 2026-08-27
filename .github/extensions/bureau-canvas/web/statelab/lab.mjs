@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyLabel, graphsDrawn, measureFor, selectorsFor, SETTLE_REPEATS, undrawnFor, undrawnLooks, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unsettledReason, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { violations } from "./constraints.mjs";
@@ -142,15 +142,33 @@ function stateButton(state) {
  * would fight over one iframe — a viewport switch mid-walk used to reload the
  * page underneath the walk in flight — so they are serialised on a promise
  * queue and each walk runs to completion before the next begins.
+ *
+ * `current` is set on *request* rather than when the walk reaches the front of
+ * the queue, and the difference is not academic. The viewport buttons and
+ * Reload both re-run `current`, so while it meant "the walk that has started"
+ * every one of those controls re-ran whichever state was still on screen rather
+ * than the one the reviewer had just clicked — and then said so in the panel,
+ * under the heading of a state the reviewer never asked to see. It was
+ * invisible only because walks used to finish before a second click could land;
+ * requiring a render to hold still before it is judged made the queue long
+ * enough to meet by hand. A control that acts on a stale selection is the
+ * ordinary shape of this defect, and a review surface is the last place it
+ * belongs.
  */
 function show(state) {
+  current = state;
+  // Written here rather than inside the walk, for the same reason `current` is.
+  // The hash and the selection have to move together: a walk that stamped the
+  // hash when it reached the front of a queue would announce state A while the
+  // reviewer had already asked for B, and the `hashchange` guard below — which
+  // compares against `current` — would read that as a *new* request and queue A
+  // all over again.
+  window.location.hash = encodeURIComponent(state.id);
   queue = queue.catch(() => {}).then(() => walk(state));
   return queue;
 }
 
 async function walk(state) {
-  current = state;
-  window.location.hash = encodeURIComponent(state.id);
   for (const node of document.querySelectorAll(".state-item")) {
     node.classList.toggle("is-active", node.querySelector(".state-id")?.textContent === state.id);
   }
@@ -203,6 +221,16 @@ const SETTLE_POLL_MS = 50;
  * reached is returned rather than kept: a render the loop could not prove is
  * marked, not presented as verified.
  *
+ * Sharing the barrier was not the whole of sharing the rule, and for a round it
+ * was mistaken for it. Settling is stability *and* a finished edge pass; only
+ * the second half came from `checks.mjs`, and the first was written out here as
+ * "leave on the first failure-free look" — which is no stability rule at all.
+ * So the two surfaces still disagreed, in the direction that matters most: the
+ * matrix recorded `transport:playing` as not proved settled, because its
+ * scrubber advances every 100ms and its signature never holds still, while this
+ * panel handed a reviewer its first frame with every line green. Both halves
+ * now come from `settleStep`, so the disagreement has nowhere left to live.
+ *
  * The count of looks a graph spent incomplete is shared too, so the note can
  * say *which* graph did not finish. "A graph on this render" is the same dead
  * end the matrix's own failure was rewritten to remove: three surfaces publish
@@ -220,14 +248,17 @@ const SETTLE_POLL_MS = 50;
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
   let looks = new Map();
+  let settle = null;
   let result = inspect(state);
-  looks = undrawnLooks(looks, result.snapshot);
-  while ((result.failures.length || !graphsDrawn(result.snapshot)) && Date.now() < deadline) {
+  for (;;) {
+    settle = settleStep(settle, result.snapshot);
+    looks = undrawnLooks(looks, result.snapshot);
+    if ((settle.settled && !result.failures.length) || Date.now() >= deadline) {
+      return { ...result, settled: settle.settled, undrawn: undrawnFor(result.snapshot, looks, SETTLE_REPEATS) };
+    }
     await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
     result = inspect(state);
-    looks = undrawnLooks(looks, result.snapshot);
   }
-  return { ...result, settled: graphsDrawn(result.snapshot), undrawn: undrawnFor(result.snapshot, looks, SETTLE_REPEATS) };
 }
 
 function inspect(state) {
@@ -345,23 +376,29 @@ function expectationList(state, result) {
   if (result?.channel?.observed === false) {
     box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
   }
-  // The graph half of the same claim. A relation or pipeline surface that never
-  // finished its edge pass is a picture of steps joined to nothing, and every
-  // other line in this panel would still read green — none of them names an
-  // edge. Marked rather than failed, because the lab renders one state at a
-  // time in a live frame, so a slow pass here is ordinary and the panel's job
-  // is to say which renders may be believed; the matrix, which gates a run
+  // The graph half of the same claim, and the stability half beside it. A
+  // relation or pipeline surface that never finished its edge pass is a picture
+  // of steps joined to nothing, and a surface still moving when the window ran
+  // out is a frame rather than a screen — every other line in this panel would
+  // read green for both, because none of them names an edge and none of them
+  // looks twice. Marked rather than failed, because the lab renders one state
+  // at a time in a live frame, so a slow pass here is ordinary and the panel's
+  // job is to say which renders may be believed; the matrix, which gates a run
   // inside a controlled budget, fails on the same fact.
+  //
+  // The reason is chosen by `unsettledReason` rather than assumed here. While
+  // `settled` meant a finished edge pass alone, "a graph has not drawn all of
+  // its edges" was the only thing it could mean; once stability joined it the
+  // same sentence became false for every state that animates by design, which
+  // is a review surface sending a reviewer after a defect that is not there.
   //
   // Named, because three surfaces publish the count and more than one can be on
   // a render at once. An empty `undrawn` beside `settled: false` says only that
-  // the graph has been behind for fewer looks than the threshold — it is not a
-  // claim that the graph was ever complete, which is a thing this loop does not
-  // record and must not imply.
+  // no graph has been behind for long enough to tell — it is not a claim that
+  // any graph was ever complete, which is a thing this loop does not record and
+  // must not imply.
   if (result?.settled === false) {
-    const detail = result.undrawn?.length
-      ? result.undrawn.map((item) => item.detail).join("; ")
-      : "a graph on this render has not drawn all of its edges, for too few looks yet to tell a late pass from a broken one";
+    const detail = unsettledReason(result.snapshot, result.undrawn ?? []);
     box.append(el("p", "note note--warn", `Not proved settled: ${detail}. Re-run this state before reading its graph.`));
   }
   const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));

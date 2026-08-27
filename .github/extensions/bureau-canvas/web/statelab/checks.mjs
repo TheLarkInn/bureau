@@ -510,6 +510,64 @@ export function graphsDrawn(snapshot) {
 export const SETTLE_REPEATS = 3;
 
 /**
+ * One look's answer to "has this render stopped changing yet".
+ *
+ * Settling is two claims, and for a while only one of them was shared. Both
+ * consumers imported `graphsDrawn`, so they agreed about a graph mid-draw — and
+ * the *stability* half stayed written out at each call site, where the two
+ * copies were not the same rule at all. `matrix-fixtures.mjs` required
+ * `SETTLE_REPEATS` consecutive looks with an unchanged signature; `lab.mjs`
+ * required nothing, and left on the first failure-free look. So the surface a
+ * human reviews certified renders the matrix marks: `transport:playing`
+ * advances on a 100ms interval and can never hold still, and the lab presented
+ * its first frame as verified while the run that gates CI recorded it as not
+ * proved settled. Two consumers of one registry answering the same question
+ * differently is the contradiction this whole change exists to remove, and
+ * sharing only the half that had already been caught left it standing in the
+ * other half.
+ *
+ * It is also the half that catches a *late* failure. Leaving on the first clean
+ * look means nothing that arrives afterwards is ever sampled — an error that
+ * lands a beat after first paint, a control that disappears once its data
+ * resolves — so the panel's green line described a page that no longer existed.
+ * Requiring the signature to hold still keeps looking until the render is done
+ * arriving, and every look re-takes the verdict.
+ *
+ * Carries the signature it judged rather than taking a bare previous string, so
+ * a caller cannot thread the two apart and compare this look against the wrong
+ * one.
+ *
+ * Pure, so the offline suite holds the rule without a browser and without a
+ * clock.
+ */
+export function settleStep(previous, snapshot) {
+  const agreed = previous && snapshot?.signature === previous.signature ? previous.agreed + 1 : 0;
+  return { signature: snapshot?.signature, agreed, settled: agreed >= SETTLE_REPEATS && graphsDrawn(snapshot) };
+}
+
+/**
+ * Why a render could not be proved settled, in words that are true of it.
+ *
+ * There are three reasons and they used to be reported as one. The note said "a
+ * graph on this render has not drawn all of its edges" whenever `settled` was
+ * false, which was accurate while `settled` meant `graphsDrawn` alone and became
+ * a false statement the moment stability joined it: a replay whose scrubber is
+ * advancing has drawn every edge it declared, and telling a reviewer to go and
+ * look at its graph sends them after a defect that is not there.
+ *
+ * Pure, so the offline suite holds the rule without a browser.
+ */
+export function unsettledReason(snapshot, undrawn) {
+  if (undrawn.length) {
+    return undrawn.map((item) => item.detail).join("; ");
+  }
+  if (!graphsDrawn(snapshot)) {
+    return "a graph on this render has not drawn all of its edges, for too few looks yet to tell a late pass from a broken one";
+  }
+  return "the DOM never stopped changing inside the settle window, so this is a frame rather than a screen; a state that animates by design is expected here";
+}
+
+/**
  * How much of the budget each graph has spent with its edges missing.
  *
  * The observation this replaces was a latch: a graph seen complete once was

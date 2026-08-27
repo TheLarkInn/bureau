@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { markUnsettled, notices } from "../e2e/playwright/global-teardown.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
@@ -463,5 +463,49 @@ test("a gallery that is missing renders raises the alarm, unsettled or not", () 
   assert.deepEqual(
     [both.includes("not the whole matrix"), both.includes(A), both.includes("not proved settled")],
     [true, true, true],
+  );
+});
+
+/**
+ * Which findings may fail a run, decided by what they are computed from.
+ *
+ * The audit produced findings and gated on none of them: a run could print
+ * `This gallery is not the whole matrix` in red and still exit 0, which is the
+ * same defect this branch exists to remove — an amber mark standing in for a
+ * check that found something — made by the instrument that reports it. Gating
+ * on everything was not the answer either, because a comparison between two
+ * renders still drifts and a flaky gate is worse than no gate here.
+ *
+ * So the line is drawn at arithmetic. `unchecked-twin` says the run rendered
+ * one side or neither, which is a fact about a file list and cannot come out
+ * differently on a loaded machine, so it gates alongside a missing render.
+ * `broken-twin` and `undeclared-twin` are comparisons and stay advisory.
+ *
+ * `total` is asserted so the partition stays total: a kind added later cannot
+ * fall out of all three buckets and quietly stop being reported at all.
+ */
+test("only the findings that are arithmetic over the file list may gate a run", () => {
+  const findings = [
+    { kind: "unchecked-twin", detail: "neither side rendered" },
+    { kind: "broken-twin", detail: "declared and parted" },
+    { kind: "undeclared-twin", detail: "two states, one screen" },
+    { kind: "unproven-twin", detail: "parted, but one side never settled" },
+    { kind: "unproven-match", detail: "matched, but one side never settled" },
+  ];
+  const parted = partitionFindings(findings);
+
+  assert.deepEqual(
+    {
+      unchecked: parted.unchecked.map((finding) => finding.kind),
+      claims: parted.claims.map((finding) => finding.kind),
+      drift: parted.drift.map((finding) => finding.kind),
+      total: parted.unchecked.length + parted.claims.length + parted.drift.length,
+    },
+    {
+      unchecked: ["unchecked-twin"],
+      claims: ["broken-twin", "undeclared-twin"],
+      drift: ["unproven-twin", "unproven-match"],
+      total: findings.length,
+    },
   );
 });

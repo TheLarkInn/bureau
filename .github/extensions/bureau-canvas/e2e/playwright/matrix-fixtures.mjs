@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, SETTLE_REPEATS, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -604,28 +604,25 @@ async function judge(state, page) {
   let result = await sample(state, page);
   let clean = result.failures.length ? null : result;
   let sustained = result.failures.length ? 1 : 0;
-  let agreed = 0;
-  let previous = null;
+  let settle = null;
   let looks = new Map();
   for (;;) {
-    agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
-    const drawn = graphsDrawn(result.snapshot);
+    settle = settleStep(settle, result.snapshot);
     // Folded on every look rather than read once at the deadline, because the
     // question is how much of the budget a graph spent behind and the deadline
-    // sees only the last look. `graphsDrawn` is the barrier — "is anything on
-    // this render still behind?" — and it answers `true` about a render
-    // carrying no graph at all, which is correct for deciding whether to keep
-    // waiting and was wrong for deciding whether anything had been observed. A
-    // render with no graph contributes no counts, so it still costs nothing.
+    // sees only the last look. `graphsDrawn`, inside `settleStep`, is the
+    // barrier — "is anything on this render still behind?" — and it answers
+    // `true` about a render carrying no graph at all, which is correct for
+    // deciding whether to keep waiting and was wrong for deciding whether
+    // anything had been observed. A render with no graph contributes no counts,
+    // so it still costs nothing.
     looks = undrawnLooks(looks, result.snapshot);
-    const settled = agreed >= SETTLE_REPEATS && drawn;
-    if (settled && !result.failures.length) {
-      return { ...result, settled };
+    if (settle.settled && !result.failures.length) {
+      return { ...result, settled: true };
     }
     if (Date.now() >= deadline) {
-      return { ...atDeadline(result, clean, sustained, looks), settled };
+      return { ...atDeadline(result, clean, sustained, looks), settled: settle.settled };
     }
-    previous = result.snapshot.signature;
     await page.waitForTimeout(SETTLE_POLL_MS);
     result = await sample(state, page);
     sustained = result.failures.length ? sustained + 1 : 0;

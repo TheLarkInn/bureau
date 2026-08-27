@@ -17,17 +17,44 @@ import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift } from "./gallery-audit.mjs";
+import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
 const SIGNATURES = "signatures";
 
 export default async function globalTeardown() {
+  await auditGallery();
+}
+
+/**
+ * Publishes this run's renders, says what the gallery holds, and hands back the
+ * findings a run may be failed for.
+ *
+ * Called from `specs/gallery.audit.spec.mjs` rather than only from the hook
+ * above, and that indirection is the point. For as long as the audit lived in
+ * the hook it produced *findings* and nothing was answerable for them: a run
+ * could print `This gallery is not the whole matrix` in red, at length, and the
+ * only thing carrying that news was a console line and a banner nobody is
+ * gated on. Throwing from the hook does fail the run — that was measured, not
+ * assumed — but it fails it as an error belonging to no test, so the reporter
+ * says "1 error was not a part of any test" and the run's own record of what it
+ * checked does not contain the check. In a change about making the harness's
+ * marks answerable as checks, this one should be a named check. A teardown
+ * *project* runs from the same vantage point, after every worker has finished,
+ * and asserts with `expect`.
+ *
+ * The hook stays because it is still the only thing that runs when the audit
+ * spec does not — `test:pr` and `test:visual` filter it out — and there it is a
+ * no-op that discards a staging directory nobody published. After the spec has
+ * run, staging has already been renamed over the gallery, so this second call
+ * finds nothing and returns without touching a reviewer's artefact.
+ */
+export async function auditGallery() {
   const { records, unreadable } = await collapseSignatures(staging());
   const published = await publishGallery(staging(), GALLERY);
   if (!published.length) {
-    return;
+    return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] };
   }
   console.log(`gallery: published ${published.length} file(s) to ${GALLERY}`);
   // A full matrix run always writes the index, including a failing one — it is
@@ -36,9 +63,9 @@ export default async function globalTeardown() {
   // rather than withholding them.
   if (!published.includes("index.html")) {
     console.log(`gallery: this run rendered no index; browse the files directly under ${GALLERY}`);
-    return;
+    return { ran: false, reason: "this run rendered states but no index, so the gallery is not a matrix to audit", incomplete: [] };
   }
-  await report(published, records, unreadable);
+  return { ...await report(published, records, unreadable), reason: null };
 }
 
 /**
@@ -98,23 +125,35 @@ function stringify(records, pick) {
  * does not, renders this run could not prove had stopped changing, and states
  * that draw one another's screen without saying so.
  *
- * Reported into the artefact rather than thrown, and that is a measured
- * decision rather than a soft one. The signature still drifts on about an
- * eighth of the renders between two runs of one tree — some content arrives
- * after the surface has stopped changing for a poll interval, so a render is
- * occasionally captured a beat early — and a gate on a drifting signal fails
- * runs at random. This repository's own rule is that a flaky gate is worse than
- * no gate, so the audit publishes what it found where the reviewer is already
- * looking, and the drift is filed rather than papered over.
+ * Two halves, and only one of them is asserted. The split is not a compromise
+ * between them; they are answers to two different kinds of question.
  *
- * What changed is that the drift is now named as drift. Every render says
- * whether it was proved settled, so a mismatched twin is reported as a broken
- * claim only when both sides were proved and as an unproven one otherwise —
- * and the renders a reviewer should not read as evidence are marked on their
- * own figures. Before this, three declared twins were reported as "no longer
- * draw the same screen" on a fully-parallel run and matched exactly when
- * rendered one at a time: the audit's own flake, published as a finding about
- * the UI.
+ * `incomplete` is arithmetic over a file list: did this run write every render
+ * the registry asked for, does every published render belong to a state, and
+ * did every published render file a record that can be read? None of that
+ * depends on comparing one render against another, so none of it can drift, and
+ * a run that gets it wrong has published an artefact that lies about its own
+ * extent — the banner has always said so in red, and until now nothing was
+ * answerable for it. A red notice carried only by a console line is the exact
+ * defect this branch exists to remove, made by the instrument that reports it.
+ *
+ * `claims` — two states drawing one screen, or a declared twin that parted —
+ * stays reported rather than asserted, and that remains a measured decision. It
+ * is a comparison between two renders, the signature still drifts on about an
+ * eighth of them between two runs of one tree because some content arrives
+ * after the surface has stopped changing for a poll interval, and this
+ * repository's rule is that a flaky gate is worse than no gate. `unchecked-twin`
+ * moves across into `incomplete`, though, because it is not a comparison at all:
+ * it says the run rendered one side or neither, which is the same arithmetic as
+ * a missing render and is just as deterministic.
+ *
+ * Drift — a finding whose own words say the difference is a frame — is the
+ * third list and is neither asserted nor alarmed.
+ *
+ * The findings are returned rather than thrown here, so the caller that owns
+ * the verdict is a named check rather than a hook. The gallery is stamped
+ * first either way: a failing run still publishes the artefact that says why it
+ * failed, which is the one thing a review surface owes on a bad day.
  *
  * What it publishes is still a contradiction the registry could not previously
  * face: `signatures.json` is a diffable record of what each state actually
@@ -134,14 +173,16 @@ async function report(published, records, unreadable) {
   // gallery: nothing is known about the screen either way. So they are reported
   // apart and marked together.
   const unknown = [...new Set([...unreadable, ...unaudited])].sort();
-  const drift = twins.filter(isDrift).map((finding) => `${finding.kind}: ${finding.detail}`);
-  const lines = [
+  const parted = partitionFindings(twins);
+  const drift = parted.drift.map((finding) => `${finding.kind}: ${finding.detail}`);
+  const incomplete = [
     ...(names.missing.length ? [`${names.missing.length} render(s) were never written by this run`] : []),
     ...(names.stray.length ? [`${names.stray.length} render(s) belong to no state in the registry`] : []),
     ...(unreadable.length ? [`${unreadable.length} render(s) filed a record this run could not read, so nothing is known about them: ${unreadable.slice(0, 5).join(", ")}`] : []),
     ...(unaudited.length ? [`${unaudited.length} render(s) were published without a record, so nothing is known about them: ${unaudited.slice(0, 5).join(", ")}`] : []),
-    ...twins.filter((finding) => !isDrift(finding)).map((finding) => `${finding.kind}: ${finding.detail}`),
+    ...parted.unchecked.map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
+  const lines = [...incomplete, ...parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`)];
   console.log(`gallery: ${Object.keys(records).length} render(s) audited`);
   if (unsettled.length) {
     console.log(`gallery: ${unsettled.length} render(s) were not proved settled and are marked on their own figures`);
@@ -152,7 +193,12 @@ async function report(published, records, unreadable) {
   if (!lines.length && !drift.length) {
     console.log("gallery: complete, and every state draws its own screen or a declared twin's");
   }
+  // Stamped before the verdict is returned, so a failing run still publishes the
+  // artefact that says why it failed. Reversing the two would take the evidence
+  // down with the run, which is the one thing a review surface owes on a bad
+  // day.
   await stamp(lines, names.missing, unsettled, drift, unknown);
+  return { ran: true, incomplete };
 }
 
 /**
