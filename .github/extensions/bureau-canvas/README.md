@@ -419,6 +419,19 @@ rounded outwards by less than a pixel, because a box measured in CSS pixels and
 a shot measured in device pixels disagree at the edge, and a sliver of a genuine
 border left uncovered would be reported as a mark drawn nowhere.
 
+Both instruments are then required to say how much they looked at, and **at
+what**. A `channels` that returns one figure fewer, or a `sweep` that returns
+fewer verdicts than it was handed regions, leaves the positional read comparing
+an empty slice — and `.some` of nothing is `false`, indistinguishable from a
+figure checked and found right. Counting closes that and closes nothing about
+*which* figures were measured: `[...document.querySelectorAll(selector)].fill(…)`
+returns the owed number of entries, every one of them the stamped figure, so
+every count is exact, every duplicated region carries the mark's ink, `wrong` is
+empty and `stray` is zero — over a sweep that never looked at one unmarked
+figure. A count is not a correspondence, so the figures are named: exactly the
+page's own shots, in page order, each owing the two channels the positional read
+assumes.
+
 The words themselves are asked of the region they occupy rather than of the box
 that holds them, and asked five things: they are in the render tree, there is a
 region, the ink is in it, it is not one flat colour, and the ink does not fill
@@ -505,6 +518,18 @@ names the action, the job is the mapping it is genuinely inside, and a key is a
 key however it is written. The seven hostile workflows are kept as a fixture
 rather than run once and thrown away, because what defeated these readers five
 times over was never the case anyone thought to write a test for.
+
+**And none of them asked whether the workflow ever starts.** Three rounds went
+into that upload step — its patterns, its own `if:`, its job's `if:`, the parse
+that reads a key however it is spelled — over a workflow whose `on:` nothing
+had ever read. Delete `pull_request:` and every reader above answers exactly as
+it does now, green, about a run that publishes nothing for the reviewer of a
+pull request, which is the only reader this gallery has. The events are read
+from the same parse, and `on` is three shapes and a trap: a scalar, a sequence
+or a mapping, and under YAML 1.1 the key is the *boolean* `true`. The vendored
+parser is 1.2 and is asked rather than assumed. Nine spellings hold it,
+including one written `"\u006fn"` and `pull_request_target`, which merely begins
+the same way and starts nothing on a pull request.
 
 **The teardown was proved only through the seam tests use.** `globalTeardown`
 forwards `audit` and `resolve` so the offline suite can watch the hand-over, and

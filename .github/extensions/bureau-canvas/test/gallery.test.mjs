@@ -234,6 +234,28 @@ test("a run given no directories works over this run's staging and the real gall
 const REVIEWER_GALLERY = ".github/extensions/bureau-canvas/e2e/gallery/";
 
 /**
+ * The events that start the workflow.
+ *
+ * A step that publishes, in a job that starts, inside a workflow that nothing
+ * ever triggers, publishes exactly as much as a step that never runs — and this
+ * gallery exists for the reviewer of a *pull request*. Deleting one line of
+ * `on:` leaves every reader above answering exactly as it does now.
+ *
+ * Read from the same parse as the rest, because `on` is three shapes and a
+ * trap. It may be a scalar, a sequence, or a mapping; and under YAML 1.1 the
+ * key `on` is the *boolean* `true`, which is why this asks the parser rather
+ * than assuming — the vendored `yaml` is 1.2, where it stays the string it
+ * looks like, and a quoted `"on"` is the same key either way.
+ */
+function triggersOf(workflow) {
+  const on = parseYaml(workflow)?.on;
+  if (typeof on === "string") {
+    return [on];
+  }
+  return Array.isArray(on) ? on.filter((event) => typeof event === "string") : Object.keys(on ?? {});
+}
+
+/**
  * The `upload-artifact` step, and the job that holds it, as YAML itself reads
  * them.
  *
@@ -313,9 +335,42 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
       published.filter((pattern) => pattern.startsWith("!")),
       conditionOf(step),
       conditionOf(job),
+      triggersOf(workflow).includes("pull_request"),
     ],
-    [true, true, [], "always()", ""],
+    [true, true, [], "always()", "", true],
   );
+});
+
+/**
+ * …and the trigger reader, held against the spellings of `on:`.
+ *
+ * A miss here fails open in the same direction as the job's condition: the
+ * workflow is asserted to run on a pull request, so a reader that cannot see
+ * the event it is looking for reports a workflow nothing starts as one that
+ * publishes for every reviewer.
+ */
+const TRIGGER_SPELLINGS = [
+  { id: "a sequence", on: "on: [push, pull_request]", starts: true },
+  { id: "a mapping", on: "on:\n  pull_request:\n  push:\n    branches: [main]", starts: true },
+  { id: "a lone scalar", on: "on: pull_request", starts: true },
+  { id: "a quoted key", on: '"on": [pull_request]', starts: true },
+  { id: "…and one whose letters are written as escapes", on: '"\\u006fn": [pull_request]', starts: true },
+  { id: "push alone", on: "on: [push]", starts: false },
+  { id: "a mapping holding every other event", on: 'on:\n  push:\n    branches: [main]\n  schedule:\n    - cron: "23 8 * * *"\n  workflow_dispatch:', starts: false },
+  { id: "an event that merely begins the same way", on: "on: [pull_request_target]", starts: false },
+  { id: "no trigger at all", on: "name: Canvas state matrix", starts: false },
+];
+
+test("a workflow nothing starts on a pull request publishes nothing for its reviewer", () => {
+  const read = TRIGGER_SPELLINGS.map((found) => triggersOf(`${found.on}
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4.4.3
+`).includes("pull_request"));
+
+  assert.deepEqual(read, TRIGGER_SPELLINGS.map((found) => found.starts));
 });
 
 /**

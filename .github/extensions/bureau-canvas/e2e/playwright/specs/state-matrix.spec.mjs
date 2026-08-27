@@ -378,24 +378,37 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
     ([data, boxes, colour]) => window.bureauDrawn.sweep(data, boxes, colour),
     [full.toString("base64"), regions, inkOf(SETTLED_INK)],
   );
-  // Absent evidence is not clean evidence. `wrong` reads each figure's verdicts
-  // by position, so a `channels` that returns one figure fewer, or a `sweep`
-  // that returns fewer verdicts than it was given regions, leaves the tail
-  // comparing an empty slice — and `.some` of nothing is `false`, which is
-  // indistinguishable here from a figure that was checked and found right.
-  // Both are instruments this very test exists to hold, so what they owe is
-  // counted before any of it is believed.
+  // Absent evidence is not clean evidence, and a count is not a correspondence.
+  // `wrong` reads each figure's verdicts by position, so a `channels` that
+  // returns one figure fewer, or a `sweep` that returns fewer verdicts than it
+  // was given regions, leaves the tail comparing an empty slice — and `.some`
+  // of nothing is `false`, which is indistinguishable here from a figure that
+  // was checked and found right.
+  //
+  // Counting what they owe closes that, and closes nothing about *which*
+  // figures were measured. `[...document.querySelectorAll(selector)].fill(…)`
+  // returns the owed number of entries, every one of them the stamped figure:
+  // the counts are exact, every duplicated region carries the mark's ink, so
+  // `wrong` is empty and `stray` is zero — over a sweep that never looked at a
+  // single unmarked figure. That is the defect this test exists to catch, in
+  // the instrument that catches it. So the figures are named: exactly the
+  // page's own shots, in page order, each contributing exactly the two channels
+  // the positional read above assumes.
   const drawn = MARKED_PAGE.length * VIEWPORT_LIST.length;
-  const counted = [figures.length, regions.length, swept.found.length];
+  const owed = MARKED_PAGE.flatMap((state) => VIEWPORT_LIST.map((viewport) => shot(state, viewport)));
+  const counted = [regions.length, swept.found.length];
+  const shaped = figures.every((figure) => figure.regions.length === 2);
   const wrong = figures.filter((figure, at) => swept.found.slice(at * 2, at * 2 + 2).some((seen) => seen !== figure.marked));
   const read = [];
   for (const name of [target, shot(MARKED_PAGE[1], VIEWPORT_LIST[0])]) {
     read.push(await legible(page, markSlot(page, name), inkOf(SETTLED_INK)));
   }
 
-  expect([said, counted, wrong.map((figure) => figure.shot), swept.stray, read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
+  expect([said, figures.map((figure) => figure.shot), shaped, counted, wrong.map((figure) => figure.shot), swept.stray, read], "exactly the stamped figure wears the mark, in ink a reviewer can read").toEqual([
     [[target], 1, drawn],
-    [drawn, drawn * 2, drawn * 2],
+    owed,
+    true,
+    [drawn * 2, drawn * 2],
     [],
     0,
     [[true, true, true, true, true], [false, false, false, false, false]],
