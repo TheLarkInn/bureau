@@ -383,11 +383,35 @@ Each channel the stylesheet paints is therefore screenshotted and read back for
 the colours Chromium actually put there. The mark's own ink — `SETTLED_INK`, the
 one the sheet interpolates and the amber notice is written in — has to be among
 them on the stamped figure's border *and* on its caption, and on neither channel
-of any figure that was not stamped. Each notice has to be rendered, to carry its
-own computed ink among its pixels, and to be more than one flat colour; the three
-are needed together, because `opacity:0` is caught only by the first,
-`color:transparent` only by the second, and a foreground equal to its background
-only by the third. The advisory is asked *alone* as well as beside the alarm — an
+of any figure that was not stamped.
+
+Which figures wear it is a *set*, not a sample. While the stamped figure was
+read as the first one carrying the attribute and the control was every figure
+without it, a mark landing where the run never asked simply moved those figures
+out of the control group: stamping every compact render — one line in
+`figureTag` — left the stamped figure saying it, no unstamped figure saying it,
+and half the gallery telling a reviewer it was not proved settled. Exactly the
+shots handed to `applyMarks` carry the attribute, and no others.
+
+The words themselves are asked of the region they occupy rather than of the box
+that holds them, and asked four things: there is a region at all, the ink is in
+it, it is not one flat colour, and the ink does not fill it. A box is bigger
+than its words, and both of the gaps that opens were real. `font-size:0` leaves
+a notice its padding, so a two-pixel stripe of its own ink painted there passes
+ink-present and not-flat over a blank bar. And a phrase painted over its own
+background is unreadable but not flat — a block of solid ink blends into what is
+behind it at its own edges and answers with two colours — so only the ink's
+*share* of the region separates words from a block: glyphs leave most of their
+line box unpainted and a block leaves none of it.
+
+That is why each caption carries an otherwise empty element for the mark to be
+written into. The phrase is CSS `content`, and pseudo-content has no box
+anything can measure; the caption's own box is shared with the viewport name, so
+flatness measured over it is satisfied by a neighbour of the thing under test.
+The slot is a box that holds the phrase and nothing else.
+
+The notices are asked the same four things, over the rectangles their text
+occupies. The advisory is asked *alone* as well as beside the alarm — an
 advisory-only run is the ordinary result of a full matrix, so the notice a
 reviewer meets on almost every good run was the one with no browser check at all.
 
@@ -417,9 +441,14 @@ an attribute it cannot see is one it silently reports absent.
 required to appear as some trimmed line of the workflow. `upload-artifact` reads
 a leading `!` as an exclusion, so a `path:` block that lists the gallery and then
 excludes it keeps the line, uploads an artefact, stays green, and publishes
-nothing. The check now finds the `actions/upload-artifact` step, reads that
-step's own `path:` block, and requires the gallery to be among the patterns and
-none of them to be an exclusion.
+nothing. The check finds the `actions/upload-artifact` step and reads that step's
+own `path:` block, bounded by the step's list-item indent — "anything after the
+`uses:` line" was the same defect one notch along, satisfied by renaming the
+input to `paths:` and letting an unrelated later step carry a block of the right
+shape. It also reads the step's `if:`, because every pattern can be correct and
+the step still never run; `always()` is required rather than merely something
+truthy, since the run a reviewer most needs the gallery from is the one that
+failed.
 
 **The teardown was proved only through the seam tests use.** `globalTeardown`
 forwards `audit` and `resolve` so the offline suite can watch the hand-over, and
@@ -428,7 +457,10 @@ Playwright ever takes, because it calls a global teardown with the config and
 nothing else — was never walked, so a guard returning early when no seam is
 passed left every offline test, every identity check and the whole browser suite
 green while a real run's teardown did nothing. It is now called the way
-Playwright calls it and required to have really audited.
+Playwright calls it, over a staging directory the test owns, and required to have
+left an *effect*: that directory is discarded by the audit and has to be gone
+afterwards. The returned sentence alone is a literal, and a guard that returns it
+without looking at anything answers correctly.
 
 ### The audit could not be found among the run's checks
 Every rule above produced a *finding*, and nothing was answerable for any of

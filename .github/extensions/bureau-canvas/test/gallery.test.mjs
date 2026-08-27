@@ -11,6 +11,7 @@
 // the run began as older than it.
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -249,15 +250,49 @@ const REVIEWER_GALLERY = ".github/extensions/bureau-canvas/e2e/gallery/";
  * still contains the line the check was looking for, still uploads an artefact,
  * still goes green — and publishes a gallery with nothing in it. The positive
  * line being present was never the claim; the gallery being *selected* is.
+ *
+ * "That step's own block" is meant literally, and reading it as "anything after
+ * the `uses:` line" was the same defect one notch along: renaming the input to
+ * `paths:` and adding an unrelated later step carrying a `path:` block of the
+ * right shape satisfied the check while `upload-artifact` received no path at
+ * all. The step is bounded by its own list-item indent, so a key belonging to
+ * another step is not a key of this one.
+ *
+ * Its `if:` is read for the same reason. Every path pattern can be correct and
+ * the step still never run: `if: 0 == 1` publishes nothing, and a check that
+ * reads inputs alone approves it. `always()` is required rather than merely
+ * something truthy, because the run a reviewer most needs the gallery from is
+ * the run that failed.
  */
-function uploadedPaths(workflow) {
+function uploadStep(workflow) {
   const lines = workflow.split("\n");
-  const step = lines.findIndex((line) => line.trim().startsWith("uses: actions/upload-artifact@"));
-  const key = lines.findIndex((line, at) => at > step && step !== -1 && line.trim() === "path: |");
-  const indent = lines[key].search(/\S/u);
-  const after = lines.slice(key + 1);
+  const uses = lines.findIndex((line) => line.trim().startsWith("uses: actions/upload-artifact@"));
+  const start = uses === -1 ? -1 : lines.slice(0, uses + 1).findLastIndex((line) => line.trimStart().startsWith("- "));
+  if (start === -1) {
+    return [];
+  }
+  const indent = lines[start].search(/\S/u);
+  const after = lines.slice(start + 1);
+  const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= indent);
+  return [lines[start], ...after.slice(0, ends === -1 ? after.length : ends)];
+}
+
+/** The patterns under one key of a step, as that key's own indented block. */
+function blockUnder(step, key) {
+  const at = step.findIndex((line) => line.trim() === `${key}: |`);
+  if (at === -1) {
+    return [];
+  }
+  const indent = step[at].search(/\S/u);
+  const after = step.slice(at + 1);
   const ends = after.findIndex((line) => line.trim() && line.search(/\S/u) <= indent);
   return after.slice(0, ends === -1 ? after.length : ends).map((line) => line.trim()).filter(Boolean);
+}
+
+/** The condition a step runs under, as written. */
+function conditionOf(step) {
+  const line = step.map((entry) => entry.trim().replace(/^-\s*/u, "")).find((entry) => entry.startsWith("if:"));
+  return line ? line.slice("if:".length).trim() : "";
 }
 
 test("the gallery a run resolves to is the directory CI publishes for a reviewer", async () => {
@@ -266,12 +301,13 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
 
   const resolved = resolveDirs().gallery;
   const workflow = await readFile(new URL("../../../workflows/canvas-state-matrix.yml", import.meta.url), "utf8");
-  const published = uploadedPaths(workflow);
+  const step = uploadStep(workflow);
+  const published = blockUnder(step, "path");
 
   process.env[STAGING_ENV] = before ?? "";
   assert.deepEqual(
-    [resolved.endsWith(`/${REVIEWER_GALLERY}`), published.includes(REVIEWER_GALLERY), published.filter((pattern) => pattern.startsWith("!"))],
-    [true, true, []],
+    [resolved.endsWith(`/${REVIEWER_GALLERY}`), published.includes(REVIEWER_GALLERY), published.filter((pattern) => pattern.startsWith("!")), conditionOf(step)],
+    [true, true, [], "always()"],
   );
 });
 
@@ -289,19 +325,23 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
  * empty. Empty is the safe way to ask: `publishGallery` discards an empty
  * staging directory and returns before it can touch `GALLERY`, so a reviewer's
  * gallery is never at risk, and the run still had to resolve a staging path to
- * discover there was nothing in it.
+ * discover there was nothing in it — which is required as the effect it is,
+ * rather than as the sentence it returns: the directory this test made has to
+ * be gone, and a body that answers without looking cannot make it so.
  */
 test("the audit a teardown really runs asks resolveDirs for its directories", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const stage = join(root, "staging");
+  await mkdir(stage, { recursive: true });
   const before = process.env[STAGING_ENV];
-  process.env[STAGING_ENV] = join(root, "staging");
+  process.env[STAGING_ENV] = stage;
 
   const audit = await audited().finally(() => {
     process.env[STAGING_ENV] = before ?? "";
   });
 
-  assert.deepEqual([audit.ran, audit.reason], [false, "this run rendered no states, so there is no gallery to audit"]);
+  assert.deepEqual([audit.ran, audit.reason, existsSync(stage)], [false, "this run rendered no states, so there is no gallery to audit", false]);
 });
 
 /**
@@ -404,17 +444,24 @@ test("the teardown Playwright loads hands the audit resolveDirs itself", async (
  * it is a seam, not a teardown.
  *
  * So it is called exactly as Playwright calls it, over a staging directory this
- * test owns and left empty, and required to have really audited: `publishGallery`
- * discards an empty staging directory and returns before it can touch `GALLERY`,
- * so a reviewer's gallery is never at risk, and the run still had to resolve a
- * staging path to discover there was nothing in it. A body that returns early
- * answers `undefined` and fails here.
+ * test owns and left empty. Empty is the safe way to ask: `publishGallery`
+ * discards an empty staging directory and returns before it can touch
+ * `GALLERY`, so a reviewer's gallery is never at risk.
+ *
+ * And what is required of it is that discarding: the directory this test made
+ * is gone afterwards. The returned value alone is a literal — `{ ran: false,
+ * reason: …, incomplete: [] }` written straight into the guard above answers
+ * this test correctly without resolving a path or reading a directory, which is
+ * the same vacuous pass one layer in. A directory this test created and the
+ * teardown removed is an effect, and nothing that returned early can produce it.
  */
 test("the teardown Playwright loads audits for real when it is handed nothing", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const stage = join(root, "staging");
+  await mkdir(stage, { recursive: true });
   const before = process.env[STAGING_ENV];
-  process.env[STAGING_ENV] = join(root, "staging");
+  process.env[STAGING_ENV] = stage;
   const spoke = console.log;
   console.log = () => {};
 
@@ -423,7 +470,10 @@ test("the teardown Playwright loads audits for real when it is handed nothing", 
     process.env[STAGING_ENV] = before ?? "";
   });
 
-  assert.deepEqual(audit, { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] });
+  assert.deepEqual(
+    [audit, existsSync(stage)],
+    [{ ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [] }, false],
+  );
 });
 
 /**

@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
-import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK } from "../e2e/playwright/gallery-index.mjs";
+import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -613,6 +613,10 @@ test("a finding that mentions markup is written as text, not as markup", () => {
  * So the attribute is read back out of a stamped figure and the page is
  * required to draw exactly that, rather than both being compared against a
  * third spelling written here — which is the shape of agreement that failed.
+ *
+ * The caption half is read through `SETTLED_SLOT` for the same reason: the
+ * phrase is written into an element of that class, and a sheet that stopped
+ * selecting it would leave the mark landing on a figure and drawn on nothing.
  */
 test("the attribute a figure is stamped with is the one the page's styling draws", () => {
   const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
@@ -623,11 +627,10 @@ test("the attribute a figure is stamped with is the one the page's styling draws
   const stamped = new RegExp(`<figure data-shot="${literal}"\\s+([^>]+)>`, "u").exec(marked.html)?.[1];
 
   assert.deepEqual(
-    [typeof stamped, page.includes(`figure[${stamped}] img`), page.includes(`figure[${stamped}] figcaption::after`)],
+    [typeof stamped, page.includes(`figure[${stamped}] img`), page.includes(`figure[${stamped}] figcaption .${SETTLED_SLOT}::after`)],
     ["string", true, true],
   );
 });
-
 /**
  * …and the ink it is drawn in is the ink the browser check hunts for.
  *

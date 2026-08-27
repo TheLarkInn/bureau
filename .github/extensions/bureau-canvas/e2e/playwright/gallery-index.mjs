@@ -59,6 +59,20 @@ export const SETTLED_PHRASE = "not proved settled";
  */
 export const SETTLED_INK = "#9a6700";
 
+/**
+ * The class of the empty element each caption carries for a mark to be written
+ * into. One string, for the same reason the ink is.
+ *
+ * The phrase is CSS `content`, and pseudo-content has no box anything can
+ * measure. While it was written straight onto `figcaption::after`, the only
+ * region a check could read was the caption's — which also holds the viewport
+ * name, in another colour — so `background:currentColor` on the phrase made it
+ * its own background, unreadable, and left the caption's region as varied as
+ * ever. The slot gives the phrase a box that holds the phrase and nothing else,
+ * which is the region the question is actually about.
+ */
+export const SETTLED_SLOT = "mark";
+
 export function escape(value) {
   return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 }
@@ -108,7 +122,7 @@ function describeProbe(state) {
 }
 
 function figureFor(state, viewport, shot) {
-  return `${figureTag(shot)}<img loading="lazy" src="./${escape(shot)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${escape(viewport.id)}</figcaption></figure>`;
+  return `${figureTag(shot)}<img loading="lazy" src="./${escape(shot)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${escape(viewport.id)}<span class="${SETTLED_SLOT}"></span></figcaption></figure>`;
 }
 
 /** One state's card, linking its render at every viewport. */
@@ -158,7 +172,7 @@ export function indexPage(rows, states, viewports) {
      applyMarks writes, so a mark can never land under an attribute this sheet
      does not draw. */
   figure[${SETTLED_MARK}] img { border-color:${SETTLED_INK}; border-width:2px; }
-  figure[${SETTLED_MARK}] figcaption::after { content:" · ${SETTLED_PHRASE}"; color:${SETTLED_INK}; font-weight:700; }
+  figure[${SETTLED_MARK}] figcaption .${SETTLED_SLOT}::after { content:" · ${SETTLED_PHRASE}"; color:${SETTLED_INK}; font-weight:700; }
 </style></head>
 <body>
 <header><h1>Bureau Canvas state gallery</h1><p class="muted">${states.length} states × ${viewports.length} viewports, rendered by the production page.</p></header>
