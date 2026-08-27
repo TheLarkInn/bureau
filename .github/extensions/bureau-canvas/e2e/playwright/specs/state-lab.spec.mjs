@@ -6,6 +6,7 @@
 // about a state matches what the registry says about that state.
 
 import { ENTRY_TRANSITIONS, rootReason, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
+import { CONSTRAINTS, harnessNotes } from "../../../web/statelab/constraints.mjs";
 import { servableInFrame } from "../../../web/statelab/intercept.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { expect, test } from "../matrix-fixtures.mjs";
@@ -162,6 +163,47 @@ test("the picker judges any combination a reviewer assembles", async ({ page, ho
 
   await page.locator('#picker select[aria-label="card"]').selectOption("n/a");
   await expect(verdict).toHaveAttribute("data-verdict", "reachable");
+  expect(errors).toEqual([]);
+});
+
+/**
+ * The harness note as a reviewer actually receives it, in both places the lab
+ * prints one.
+ *
+ * The offline suite holds `harnessNotes` — that the sentence it returns names
+ * the limit, names the standing state, and claims no more. That is a different
+ * claim from *the lab printing it*, and the gap between the two is the whole
+ * defect the last round removed: the sentence was written out at each call
+ * site, so the surface said "The same screen is rendered by …" while nothing
+ * that tested a function ever saw it. Making the sentence data closed the
+ * drift between the two copies; it did not make either copy answerable. Either
+ * one can be hard-coded back with the offline test still green.
+ *
+ * So both are read from the rendered DOM, and the overclaim is refused across
+ * the whole surface rather than at the two places it is known to have lived —
+ * a reviewer told two screens match has been given a reason not to look at the
+ * difference, and looking is the entire job of this page.
+ */
+test("the lab prints the registry's harness note, and the overclaim appears nowhere", async ({ page, host }) => {
+  const errors = await openLab(page, host);
+  const rule = CONSTRAINTS.find((item) => item.kind === "harness");
+  const [limit, instead] = harnessNotes(rule);
+
+  const listed = page.locator("#constraints details", { hasText: rule.title });
+  await listed.locator("summary").click();
+  await expect(listed).toContainText(limit);
+  await expect(listed).toContainText(instead);
+
+  // The picker's copy, driven onto a combination this harness rule rejects.
+  const combination = { surface: "config", data: "validated", section: "two-cards", card: "expanded", field: "delete" };
+  for (const [axis, value] of Object.entries(combination)) {
+    await page.locator(`#picker select[aria-label="${axis}"]`).selectOption(value);
+  }
+  const rejected = page.locator("#picker-verdict details", { hasText: rule.id });
+  await expect(rejected).toContainText(limit);
+  await expect(rejected).toContainText(instead);
+
+  await expect(page.locator("body")).not.toContainText(/the same screen is rendered/iu);
   expect(errors).toEqual([]);
 });
 

@@ -35,7 +35,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { drawableEdges } from "../web/graph-edges.mjs";
-import { stepNameProblem, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+import { renameStep as draftRename } from "../web/step-edit.mjs";
 import { parse, render } from "../lib/codec.mjs";
 import { createStep, editable, removeStep, renameStep } from "../lib/edit.mjs";
 import { pipelineView } from "../lib/view.mjs";
@@ -56,10 +57,36 @@ const referenceUrl = new URL("./fixtures/codec-reference-pipeline.yaml", import.
  * Whitespace is collapsed before comparing, so reformatting an approved
  * expression is not a finding. Changing what it reads is.
  */
+/**
+ * Each surface's approved edge count, at both ends of the chain.
+ *
+ * `call` is the argument text `drawableEdges` is given. `produces` is the
+ * expression that binds its result, and `publishes` is the expression the
+ * `data-graph-edges` attribute is set from. Holding only the first left a decoy
+ * shape approved: a call whose result goes nowhere —
+ * `if (false) drawableEdges(sources, …)` — beside a `declared` bound to
+ * `flow.edges.length` reads as the reviewed call while publishing the very
+ * projection the independence rule exists to keep out.
+ */
 const SURFACES = [
-  ["app.mjs", "sources, planned.map((item) => item.remapped)"],
-  ["editor/editor.mjs", "[...view.steps.map((step) => ({ id: step.name })), ...terminals], edges"],
-  ["editor/relation.mjs", "source.nodes, source.edges"],
+  [
+    "app.mjs",
+    "sources, planned.map((item) => item.remapped)",
+    "declared: drawableEdges(sources, planned.map((item) => item.remapped)),",
+    "String(flow.declared)",
+  ],
+  [
+    "editor/editor.mjs",
+    "[...view.steps.map((step) => ({ id: step.name })), ...terminals], edges",
+    "declared: drawableEdges([...view.steps.map((step) => ({ id: step.name })), ...terminals], edges),",
+    "String(flow.declared)",
+  ],
+  [
+    "editor/relation.mjs",
+    "source.nodes, source.edges",
+    "String(drawableEdges(source.nodes, source.edges))",
+    "String(drawableEdges(source.nodes, source.edges))",
+  ],
 ];
 
 async function fixtureView() {
@@ -113,12 +140,43 @@ function argumentsAt(code, open) {
 
 /** Every `drawableEdges(...)` call in a source, as its complete argument text. */
 function callsIn(source) {
-  const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
   const calls = [];
+  const code = withoutCommentLines(source);
   for (let at = code.indexOf("drawableEdges("); at !== -1; at = code.indexOf("drawableEdges(", at + 1)) {
     calls.push(argumentsAt(code, at + "drawableEdges".length));
   }
   return calls;
+}
+
+/** A source with its commentary dropped, so prose is never read as code. */
+function withoutCommentLines(source) {
+  return source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line)).join("\n");
+}
+
+/**
+ * The expression `data-graph-edges` is set from, whitespace collapsed.
+ *
+ * Read to the comma or the closing brace that ends the property, so the whole
+ * value is compared rather than its first token. This is the half `callsIn`
+ * cannot see: a reviewed call proves a number was computed correctly, never
+ * that it is the number the attribute carries, and the settle barrier and
+ * `undrawn-graph` both read the attribute.
+ */
+function attributeIn(source) {
+  const code = withoutCommentLines(source);
+  const key = "\"data-graph-edges\":";
+  const at = code.indexOf(key);
+  if (at === -1) {
+    return null;
+  }
+  let depth = 0;
+  for (let cursor = at + key.length; cursor < code.length; cursor += 1) {
+    depth += Number("([{".includes(code[cursor])) - Number(")]}".includes(code[cursor]));
+    if (depth < 0 || (depth === 0 && code[cursor] === ",")) {
+      return code.slice(at + key.length, cursor).replace(/\s+/gu, " ").trim();
+    }
+  }
+  return "unterminated";
 }
 
 /**
@@ -142,11 +200,12 @@ function callsIn(source) {
  * underneath it. Naming what each surface *may* count from inverts the default:
  * an unreviewed source is a failure whether or not anyone predicted its shape.
  *
- * What it holds is the counting expression, not the provenance of every name
- * inside it — a surface that rebound `sources` to the projection elsewhere in
- * the function would still read as approved. The guarantee is that no surface's
- * count can change without editing the table above, which is where a reviewer
- * is asked the question.
+ * What it holds is the counting expression and the two ends of the chain from
+ * that call to the attribute — not the provenance of every name inside it. A
+ * surface that rebound `sources` to the projection elsewhere in the function
+ * would still read as approved. The guarantee is that no surface's count, and
+ * no surface's route from that count to `data-graph-edges`, can change without
+ * editing the table above, which is where a reviewer is asked the question.
  *
  * Checked for all three at once rather than only the relation graph, because
  * the same shape was on the pipeline and the editor, and a rule held at one of
@@ -160,10 +219,15 @@ test("every surface counts its edges from the model it was reviewed against", as
 
   assert.deepStrictEqual(
     sources.map((source) => ({
-      publishes: source.includes("data-graph-edges"),
       counts: callsIn(source),
+      produces: SURFACES.map(([, , binding]) => source.includes(binding)),
+      publishes: attributeIn(source),
     })),
-    SURFACES.map(([, approved]) => ({ publishes: true, counts: [approved] })),
+    SURFACES.map(([, approved, binding, attribute]) => ({
+      counts: [approved],
+      produces: SURFACES.map(([, , other]) => other === binding),
+      publishes: attribute,
+    })),
   );
 });
 
@@ -357,15 +421,68 @@ test("one rule decides what a step may be called, and says why not", () => {
 });
 
 /**
- * And that the browser editor reads that rule rather than keeping its own.
+ * And that a refused rename actually refuses.
  *
- * A property of the call site, so it is asserted by reading source, exactly as
- * the `drawableEdges` allowlist above and `test/web-imports.test.mjs` are: the
- * module imports React and `@xyflow/react`, so nothing offline can import it and
- * ask it. What is held is the shape that made the two copies possible — a second
- * literal terminal list, and a `nameProblem` computed from anything but the
- * shared rule. Both of the previous copies satisfied every other test in this
- * repository, which is why the shape is what gets asserted.
+ * The old form of this test read `editor.mjs` and asserted the *text* of the
+ * guard — `if (to === from || stepNameProblem(view.steps, to, from)) {` — was
+ * present. That is a claim about spelling, not about behaviour: replacing the
+ * `return view;` inside the guard with `void view;` left every predicate at its
+ * expected value, and the browser cannot reach the second layer either, because
+ * the field refuses `abort` before `commitName` ever fires. So the one rule
+ * standing between a terminal's name and a rewritten routing table was held by
+ * nothing that would notice it going.
+ *
+ * `web/step-edit.mjs` exists so this can be asked instead of read. Identity is
+ * asserted, not equality, because `onRename` compares `next !== view` before it
+ * moves the saved position, commits the edit and moves the selection — an
+ * equal-but-new object would run all three against a rename that never
+ * happened.
+ */
+test("a rename to a terminal's name changes nothing, and one to a free name retargets", () => {
+  const view = {
+    steps: [
+      { id: "verify", name: "verify", fields: {} },
+      { id: "gate", name: "gate", fields: { over: "verify", on: { success: "verify", failure: "abort" }, inputsFrom: ["verify"] } },
+    ],
+    edges: [{ id: "control:gate:success->verify", relation: "control", source: "gate", target: "verify", outcome: "success" }],
+  };
+
+  const refused = TERMINAL_NAMES.map((terminal) => draftRename(view, "verify", terminal) === view);
+  const renamed = draftRename(view, "verify", "recheck");
+
+  assert.deepStrictEqual(
+    {
+      refused,
+      names: renamed.steps.map((step) => step.name),
+      // The `abort` route is the terminal and must survive a rename of a step;
+      // `success` named the step and must follow it.
+      on: renamed.steps[1].fields.on,
+      inputsFrom: renamed.steps[1].fields.inputsFrom,
+      over: renamed.steps[1].fields.over,
+      edge: renamed.edges[0].id,
+    },
+    {
+      refused: [true, true, true],
+      names: ["recheck", "gate"],
+      on: { success: "recheck", failure: "abort" },
+      inputsFrom: ["recheck"],
+      over: "recheck",
+      edge: "control:gate:success->recheck",
+    },
+  );
+});
+
+/**
+ * And that the browser editor reads the shared rules rather than keeping its
+ * own.
+ *
+ * A property of the call site, so it is asserted by reading source: the module
+ * imports React and `@xyflow/react`, so nothing offline can import it. What is
+ * held is the shape that made the two copies possible — a second literal
+ * terminal list, and a `nameProblem` computed from anything but the shared
+ * rule. Both previous copies satisfied every other test in this repository,
+ * which is why the shape is what gets asserted. The *behaviour* of the guard is
+ * held by the test above, against the module the transforms now live in.
  */
 test("the editor's name refusal comes from the shared rule, not a second copy", async () => {
   const source = await readFile(new URL("../web/editor/editor.mjs", import.meta.url), "utf8");
@@ -373,12 +490,13 @@ test("the editor's name refusal comes from the shared rule, not a second copy", 
 
   assert.deepStrictEqual(
     {
-      imports: collapsed.includes("stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from \"../step-refs.mjs\""),
+      imports: collapsed.includes("stepNameProblem, TERMINAL_NAMES } from \"../step-refs.mjs\""),
+      transforms: collapsed.includes("removeStep, renameStep, syncSteps } from \"../step-edit.mjs\""),
       terminals: collapsed.includes("const TERMINALS = TERMINAL_NAMES;"),
       ownList: /const TERMINALS = \[/u.test(collapsed),
+      ownRename: /function renameStep\(/u.test(collapsed),
       field: collapsed.includes("const nameProblem = stepNameProblem(view.steps, name, step.name)?.message ?? null;"),
-      rename: collapsed.includes("if (to === from || stepNameProblem(view.steps, to, from)) {"),
     },
-    { imports: true, terminals: true, ownList: false, field: true, rename: true },
+    { imports: true, transforms: true, terminals: true, ownList: false, ownRename: false, field: true },
   );
 });

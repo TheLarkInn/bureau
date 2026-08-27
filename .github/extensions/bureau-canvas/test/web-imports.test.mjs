@@ -58,9 +58,27 @@ const SPECIFIERS = [
   /\bimport\s*["'`]([^"'`\n]+)["'`]/gu,
 ];
 
-/** Whether a specifier read from source is knowable at all. */
-function interpolated(specifier) {
-  return specifier.includes("${");
+/**
+ * A dynamic import whose argument is not a literal at all.
+ *
+ * Each pattern above requires the argument to *open* with a quote or a
+ * backtick, so `import(target)` — an identifier, a call, a ternary — matched
+ * nothing, and a specifier this scanner never captures is one no later rule is
+ * ever asked about. That is the backtick hole one step further out, and the
+ * more useful one to a module reaching past this boundary, because it needs no
+ * unusual syntax: two ordinary lines put `../../lib/edit.mjs` outside
+ * everything here enforces.
+ *
+ * Reported rather than resolved, exactly as an interpolated template is. What
+ * the argument evaluates to is not knowable from source, so the honest verdict
+ * is that no source-reading rule can say where it points — and the alternative
+ * to saying that is a silence indistinguishable from approval.
+ */
+const COMPUTED_IMPORT = /\bimport\s*\(\s*(?!["'`])([^)]+)\)/gu;
+
+/** Whether a specifier read from source can be followed at all. */
+function unknowable(specifier) {
+  return specifier.includes("${") || specifier.startsWith("import(");
 }
 
 /**
@@ -123,10 +141,14 @@ function inlineSpecifiers(source) {
 
 function specifiersIn(source) {
   const found = new Set();
+  const stripped = withoutComments(source);
   for (const pattern of SPECIFIERS) {
-    for (const [, specifier] of withoutComments(source).matchAll(pattern)) {
+    for (const [, specifier] of stripped.matchAll(pattern)) {
       found.add(specifier);
     }
+  }
+  for (const [, argument] of stripped.matchAll(COMPUTED_IMPORT)) {
+    found.add(`import(${argument.trim()})`);
   }
   return [...found].sort();
 }
@@ -215,7 +237,7 @@ async function unmapped() {
  * `${…}` no source-reading rule can follow.
  */
 function unreachableReason(file, specifier, mapped) {
-  if (interpolated(specifier)) {
+  if (unknowable(specifier)) {
     return "built at runtime, so no rule reading source can say where it points";
   }
   if (!specifier.startsWith(".")) {
@@ -351,6 +373,43 @@ test("the scanner reads a template specifier, and refuses to guess an interpolat
     [
       ["../../lib/edit.mjs", "./built-${kind}.mjs", "./templated.mjs"],
       ["outside the served root", "built at runtime, so no rule reading source can say where it points", undefined],
+    ],
+  );
+});
+
+/**
+ * And a specifier that is no literal at all.
+ *
+ * The three patterns each require the argument to *open* with a quote or a
+ * backtick, so `import(target)` matched nothing and reached the served-root
+ * rule as silence. That silence is indistinguishable from approval, and it is
+ * the cheapest way past this boundary of the three: `const target = "…"` and
+ * `await import(target)` are two ordinary lines needing no unusual syntax.
+ *
+ * Answered the way an interpolated template is, and for the same reason — an
+ * argument computed at runtime has no source-readable target — with the call
+ * itself carried as the finding so a reader is told which call to go and look
+ * at, not merely that one exists.
+ */
+test("the scanner reports a dynamic import whose target is computed", () => {
+  const editor = join(WEB, "editor", "editor.mjs");
+  const source = [
+    "const target = \"../../lib/edit.mjs\";",
+    "const a = await import(target);",
+    "const b = await import(pick ? \"./one.mjs\" : \"./two.mjs\");",
+    "const c = await import(\"./plain.mjs\");",
+  ].join("\n");
+  const found = specifiersIn(source);
+
+  assert.deepStrictEqual(
+    [found, found.map((specifier) => unreachableReason(editor, specifier, new Set()))],
+    [
+      ["./plain.mjs", "import(pick ? \"./one.mjs\" : \"./two.mjs\")", "import(target)"],
+      [
+        undefined,
+        "built at runtime, so no rule reading source can say where it points",
+        "built at runtime, so no rule reading source can say where it points",
+      ],
     ],
   );
 });

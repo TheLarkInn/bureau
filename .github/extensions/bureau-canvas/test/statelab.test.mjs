@@ -758,21 +758,34 @@ test("the lab's harness note names the limit and the nearest state, and claims n
 
 /**
  * Whether a rule's standing state is reachable past that rule and one axis away
- * from a combination the rule rejects.
+ * from a combination *this rule alone* rejects.
  *
  * Asked against the rule's own predicate rather than against an enumerated
  * example, because `enumerate` keeps one worked example per rule and which
  * tuple that is depends on `ORDER`. A check that compared `stands` against that
  * example would pass or fail on the walk order rather than on the registry,
  * which is a mark rather than a check by a different route.
+ *
+ * The neighbour must also satisfy every *other* constraint, and that half was
+ * missing. Adjacency asked only `!rule.holds(neighbour)`, so a state qualified
+ * by sitting next to a combination that some unrelated rule already excluded —
+ * a combination that is not a screen this harness rule hides, and in one
+ * measured case the only neighbour a `stands` had. The lab then told a reviewer
+ * "the nearest state this harness can reach" about a state adjacent to nothing
+ * the harness was keeping from them. A witness that is itself not a screen
+ * proves nothing about the screen being stood in for.
  */
 function standsNextTo(rule) {
   const stands = STATES.find((state) => state.id === rule.stands);
   if (!stands?.dimensions || !rule.holds(stands.dimensions)) {
     return false;
   }
+  const others = CONSTRAINTS.filter((item) => item.id !== rule.id);
   return rule.reads.some((axis) =>
-    valuesOf(axis).some((value) => !rule.holds({ ...stands.dimensions, [axis]: value.id })));
+    valuesOf(axis).some((value) => {
+      const neighbour = { ...stands.dimensions, [axis]: value.id };
+      return !rule.holds(neighbour) && others.every((item) => item.holds(neighbour));
+    }));
 }
 
 /**

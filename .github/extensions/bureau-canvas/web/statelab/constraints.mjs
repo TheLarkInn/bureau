@@ -41,11 +41,14 @@
 //
 //   limit  — the harness mechanism that stops it, named precisely enough to
 //            re-read when that mechanism changes.
-//   stands — the state that renders the *same screen* at a point on the axis
-//            the harness can reach. That is what keeps the screen asserted
-//            somewhere; an offline test requires the state to exist, and
-//            requires every harness rule to actually hide a renderable
-//            combination, re-enumerating without it to prove the cost is real.
+//   stands — the nearest state this harness *can* reach: one that satisfies
+//            the rule and sits one named axis away from a combination the rule
+//            rejects. Not the same screen — it differs by exactly that axis, on
+//            purpose, because the axis is what the harness cannot reach. That
+//            is what keeps the region asserted somewhere adjacent; an offline
+//            test holds the adjacency, and requires every harness rule to
+//            actually hide a renderable combination, re-enumerating without it
+//            to prove the cost is real.
 //
 // Those checks all start from the label, though, so a harness limit kinded
 // `structural` is asked for none of them — and that is where the error recurs,

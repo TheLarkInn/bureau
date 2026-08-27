@@ -220,7 +220,7 @@ under permuted orders to keep it that way.
 | | |
 |---|---|
 | `dimensions.mjs` | the axes the canvas varies along, and what each value promises on screen |
-| `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render), `scoping` (renders, but adds nothing to cross), or `harness` (renders in production; this harness cannot produce it, and it names the limit and the state that renders the same screen) |
+| `constraints.mjs` | why a combination is or is not a state — `structural` (cannot render), `scoping` (renders, but adds nothing to cross), or `harness` (renders in production; this harness cannot produce it, and it names the limit and the nearest state this harness can reach — one named axis away, not the same screen) |
 | `enumerate.mjs` | walks the product with pruning, so the totals are exact without materialising 10^9 tuples; per-rule figures count what each rule pruned *first*, in walk order |
 | `probes.mjs` | crossings each `scoping` rule excluded, rendered anyway to hold the rule to account, plus content samples the dimensions do not model |
 | `paths.mjs` | how each state is reached, as data — and which of them need a route intercepted rather than a click |
@@ -691,12 +691,25 @@ bar the excluded screen would not have, and claiming the renders match would be
 the same overclaim in the other direction. So the standing state must satisfy
 the rule — a state the rule itself excludes is not somewhere the harness can get
 to — and changing exactly one of the axes the rule reads must produce a
-combination the rule rejects. A reviewer looking at `stands` is one named axis
+combination the rule rejects **that no other rule rejects too**. That last
+clause is the round-later half: adjacency asked only "does this rule reject the
+neighbour?", so a `stands` could qualify by sitting next to a combination some
+unrelated rule had already excluded — a combination that is not a screen this
+harness rule hides at all, and in one measured case the only neighbour a
+`stands` had. A witness that is itself not a screen proves nothing about the
+screen being stood in for. A reviewer looking at `stands` is one named axis
 away from the screen the rule removed, rather than somewhere else entirely, and
 that is now a check rather than a promise. It is asked against the rule's own
 predicate, not against `enumerate`'s worked example, because which tuple that
 example is depends on the walk order — a check that passed or failed on `ORDER`
 would be a mark by another route.
+
+What the lab may *say* about `stands` is held too, and in the rendered DOM
+rather than in the helper: `harnessNotes` words both sentences once, and
+`specs/state-lab.spec.mjs` reads them back out of the constraint list and the
+picker, then refuses the sentence they replaced anywhere on the page. Holding
+the helper alone left either call site free to hard-code the old overclaim with
+the offline suite still green.
 
 Kinding is a judgement, and the check that catches this one is narrower than the
 judgement: a rule whose verdict is computed from `SAMPLE_STEPS` is deciding from
@@ -874,7 +887,11 @@ Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
   that was never coming. That is why a rule both trees must obey lives on the
   reachable side (`web/step-refs.mjs`, imported by `lib/edit.mjs`, so the
   editor's draft delete and the host's saved-view delete cannot drift the way
-  three separate `removeStep`s did). `test/web-imports.test.mjs` holds the
+  three separate `removeStep`s did; `web/step-edit.mjs` carries the editor's
+  draft transforms there for the second reason — a rule the offline suite
+  cannot import is a rule it can only check by *reading its spelling*, which
+  passes when the refusal is deleted and fails when the line is reformatted).
+  `test/web-imports.test.mjs` holds the
   boundary offline: every relative specifier under `web/` resolves to a file
   that exists inside `web/`, and every bare one is declared in the import map of
   **the page that loads it**. Per page, because an import map belongs to a page:
@@ -883,7 +900,10 @@ Both halves are pinned — `the_logged_name_is_the_one_the_adapter_invokes` and
   answered for `statelab.html` — which carries no import map at all — with
   another page's. The rule now walks each page's own module graph, starting from
   the `src` and `await import(…)` inside its inline `<script type="module">`,
-  which is where both surfaces actually begin.
+  which is where both surfaces actually begin. A specifier it cannot read from
+  source — an interpolated template, or an `import()` whose argument is not a
+  literal at all — is reported as its own finding rather than skipped, because a
+  specifier the scanner never captures is one no later rule is ever asked about.
 - **The pipeline editor never leaves an unloadable config.** `save-pipeline`
   renders the edited step graph, writes the file, and re-runs
   `bureau validate --json`; findings that name the edited pipeline revert the

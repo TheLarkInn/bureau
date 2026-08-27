@@ -22,7 +22,8 @@ import {
 
 import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
-import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../step-refs.mjs";
+import { stepNameProblem, TERMINAL_NAMES } from "../step-refs.mjs";
+import { removeStep, renameStep, syncSteps } from "../step-edit.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -238,13 +239,6 @@ function setEdge(view, source, outcome, target) {
   return syncSteps({ ...view, steps, edges: [...others, edge] });
 }
 
-function syncSteps(view) {
-  return {
-    ...view,
-    steps: view.steps.map((step) => ({ ...step, outgoing: view.edges.filter((edge) => edge.relation === "control" && edge.source === step.name) })),
-  };
-}
-
 function addStep(name, view, kind, edit, setSelected) {
   const base = `step-${view.steps.length + 1}`;
   let candidate = base;
@@ -265,26 +259,6 @@ function addStep(name, view, kind, edit, setSelected) {
   }
   edit({ ...view, steps: [...view.steps, { id: candidate, name: candidate, type: "step", kind, order: view.steps.length, fields, outgoing: [] }] });
   setSelected(candidate);
-}
-
-/**
- * The step gone, its edges gone, and every reference to it in another step's
- * fields gone with them.
- *
- * The field rule is `web/step-refs.mjs`, shared with `lib/edit.mjs`, because
- * dangling on delete is one defect however it is reached: a decision routes
- * through its `on:` map and an agent step through `inputs_from`, neither of
- * which is in `view.edges`, so dropping edges alone left the pipeline naming a
- * step that no longer exists. React Flow draws nothing for an edge whose
- * endpoint is missing, so the graph looked clean either way — this is the case
- * the screen cannot show, which is why it has to be true by construction.
- */
-function removeStep(view, stepName) {
-  return {
-    ...view,
-    steps: view.steps.filter((step) => step.name !== stepName).map((step) => withoutReferencesTo(step, stepName)),
-    edges: view.edges.filter((edge) => edge.source !== stepName && edge.target !== stepName),
-  };
 }
 
 function connect(view, connection, edit) {
@@ -692,35 +666,6 @@ function positiveInteger(value) {
 
 function numberInput(value) {
   return value === "" ? null : Number(value);
-}
-
-/**
- * The draft rename, whose field half is `web/step-refs.mjs` — the same rule the
- * host's saved-view rename uses, so the two cannot drift the way the delete
- * once did. The name rule is shared from there too: a step may not take a
- * terminal's name, or `on: abort` would stop meaning the terminal it means
- * everywhere it is read, and `StepEditor` reads the same rule so the refusal is
- * explained rather than silent.
- */
-function renameStep(view, from, to) {
-  if (to === from || stepNameProblem(view.steps, to, from)) {
-    return view;
-  }
-  const steps = view.steps.map((step) => {
-    const retargeted = withReferencesRetargeted(step, from, to);
-    return { ...retargeted, id: step.name === from ? to : step.id, name: step.name === from ? to : step.name };
-  });
-  const edges = view.edges.map((edge) => ({
-    ...edge,
-    source: edge.source === from ? to : edge.source,
-    target: edge.target === from ? to : edge.target,
-  })).map((edge) => ({ ...edge, id: edgeIdentifier(edge) }));
-  return syncSteps({ ...view, steps, edges });
-}
-
-function edgeIdentifier(edge) {
-  const outcome = edge.outcome ? `:${edge.outcome}` : "";
-  return `${edge.relation}:${edge.source}${outcome}->${edge.target}`;
 }
 
 function KindFields({ view, step, roles, set }) {
