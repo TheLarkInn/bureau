@@ -1,8 +1,8 @@
-//! A step may not take a terminal's name (DESIGN.md sections 7, 11).
+//! A step may not take a terminal's name.
 //!
 //! `engine::edge::resolve` matches `done`, `abort` and `escalate` before it
 //! looks at `pipeline.steps`, so a bare terminal name in an edge is the
-//! *terminal* wherever it is written and a step of that name is unreachable
+//! terminal wherever it is written and a step of that name is unreachable
 //! through it. Validation used to read the two the other way round:
 //! `check_edge` returns as soon as the target names a step, so a pipeline
 //! carrying a step called `abort` passed every rule — reachability included,
@@ -12,62 +12,15 @@
 //! The canvas refuses the name on the way in (`web/step-refs.mjs`
 //! `stepNameProblem`). A config already on disk needs the same rule, because
 //! the canvas is not the only way to write one.
-
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+//!
+//! Sharing the parent's binary and harness, as `engine/terminal_labels.rs` and
+//! `label_rules/recovery.rs` do: this is a sub-rule of the parent's subject,
+//! and a standalone file would copy `TestDir` and three fixtures verbatim to
+//! buy a seventieth link unit.
 
 use bureau::config::Config;
 
-static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
-
-struct TestDir(PathBuf);
-
-impl TestDir {
-    fn new(tag: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "bureau-test-{}-{}-{tag}",
-            std::process::id(),
-            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir");
-        Self(dir)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TestDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-const REPOS: &str = "repos:\n  odsp-web:\n    url: https://dev.azure.com/microsoft/Odsp/_git/odsp-web\n    forge: ado\n    access: push\n    credential: ado-main\n";
-const ROLE: &str = "name: implementer\nagent: /bureau:implementer\nadapter: copilot\npermissions: [repo:read, repo:write, repo:push, pr:write]\nmin_trust: maintainer\n";
-
-const ASSIGNMENT: &str = r#"
-name: fix-flaky-tests
-work:
-  forge: ado
-  source: "Odsp/odsp-web"
-  filter: "[System.Tags] CONTAINS 'agent-eligible'"
-  approval_label: agent-approved
-  abort_label: bureau:failed
-  escalate_label: bureau:needs-human
-repos: [odsp-web]
-pipeline: fix-failing-test
-role: implementer
-verify: "rush test --to odsp-web"
-branch_prefix: runner/
-limits:
-  max_concurrent: 2
-  max_runs_per_hour: 6
-  max_runs_per_day: 40
-  max_open_prs: 5
-  max_cost_per_day_usd: 25
-"#;
+use super::{ASSIGNMENT, REPOS, ROLE_IMPLEMENTER, TestDir, write_files};
 
 /// A two-step pipeline whose second step carries `name`, reached from the
 /// first. Every other rule is satisfied, so the only thing under test is the
@@ -80,17 +33,15 @@ fn pipeline_naming(name: &str) -> String {
 
 fn load(tag: &str, step: &str) -> Result<Config, Vec<String>> {
     let dir = TestDir::new(tag);
-    let files = [
-        ("repos.yaml", REPOS),
-        ("roles/implementer.yaml", ROLE),
-        ("assignments/fix-flaky-tests.yaml", ASSIGNMENT),
-        ("pipelines/fix-failing-test.yaml", &pipeline_naming(step)),
-    ];
-    for (name, text) in files {
-        let path = dir.path().join(name);
-        std::fs::create_dir_all(path.parent().expect("parent dir")).expect("mkdir");
-        std::fs::write(path, text).expect("write fixture");
-    }
+    write_files(
+        &dir,
+        &[
+            ("repos.yaml", REPOS),
+            ("roles/implementer.yaml", ROLE_IMPLEMENTER),
+            ("assignments/fix-flaky-tests.yaml", ASSIGNMENT),
+            ("pipelines/fix-failing-test.yaml", &pipeline_naming(step)),
+        ],
+    );
     Config::load(dir.path()).map_err(|errors| errors.iter().map(ToString::to_string).collect())
 }
 
