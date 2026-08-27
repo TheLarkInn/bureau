@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { shotName, twinParticipants } from "../gallery-audit.mjs";
+import { indexPage, rowsFor } from "../gallery-index.mjs";
 import { enterState, applyOps, expect, galleryDir, test } from "../matrix-fixtures.mjs";
 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
@@ -121,17 +122,9 @@ test.describe("@matrix transitions", () => {
  * shots are written by other workers and this test may run before them.
  */
 test("@matrix gallery index", async () => {
-  const rows = STATES.map((state) => `
-    <article class="card" id="${escape(state.id)}">
-      <h2>${escape(state.id)}</h2>
-      <p class="muted">${escape(state.summary ?? "")}</p>
-      <p class="meta">${escape(state.kind)}${describeProbe(state)} · fixture ${escape([].concat(state.fixture ?? []).join(" + ") || "none")}</p>
-      <div class="shots">
-        ${VIEWPORT_LIST.map((viewport) => `<figure data-shot="${escape(shot(state, viewport))}"><img loading="lazy" src="./${shot(state, viewport)}" alt="${escape(state.id)} at ${viewport.id}"><figcaption>${viewport.id}</figcaption></figure>`).join("")}
-      </div>
-    </article>`).join("");
+  const rows = rowsFor(STATES, VIEWPORT_LIST, shot);
 
-  await writeFile(join(galleryDir(), "index.html"), page(rows), "utf8");
+  await writeFile(join(galleryDir(), "index.html"), indexPage(rows, STATES, VIEWPORT_LIST), "utf8");
 
   const written = await readFile(join(galleryDir(), "index.html"), "utf8");
   const missing = STATES.flatMap((state) =>
@@ -140,45 +133,3 @@ test("@matrix gallery index", async () => {
       .map((viewport) => `${state.id} @ ${viewport.id}`));
   expect(missing, "states the gallery index does not link").toEqual([]);
 });
-
-function page(rows) {
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Bureau Canvas state gallery</title>
-<style>
-  :root { color-scheme: light dark; --border:#d0d7de; --muted:#656d76; }
-  body { margin:0; font:14px/20px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-  header { padding:1rem 1.5rem; border-bottom:1px solid var(--border); }
-  h1 { font-size:1.25rem; margin:0; }
-  main { display:grid; gap:1.5rem; padding:1.5rem; }
-  .card { border:1px solid var(--border); border-radius:.625rem; padding:1rem; }
-  .card h2 { font-size:1rem; margin:0 0 .25rem; font-family:"SFMono-Regular",Consolas,monospace; }
-  .muted,.meta { color:var(--muted); margin:.25rem 0; }
-  .meta { font-size:12px; }
-  .shots { display:grid; grid-template-columns:repeat(auto-fit,minmax(20rem,1fr)); gap:1rem; margin-top:.75rem; }
-  figure { margin:0; }
-  img { width:100%; border:1px solid var(--border); border-radius:6px; display:block; }
-  figcaption { color:var(--muted); font-size:12px; padding-top:.25rem; }
-  /* Stamped by global-teardown.mjs on renders whose DOM never stopped changing
-     inside the settle budget. The marker sits on the figure a reviewer is
-     looking at rather than only in the banner, because the judgement being made
-     is about that screen. */
-  figure[data-settled="false"] img { border-color:#9a6700; border-width:2px; }
-  figure[data-settled="false"] figcaption::after { content:" · not proved settled"; color:#9a6700; font-weight:700; }
-</style></head>
-<body>
-<header><h1>Bureau Canvas state gallery</h1><p class="muted">${STATES.length} states × ${VIEWPORT_LIST.length} viewports, rendered by the production page.</p></header>
-<main>${rows}</main>
-</body></html>`;
-}
-
-function escape(value) {
-  return String(value).replace(/[&<>"]/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
-}
-
-/** A crossing names the rule it breaks; a content sample names what it covers. */
-function describeProbe(state) {
-  if (state.rule) {
-    return ` · crossing excluded by ${escape(state.rule)}`;
-  }
-  return state.covers ? ` · covers ${escape(state.covers)}` : "";
-}

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
+import { applyMarks } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
@@ -197,12 +198,28 @@ async function report(published, records, unreadable) {
   // artefact that says why it failed. Reversing the two would take the evidence
   // down with the run, which is the one thing a review surface owes on a bad
   // day.
-  await stamp(lines, names.missing, unsettled, drift, unknown);
-  return { ran: true, incomplete };
+  //
+  // A mark that found no anchor joins the deterministic findings: it is decided
+  // by `indexOf` over a file this run wrote, not by comparing two renders, so it
+  // cannot come out differently on a contended machine and belongs where the
+  // audit spec can gate on it.
+  const unmarked = await stamp(lines, names.missing, unsettled, drift, unknown);
+  for (const line of unmarked) {
+    console.log(`gallery: ${line}`);
+  }
+  return { ran: true, incomplete: [...incomplete, ...unmarked] };
 }
 
 /**
- * Marks the findings in the artefact itself, not only on a console.
+ * Marks the findings in the artefact itself, not only on a console, and says
+ * which marks found nothing to attach to.
+ *
+ * The anchors it replaces belong to `gallery-index.mjs`, which is also what
+ * wrote the page, so the two cannot drift apart in silence. `applyMarks`
+ * returns the marks that landed nowhere; they are returned rather than swallowed
+ * because an index that lost its anchors still renders — cleanly, and without
+ * the alarm — which is precisely the unmarked-but-broken gallery this suite is
+ * written against.
  *
  * Two notices, because they are two different sentences and only one of them is
  * an alarm. "This gallery is not the whole matrix" has to keep meaning that:
@@ -222,10 +239,14 @@ async function stamp(lines, missing, unsettled, drift, unknown = []) {
   const index = join(GALLERY, "index.html");
   const written = await readFile(index, "utf8").catch(() => null);
   if (!written) {
-    return;
+    return ["index.html could not be read, so none of this run's findings are marked on it"];
   }
-  const page = written.replace("<main>", `${notices(lines, missing, unsettled, drift, unknown)}<main>`);
-  await writeFile(index, markUnsettled(page, [...unsettled, ...unknown]), "utf8");
+  const notice = notices(lines, missing, unsettled, drift, unknown);
+  const marked = applyMarks(written, notice, [...unsettled, ...unknown]);
+  await writeFile(index, marked.html, "utf8");
+  return marked.unmarked.length
+    ? [`${marked.unmarked.length} of this run's marks found no anchor in the gallery index, so the artefact understates what was found: ${marked.unmarked.slice(0, 5).join(", ")}`]
+    : [];
 }
 
 /**
@@ -280,12 +301,4 @@ export function notices(lines, missing, unsettled, drift = [], unknown = []) {
       + `${drift.length ? ` ${drift.slice(0, 20).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`
     : "";
   return `${alarm}${note}`;
-}
-
-/** Tags every unsettled render's figure, which the index's own CSS then draws. */
-export function markUnsettled(html, unsettled) {
-  return unsettled.reduce(
-    (page, shot) => page.replace(`<figure data-shot="${shot}">`, `<figure data-shot="${shot}" data-settled="false">`),
-    html,
-  );
 }

@@ -13,7 +13,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
-import { markUnsettled, notices } from "../e2e/playwright/global-teardown.mjs";
+import { notices } from "../e2e/playwright/global-teardown.mjs";
+import { applyMarks, figureTag, indexPage, NOTICE_ANCHOR, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
@@ -377,7 +378,7 @@ test("a render with no usable record is marked on its figure and counted in the 
   const note = notices([`1 render(s) were published without a record, so nothing is known about them: ${B}`], [], [A], [], [B]);
 
   assert.deepEqual(
-    [note.includes("2 render(s) below are marked"), note.includes("filed no record this run could read"), markUnsettled(`<figure data-shot="${B}">`, [B])],
+    [note.includes("2 render(s) below are marked"), note.includes("filed no record this run could read"), applyMarks(figureTag(B), "", [B]).html],
     [true, true, `<figure data-shot="${B}" data-settled="false">`],
   );
 });
@@ -427,11 +428,11 @@ test("a broken twin with no signature filed reports the break and no difference"
  * so the tag lands on that figure and on no other.
  */
 test("marking tags the unsettled figure and leaves its neighbours alone", () => {
-  const html = `<figure data-shot="${A}"><img src="./${A}"></figure><figure data-shot="${B}"><img src="./${B}"></figure>`;
+  const html = `${figureTag(A)}<img src="./${A}"></figure>${figureTag(B)}<img src="./${B}"></figure>`;
 
   assert.equal(
-    markUnsettled(html, [A]),
-    `<figure data-shot="${A}" data-settled="false"><img src="./${A}"></figure><figure data-shot="${B}"><img src="./${B}"></figure>`,
+    applyMarks(html, "", [A]).html,
+    `<figure data-shot="${A}" data-settled="false"><img src="./${A}"></figure>${figureTag(B)}<img src="./${B}"></figure>`,
   );
 });
 
@@ -507,5 +508,68 @@ test("only the findings that are arithmetic over the file list may gate a run", 
       drift: ["unproven-twin", "unproven-match"],
       total: findings.length,
     },
+  );
+});
+
+/**
+ * The marks are held against the page the suite actually writes.
+ *
+ * Every other test here hands `applyMarks` a hand-written `<figure …>` literal,
+ * which proves the replacement works on that literal and nothing about whether
+ * the index still contains one. While the template was private to
+ * `state-matrix.spec.mjs`, that was the whole coverage: an attribute added to
+ * `<figure>`, or a `<main>` that gained one, turned both marks into silent
+ * no-ops — the red banner and every amber figure would stop appearing and no
+ * check would notice, because an unmarked gallery renders exactly like a clean
+ * one. So the anchors now belong to `gallery-index.mjs`, and this asks the real
+ * template for a real page and requires both marks to land in it.
+ */
+test("both of the gallery's marks land in the page the suite really writes", () => {
+  const shot = (state, viewport) => shotName(state.id, viewport.id);
+  const page = indexPage(rowsFor(STATES, VIEWPORTS, shot), STATES, VIEWPORTS);
+  const target = shot(STATES[0], VIEWPORTS[0]);
+
+  const marked = applyMarks(page, notices(["a hole"], [], [target], [], []), [target]);
+
+  assert.deepEqual(
+    [marked.unmarked, marked.html.includes("This gallery is not the whole matrix"), marked.html.includes(`data-shot="${target}" data-settled="false"`), page.includes(NOTICE_ANCHOR)],
+    [[], true, true, true],
+  );
+});
+
+/**
+ * A mark that finds no anchor is news, not a shrug.
+ *
+ * This is the failure the extraction above is guarding against, asserted from
+ * the other side: given a page whose anchors have drifted, `applyMarks` must
+ * name what it could not attach rather than returning the page unchanged and
+ * letting the run look clean. `stamp` folds this list into the audit's
+ * deterministic findings, so the gate fires.
+ */
+test("a mark with nothing to attach to is reported rather than dropped", () => {
+  const drifted = `<main class="grid">${figureTag(A).replace(">", ' class="shot">')}</figure></main>`;
+
+  const marked = applyMarks(drifted, notices(["a hole"], [], [A], [], []), [A]);
+
+  assert.deepEqual(
+    [marked.unmarked, marked.html === drifted],
+    [["notices", A], true],
+  );
+});
+
+/**
+ * The notices carry text quoted back from a rendered page, and a signature line
+ * can contain anything an attribute value can. `String.prototype.replace` with a
+ * string pattern expands `$&`, `` $` ``, `$'` and `$n` *in the replacement*, so
+ * a banner quoting one of those would have been corrupted by its own insertion.
+ */
+test("a notice containing a dollar pattern is inserted literally", () => {
+  const page = indexPage(rowsFor(STATES, VIEWPORTS, (state, viewport) => shotName(state.id, viewport.id)), STATES, VIEWPORTS);
+
+  const marked = applyMarks(page, "<p>broken-twin: attr=$& and $` and $'</p>", []);
+
+  assert.deepEqual(
+    [marked.unmarked, marked.html.includes("attr=$& and $` and $'")],
+    [[], true],
   );
 });
