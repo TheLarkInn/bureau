@@ -359,6 +359,28 @@ on one element — the thing a person cannot find by eye and a diff finds at onc
 A render missing a settle record reads as proved, so a gallery published before
 this rule existed is not retroactively cast into doubt.
 
+### A mark can be attached, spelled right, and painted in nothing
+
+Every rule above binds where a mark attaches and what it says. None of them
+asked whether a reviewer can see it. `border-color:transparent` beside
+`border-width:2px`, and `color:transparent` on the caption's `::after`, leave
+every selector matching, every mark landing, `unmarked` empty and every computed
+value readable and *different from its neighbours* — over 512 renders on which
+nothing is drawn at all. `hidden`, `display:none` and `opacity:0` do the same to
+the notice a bad run depends on, and the offline suite cannot tell, because it
+holds `notices` as a string and a hidden banner serializes exactly like a shown
+one.
+
+So both are asked whether they are painted, by a browser: the stamped figure has
+to be visible, its border opaque, and every channel that says the words has to
+say them in a colour with alpha. The notices are asked the same question, and
+the advisory is asked *alone* as well as beside the alarm — an advisory-only run
+is the ordinary result of a full matrix, so the notice a reviewer meets on
+almost every good run was the one with no browser check at all. What counts as
+drawn is decided once, in `e2e/playwright/drawn.js`, and injected into the page
+by both checks, so the two cannot drift into asking different questions about
+the same artefact.
+
 ### The audit could not be found among the run's checks
 
 Every rule above produced a *finding*, and nothing was answerable for any of

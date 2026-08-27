@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { auditGallery, resolveDirs, runAudit } from "../e2e/playwright/global-teardown.mjs";
+import globalTeardown, { auditGallery, resolveDirs, runAudit } from "../e2e/playwright/global-teardown.mjs";
 import { shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
@@ -214,6 +214,38 @@ test("a run given no directories works over this run's staging and the real gall
 });
 
 /**
+ * …and that gallery is the directory a reviewer is actually sent to.
+ *
+ * The test above compares the resolved pair against `GALLERY`, which it imports
+ * from the module that produced it. Both ends of that comparison are the same
+ * binding, so it holds for any value: point `GALLERY` at `../gallery-review/`
+ * and the suite follows it there, green, while the workflow keeps uploading
+ * `e2e/gallery/` and a reviewer downloads an empty artefact. A check whose
+ * expected value comes from the thing under test is exactly the defect this
+ * branch has been closing, standing in the check written to close it.
+ *
+ * The reviewer-facing path is therefore spelled here, independently, and read
+ * back out of the workflow that publishes it — the only two places that decide
+ * what a human ends up browsing. Moving the gallery now has to move both, which
+ * is the point: they are one contract, not two coincidences.
+ */
+const REVIEWER_GALLERY = ".github/extensions/bureau-canvas/e2e/gallery/";
+
+test("the gallery a run resolves to is the directory CI publishes for a reviewer", async () => {
+  const before = process.env[STAGING_ENV];
+  process.env[STAGING_ENV] = "/tmp/bureau-staging-under-test";
+
+  const resolved = resolveDirs().gallery;
+  const workflow = await readFile(new URL("../../../workflows/canvas-state-matrix.yml", import.meta.url), "utf8");
+
+  process.env[STAGING_ENV] = before ?? "";
+  assert.deepEqual(
+    [resolved.endsWith(`/${REVIEWER_GALLERY}`), workflow.split("\n").map((line) => line.trim()).includes(REVIEWER_GALLERY)],
+    [true, true],
+  );
+});
+
+/**
  * …and `auditGallery` is the thing that asks for it.
  *
  * The test above proves `resolveDirs` alone, which is one binding short of the
@@ -274,6 +306,45 @@ test("the teardown hands the audit resolveDirs itself, not a second spelling of 
   const named = () => ({ staging: "/tmp/a", gallery: "/tmp/b" });
 
   const returned = [await runAudit(spy), await runAudit(spy, named)];
+
+  assert.deepEqual(
+    [returned, handed.map((call) => call.dirs), handed[0]?.resolve === resolveDirs, handed[1]?.resolve === named],
+    [["audited", "audited"], [{}, {}], true, true],
+  );
+});
+
+/**
+ * …and the teardown Playwright actually loads is that hand-over, not a copy.
+ *
+ * Every test above reaches `runAudit` by importing it. Nothing imported the
+ * module's *default export*, which is the only function a real run calls — so
+ * `runAudit` could be proved exactly, in both directions, while the thing
+ * Playwright loads went around it:
+ *
+ *   export default async function globalTeardown() {
+ *     await auditGallery({}, (dirs) => ({
+ *       staging: dirs.staging ?? staging(), gallery: dirs.gallery ?? GALLERY,
+ *     }));
+ *   }
+ *
+ * That behaves identically on every run, so no behavioural test here or in the
+ * browser suite can tell it apart — and it is the duplicate spelling of the
+ * resolver rule that `resolveDirs` exists to be the only one of, restored in
+ * the one function none of these tests had ever called.
+ *
+ * So the default export is called the way Playwright calls it, with a config
+ * and nothing else, and asked the same two questions `runAudit` is asked: the
+ * defaulted call must hand over `resolveDirs` itself, and a call naming its own
+ * resolver must hand over that one. A body that bypasses `runAudit` never calls
+ * the stand-in at all.
+ */
+test("the teardown Playwright loads hands the audit resolveDirs itself", async () => {
+  const handed = [];
+  const spy = (dirs, resolve) => (handed.push({ dirs, resolve }), "audited");
+  const named = () => ({ staging: "/tmp/a", gallery: "/tmp/b" });
+  const config = { rootDir: "/tmp/bureau-never-read" };
+
+  const returned = [await globalTeardown(config, spy), await globalTeardown(config, spy, named)];
 
   assert.deepEqual(
     [returned, handed.map((call) => call.dirs), handed[0]?.resolve === resolveDirs, handed[1]?.resolve === named],

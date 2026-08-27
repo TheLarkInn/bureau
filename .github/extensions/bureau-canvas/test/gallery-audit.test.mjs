@@ -708,18 +708,36 @@ test("the marker stamps attributes the page carries that it never wrote", () => 
 });
 
 /**
- * The attributes of one element, read as attributes rather than as substrings.
+ * The attributes of one element, read the way a browser reads them.
  *
  * A row is asked what its `<figure>` and `<img>` actually carry, because
  * `row.includes('src="./…"')` answers yes to a *suffix* of some other
  * attribute's value. Adding `data-original-src="./${escape(shot)}"` beside a
  * `src` written raw satisfied that check while the real `src` broke open on the
  * hostile quote — the substring was found, in the wrong attribute.
+ *
+ * First occurrence wins, and a repeat is reported. `Object.fromEntries` takes
+ * the *last* of a repeated name and a browser takes the first, so a row could
+ * carry `src` twice — the raw one the page would use, then an escaped one — and
+ * this read the escaped copy and agreed with it while Chromium loaded the
+ * broken one. A check that parses the markup differently from the renderer is
+ * reading a page nobody will ever see, so the disagreement is closed in the
+ * renderer's favour and the duplicate itself is a finding: a row is malformed
+ * output whether or not the winning value happens to be right.
  */
 function attributesOf(row, tag) {
   const opens = row.indexOf(`<${tag}`);
   const text = row.slice(opens, row.indexOf(">", opens) + 1);
-  return Object.fromEntries([...text.matchAll(/([\w-]+)="([^"]*)"/gu)].map(([, name, value]) => [name, value]));
+  const attributes = new Map();
+  const repeated = [];
+  for (const [, name, value] of text.matchAll(/([\w-]+)="([^"]*)"/gu)) {
+    if (attributes.has(name)) {
+      repeated.push(name);
+    } else {
+      attributes.set(name, value);
+    }
+  }
+  return { attributes: Object.fromEntries(attributes), repeated };
 }
 
 /**
@@ -752,15 +770,18 @@ test("a state's own text cannot break out of the attribute it is written into", 
   const shot = 'desktop--"x.png';
 
   const row = rowsFor([hostile], VIEWPORTS, () => shot);
+  const figure = attributesOf(row, "figure");
+  const image = attributesOf(row, "img");
 
   assert.deepEqual(
     [
       escape('a "b" <c> & d'),
       ["<script>", "<em>", "<b>", "<i>", "<u>"].filter((tag) => row.includes(tag)),
-      attributesOf(row, "figure")["data-shot"],
-      attributesOf(row, "img").src,
+      figure.attributes["data-shot"],
+      image.attributes.src,
+      [...figure.repeated, ...image.repeated],
       row.includes(`data-shot="${shot}"`),
     ],
-    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, false],
+    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, [], false],
   );
 });

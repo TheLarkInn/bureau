@@ -24,8 +24,22 @@ import { GALLERY, staging } from "./gallery-paths.mjs";
 
 const SIGNATURES = "signatures";
 
-export default async function globalTeardown() {
-  await runAudit();
+/**
+ * The teardown Playwright loads, which is `runAudit` and nothing else.
+ *
+ * `audit` and `resolve` are forwarded rather than defaulted here, and that is
+ * the whole point of the parameters: while this took none, the body was a place
+ * the resolver rule could be written a second time. `await auditGallery({},
+ * (dirs) => ({ staging: dirs.staging ?? staging(), gallery: dirs.gallery ??
+ * GALLERY }))` behaves identically to `runAudit()` on every run and left the
+ * whole suite green — including the identity checks on `runAudit`, which never
+ * imported this function and so could not see it bypass `runAudit` entirely.
+ *
+ * Playwright calls a global teardown with the run's config and nothing else, so
+ * the seams sit behind it, where a real run always leaves them defaulted.
+ */
+export default async function globalTeardown(_config, audit, resolve) {
+  return runAudit(audit, resolve);
 }
 
 /**
