@@ -483,8 +483,11 @@ export function deadlineVerdict({ lastFailed, sustained, sawClean }, repeats) {
  *
  * This is a claim the surface makes about itself rather than a list of
  * selectors to wait for, so it cannot fall out of date when a graph gains an
- * edge — `data-graph-edges` is the count handed to React Flow, at the one place
- * that knows it.
+ * edge — `data-graph-edges` is the count each surface derives from its own
+ * model, at the one place that knows it. Derived from the model and not from
+ * the arrays handed to React Flow, so that a projection which drops edges is
+ * caught by `undrawnGraphs` rather than quietly lowering the bar to nothing;
+ * `web/graph-edges.mjs` carries the reasoning.
  *
  * "No edge is still missing" rather than an exact count: the question being
  * asked is whether the draw pass has happened, and a surface that puts one more

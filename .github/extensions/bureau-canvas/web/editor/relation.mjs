@@ -17,10 +17,12 @@ const Y_GAP = 130;
 const COLUMNS = { assignment: 0, pipeline: 1, role: 2, repo: 3 };
 
 export function RelationGraph({ relation }) {
-  const flow = toFlow(relation ?? { nodes: [], edges: [] });
+  // Counted from the config, never from `flow`: see `web/graph-edges.mjs`.
+  const source = relation ?? { nodes: [], edges: [] };
+  const flow = toFlow(source);
   return h(
     "div",
-    { className: "relation-flow", "aria-label": "Config relation graph", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
+    { className: "relation-flow", "aria-label": "Config relation graph", "data-graph-edges": String(drawableEdges(source.nodes, source.edges)) },
     h(
       ReactFlow,
       {

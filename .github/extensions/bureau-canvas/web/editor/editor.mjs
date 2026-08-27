@@ -143,7 +143,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       { className: "editor-main" },
       h(
         "div",
-        { className: "editor-flow", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
+        { className: "editor-flow", "data-graph-edges": String(flow.declared) },
         h(
           ReactFlow,
           {
@@ -326,6 +326,9 @@ function toFlow(view, positions, hints, saveResult) {
   return {
     nodes: auto.nodes.map((node) => flowNode(node, positions, marked)),
     edges: flowEdges(view),
+    // Counted from the view and its referenced terminals, never from the two
+    // arrays above: see `web/graph-edges.mjs`.
+    declared: drawableEdges([...view.steps.map((step) => ({ id: step.name })), ...terminals], edges),
   };
 }
 

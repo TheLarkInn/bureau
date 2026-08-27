@@ -427,15 +427,47 @@ holds each to its own words.
 
 ### The relation graph's edge count answered for itself
 
-`data-graph-edges` is derived from the same projection React Flow renders, which
-is exactly right for the barrier it serves — *has the edge pass happened* — and
-is no evidence at all for *are the right edges there*: a projection that dropped
-every edge would declare zero, draw zero, and satisfy it. The pipeline graph has
-been checked against its own layout since the first version of the Edge harness.
-The relation graph — which draws the assignment-first mental model this canvas
-is built around — was only ever asked whether it had drawn *some* edge. It is
-now counted against `relationView`'s own edges, which are derived from the
-config rather than from the render.
+`data-graph-edges` was derived from the same projection React Flow renders,
+which is exactly right for the barrier it was written to serve — *has the edge
+pass happened* — and is no evidence at all for *are the right edges there*: a
+projection that dropped every edge declares zero, draws zero, and satisfies it.
+
+That was tolerable while the count was only a barrier, because both numbers moved
+together by construction. `undrawn-graph`, added last round, changed what the
+number is *for*: it fails a render whose graph never drew the edges it declared,
+which is a claim about the screen. Against that claim a self-reported count does
+not merely fail to help, it answers by lowering the bar to nothing — the exact
+shape this branch exists to remove, committed by the newest instrument on it.
+
+The previous revision of this file said the relation graph was "now counted
+against `relationView`'s own edges, derived from the config rather than from the
+render". That counting existed, in `e2e/run.mjs`, and it is a real assertion —
+but `e2e/run.mjs` is the Edge harness, which is opt-in and named by no workflow,
+no npm script and no step in `scripts/lint.sh`. So the sentence described a check
+that ran nowhere in CI, and the pipeline graph's in-page count had the same
+defect the sentence claimed was fixed for the relation graph.
+
+All three surfaces now count from their own model instead: the relation graph
+from the config it was handed, the editor from `view.steps` and the terminals its
+edges reference, and the pipeline from the overlay *plan* — `overlayPlan`, split
+out of `overlayEdges` so the remap-and-dedupe that is the overlay's meaning stays
+on the counted side and `flowEdge`, the projection, is the untrusted half.
+
+The consequence is that `undrawn-graph` becomes a real correctness gate across
+all 512 renders in CI, rather than one assertion in a harness that runs only when
+someone has Edge. Both directions were measured on the same sabotage — a
+`toFlow` that hands React Flow no edges at all:
+
+| `data-graph-edges` derived from | result |
+|---|---|
+| the projection (before) | **26 passed, exit 0** — the defect is invisible |
+| the config (after) | **18 failed, exit 1** — `Config relation graph declared 4 edge(s) and drew 0` |
+
+Independence is a property of the *call site*, and nothing inside `drawableEdges`
+can enforce it, so `test/graph-edges.test.mjs` holds it offline by reading how
+each of the three surfaces computes the attribute. That test was mutation-checked
+in both directions too: it fails when any one surface is reverted to counting
+`flow.nodes, flow.edges`.
 
 ### Absence, and the writes that are not a Save
 

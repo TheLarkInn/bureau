@@ -6,6 +6,14 @@
 // edges that will actually appear, because React Flow draws nothing for an edge
 // whose endpoint is missing and the barrier would then never be reached.
 //
+// It also has to be counted from the surface's own model rather than from the
+// arrays handed to the renderer. As a pure timing barrier either source would
+// do, since both move together by construction; but `undrawn-graph` turned the
+// number into a claim about the screen, and a projection that dropped every
+// edge answered that claim by lowering the bar — declaring 0, drawing 0, and
+// passing. Independence is a property of the call site, so it is asserted here
+// against all three surfaces that publish the attribute.
+//
 // The second is the reason such an edge can exist at all. A step's references
 // to another step live in its fields, not only in `view.edges`: `inputs_from`,
 // a decision's `on:` map, `over`, and a concurrent step's `members`. Dropping
@@ -33,6 +41,9 @@ import { pipelineView } from "../lib/view.mjs";
 const committedUrl = new URL("./fixtures/committed-payload.json", import.meta.url);
 const referenceUrl = new URL("./fixtures/codec-reference-pipeline.yaml", import.meta.url);
 
+/** The three surfaces that publish `data-graph-edges` about themselves. */
+const SURFACES = ["app.mjs", "editor/editor.mjs", "editor/relation.mjs"];
+
 async function fixtureView() {
   const payload = JSON.parse(await readFile(committedUrl, "utf8"));
   return editable(pipelineView(payload, "agent-eligible-pipeline"));
@@ -58,6 +69,40 @@ test("a graph declares the edges it can draw, not the ones it was handed", () =>
   assert.deepStrictEqual(
     cases.map(([edges]) => drawableEdges(nodes, edges)),
     cases.map(([, expected]) => expected),
+  );
+});
+
+/**
+ * The number a graph publishes about itself is not read off the array it handed
+ * the renderer.
+ *
+ * `undrawn-graph` fails a render whose graph never drew the edges it declared.
+ * While both numbers came from the same projection that failure could not fire
+ * for the defect it names: a `toFlow` that dropped every edge declared 0, drew
+ * 0, and satisfied `graphsDrawn` and `undrawnGraphs` alike, so the gallery would
+ * publish graphs of disconnected boxes and the matrix would stay green. The
+ * count is only evidence if it is derived independently, which is a property of
+ * the *call site* — nothing inside `drawableEdges` can enforce it, so it is
+ * asserted here, offline, by reading how each surface computes the attribute.
+ *
+ * Checked for all three at once rather than only the relation graph, because
+ * the same shape was on the pipeline and the editor, and a rule held at one of
+ * three call sites is the kind of half-measure this whole registry exists to
+ * remove. `publishes` and `counts` guard the rule against going vacuous if a
+ * surface stops publishing or stops counting altogether.
+ */
+test("no surface counts its edges from the arrays it handed React Flow", async () => {
+  const sources = await Promise.all(SURFACES.map((path) => readFile(new URL(`../web/${path}`, import.meta.url), "utf8")));
+  const calls = sources.map((source) =>
+    source.split("\n").filter((line) => line.includes("drawableEdges(") && !line.trimStart().startsWith("*")));
+
+  assert.deepStrictEqual(
+    sources.map((source, index) => ({
+      publishes: source.includes("data-graph-edges"),
+      counts: calls[index].length > 0,
+      fromProjection: calls[index].some((line) => /\bflow\.(nodes|edges)\b/u.test(line)),
+    })),
+    SURFACES.map(() => ({ publishes: true, counts: true, fromProjection: false })),
   );
 });
 

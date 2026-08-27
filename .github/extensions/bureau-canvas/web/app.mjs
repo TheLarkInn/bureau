@@ -1594,7 +1594,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       ),
       h(
         "div",
-        { className: "pipeline-flow", "data-graph-edges": String(drawableEdges(flow.nodes, flow.edges)) },
+        { className: "pipeline-flow", "data-graph-edges": String(flow.declared) },
         h(ReactFlow, {
           nodes: flow.nodes,
           edges: flow.edges,
@@ -1667,16 +1667,27 @@ function toFlow(pipeline, state, selectedStep, decoration = null) {
   const terminals = layout.terminals.map((terminal) =>
     flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name]));
   const backIndexes = routeIndexes(layout.edges, "back");
+  const planned = overlayPlan(layout.edges, resolved);
+  const sources = [...(pipeline?.containers ?? []), ...layout.steps.filter((step) => visible.has(step.id)), ...layout.terminals];
   return {
     nodes: [...frames, ...steps, ...terminals],
-    edges: overlayEdges(layout.edges, handles, backIndexes, resolved),
+    edges: planned.map((item) => flowEdge(item.remapped, handles.edges[item.id], backIndexes.get(item.id) ?? 0, resolved, item.id)),
+    declared: drawableEdges(sources, planned.map((item) => item.remapped)),
   };
 }
 
-/** Remap hidden-member edges onto their group node and drop the duplicates. */
-function overlayEdges(edges, handles, backIndexes, resolved) {
+/**
+ * Remap hidden-member edges onto their group node and drop the duplicates.
+ *
+ * The semantic half of what used to be `overlayEdges`, kept apart from the
+ * React Flow projection so `declared` above can be counted from the layout this
+ * returns rather than from the array handed to the renderer — the independence
+ * `web/graph-edges.mjs` requires. The drops are the overlay's meaning and so
+ * belong on this side; `flowEdge` is the untrusted half.
+ */
+function overlayPlan(edges, resolved) {
   const seen = new Set();
-  const drawn = [];
+  const planned = [];
   for (const edge of edges) {
     const remapped = resolved ? { ...edge, source: resolved.remapEdge(edge.source), target: resolved.remapEdge(edge.target) } : edge;
     const key = `${remapped.source}->${remapped.target}:${remapped.outcome ?? remapped.relation}`;
@@ -1684,9 +1695,9 @@ function overlayEdges(edges, handles, backIndexes, resolved) {
       continue;
     }
     seen.add(key);
-    drawn.push(flowEdge(remapped, handles.edges[edge.id], backIndexes.get(edge.id) ?? 0, resolved, edge.id));
+    planned.push({ id: edge.id, remapped });
   }
-  return drawn;
+  return planned;
 }
 
 function flowFrame(frame) {
