@@ -33,7 +33,7 @@ function pageFor(combo) {
  * surface simply does not draw.
  */
 function expectations(combo) {
-  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set() };
+  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set(), allowOverlap: new Set() };
   const absorb = (source) => {
     for (const [key, set] of Object.entries(bag)) {
       for (const item of source?.[key] ?? []) {
@@ -60,7 +60,22 @@ function expectations(combo) {
     copy: [...bag.copy],
     allowErrors: [...bag.allowErrors],
     allowPlaceholder: [...bag.allowPlaceholder],
+    allowOverlap: [...bag.allowOverlap],
+    settles: settlement(combo),
   };
+}
+
+/**
+ * Whether this state's render is required to come to rest.
+ *
+ * True for all but one value in the whole matrix, and it is a claim in both
+ * directions rather than a tolerance: see `transport:playing` in
+ * `dimensions.mjs` for why an exemption that only permitted instability would
+ * be a mark that cannot fail. A dimension value declaring `settles: false`
+ * makes the state's own motion the thing under test.
+ */
+function settlement(combo) {
+  return !ORDER.some((key) => valueOf(key, combo[key])?.settles === false);
 }
 
 /**

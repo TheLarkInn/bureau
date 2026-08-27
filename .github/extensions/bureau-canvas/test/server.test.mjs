@@ -70,8 +70,41 @@ test("serves config page and state", async () => {
     }
 });
 
-test("Copilot canvas host remains frameable", async () => {
-    const instanceId = "bureau-embedded-frame-test";
+/**
+ * `/sample` is what the State Lab starts from, and the claim it makes is that
+ * the payload is the bundled one rather than whatever config the host was
+ * opened on. Asserted against the *committed fixture's* own assignment names,
+ * not a literal list here, so the two cannot drift: the lab's fixtures reach
+ * into this payload by name, and a sample that stopped carrying them would take
+ * a fifth of the matrix down with it.
+ *
+ * The comparison is with `/state` from the same host, because "it served
+ * something" is not the claim — "it served the sample even though the host has
+ * its own config" is. Under `BUREAU_CANVAS_TEST=1` the binary is missing, so
+ * `/state` already falls back to the same payload; what this pins is that
+ * `/sample` reaches it by its own route rather than by that coincidence.
+ */
+test("serves the bundled sample the state lab starts from", async () => {
+    const instanceId = "bureau-sample-test";
+    const opened = await canvas.openBureauCanvas({ instanceId, input: {} });
+    try {
+        const sample = await fetch(new URL("/sample", opened.url)).then((response) => response.json());
+        const fixture = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
+        const named = (config) => Object.keys(config?.assignments ?? {}).sort();
+        assert.deepStrictEqual(
+            {
+                assignments: sample.config.view.assignments.map((item) => item.name).sort(),
+                state: sample.validation.state,
+                instanceId: sample.instanceId,
+            },
+            { assignments: named(fixture.config), state: "fixture", instanceId },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+test("Copilot canvas host remains frameable", async () => {    const instanceId = "bureau-embedded-frame-test";
     const options = canvas.createBureauCanvasOptions(() => process.cwd());
     const opened = await options.open({ instanceId, input: {} });
     try {

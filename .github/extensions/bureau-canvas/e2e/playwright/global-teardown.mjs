@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
+import { auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings } from "./gallery-audit.mjs";
 import { applyMarks, escape, SETTLED_INK, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
@@ -244,6 +244,7 @@ async function report(published, records, unreadable, outDir) {
   const names = auditNames(expected, published);
   const twins = auditTwins(records, RENDER_TWINS);
   const unsettled = auditSettled(records);
+  const motion = auditMotion(records, movingShots(STATES, Object.values(VIEWPORTS)));
   const unaudited = auditUnaudited(expected, published, records, unreadable);
   // The two ways a render ends up with no usable record read differently to
   // whoever has to fix them, and identically to whoever has to review the
@@ -257,6 +258,8 @@ async function report(published, records, unreadable, outDir) {
     ...(names.stray.length ? [`${names.stray.length} render(s) belong to no state in the registry`] : []),
     ...(unreadable.length ? [`${unreadable.length} render(s) filed a record this run could not read, so nothing is known about them: ${unreadable.slice(0, 5).join(", ")}`] : []),
     ...(unaudited.length ? [`${unaudited.length} render(s) were published without a record, so nothing is known about them: ${unaudited.slice(0, 5).join(", ")}`] : []),
+    ...(motion.stray.length ? [`${motion.stray.length} render(s) never stopped changing and no state declares them in motion, so their screenshots are whichever frame the run caught: ${motion.stray.slice(0, 5).join(", ")}`] : []),
+    ...(motion.still.length ? [`${motion.still.length} render(s) declare themselves in motion and came to rest, so the exemption is stale: ${motion.still.slice(0, 5).join(", ")}`] : []),
     ...parted.unchecked.map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
   const lines = [...incomplete, ...parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`)];

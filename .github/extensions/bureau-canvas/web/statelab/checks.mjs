@@ -97,17 +97,27 @@ export function collect(doc, request) {
   // y visible) nested inside a genuinely lidded box answered "nothing clips y"
   // for its whole subtree, and a control cut away vertically reported a clean
   // box. Each axis now keeps looking until it finds its own clipper.
+  //
+  // And keeps looking *past* it. Retaining only the nearest clipper per axis
+  // assumed the innermost window is the narrowest one, which is false whenever a
+  // wide inner box sits inside a narrow outer one: a control comfortably inside
+  // a 300px pane, itself inside a 100px `overflow-x: hidden` shell, is entirely
+  // off screen and reported `trimmed: 0`. Every ancestor gets a vote, so what is
+  // kept is the intersection — the window the element is actually seen through —
+  // and a check that could not see the outer lid can now fail on it.
   const clipper = (node) => {
     let x = null;
     let y = null;
     let pannable = false;
     for (let item = node.parentElement; item; item = item.parentElement) {
       const style = view.getComputedStyle(item);
-      if (!x && /hidden|clip/u.test(style.overflowX)) {
-        x = item.getBoundingClientRect();
+      if (/hidden|clip/u.test(style.overflowX)) {
+        const box = item.getBoundingClientRect();
+        x = { left: Math.max(x?.left ?? box.left, box.left), right: Math.min(x?.right ?? box.right, box.right) };
       }
-      if (!y && /hidden|clip/u.test(style.overflowY)) {
-        y = item.getBoundingClientRect();
+      if (/hidden|clip/u.test(style.overflowY)) {
+        const box = item.getBoundingClientRect();
+        y = { top: Math.max(y?.top ?? box.top, box.top), bottom: Math.min(y?.bottom ?? box.bottom, box.bottom) };
       }
       // Graph content pans: a step card half out of frame is the surface
       // working, and the reader drags it back. Ordinary controls have no such
@@ -380,19 +390,30 @@ export const MEASURED = [
   // offline suite could not see and the Edge harness only checked on the two
   // pipelines it happens to open.
   ".flow-card",
+  // The other two graph surfaces, for exactly the same reason and by exactly
+  // the same layout code. `.flow-card` is only the *viewer's* class: the editor
+  // draws `.editor-card` and the shared relation renderer draws
+  // `.relation-card`, and neither appeared here — so the overlap rule that
+  // exists to catch a bad placement was scoped to one of the three surfaces
+  // that can have one. Every editor and relation state in the matrix reported a
+  // clean geometry it had never been asked about, which is a mark rather than a
+  // check: React Flow gives each node its own absolutely positioned wrapper, so
+  // the sibling rule cannot reach them either and nothing else was looking.
+  ".editor-card",
+  ".relation-card",
 ];
 
 /**
  * Regions that stack vertically and must never sit on top of one another.
  *
- * `.flow-card` is the exception that is not vertical: the graph places its
- * cards in two dimensions, and the rule there is simply that no two of them may
- * intersect. It belongs on this list rather than in `SIBLINGS` because React
- * Flow gives every node its own absolutely positioned wrapper — so the cards
- * share no DOM parent and are not in normal flow, and neither the sibling rule
- * nor the flow rule can reach them. Same-selector comparison can.
+ * The three graph card classes are the exception that is not vertical: a graph
+ * places its cards in two dimensions, and the rule there is simply that no two
+ * of them may intersect. They belong on this list rather than in `SIBLINGS`
+ * because React Flow gives every node its own absolutely positioned wrapper —
+ * so the cards share no DOM parent and are not in normal flow, and neither the
+ * sibling rule nor the flow rule can reach them. Same-selector comparison can.
  */
-const STACKED = [".assignment-card", ".detail-row", ".limit-row", ".repo-row", ".flow-card"];
+const STACKED = [".assignment-card", ".detail-row", ".limit-row", ".repo-row", ".flow-card", ".editor-card", ".relation-card"];
 
 /**
  * Regions that are siblings in the landing's single column. None of these
@@ -512,6 +533,18 @@ export function graphsDrawn(snapshot) {
  */
 export const SETTLE_REPEATS = 3;
 
+/**
+ * How long the browser suite gives a render to stop changing.
+ *
+ * Here rather than in `matrix-fixtures.mjs` for the same reason `SETTLE_REPEATS`
+ * is: the offline suite has to reach it. `transport:playing` is the one state
+ * declared never to settle, and that declaration is only safe while playing the
+ * committed run takes materially longer than this budget — otherwise the run
+ * would sometimes reach its end, clear `playing`, come to rest, and the claim
+ * would flake. `test/statelab.test.mjs` holds that margin against this number,
+ * which it can only do if the number has one home.
+ */
+export const SETTLE_BUDGET_MS = 5000;
 /**
  * One look's answer to "has this render stopped changing yet".
  *
@@ -697,9 +730,31 @@ export function verdict(state, snapshot, options = {}) {
     ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...strandedLabels(snapshot),
-    ...overlaps(snapshot),
+    ...permitted(state, overlaps(snapshot)),
     ...clipping(snapshot, options),
   ];
+}
+
+/**
+ * Drops the overlaps a state declared, and only those.
+ *
+ * Bringing `.editor-card` under the overlap rule immediately found a collision,
+ * and reading it is the whole of why this exists. Every editor state in the
+ * matrix draws a layout `lib/layout.mjs` computed, and none of those overlap.
+ * One state does: `edit:layout-moved`, whose entry path *is* a drag of 80,60 —
+ * the reader picked a card up and put it down on its neighbour, which is the
+ * feature working. A node a user has dragged is theirs to place, and a rule that
+ * forbade it would be asserting the opposite of what the surface offers.
+ *
+ * So the allowance is per selector rather than a flag, and it is declared by the
+ * one dimension value that moves a card by hand. The claim it makes is narrow:
+ * *these* cards may sit on one another in *this* state. An editor state that has
+ * not been dragged still fails on a computed layout that collides, which is the
+ * defect the check was added for and which nothing could see before.
+ */
+export function permitted(state, found) {
+  const allowed = state.expect?.allowOverlap ?? [];
+  return allowed.length ? found.filter((problem) => !allowed.some((selector) => problem.detail.startsWith(selector))) : found;
 }
 
 /**

@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
 import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
@@ -833,5 +833,46 @@ test("a state's own text cannot break out of the attribute it is written into", 
       row.includes(`data-shot="${shot}"`),
     ],
     ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, [], ["", ""], false],
+  );
+});
+
+/**
+ * Motion has to be attributable, not merely counted.
+ *
+ * `auditSettled` returns a number, and a number is not a correspondence: "2
+ * render(s) were not proved settled" reads identically whether the two are the
+ * `transport:playing` figures, which advance on a timer and are supposed to
+ * move, or two ordinary screens that have quietly become nondeterministic. The
+ * gallery published both worlds as the same clean note.
+ *
+ * So the two directions are separated and both are findings. `stray` is a
+ * render that moved without any state claiming it would. `still` is the
+ * opposite and the subtler one: a declaration that has gone stale, which is
+ * what a regression in the transport would look like — Play stops advancing the
+ * run, the render comes to rest, and an exemption phrased only as permission
+ * would absorb it in silence.
+ */
+test("an unsettled render is a finding unless a state declared it in motion", () => {
+  const records = {
+    "desktop--moving.png": { settled: false },
+    "desktop--drifted.png": { settled: false },
+    "desktop--stale.png": { settled: true },
+    "desktop--ordinary.png": { settled: true },
+  };
+  const found = auditMotion(records, ["desktop--moving.png", "desktop--stale.png"]);
+  assert.deepStrictEqual(found, { stray: ["desktop--drifted.png"], still: ["desktop--stale.png"] });
+});
+
+/**
+ * The declared set is read off the registry rather than kept beside it, so the
+ * audit and the per-render assertion in `state-matrix.spec.mjs` cannot disagree
+ * about which figures are entitled to move.
+ */
+test("the renders entitled to move are the registry's own, at every viewport", () => {
+  const moving = movingShots(REGISTRY_STATES, Object.values(REAL_VIEWPORTS));
+  const declared = REGISTRY_STATES.filter((state) => state.expect?.settles === false);
+  assert.deepStrictEqual(
+    { count: moving.length, expected: declared.length * Object.values(REAL_VIEWPORTS).length, unique: new Set(moving).size },
+    { count: 2, expected: 2, unique: 2 },
   );
 });

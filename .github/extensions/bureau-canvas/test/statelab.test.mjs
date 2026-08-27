@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, selectorsFor, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -2344,5 +2344,73 @@ test("a state rides the route its own source decided, not merely the one its ops
       routed: STATES.filter((state) => state.intercept).length,
     },
     { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 98 },
+  );
+});
+
+/**
+ * Exactly one state in the matrix is allowed to be in motion, and the whole
+ * value of saying so is that it is one rather than a mood.
+ *
+ * `settled` was filed for every render for several rounds and asserted for
+ * none: the gallery folded the unsettled ones into a note, so a screenshot that
+ * had quietly become nondeterministic read exactly like the two that are
+ * supposed to move. The registry answers the question now, and this pins the
+ * answer — a second state acquiring the exemption is how "deterministic
+ * screenshots" would erode one value at a time.
+ */
+test("one state declares itself in motion, and it is the one whose transport is playing", () => {
+  const moving = STATES.filter((state) => state.expect.settles === false).map((state) => state.id);
+  assert.deepStrictEqual(moving, ["surface:pipeline+data:validated+mode:replay+run:finished+transport:playing"]);
+});
+
+/**
+ * The margin that makes `settles: false` an assertion rather than a flake.
+ *
+ * The claim is "this render never stops changing inside the settle window", and
+ * it holds only while playing the run to its end takes materially longer than
+ * that window — at the end `useReplayOverlay` clears `playing`, the signature
+ * comes to rest, and the state would report settled. Every number is read from
+ * whatever owns it: the span from the committed log, the tick from the literal
+ * in `replay.js` (browser-only, so it is read rather than imported), the budget
+ * from `checks.mjs`. Shorten the log, speed the transport up or lengthen the
+ * budget and this fails here, offline, instead of intermittently in CI.
+ */
+test("playing the finished run to its end takes far longer than the settle budget", async () => {
+  const log = await readFile(new URL(`./fixtures/runs/${RUN_IDS.finished}/events.jsonl`, import.meta.url), "utf8");
+  const stamps = log.trim().split("\n").map((line) => JSON.parse(line).at_ms);
+  const source = await readFile(new URL("../web/replay/replay.js", import.meta.url), "utf8");
+  const tick = Number(source.match(/const TICK_MS = (\d+);/u)?.[1]);
+  // At 1x the transport advances TICK_MS of run time per TICK_MS of wall time,
+  // so the wall clock it needs is the span itself. The tick is still read, and
+  // asserted finite, because a speed-up is exactly what would close the margin.
+  const wallMs = (stamps.at(-1) - stamps[0]) / (tick * 1) * tick;
+  assert.ok(
+    Number.isFinite(tick) && wallMs >= SETTLE_BUDGET_MS * 2,
+    `playing spans ${wallMs}ms at a ${tick}ms tick, against a ${SETTLE_BUDGET_MS}ms budget`,
+  );
+});
+
+/**
+ * The overlap licence is per selector and per state, not a flag.
+ *
+ * Bringing the editor's and the relation graph's cards under the overlap rule
+ * found a real collision on the one state that drags a card by hand, which is
+ * the feature working rather than a layout that computed a collision. The risk
+ * in answering that with an allowance is that it becomes a blanket amnesty, so
+ * this holds it to the two things that keep it narrow: it drops the region it
+ * names, and it keeps every other overlap on the same render.
+ */
+test("a declared overlap is dropped and an undeclared one on the same render is not", () => {
+  const found = [
+    { kind: "overlap", detail: ".editor-card #0 overlaps #1" },
+    { kind: "overlap", detail: ".assignment-card #0 overlaps #1" },
+  ];
+  const detailsOf = (list) => list.map((item) => item.detail);
+  assert.deepStrictEqual(
+    {
+      declared: detailsOf(permitted({ expect: { allowOverlap: [".editor-card"] } }, found)),
+      undeclared: detailsOf(permitted({ expect: { allowOverlap: [] } }, found)),
+    },
+    { declared: [".assignment-card #0 overlaps #1"], undeclared: detailsOf(found) },
   );
 });

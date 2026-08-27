@@ -146,6 +146,41 @@ export function auditSettled(records) {
 }
 
 /**
+ * The unsettled renders no state asked to be unsettled, and the declared ones
+ * that came to rest anyway. Both are findings; neither was one before.
+ *
+ * `auditSettled` counts motion, and a count is not a correspondence: two
+ * unsettled renders reported as a note read exactly the same whether they are
+ * the two `transport:playing` figures — which advance on a 100ms interval and
+ * are supposed to move — or two ordinary screens that have quietly become
+ * nondeterministic. The note said "2" in both worlds, so the gallery could
+ * publish a screenshot that differed run to run and still describe itself as
+ * complete.
+ *
+ * So the registry is asked which renders are entitled to move. `stray` is a
+ * render that moved without saying it would; `still` is one that said it would
+ * and did not, which is how a declaration goes stale — Play stops advancing the
+ * run and the exemption silently absorbs the regression. `state-matrix.spec.mjs`
+ * fails per render on both, and this is the same claim made over the published
+ * artefact, where a partial or reordered run cannot hide it.
+ */
+export function auditMotion(records, moving) {
+  const declared = new Set(moving);
+  const names = Object.keys(records).filter((name) => typeof records[name]?.settled === "boolean");
+  return {
+    stray: names.filter((name) => records[name].settled === false && !declared.has(name)).sort(),
+    still: names.filter((name) => records[name].settled === true && declared.has(name)).sort(),
+  };
+}
+
+/** The renders whose state declares itself in motion, as published names. */
+export function movingShots(states, viewports) {
+  return states
+    .filter((state) => state.expect?.settles === false)
+    .flatMap((state) => viewports.map((viewport) => shotName(state.id, viewport.id)));
+}
+
+/**
  * Renders the gallery published and knows nothing about.
  *
  * A render files its record *after* its screenshot, so a worker killed between

@@ -248,6 +248,9 @@ async function loadLayoutSidecar(dir, options) {
 }
 
 async function loadConfigPayload(dir, options) {
+    if (options.sample) {
+        return fallbackResult(dir, { state: "binary-missing" });
+    }
     if (options.payload) {
         return resultFromPayload(options.payload, dir);
     }
@@ -525,6 +528,8 @@ async function handleRequest(entry, request, response) {
 
     if (pathname === "/state") {
         sendJson(response, entry.state, request.method === "HEAD");
+    } else if (pathname === "/sample") {
+        await sendSample(entry, response, request.method === "HEAD");
     } else if (pathname === "/events") {
         sendEvents(entry, request, response);
     } else if (pathname === "/runs") {
@@ -789,8 +794,30 @@ async function runPlanIntent(entry, intent, response) {
     }
 }
 
-async function refreshState(entry) {
-    const input = {
+/**
+ * The bundled sample, built exactly as `/state` builds the host's own config.
+ *
+ * The State Lab exists to show a reviewer the states CI asserts, and it applies
+ * each fixture as a *transform* of whatever `/state` served. Against the
+ * bundled sample those two are the same payload. Against a contributor's real
+ * `.bureau/` they are not: the transforms reach for the sample's assignment by
+ * name, so a config that does not have one produced a different screen under
+ * the same state id — and an empty config made 57 of them throw outright, so
+ * the surface whose whole job is "browse every state" could not draw a fifth of
+ * them.
+ *
+ * This is the same fallback the host already serves when the binary is missing,
+ * so it is not a second fixture kept in step by hand — `fallbackResult` reads
+ * the one committed payload, and the state is assembled by `buildState` like
+ * any other. The lab asks for it by name and says which one it is showing.
+ */
+async function sendSample(entry, response, headOnly) {
+    const input = { dir: entry.state.dir, pipeline: entry.state.pipeline ?? undefined, instanceId: entry.state.instanceId };
+    const state = await buildState(input, { ...(entry.options ?? {}), sample: true });
+    sendJson(response, state, headOnly);
+}
+
+async function refreshState(entry) {    const input = {
         dir: entry.state.dir,
         pipeline: entry.state.pipeline ?? undefined,
     };

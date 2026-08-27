@@ -941,6 +941,26 @@ const transport = {
       enter: [{ op: "click", selector: S.replayPlay }, { op: "wait", selector: S.replayPause }],
       shows: [S.replayPause, S.replayStepForward, S.replayStepBack],
       copy: ["Pause"],
+      // The one state in the matrix that must *not* hold still, declared here so
+      // the render loop can hold it to that rather than merely tolerating it.
+      //
+      // Every other state is required to settle, which is what makes an
+      // unsettled render a failure instead of a note. Exempting this one by
+      // name would have made the exemption a free pass: were Play to stop
+      // advancing the run — the timeline that "only draws", which is the very
+      // defect this dimension exists to catch — the state would settle, and an
+      // allowance phrased as "may be unsettled" would pass on the regression.
+      // So the claim is two-directional: this state settling is a failure too.
+      //
+      // Safe to assert because the margin is not a coincidence. `run:finished`
+      // spans RUN_END - RUN_STEP.start = 10,000ms of run time, and the overlay
+      // advances TICK_MS of run time per TICK_MS of wall time at 1x, so playing
+      // it to the end — where `useReplayOverlay` sets `playing` false and the
+      // signature would come to rest — takes ~10s against the browser suite's
+      // 5s settle budget. `test/statelab.test.mjs` derives both numbers from the
+      // committed log, `replay.js` and `matrix-fixtures.mjs`, and fails if that
+      // 2x margin ever narrows, so the claim cannot rot into a flake.
+      settles: false,
     },
   ],
 };
@@ -1106,6 +1126,17 @@ const edit = {
       // distinguish it from an issue count appearing anywhere on the page.
       copy: [{ selector: S.editorStatus, text: "unsaved edits" }],
       hides: [S.editorIssues],
+      // The one state that may draw two cards on top of one another, because
+      // its entry path is the reader doing exactly that: a drag of 80,60 lands
+      // the chosen card on its neighbour. React Flow places a dragged node where
+      // it is dropped, so the overlap is the editor obeying the mouse, not a
+      // layout that computed a collision.
+      //
+      // Named per selector rather than as a blanket exemption. Every other
+      // editor state is still held to a collision-free layout — see `permitted`
+      // in `checks.mjs` — so this cannot become a way for a real placement bug
+      // to pass, and it says out loud which regions the licence covers.
+      allowOverlap: [".editor-card"],
     },
     {
       id: "deleted",

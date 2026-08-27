@@ -36,7 +36,7 @@ const el = (tag, className, text) => {
 };
 
 async function boot() {
-  base = await fetch("./state", { cache: "no-store" }).then((response) => response.json());
+  base = await loadBase();
   renderBaseNote();
   renderSummary();
   renderList();
@@ -50,6 +50,37 @@ async function boot() {
       void show(next);
     }
   });
+}
+
+/**
+ * Every fixture is a *transform* of the payload the lab starts from, so which
+ * payload that is decides whether these renders are the ones CI asserts.
+ *
+ * It used to be `./state` — the host's own config — which made the lab a
+ * different surface depending on who opened it. Against the bundled sample the
+ * two agree; against a contributor's real `.bureau/` the transforms reached for
+ * an assignment that was not there, so the same state id drew a different
+ * screen, and against an empty config 57 of the 256 threw and drew nothing at
+ * all. A review surface that silently swaps its subject is worse than one that
+ * refuses, and one that cannot draw a fifth of the matrix is not a review
+ * surface at all.
+ *
+ * So it asks for `/sample`: the same committed payload the host itself falls
+ * back to when the binary is missing, assembled by the same `buildState`. The
+ * page in the frame is still the production page reading a real host — only the
+ * payload is pinned, which is the half that has to match CI for a comparison
+ * against the gallery to mean anything.
+ *
+ * The fallback to `./state` is for a host too old to answer `/sample`, and it
+ * is reported rather than absorbed: `renderBaseNote` then says out loud that
+ * these renders are the reader's own config in the shape of each state.
+ */
+async function loadBase() {
+  const sample = await fetch("./sample", { cache: "no-store" }).catch(() => null);
+  if (sample?.ok) {
+    return sample.json();
+  }
+  return fetch("./state", { cache: "no-store" }).then((response) => response.json());
 }
 
 /**

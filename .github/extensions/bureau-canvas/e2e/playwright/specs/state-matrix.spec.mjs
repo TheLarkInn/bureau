@@ -186,6 +186,7 @@ for (const viewport of VIEWPORT_LIST) {
 
         expect(describe(result.failures), `${state.id} @ ${viewport.id}`).toEqual([]);
         expect(unexpected(watched.errors, state), `${state.id} @ ${viewport.id} console`).toEqual([]);
+        expect(Boolean(result.settled), settleMessage(state, viewport)).toBe(mustSettle(state));
       });
     }
   });
@@ -193,6 +194,32 @@ for (const viewport of VIEWPORT_LIST) {
 
 function describe(failures) {
   return failures.map((failure) => `${failure.kind}: ${failure.detail}`);
+}
+
+/**
+ * Whether this state promised to come to rest. The registry answers, so the
+ * one moving state is named in the same place as everything else about it.
+ */
+function mustSettle(state) {
+  return state.expect.settles !== false;
+}
+
+/**
+ * Both directions read badly as a bare `expected false to be true`, and the two
+ * failures mean opposite things — one is a render that would not stop changing,
+ * the other a state that was supposed to be moving and stopped.
+ *
+ * `settled` was filed for every render for several rounds and asserted for
+ * none: the gallery counted the unsettled ones into a note and the matrix went
+ * green over screenshots that differed run to run. That is the shape this loop
+ * exists to find, so it is a check now, and the state that is genuinely in
+ * motion carries the opposite claim rather than an exemption.
+ */
+function settleMessage(state, viewport) {
+  const at = `${state.id} @ ${viewport.id}`;
+  return mustSettle(state)
+    ? `${at} never stopped changing, so its screenshot is whichever frame the run caught`
+    : `${at} came to rest, but it declares itself in motion — Play has stopped advancing the run`;
 }
 
 /** Errors the state did not declare. A declared one is the state, not a bug. */
