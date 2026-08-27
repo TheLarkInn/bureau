@@ -12,6 +12,34 @@
 // browser and without a host.
 
 /**
+ * The three routing terminals, repeated here rather than imported because this
+ * module is the one both trees reach and it takes no imports of its own.
+ *
+ * They matter to this rule because `on:` is the only one of the four fields
+ * whose values are not always step names. A bare `done`/`abort`/`escalate` in
+ * an `on:` map is the *terminal* of that name everywhere it is read — the
+ * engine matches those three arms before it looks at `pipeline.steps`
+ * (`crates/bureau/src/engine/edge.rs`), and both canvas resolvers do the same —
+ * so a step may be named `abort` without ever being the thing `on: abort`
+ * points at. `over`, `members` and `inputs_from` never take a terminal, so a
+ * name there is always the step.
+ */
+export const TERMINAL_NAMES = ["done", "abort", "escalate"];
+
+/**
+ * Whether a bare `on:` value naming `name` would resolve to the terminal
+ * rather than to the step called `name`.
+ *
+ * When it does, an edit to the step called `name` must leave that route alone:
+ * it was never a reference to the step. Getting this wrong is a silent write —
+ * the routes vanish or move, the codec renders the result, and React Flow draws
+ * nothing for what is no longer there, so the screen looks clean either way.
+ */
+function routesToTerminal(name) {
+  return TERMINAL_NAMES.includes(name);
+}
+
+/**
  * A step with every reference to a departed step dropped, in the same four
  * fields a rename retargets.
  *
@@ -41,13 +69,19 @@
  * routed to nothing are different states in this editor — the first is a gap
  * the decision panel offers to fill, the second is a value — and the reader
  * deleted a step, not an outcome.
+ *
+ * `on` is skipped entirely when the departed step shares a terminal's name,
+ * because then none of those routes named the step in the first place. Without
+ * that guard, deleting a step called `abort` stripped every outcome in the
+ * pipeline that failed closed to the `abort` terminal — and a scaffolded
+ * decision routes three of its four outcomes there.
  */
 export function withoutReferencesTo(step, name) {
   const fields = { ...step.fields };
   if (fields.over === name) {
     fields.over = null;
   }
-  if (fields.on && typeof fields.on === "object") {
+  if (fields.on && typeof fields.on === "object" && !routesToTerminal(name)) {
     fields.on = Object.fromEntries(Object.entries(fields.on).filter(([, target]) => target !== name));
   }
   if (Array.isArray(fields.members)) {
@@ -55,6 +89,38 @@ export function withoutReferencesTo(step, name) {
   }
   if (Array.isArray(fields.inputsFrom)) {
     fields.inputsFrom = fields.inputsFrom.filter((source) => source !== name);
+  }
+  return { ...step, fields };
+}
+
+/**
+ * A step with every reference to `from` retargeted to `to`, in the same four
+ * fields a delete drops.
+ *
+ * The counterpart of `withoutReferencesTo`, and here for the same reason: this
+ * rule was written out once in `lib/edit.mjs` and again in
+ * `web/editor/editor.mjs`, which is the drift this module exists to end. A
+ * rename that misses a field dangles exactly as invisibly as a delete that
+ * does.
+ *
+ * The `on` guard is the mirror of the delete's, and matters more: retargeting a
+ * rename of a step called `abort` did not merely drop those routes, it pointed
+ * them at the renamed step — turning every outcome that failed closed to the
+ * `abort` terminal into one that carries on into live work.
+ */
+export function withReferencesRetargeted(step, from, to) {
+  const fields = { ...step.fields };
+  if (fields.over === from) {
+    fields.over = to;
+  }
+  if (fields.on && typeof fields.on === "object" && !routesToTerminal(from)) {
+    fields.on = Object.fromEntries(Object.entries(fields.on).map(([outcome, target]) => [outcome, target === from ? to : target]));
+  }
+  if (Array.isArray(fields.members)) {
+    fields.members = fields.members.map((member) => (member === from ? to : member));
+  }
+  if (Array.isArray(fields.inputsFrom)) {
+    fields.inputsFrom = fields.inputsFrom.map((source) => (source === from ? to : source));
   }
   return { ...step, fields };
 }

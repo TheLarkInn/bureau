@@ -35,9 +35,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { drawableEdges } from "../web/graph-edges.mjs";
-import { withoutReferencesTo } from "../web/step-refs.mjs";
+import { withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
 import { parse, render } from "../lib/codec.mjs";
-import { editable, removeStep } from "../lib/edit.mjs";
+import { createStep, editable, removeStep, renameStep } from "../lib/edit.mjs";
 import { pipelineView } from "../lib/view.mjs";
 
 const committedUrl = new URL("./fixtures/committed-payload.json", import.meta.url);
@@ -248,5 +248,76 @@ test("deleting an observed step takes `over` out of the file, not just the view"
   assert.deepStrictEqual(
     [dropped.includes("over: propose"), nulled.includes("over: propose")],
     [true, false],
+  );
+});
+
+/**
+ * A bare `done`/`abort`/`escalate` in an `on:` map is the *terminal* of that
+ * name, not a step that happens to share it. The engine settles this before it
+ * ever looks at the step list — `crates/bureau/src/engine/edge.rs` matches the
+ * three terminal arms first — and both canvas resolvers agree.
+ *
+ * So a step called `abort` is not the thing `on: abort` points at, and an edit
+ * to that step must leave those routes untouched. The delete rule compared raw
+ * strings, so deleting it stripped every outcome in the pipeline that failed
+ * closed to the terminal — and `decisionOn()` scaffolds three of four there.
+ *
+ * `members` and `inputsFrom` never hold a terminal, so a name there is always
+ * the step and is still dropped. Both halves in one assertion, because the
+ * defect is precisely the difference between the two kinds of field.
+ */
+test("deleting a step named like a terminal spares the routes that meant the terminal", () => {
+  const fields = { on: { success: "abort", failure: "done", blocked: "abort" }, members: ["abort", "build"], inputsFrom: ["abort"] };
+
+  assert.deepStrictEqual(
+    withoutReferencesTo({ name: "gate", fields }, "abort").fields,
+    { on: { success: "abort", failure: "done", blocked: "abort" }, members: ["build"], inputsFrom: [] },
+  );
+});
+
+/**
+ * The same rule for a rename, where getting it wrong costs more than a drop.
+ *
+ * Retargeting turned every outcome that failed closed to the `abort` terminal
+ * into one routed at the renamed step — a pipeline that stopped becoming a
+ * pipeline that carries on into live work, written silently, with a graph that
+ * looks correct either way because both are edges it can draw.
+ */
+test("renaming a step named like a terminal spares the routes that meant the terminal", () => {
+  const fields = { on: { success: "abort", failure: "done" }, members: ["abort"], inputsFrom: ["abort"] };
+
+  assert.deepStrictEqual(
+    withReferencesRetargeted({ name: "gate", fields }, "abort", "cleanup").fields,
+    { on: { success: "abort", failure: "done" }, members: ["cleanup"], inputsFrom: ["cleanup"] },
+  );
+});
+
+/**
+ * And the hole closed at the source: the canvas will not put a step and a
+ * terminal under one name in the first place.
+ *
+ * The rules above keep an already-on-disk config honest — nothing in the schema
+ * forbade the name, so one can be loaded — but a name the editor cannot mint is
+ * a defect class that stops arriving. Refused on the way in and on a rename,
+ * since either would otherwise create the ambiguity.
+ */
+test("a step cannot be given a terminal's name", () => {
+  const view = { steps: [{ id: "build", name: "build", type: "step", kind: "deterministic", order: 0, fields: {} }], edges: [] };
+  const refused = (act) => {
+    try {
+      act();
+      return null;
+    } catch (error) {
+      return error.message;
+    }
+  };
+
+  assert.deepStrictEqual(
+    [
+      refused(() => createStep(view, "abort", "deterministic")),
+      refused(() => renameStep(view, "build", "done")),
+      refused(() => createStep(view, "cleanup", "deterministic")),
+    ],
+    ["`abort` is a terminal, so a step cannot take that name", "`done` is a terminal, so a step cannot take that name", null],
   );
 });

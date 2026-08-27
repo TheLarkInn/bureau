@@ -22,7 +22,7 @@ import {
 
 import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
-import { withoutReferencesTo } from "../step-refs.mjs";
+import { withReferencesRetargeted, withoutReferencesTo } from "../step-refs.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
@@ -693,25 +693,19 @@ function numberInput(value) {
   return value === "" ? null : Number(value);
 }
 
+/**
+ * The draft rename, whose field half is `web/step-refs.mjs` — the same rule the
+ * host's saved-view rename uses, so the two cannot drift the way the delete
+ * once did. A step may not take a terminal's name, or `on: abort` would stop
+ * meaning the terminal it means everywhere it is read.
+ */
 function renameStep(view, from, to) {
-  if (!to || to === from || view.steps.some((step) => step.name === to)) {
+  if (!to || to === from || TERMINALS.includes(to) || view.steps.some((step) => step.name === to)) {
     return view;
   }
   const steps = view.steps.map((step) => {
-    const fields = { ...step.fields };
-    if (fields.over === from) {
-      fields.over = to;
-    }
-    if (fields.on) {
-      fields.on = Object.fromEntries(Object.entries(fields.on).map(([outcome, target]) => [outcome, target === from ? to : target]));
-    }
-    if (Array.isArray(fields.members)) {
-      fields.members = fields.members.map((member) => (member === from ? to : member));
-    }
-    if (Array.isArray(fields.inputsFrom)) {
-      fields.inputsFrom = fields.inputsFrom.map((source) => (source === from ? to : source));
-    }
-    return { ...step, id: step.name === from ? to : step.id, name: step.name === from ? to : step.name, fields };
+    const retargeted = withReferencesRetargeted(step, from, to);
+    return { ...retargeted, id: step.name === from ? to : step.id, name: step.name === from ? to : step.name };
   });
   const edges = view.edges.map((edge) => ({
     ...edge,
