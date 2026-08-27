@@ -153,6 +153,15 @@ test("@matrix gallery index", async () => {
  * this green while telling a reviewer that the first render of all 256 cards
  * was not proved settled. A mark drawn on the wrong screens is worse than one
  * drawn on none, so the question is asked of the whole page.
+ *
+ * It is asked of the whole *figure*, too. Reading the caption's `::after` and
+ * the image's border named two channels out of many: `.shots figure
+ * :first-of-type::after` draws the same amber sentence on the figure itself,
+ * where neither was looking, and this stayed green while every card's first
+ * render carried the warning. So both pseudo-elements of the figure and of
+ * everything inside it are read. And the unstamped figures are required to be
+ * drawn like *each other* rather than merely unlike the stamped one — a rule
+ * that restyles some of them differs from the stamped border just as well.
  */
 test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page }) => {
   const target = shot(STATES[0], VIEWPORT_LIST[VIEWPORT_LIST.length - 1]);
@@ -165,17 +174,20 @@ test("@matrix an unsettled figure is drawn unlike a settled one", async ({ page 
       const style = getComputedStyle(figure.querySelector("img"));
       return `${style.borderTopColor} ${style.borderTopWidth}`;
     };
-    const after = (figure) => getComputedStyle(figure.querySelector("figcaption"), "::after").content;
-    const says = (figure) => after(figure).includes("not proved settled");
+    const says = (figure) => [figure, ...figure.querySelectorAll("*")]
+      .some((node) => ["::before", "::after"]
+        .some((pseudo) => getComputedStyle(node, pseudo).content.includes("not proved settled")));
     const stamped = document.querySelector("figure[data-settled]");
     const plain = [...document.querySelectorAll("figure:not([data-settled])")];
+    const alike = new Set(plain.map(border));
     return [
       plain.length > 1,
-      plain.every((figure) => border(figure) !== border(stamped)),
+      alike.size,
+      [...alike].every((drawing) => drawing !== border(stamped)),
       says(stamped),
       plain.filter(says).length,
     ];
   });
 
-  expect(drawn, "a stamped figure is drawn unlike every unstamped one, and only it says so").toEqual([true, true, true, 0]);
+  expect(drawn, "every unstamped figure is drawn alike, unlike the stamped one, and only it says so").toEqual([true, 1, true, true, 0]);
 });

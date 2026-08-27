@@ -575,6 +575,27 @@ test("a notice containing a dollar pattern is inserted literally", () => {
 });
 
 /**
+ * …and a finding that mentions markup is reported, not obeyed.
+ *
+ * The three dynamic lists a banner interpolates are not literals: findings carry
+ * state ids and filenames, and a drift finding carries a DOM signature quoted
+ * straight off a rendered page. Written raw, a finding that merely *names* an
+ * element becomes one — so the single artefact a reviewer opens to learn that a
+ * run went wrong is the artefact that finding quietly rewrites, which is this
+ * file's own subject turned on the notice that reports it.
+ */
+test("a finding that mentions markup is written as text, not as markup", () => {
+  const hostile = "<img src=x onerror=boom>";
+
+  const banner = notices([`broken-twin: ${hostile}`], [hostile], [], [`drift: ${hostile}`], []);
+
+  assert.deepEqual(
+    [banner.includes(hostile), banner.split(escape(hostile)).length - 1, banner.includes("<img")],
+    [false, 3, false],
+  );
+});
+
+/**
  * A mark that lands and is not drawn is not a mark.
  *
  * Stamping the figure is only half of the amber mark; the other half is the
@@ -649,6 +670,21 @@ test("the figures a marked page carries are the page's own tags, stamped", () =>
 });
 
 /**
+ * The attributes of one element, read as attributes rather than as substrings.
+ *
+ * A row is asked what its `<figure>` and `<img>` actually carry, because
+ * `row.includes('src="./…"')` answers yes to a *suffix* of some other
+ * attribute's value. Adding `data-original-src="./${escape(shot)}"` beside a
+ * `src` written raw satisfied that check while the real `src` broke open on the
+ * hostile quote — the substring was found, in the wrong attribute.
+ */
+function attributesOf(row, tag) {
+  const opens = row.indexOf(`<${tag}`);
+  const text = row.slice(opens, row.indexOf(">", opens) + 1);
+  return Object.fromEntries([...text.matchAll(/([\w-]+)="([^"]*)"/gu)].map(([, name, value]) => [name, value]));
+}
+
+/**
  * A state's own text is written into `alt`, `data-shot`, the heading, the
  * summary, the meta line and the fixture list, and nothing stops any of them
  * from containing a quote. No state carries one today, so `escape` doing
@@ -664,8 +700,8 @@ test("the figures a marked page carries are the page's own tags, stamped", () =>
  * name written raw breaks `data-shot` and `src` open three characters early
  * without introducing a single `<`, so the tag filter stays empty and the marker
  * then hunts for an anchor the page never wrote. The two attributes a mark and a
- * reviewer's eye depend on are therefore read exactly, and the raw spelling is
- * required to be absent.
+ * reviewer's eye depend on are therefore read as attributes and compared whole,
+ * not searched for as text anywhere in the row.
  */
 test("a state's own text cannot break out of the attribute it is written into", () => {
   const hostile = {
@@ -683,10 +719,10 @@ test("a state's own text cannot break out of the attribute it is written into", 
     [
       escape('a "b" <c> & d'),
       ["<script>", "<em>", "<b>", "<i>", "<u>"].filter((tag) => row.includes(tag)),
-      row.includes(`data-shot="${escape(shot)}"`),
-      row.includes(`src="./${escape(shot)}"`),
+      attributesOf(row, "figure")["data-shot"],
+      attributesOf(row, "img").src,
       row.includes(`data-shot="${shot}"`),
     ],
-    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], true, true, false],
+    ["a &quot;b&quot; &lt;c&gt; &amp; d", [], escape(shot), `./${escape(shot)}`, false],
   );
 });

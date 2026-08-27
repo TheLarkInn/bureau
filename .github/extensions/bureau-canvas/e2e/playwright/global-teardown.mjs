@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
 import { auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, partitionFindings } from "./gallery-audit.mjs";
-import { applyMarks } from "./gallery-index.mjs";
+import { applyMarks, escape } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
 
@@ -74,9 +74,18 @@ export function resolveDirs(dirs = {}) {
  * correctly, `unmarked` was legitimately empty, the gate passed, and the
  * artefact a reviewer opens was clean and silent. That is the exact defect this
  * file exists to remove, so it is now decided here rather than in a comment.
+ *
+ * `resolve` is a parameter for the same reason `dirs` is. Calling this with no
+ * arguments proves the defaulting path is *taken*, but not that the defaults
+ * come from one place: writing `{ staging: dirs.staging ?? staging(), gallery:
+ * dirs.gallery ?? GALLERY }` inline here behaved identically and left every
+ * test green, restoring the duplicate spelling of the rule that `resolveDirs`
+ * exists to be. As a seam it is answerable — a resolver that returns a pair
+ * unrelated to `dirs` must be the pair audited, which an inline copy reading
+ * `dirs` directly cannot satisfy.
  */
-export async function auditGallery(dirs = {}) {
-  const { staging: stageDir, gallery: outDir } = resolveDirs(dirs);
+export async function auditGallery(dirs = {}, resolve = resolveDirs) {
+  const { staging: stageDir, gallery: outDir } = resolve(dirs);
   const { records, unreadable } = await collapseSignatures(stageDir);
   const published = await publishGallery(stageDir, outDir);
   if (!published.length) {
@@ -314,22 +323,29 @@ async function stamp(lines, missing, unsettled, drift, unknown, outDir) {
  * different sentence from an unsettled render — one was still moving, the other
  * has no record this run could read — so the opening line says only what is
  * true of both, and the difference is named in its own clause.
+ *
+ * Every dynamic line is escaped. What goes in here is not a literal: findings
+ * carry state ids, filenames and — for a twin difference — a DOM signature
+ * quoted back off a rendered page. Written raw, a finding that merely *mentions*
+ * markup stops being reported text and becomes markup, so the one artefact a
+ * reviewer reads to learn a run went wrong is the artefact the finding corrupts.
+ * The counts are `.length` values and cannot carry any.
  */
 export function notices(lines, missing, unsettled, drift = [], unknown = []) {
   const shown = lines.slice(0, 20);
   const marked = unsettled.length + unknown.length;
   const alarm = lines.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#ffebe9;color:#cf222e;font-weight:700">'
-      + `This gallery is not the whole matrix, or not every state in it draws its own screen: ${shown.join("; ")}`
+      + `This gallery is not the whole matrix, or not every state in it draws its own screen: ${shown.map(escape).join("; ")}`
       + `${lines.length > shown.length ? `; and ${lines.length - shown.length} more` : ""}. `
-      + `${missing.length ? `Missing: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`
+      + `${missing.length ? `Missing: ${missing.slice(0, 20).map(escape).join(", ")}${missing.length > 20 ? ", …" : ""}` : ""}</p>`
     : "";
   const note = marked || drift.length
     ? '<p style="margin:0;padding:.75rem 1.5rem;background:#fff8c5;color:#9a6700">'
       + `${marked} render(s) below are marked <strong>not proved settled</strong>: this run could not vouch for them, `
       + "so read those as a frame rather than as a screen. A state that animates by design is expected here."
       + `${unknown.length ? ` ${unknown.length} of them filed no record this run could read, so nothing at all is known about those.` : ""}`
-      + `${drift.length ? ` ${drift.slice(0, 20).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`
+      + `${drift.length ? ` ${drift.slice(0, 20).map(escape).join("; ")}${drift.length > 20 ? `; and ${drift.length - 20} more` : ""}.` : ""}</p>`
     : "";
   return `${alarm}${note}`;
 }

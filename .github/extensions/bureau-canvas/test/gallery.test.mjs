@@ -121,11 +121,11 @@ async function staged(t, index, shot) {
 }
 
 /** The audit, with its console quiet: what it prints is not what is under test. */
-async function audited(dirs) {
+async function audited(dirs, resolve) {
   const spoke = console.log;
   console.log = () => {};
   try {
-    return await auditGallery(dirs);
+    return resolve ? await auditGallery(dirs, resolve) : await auditGallery(dirs);
   } finally {
     console.log = spoke;
   }
@@ -240,4 +240,36 @@ test("the audit a teardown really runs asks resolveDirs for its directories", as
   });
 
   assert.deepEqual([audit.ran, audit.reason], [false, "this run rendered no states, so there is no gallery to audit"]);
+});
+
+/**
+ * …and it works over the pair the resolver answered with, not the one it was handed.
+ *
+ * The test above proves the defaulting path is *taken*. It does not prove the
+ * defaults are asked for in one place: writing `{ staging: dirs.staging ??
+ * staging(), gallery: dirs.gallery ?? GALLERY }` inline inside `auditGallery`
+ * behaves identically, so every test here — including that one — stays green
+ * while the rule `resolveDirs` exists to be is spelled twice again. The next
+ * change to either spelling then moves one of them.
+ *
+ * A resolver is answerable in a way a behavioural equivalence is not. This hands
+ * `auditGallery` a directory pair that was never written to and a resolver that
+ * ignores it, and requires the audit to have run over the resolver's answer.
+ * An inline copy reads `dirs` directly, finds an empty staging directory, and
+ * returns `ran: false` having published nothing — which is the whole distance
+ * between a duplicate of the rule and a use of it.
+ */
+test("the audit works over the pair its resolver answers with, not the one it was handed", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const answered = await staged(t, realIndex(), shot);
+  const handed = { staging: join(tmpdir(), "bureau-never-staged"), gallery: join(tmpdir(), "bureau-never-published") };
+  const asked = [];
+
+  const audit = await audited(handed, (dirs) => (asked.push(dirs), answered));
+  const written = await readFile(join(answered.gallery, "index.html"), "utf8");
+
+  assert.deepEqual(
+    [asked, audit.ran, written.includes("This gallery is not the whole matrix")],
+    [[handed], true, true],
+  );
 });
