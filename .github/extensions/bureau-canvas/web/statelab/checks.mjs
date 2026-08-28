@@ -205,6 +205,31 @@ export function collect(doc, request) {
       contrast.push({ selector, text: node.textContent.trim().slice(0, 40), ratio: Number(ratio.toFixed(2)) });
     }
   }
+  // What the words in each requested element are actually made of.
+  //
+  // `texts` above reads `innerText`, and a reader does not. `innerText` reports
+  // words painted in transparent ink, and it does not report the words a
+  // `::before` or `::after` paints in their place — so a rule that sets an
+  // element's own colour to `transparent` and spells a different sentence in
+  // generated content satisfies an exact-text expectation while the screen says
+  // something else entirely. That is the `opacity: 0` lie one level down: the
+  // words measure perfectly, and none of them are the ones on screen.
+  //
+  // Gathered for every requested selector and judged only where a state
+  // promises exact words, keeping the split this module is built on — `collect`
+  // reports what the page is, `verdict` decides what that means.
+  const generated = (node, part) => {
+    const value = view.getComputedStyle(node, part).content;
+    return ["none", "normal", "\"\"", "''"].includes(value) ? "" : value;
+  };
+  const paint = {};
+  for (const selector of request.selectors) {
+    const found = [...doc.querySelectorAll(selector)].filter(visible);
+    paint[selector] = {
+      ink: found.every((node) => opaque(view.getComputedStyle(node).color)),
+      injected: found.flatMap((node) => [generated(node, "::before"), generated(node, "::after")]).filter(Boolean).join(" "),
+    };
+  }
   // Every `label[for]` beside the control it names, as two boxes. Gathered
   // here rather than derived from `boxes` because the pairing is the point: a
   // label and its control are one thing to a reader, and the only way to tell
@@ -380,6 +405,7 @@ export function collect(doc, request) {
   return {
     counts,
     texts,
+    paint,
     boxes,
     contrast,
     labels,
@@ -755,6 +781,7 @@ export function verdict(state, snapshot, options = {}) {
     ...missing(state, snapshot),
     ...forbidden(state, snapshot),
     ...absentCopy(state, snapshot),
+    ...paintedCopy(state, snapshot),
     ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...strandedLabels(snapshot),
@@ -899,6 +926,43 @@ function satisfied(phrase, snapshot) {
     return normalise(snapshot.text).includes(normalise(phrase));
   }
   return normalise(snapshot.texts?.[phrase.selector]) === normalise(phrase.text);
+}
+
+/**
+ * The promised words are the words on screen.
+ *
+ * `absentCopy` compares an element's `innerText` against the sentence its state
+ * promises, and `innerText` answers for the DOM rather than for a reader: it
+ * reports words drawn in transparent ink, and it does not report a `::before`
+ * or `::after` at all. So a stylesheet that hides an element's own sentence and
+ * spells a different one in generated content satisfies the exact-text
+ * expectation with every gate green — 681 browser checks and 452 offline ones —
+ * while the panel tells a reader the opposite of what the validator said, a
+ * rejected config reported as `clean — bureau validate would pass`.
+ *
+ * That is the family `visible()` already defends against, one level down. The
+ * walk above asks whether a promised element paints *anything*; this asks
+ * whether what it paints is its *own words*, which is the question an
+ * exact-text promise is actually making.
+ *
+ * Both halves are asserted, because either alone is half a check. Ink without
+ * generated content passes a false sentence layered over the true one; generated
+ * content without ink passes a true sentence painted in nothing. Judged only
+ * where a state names an element and the words it must read, since that is the
+ * only place the registry claims to know what a reader sees.
+ */
+function paintedCopy(state, snapshot) {
+  return scopedCopy(state).flatMap((phrase) => {
+    const paint = snapshot.paint?.[phrase.selector];
+    const problems = [];
+    if (paint?.ink === false) {
+      problems.push({ kind: "unreadable-copy", detail: `${phrase.selector} draws its own words in ink a reader cannot see` });
+    }
+    if (paint?.injected) {
+      problems.push({ kind: "substituted-copy", detail: `${phrase.selector} paints ${paint.injected} in place of its own words` });
+    }
+    return problems;
+  });
 }
 
 /** One stable string per expectation, so a failure names what was promised. */

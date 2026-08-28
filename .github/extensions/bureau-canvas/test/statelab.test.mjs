@@ -1299,6 +1299,59 @@ test("a scoped copy expectation passes the element it names", () => {
 });
 
 /**
+ * A promised sentence is painted, and painted as itself.
+ *
+ * Every scoped copy expectation above is settled by `texts`, and `texts` is
+ * `innerText` — which answers for the DOM rather than for a reader. `innerText`
+ * reports words drawn in transparent ink, and it does not report a `::before` or
+ * `::after` at all. So a stylesheet that colours the panel's own sentence
+ * `transparent` and spells a different one in generated content leaves
+ * `innerText` exactly right, and with it every gate: 681 browser checks and 452
+ * offline ones stayed green while the panel showed a config `bureau validate`
+ * had *rejected* as `clean — bureau validate would pass`. The promise was kept
+ * in the DOM and broken on the screen, which is the one failure a review surface
+ * may not have — the gallery would show the false sentence and the matrix would
+ * call the state correct.
+ *
+ * This is the family `visible()` already defends against, one level down. That
+ * walk asks whether a promised element paints *anything*; these rows ask whether
+ * what it paints is its *own words*.
+ *
+ * Every row keeps `texts` truthful, because that is the entire point: the
+ * expectation the registry states is satisfied and the render is still a lie.
+ * The first row is the vacuity guard — a mark that fired on an honest render
+ * could never be kept green, and the last pins that the two clauses are
+ * independent, since either alone is half a check. Ink without generated content
+ * passes a false sentence layered over the true one; generated content without
+ * ink passes a true sentence painted in nothing.
+ */
+test("a promised sentence has to be painted, and painted as itself", () => {
+  const kinds = (paint) => verdict(
+    { expect: { shows: [], hides: [], copy: [{ selector: SELECTORS.panelValidationClean, text: PANEL_ELSEWHERE }] } },
+    {
+      counts: { [SELECTORS.panelValidationClean]: 1 },
+      texts: { [SELECTORS.panelValidationClean]: PANEL_ELSEWHERE },
+      paint: { [SELECTORS.panelValidationClean]: paint },
+      text: PANEL_ELSEWHERE,
+      viewport: { width: 1280, height: 900 },
+      overflowX: 0,
+      contrast: [],
+      boxes: [],
+    },
+  ).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [
+      kinds({ ink: true, injected: "" }),
+      kinds({ ink: false, injected: "" }),
+      kinds({ ink: true, injected: `"${PANEL_CLEAN}"` }),
+      kinds({ ink: false, injected: `"${PANEL_CLEAN}"` }),
+    ],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy", "substituted-copy"]],
+  );
+});
+
+/**
  * A scoped expectation is only checkable if its element was gathered, and
  * `collect` gathers exactly the selectors it is handed. So the selector list a
  * state produces has to include the ones its copy names — otherwise the text
@@ -2071,9 +2124,17 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 2 },
-    texts: { ".a": "saved wrapped" },
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d"], measure: [".b"], contrast: [".c"] }), {
+    counts: { ".a": 2, ".d": 1 },
+    texts: { ".a": "saved wrapped", ".d": "no findings for this pipeline" },
+    // `.d` is the render that keeps its promise in the DOM and breaks it on the
+    // screen: `texts` is exactly the sentence a scoped expectation asks for, and
+    // a reader sees the opposite one an `::after` paints over transparent ink.
+    // Gathering both is what lets `verdict` tell the two apart.
+    paint: {
+      ".a": { ink: true, injected: "" },
+      ".d": { ink: false, injected: '"clean — bureau validate would pass"' },
+    },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
       { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", within: [], flow: true, clipped: true, trimmed: 150 },
@@ -2219,6 +2280,7 @@ const AREA = [{ width: 100, height: 20 }];
  */
 function pageStub() {
   const styles = new Map();
+  const pseudos = new Map();
   const element = (style, own = {}) => {
     const node = {
       getClientRects: () => AREA,
@@ -2294,8 +2356,15 @@ function pageStub() {
   );
   const wordless = element({}, { parentElement: painted, textContent: "   " });
 
-  const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });
-  const label = element({}, {
+  // The way a promised sentence stays perfect in the DOM and false on screen.
+  // `innerText` reports this node's own words and a reader sees none of them —
+  // the ink is transparent — while an `::after` paints a different sentence
+  // that `innerText` does not report at all. Both halves are here because
+  // `collect` has to gather both: the ink, and the words put in their place.
+  const ghost = element({ color: "rgba(0, 0, 0, 0)" }, { innerText: "no findings for this pipeline" });
+  pseudos.set(ghost, { "::after": { content: '"clean — bureau validate would pass"' } });
+
+  const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
     getBoundingClientRect: () => boxOf(0, 40, 60, 16),
     getAttribute: (name) => (name === "for" ? "field-1" : null),
@@ -2377,12 +2446,13 @@ function pageStub() {
     ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
     ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
+    ".d": [ghost],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
   };
   return {
-    defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },
+    defaultView: { getComputedStyle: (node, part) => (part ? pseudos.get(node)?.[part] ?? { content: "none" } : styles.get(node) ?? BASE_STYLE) },
     documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
     body: { innerText: "Bureau" },
     querySelectorAll: (selector) => matches[selector] ?? [],
