@@ -222,12 +222,64 @@ export function collect(doc, request) {
     const value = view.getComputedStyle(node, part).content;
     return ["none", "normal", "\"\"", "''"].includes(value) ? "" : value;
   };
+  const alpha = (value) => {
+    const parts = channels(value);
+    return parts.length < 4 ? 1 : parts[3];
+  };
+  const honestInk = (node) => {
+    const style = view.getComputedStyle(node);
+    const rect = node.getBoundingClientRect();
+    const indent = Math.abs(Number.parseFloat(style.textIndent) || 0);
+    let opacity = alpha(style.color) * alpha(style.webkitTextFillColor);
+    for (let item = node; item; item = item.parentElement) {
+      opacity *= Number.parseFloat(view.getComputedStyle(item).opacity);
+    }
+    return opacity === 1
+      && (!style.fontSize || Number.parseFloat(style.fontSize) > 0)
+      && (!style.clipPath || style.clipPath === "none")
+      && indent < Math.max(rect.width, 1);
+  };
+  const exposed = (node) => {
+    if (!doc.elementFromPoint) {
+      return true;
+    }
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return true;
+    }
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    if (x < 0 || x > doc.documentElement.clientWidth || y < 0 || y > doc.documentElement.clientHeight) {
+      return true;
+    }
+    const front = doc.elementFromPoint(x, y);
+    return front === node || node.contains(front);
+  };
+  const relatedTo = (node) => {
+    const related = [node, ...(node.querySelectorAll?.("*") ?? [])];
+    for (let item = node.parentElement; item; item = item.parentElement) {
+      related.push(item);
+    }
+    return [...new Set(related)];
+  };
+  const coveringLayer = (node) => relatedTo(node).some((item) =>
+    ["::before", "::after"].some((part) => {
+      const style = view.getComputedStyle(item, part);
+      const exists = !["none", "normal"].includes(style.content);
+      return exists
+        && /absolute|fixed/u.test(style.position)
+        && (opaque(style.backgroundColor) || (style.backgroundImage && style.backgroundImage !== "none"));
+    }));
+  const generatedAround = (node) =>
+    relatedTo(node)
+      .flatMap((item) => [generated(item, "::before"), generated(item, "::after")])
+      .filter(Boolean);
   const paint = {};
   for (const selector of request.selectors) {
     const found = [...doc.querySelectorAll(selector)].filter(visible);
     paint[selector] = {
-      ink: found.every((node) => opaque(view.getComputedStyle(node).color)),
-      injected: found.flatMap((node) => [generated(node, "::before"), generated(node, "::after")]).filter(Boolean).join(" "),
+      ink: found.every((node) => honestInk(node) && exposed(node) && !coveringLayer(node)),
+      injected: [...new Set(found.flatMap(generatedAround))].join(" "),
     };
   }
   // Every `label[for]` beside the control it names, as two boxes. Gathered
@@ -955,7 +1007,9 @@ function paintedCopy(state, snapshot) {
   return scopedCopy(state).flatMap((phrase) => {
     const paint = snapshot.paint?.[phrase.selector];
     const problems = [];
-    if (paint?.ink === false) {
+    if (!paint) {
+      problems.push({ kind: "unreadable-copy", detail: `${phrase.selector} has no paint sample, so its words were not proved readable` });
+    } else if (paint.ink === false) {
       problems.push({ kind: "unreadable-copy", detail: `${phrase.selector} draws its own words in ink a reader cannot see` });
     }
     if (paint?.injected) {

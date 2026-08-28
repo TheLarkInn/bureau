@@ -1265,6 +1265,7 @@ test("a scoped copy expectation tells a status from its own negation", () => {
   const dirty = {
     counts: { ".editor-status": 1 },
     texts: { ".editor-status": "unsaved edits" },
+    paint: { ".editor-status": { ink: true, injected: "" } },
     text: "Pipeline editor unsaved edits",
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
@@ -1288,6 +1289,7 @@ test("a scoped copy expectation passes the element it names", () => {
   const clean = {
     counts: { ".editor-status": 1 },
     texts: { ".editor-status": " Saved " },
+    paint: { ".editor-status": { ink: true, injected: "" } },
     text: "Pipeline editor saved",
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
@@ -1320,10 +1322,9 @@ test("a scoped copy expectation passes the element it names", () => {
  * Every row keeps `texts` truthful, because that is the entire point: the
  * expectation the registry states is satisfied and the render is still a lie.
  * The first row is the vacuity guard — a mark that fired on an honest render
- * could never be kept green, and the last pins that the two clauses are
- * independent, since either alone is half a check. Ink without generated content
- * passes a false sentence layered over the true one; generated content without
- * ink passes a true sentence painted in nothing.
+ * could never be kept green. The middle rows pin that the two clauses are
+ * independent, since either alone is half a check. The last refuses to call an
+ * absent paint sample readable.
  */
 test("a promised sentence has to be painted, and painted as itself", () => {
   const kinds = (paint) => verdict(
@@ -1346,8 +1347,9 @@ test("a promised sentence has to be painted, and painted as itself", () => {
       kinds({ ink: false, injected: "" }),
       kinds({ ink: true, injected: `"${PANEL_CLEAN}"` }),
       kinds({ ink: false, injected: `"${PANEL_CLEAN}"` }),
+      kinds(undefined),
     ],
-    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy", "substituted-copy"]],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy", "substituted-copy"], ["unreadable-copy"]],
   );
 });
 
@@ -2124,9 +2126,18 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 2, ".d": 1 },
-    texts: { ".a": "saved wrapped", ".d": "no findings for this pipeline" },
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded"], measure: [".b"], contrast: [".c"] }), {
+    counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1 },
+    texts: {
+      ".a": "saved wrapped",
+      ".d": "no findings for this pipeline",
+      ".alpha": "faint",
+      ".font": "flat",
+      ".clip": "cut away",
+      ".indent": "far away",
+      ".cover": "under a lid",
+      ".occluded": "behind a sibling",
+    },
     // `.d` is the render that keeps its promise in the DOM and breaks it on the
     // screen: `texts` is exactly the sentence a scoped expectation asks for, and
     // a reader sees the opposite one an `::after` paints over transparent ink.
@@ -2134,6 +2145,12 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
     paint: {
       ".a": { ink: true, injected: "" },
       ".d": { ink: false, injected: '"clean — bureau validate would pass"' },
+      ".alpha": { ink: false, injected: "" },
+      ".font": { ink: false, injected: "" },
+      ".clip": { ink: false, injected: "" },
+      ".indent": { ink: false, injected: "" },
+      ".cover": { ink: false, injected: "" },
+      ".occluded": { ink: false, injected: "" },
     },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
@@ -2169,6 +2186,10 @@ const BASE_STYLE = {
   overflowY: "visible",
   backgroundColor: "rgb(255, 255, 255)",
   color: "rgb(0, 0, 0)",
+  webkitTextFillColor: "rgb(0, 0, 0)",
+  fontSize: "14px",
+  clipPath: "none",
+  textIndent: "0px",
   position: "static",
   // What React Flow's stylesheet actually computes onto an edge path. Present
   // in the base style because "drawn" now means laid out *and* inked, so an
@@ -2361,8 +2382,29 @@ function pageStub() {
   // the ink is transparent — while an `::after` paints a different sentence
   // that `innerText` does not report at all. Both halves are here because
   // `collect` has to gather both: the ink, and the words put in their place.
-  const ghost = element({ color: "rgba(0, 0, 0, 0)" }, { innerText: "no findings for this pipeline" });
-  pseudos.set(ghost, { "::after": { content: '"clean — bureau validate would pass"' } });
+  const ghostParent = element({});
+  const ghost = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "no findings for this pipeline",
+    parentElement: ghostParent,
+  });
+  pseudos.set(ghostParent, { "::after": { content: '"clean — bureau validate would pass"' } });
+  const faint = element({ color: "rgba(0, 0, 0, 0.01)" }, { innerText: "faint" });
+  const flat = element({ fontSize: "0px" }, { innerText: "flat" });
+  const cutAway = element({ clipPath: "inset(100%)" }, { innerText: "cut away" });
+  const farAway = element(
+    { textIndent: "-9999px" },
+    { innerText: "far away", getBoundingClientRect: () => boxOf(0, 0, 100, 20) },
+  );
+  const coverParent = element({});
+  const covered = element({}, { innerText: "under a lid", parentElement: coverParent });
+  pseudos.set(coverParent, {
+    "::after": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const occluded = element({}, {
+    innerText: "behind a sibling",
+    getBoundingClientRect: () => boxOf(200, 200, 100, 20),
+  });
+  const overlay = element({});
 
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
@@ -2447,6 +2489,12 @@ function pageStub() {
     ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
     ".d": [ghost],
+    ".alpha": [faint],
+    ".font": [flat],
+    ".clip": [cutAway],
+    ".indent": [farAway],
+    ".cover": [covered],
+    ".occluded": [occluded],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
@@ -2457,6 +2505,7 @@ function pageStub() {
     body: { innerText: "Bureau" },
     querySelectorAll: (selector) => matches[selector] ?? [],
     getElementById: (id) => (id === "field-1" ? control : null),
+    elementFromPoint: (x, y) => (x === 250 && y === 210 ? overlay : null),
   };
 }
 
