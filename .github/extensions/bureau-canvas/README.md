@@ -606,24 +606,36 @@ console line and a banner nobody is gated on — which is the same defect this
 whole branch is about, an amber mark standing in for a check that found
 something, made by the instrument whose job is to find it.
 
-Gating on everything the audit produces was not the answer, and the reason is
-worth keeping. The findings are two different kinds of statement. Some are
-arithmetic over a file list: did this run write every render the registry asked
-for, does every published render belong to a state, did every published render
-file a record that can be read, and did a declared twin get both of its sides
-rendered. None of those compares one render against another, so none of them can
-come out differently on a contended machine. The rest — two states drawing one
-screen, a declared twin that parted — *are* comparisons, and the signature still
-drifts on some renders because content occasionally arrives after a surface has
-held still for a poll interval. A gate on a drifting signal fails runs at random,
-and a flaky gate is worse than no gate.
+The audit's findings are two different kinds of statement, and the split is
+still worth keeping — but both kinds now gate. Some are arithmetic over a file
+list: did this run write every render the registry asked for, does every
+published render belong to a state, did every published render file a record
+that can be read, and did a declared twin get both of its sides rendered. The
+rest — two states drawing one screen, a declared twin that parted — *are*
+comparisons between two renders.
 
-So the line is drawn at what the finding is computed from, not at how bad it
-sounds. `partitionFindings` splits the three ways once, the deterministic half
-is asserted, the comparisons stay reported in the banner where a reviewer is
-already looking, and drift stays in the amber note. `unchecked-twin` moved
-across into the asserted half, because "this run rendered one side or neither"
-is not a comparison at all — it is the same arithmetic as a missing render.
+The comparisons were reported and not asserted for several rounds, excused as a
+signal that "still drifts on some renders because content occasionally arrives
+after a surface has held still for a poll interval". That excuse had stopped
+being true, and it was the last unasserted mark in the instrument built to
+remove unasserted marks. A claim is only made once **both** renders have proved
+they stopped changing; every other pair becomes an `unproven-*` finding, which
+is routed to drift and never asserted. So the drift the gate was traded against
+is filtered out before a claim can exist.
+
+Measured, because a stale excuse is exactly how this survived: two full matrix
+runs over one tree, 512 renders each, agree on **511 of 512** signatures. The
+one that moves is `…mode_replay_run_finished_transport_playing` — the single
+state the registry declares in motion, `settled: false`, therefore unproved,
+therefore drift by construction. Among the renders that can reach a claim the
+disagreement is **0 of 511**.
+
+`partitionFindings` still splits the three ways once. `incomplete` and `claims`
+are two separate assertions in the audit spec, so a failing run says which kind
+of thing it got wrong, and drift stays in the amber note where it cannot cry
+wolf. `unchecked-twin` sits with the arithmetic, because "this run rendered one
+side or neither" is not a comparison at all — it is the same arithmetic as a
+missing render.
 
 Where it is asserted matters too. A throwing `globalTeardown` does fail a run —
 that was measured rather than assumed — but it fails it as an error belonging to

@@ -289,13 +289,14 @@ export function isDrift(finding) {
  * The distinction is not severity, it is what the finding is computed *from*.
  * `unchecked` — a declared twin whose renders this run did not both produce —
  * is arithmetic over a file list, exactly like a missing render: it says the run
- * did not do the work, it cannot come out differently on a contended machine,
- * and a run that reports it has published an artefact that lies about its own
- * extent. `claims` compares two renders against each other, and that comparison
- * still drifts — some content arrives after a surface has held still for a poll
- * interval — so gating on it would fail runs at random, which this repository
- * treats as worse than not gating at all. `drift` is the subset that has already
- * said in its own words that the difference is a frame.
+ * did not do the work, and a run that reports it has published an artefact that
+ * lies about its own extent. `claims` compares two renders against each other,
+ * and every claim requires both of them to have *proved* they stopped changing
+ * first — so the drift this split was once made to tolerate is filtered out
+ * before a claim exists, and both lists gate. `drift` is the subset that has
+ * already said in its own words that the difference is a frame: it is the pairs
+ * `undeclared` and `parted` refused to judge, and it is reported, never
+ * asserted, because there is nothing in the product to go and look at.
  *
  * Pure and total: every finding lands in exactly one of the three, so a kind
  * added later cannot fall out of all of them and quietly stop being reported.

@@ -16,13 +16,19 @@
 // record of what it checked does not contain the check. An audit that cannot be
 // found in the list of checks is halfway to the defect this branch removes.
 //
-// Only the deterministic half is asserted. `auditGallery` splits its findings
-// by what they are computed from: arithmetic over a file list on one side —
-// renders never written, renders belonging to no state, records that will not
-// parse, declared twins the run never rendered both sides of — and comparisons
-// between two renders on the other. The first cannot come out differently on a
-// contended machine and gates here; the second still drifts and stays in the
-// banner and the console, where `global-teardown.mjs` explains why.
+// Both halves are asserted. `auditGallery` splits its findings by what they are
+// computed from: arithmetic over a file list on one side — renders never
+// written, renders belonging to no state, records that will not parse, declared
+// twins the run never rendered both sides of — and comparisons between two
+// renders on the other. Both gate, in two assertions rather than one, so a run
+// says which kind of thing it got wrong.
+//
+// The comparisons gate because the drift they were once excused for cannot
+// reach them: a claim requires both renders to have *proved* they stopped
+// changing, and every other pair is routed to `unproven-*` and reported as
+// drift. `global-teardown.mjs` carries the measurement — two full runs over one
+// tree agree on 511 of 512 signatures, and the one that moves is the single
+// state the registry declares in motion, which is unproved by construction.
 
 import { expect, test } from "@playwright/test";
 
@@ -48,4 +54,5 @@ test("@matrix the published gallery is the whole matrix", async () => {
 
   test.skip(!audit.ran, audit.reason ?? "no gallery was published by this run");
   expect(audit.incomplete, "renders the gallery claims and does not hold").toEqual([]);
+  expect(audit.claims, "states that draw one screen without declaring they do, and declared twins that parted").toEqual([]);
 });

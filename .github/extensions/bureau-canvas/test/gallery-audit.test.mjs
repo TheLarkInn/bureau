@@ -485,24 +485,29 @@ test("a gallery that is missing renders raises the alarm, unsettled or not", () 
 });
 
 /**
- * Which findings may fail a run, decided by what they are computed from.
+ * Which findings say something about the product, and which about the harness.
  *
  * The audit produced findings and gated on none of them: a run could print
  * `This gallery is not the whole matrix` in red and still exit 0, which is the
  * same defect this branch exists to remove — an amber mark standing in for a
- * check that found something — made by the instrument that reports it. Gating
- * on everything was not the answer either, because a comparison between two
- * renders still drifts and a flaky gate is worse than no gate here.
+ * check that found something — made by the instrument that reports it.
  *
- * So the line is drawn at arithmetic. `unchecked-twin` says the run rendered
- * one side or neither, which is a fact about a file list and cannot come out
- * differently on a loaded machine, so it gates alongside a missing render.
- * `broken-twin` and `undeclared-twin` are comparisons and stay advisory.
+ * `unchecked-twin` says the run rendered one side or neither, which is a fact
+ * about a file list, so it gates alongside a missing render. `broken-twin` and
+ * `undeclared-twin` are comparisons and gate too, in their own assertion,
+ * because a claim is only made once *both* renders have proved they stopped
+ * changing — the drift that once excused them lands in `unproven-*`, which is
+ * reported and never asserted, because there is nothing in the product to look
+ * at.
+ *
+ * The three buckets are asserted by name here rather than as a count, so moving
+ * a kind between them is a decision this row records rather than a silent
+ * regrading.
  *
  * `total` is asserted so the partition stays total: a kind added later cannot
  * fall out of all three buckets and quietly stop being reported at all.
  */
-test("only the findings that are arithmetic over the file list may gate a run", () => {
+test("each finding is graded by whether it describes the product or this harness", () => {
   const findings = [
     { kind: "unchecked-twin", detail: "neither side rendered" },
     { kind: "broken-twin", detail: "declared and parted" },

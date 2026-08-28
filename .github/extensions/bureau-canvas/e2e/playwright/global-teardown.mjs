@@ -142,7 +142,7 @@ export async function auditGallery(dirs, resolve) {
     // it and say so, and a stand-in that reports the sentence without the path
     // never had to resolve anything. Saying where it looked is also what a
     // person reading "this run rendered no states" wants to know next.
-    return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [], staging: stageDir };
+    return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [], claims: [], staging: stageDir };
   }
   console.log(`gallery: published ${published.length} file(s) to ${outDir}`);
   return { ...await report(published, records, unreadable, outDir), reason: null };
@@ -260,14 +260,29 @@ function shotOf(name, bytes) {
  * reports it.
  *
  * `claims` — two states drawing one screen, or a declared twin that parted —
- * stays reported rather than asserted, and that remains a measured decision. It
- * is a comparison between two renders, the signature still drifts on about an
+ * is answered for here too, and the reason it once was not had stopped being
+ * true. It was excused as a comparison whose signature "drifts on about an
  * eighth of them between two runs of one tree because some content arrives
- * after the surface has stopped changing for a poll interval, and this
- * repository's rule is that a flaky gate is worse than no gate. `unchecked-twin`
- * moves across into `incomplete`, though, because it is not a comparison at all:
- * it says the run rendered one side or neither, which is the same arithmetic as
- * a missing render and is just as deterministic.
+ * after the surface has stopped changing for a poll interval". That sentence
+ * describes the *unproved* case, and the unproved case cannot reach this list:
+ * `undeclared` and `parted` each require `proved()` on **both** sides before
+ * they emit a claim, and route every other pair to `unproven-*`, which
+ * `isDrift` sends to `drift`. The excuse defended the gate's absence with the
+ * one input already filtered out of it — which is the same defect as an
+ * unasserted mark, wearing a reason.
+ *
+ * Measured rather than assumed, because a stale excuse is how it survived: two
+ * full matrix runs over one tree, 512 renders each, agree on 511 of 512
+ * signatures. The one that differs is
+ * `desktop--…mode_replay_run_finished_transport_playing`, the single state the
+ * registry declares in motion — `settled: false`, therefore unproved,
+ * therefore drift by construction. Among renders that can reach `claims` the
+ * disagreement is 0 of 511, so the flake this was traded against is the flake
+ * the filter already removes.
+ *
+ * `unchecked-twin` is in `incomplete` rather than here because it is not a
+ * comparison at all: it says the run rendered one side or neither, which is the
+ * same arithmetic as a missing render.
  *
  * Drift — a finding whose own words say the difference is a frame — is the
  * third list and is neither asserted nor alarmed.
@@ -312,7 +327,8 @@ async function report(published, records, unreadable, outDir) {
     ...(motion.unproved.length ? [`${motion.unproved.length} render(s) filed a record carrying no settle evidence, so nothing says whether their screenshot is a result or whichever frame the run caught: ${motion.unproved.slice(0, 5).join(", ")}`] : []),
     ...parted.unchecked.map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
-  const lines = [...incomplete, ...parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`)];
+  const claims = parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`);
+  const lines = [...incomplete, ...claims];
   console.log(`gallery: ${Object.keys(records).length} render(s) audited`);
   if (unsettled.length) {
     console.log(`gallery: ${unsettled.length} render(s) were ${SETTLED_PHRASE} and are marked on their own figures`);
@@ -336,7 +352,7 @@ async function report(published, records, unreadable, outDir) {
   for (const line of unmarked) {
     console.log(`gallery: ${line}`);
   }
-  return { ran: true, incomplete: [...incomplete, ...unmarked] };
+  return { ran: true, incomplete: [...incomplete, ...unmarked], claims };
 }
 
 /**

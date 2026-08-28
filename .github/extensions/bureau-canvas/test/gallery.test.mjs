@@ -24,7 +24,7 @@ import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
 import { GALLERY, stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
 import { parse as parseYaml } from "../lib/vendor/yaml.mjs";
-import { STATES } from "../web/statelab/registry.mjs";
+import { STATES, RENDER_TWINS } from "../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 /** A staging and a gallery directory, with the gallery already populated. */
@@ -144,6 +144,65 @@ async function audited(dirs, resolve) {
     console.log = spoke;
   }
 }
+
+/**
+ * A staging directory holding several renders, each with the record it filed.
+ *
+ * `staged` above is the one-render shape most of these tests want. A comparison
+ * needs two, because the finding is about a pair, and both sides must reach the
+ * audit through the same real path a run uses.
+ */
+async function stagedPairs(t, index, shots) {
+  const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stage = join(root, "staging");
+  await mkdir(join(stage, "signatures"), { recursive: true });
+  await writeFile(join(stage, "index.html"), index, "utf8");
+  for (const [shot, record] of shots) {
+    await writeFile(join(stage, shot), ONE_PIXEL);
+    await writeFile(join(stage, "signatures", `${shot}.json`), JSON.stringify(record), "utf8");
+  }
+  return { staging: stage, gallery: join(root, "gallery") };
+}
+
+/**
+ * A comparison the audit makes is a comparison the run is answerable for.
+ *
+ * `auditTwins` is pinned in the unit table, and the unit table hands it records
+ * it built itself. Nothing asked whether the answer reaches the caller that owns
+ * the verdict — and it did not: `report` folded the claims into the console and
+ * the banner and returned `{ ran, incomplete }`, so `broken-twin` and
+ * `undeclared-twin` could not be asserted without changing the signature first.
+ * Delete `matched()`, delete `parted()`'s `broken-twin` arm, or delete the whole
+ * comparison, and the full matrix stayed green. The rule was proved and its one
+ * consumer was not, which is the same hole one step along: a declared twin could
+ * part — an entry operation quietly becoming a no-op, which is the defect the
+ * 256-state matrix exists to catch — and the run would report it in amber and
+ * exit 0.
+ *
+ * So both kinds go in through the real audit, off a real disk, and are read off
+ * the returned object rather than a console. Three rows, because a claim that
+ * fired on everything would gate every run and be switched off within a week:
+ * the matching declared twin must produce no claim at all.
+ */
+test("a parted twin and an undeclared match are on the object the gate reads", async (t) => {
+  const twin = RENDER_TWINS[0];
+  const [one, other] = [shotName(twin.a, "desktop"), shotName(twin.b, "desktop")];
+  const settled = (signature) => ({ signature, settled: true });
+  const cases = [
+    [[[one, settled("a")], [other, settled("b")]], "broken-twin"],
+    [[[one, settled("same")], [other, settled("same")]], null],
+    [[[shotName(STATES[0].id, "desktop"), settled("x")], [shotName(STATES[1].id, "desktop"), settled("x")]], "undeclared-twin"],
+  ];
+
+  const found = [];
+  for (const [shots] of cases) {
+    const audit = await audited(await stagedPairs(t, realIndex(), shots));
+    found.push(audit.claims.map((line) => line.slice(0, line.indexOf(":"))));
+  }
+
+  assert.deepEqual(found, cases.map(([, kind]) => (kind ? [kind] : [])));
+});
 
 /**
  * The marks a run computes are the marks a reviewer meets.
@@ -774,6 +833,7 @@ test("the teardown Playwright loads audits for real when it is handed nothing", 
       ran: false,
       reason: "this run rendered no states, so there is no gallery to audit",
       incomplete: [],
+      claims: [],
       staging: stage,
     }, false],
   );

@@ -229,7 +229,8 @@ export const STATES = [...matrixStates, ...PROBES];
  * that leaves with the run it was about leaves the screen it found. Saying so
  * here turns an unremarked coincidence into an assertion in both directions —
  * `e2e/playwright/gallery-audit.mjs` reports a declared twin that stops
- * matching exactly as loudly as an undeclared pair that starts.
+ * matching exactly as loudly as an undeclared pair that starts, and
+ * `specs/gallery.audit.spec.mjs` fails the run on either.
  *
  * `viewports` is per-pair rather than assumed, because the two layouts are two
  * screens: a claim that holds in one column may not hold in two.
