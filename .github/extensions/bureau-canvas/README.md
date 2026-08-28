@@ -238,7 +238,8 @@ it shut.
 
 The pipeline side panel is headed `Validation (0)` when it has no findings for
 the pipeline it describes, and says a sentence about it. An empty findings list
-arrives two different ways, and the panel said the same thing about both:
+arrives three different ways, and the panel said the same thing about the first
+two:
 
 ```
 clean — bureau validate would pass
@@ -279,6 +280,75 @@ satisfied by swapping them.
 
 The fourteen are the seven `surface:pipeline+data:fixture` states at both
 viewports, which is exactly the set the registry certifies.
+
+### `validated` is not a verdict either
+
+The fix above reads `state.validation.state`, and that is the third way an empty
+list arrives. `lib/findings.mjs` sets `state: "validated"` whenever
+`bureau validate` **returned JSON** — accepted *and* rejected alike — and records
+which of the two in `ok`, a field `emptyVerdict` never read. Meanwhile
+`pipelineFindings` scopes the panel's list to the pipeline on screen, and
+`targetFor` routinely aims a finding somewhere else: `roles`, `assignments`,
+`repos`, a bare `file`, or another pipeline.
+
+So a config the CLI **rejected** for a reason that names a role or `repos.yaml`
+leaves the open pipeline with an empty list, and the panel announced:
+
+```
+clean — bureau validate would pass
+```
+
+while the header on the same screen read *"Validation findings"*. That is the
+identical defect one branch over — a mark standing in for a check nobody made —
+except that this one asserts the exact opposite of the command's answer, under
+the heading a reader takes the verdict from.
+
+The panel has three honest things to say, so it now says three:
+
+| `validation` | sentence |
+|---|---|
+| not `validated` | `not checked — bureau validate did not run` |
+| `validated`, `ok` | `clean — bureau validate would pass` |
+| `validated`, not `ok` | `no findings for this pipeline — bureau validate rejected the config elsewhere` |
+
+`invalid` could not catch it. That fixture hand-places a finding on the very
+pipeline it opens, so the panel is never empty there and the `validated && !ok`
+branch never renders — the defect lived precisely in the gap between the two
+values, which is why `invalid-elsewhere` is a value on the `data` axis rather
+than a variation of an existing one. Its fixture rejects the config for reasons
+that name no step and no pipeline, and the offline test asserts that premise
+rather than assuming it: a later edit that attached a finding to that pipeline
+would fill the panel, stop rendering the branch, and otherwise pass while
+covering nothing.
+
+The rule moved to `web/panel-verdict.mjs` for `step-refs.mjs`'s reason — `web/`
+is the only tree the browser can reach, and `app.mjs` cannot be imported without
+a browser, so a verdict spelled inside it is a rule the offline suite can only
+read. The registry imports the same three constants rather than re-spelling
+them, so the expectation is bound to the page instead of agreeing with a second
+literal.
+
+| mutation | offline | browser |
+|---|---|---|
+| `emptyVerdict` reading `state` alone, ignoring `ok` | **2 failed** | **15 failed** |
+| `PANEL_ELSEWHERE` collapsed into the unchecked sentence | **1 failed** | — |
+| restored | **450 passed** | **681 passed** |
+
+The fifteen are the seven `surface:pipeline+data:invalid-elsewhere` states at
+both viewports plus the gallery audit. The config-surface states pass under the
+mutation, correctly: that surface draws no panel.
+
+The second row is the fix's own defect, found by the finish review after the
+first was closed. Sharing one export between the page and the registry is what
+stops the two drifting — but it also means the table test compares
+`emptyVerdict`'s output against the very constants it returns, so both sides
+move together and the wording is asserted only against itself. Two of the three
+pairs were pinned by other tests; `elsewhere` against `unchecked` was pinned by
+none, so collapsing them left **every gate green** while the panel told a reader
+that a config the CLI had checked and rejected "was not checked". That is the
+original defect with the labels exchanged. Distinctness is now asserted over the
+set of three, and each sentence is held to its own opening besides — a set
+survives any swap, and the shape pins are what make a swap fail.
 
 ### A render that was not proved settled says so
 
@@ -418,7 +488,7 @@ Every rule above binds where a mark attaches and what it says. None of them
 asked whether a reviewer can see it. `border-color:transparent` beside
 `border-width:2px`, and `color:transparent` on the caption's `::after`, leave
 every selector matching, every mark landing, `unmarked` empty and every computed
-value readable and *different from its neighbours* — over 512 renders on which
+value readable and *different from its neighbours* — over 540 renders on which
 nothing is drawn at all. `hidden`, `display:none` and `opacity:0` do the same to
 the notice a bad run depends on, and the offline suite cannot tell, because it
 holds `notices` as a string and a hidden banner serializes exactly like a shown
@@ -624,7 +694,8 @@ is routed to drift and never asserted. So the drift the gate was traded against
 is filtered out before a claim can exist.
 
 Measured, because a stale excuse is exactly how this survived: two full matrix
-runs over one tree, 512 renders each, agree on **511 of 512** signatures. The
+runs over one tree, 512 renders each at the time of the measurement, agree on
+**511 of 512** signatures. The
 one that moves is `…mode_replay_run_finished_transport_playing` — the single
 state the registry declares in motion, `settled: false`, therefore unproved,
 therefore drift by construction. Among the renders that can reach a claim the
@@ -704,7 +775,7 @@ out of `overlayEdges` so the remap-and-dedupe that is the overlay's meaning stay
 on the counted side and `flowEdge`, the projection, is the untrusted half.
 
 The consequence is that `undrawn-graph` becomes a real correctness gate across
-all 512 renders in CI, rather than one assertion in a harness that runs only when
+all 540 renders in CI, rather than one assertion in a harness that runs only when
 someone has Edge. Both directions were measured on the same sabotage — a
 `toFlow` that hands React Flow no edges at all:
 
@@ -1305,7 +1376,8 @@ Two ways a published gallery used to pass while being useless:
   the chunk stream is walked from the signature to the end of the file, every
   chunk checked against its own CRC, and at least one `IDAT` required — the one
   conjunct two perfect ends can never carry. The reader takes whole files, which
-  reverses the note above about reading only their ends: 512 files, about 43 MB,
+  reverses the note above about reading only their ends: 512 files at the time it
+  was measured, about 43 MB,
   roughly half a second against the three and a half minutes that produced them.
 - **Clauses the walk answered for.** Adding that walk quietly retired three of
   the checks above. A dimension, a chunk type and a declared length all live

@@ -108,6 +108,43 @@ function advisory(state) {
 }
 
 /**
+ * A config the CLI rejected for reasons that name nothing on the pipeline being
+ * viewed — a role, an assignment and `repos.yaml`, and no step and no pipeline.
+ *
+ * This is not a narrower `invalid`; it is the case that separates two claims
+ * the panel had been making with one sentence. `pipelineFindings` scopes the
+ * panel's list to the open pipeline, so this payload leaves that list empty
+ * while `validation.ok` is `false` and the header reads "Validation findings".
+ * A verdict that reads only `validation.state` calls that "clean — bureau
+ * validate would pass", which is the command's answer inverted, on the screen
+ * a reader takes the verdict from.
+ *
+ * `invalid` cannot expose it: that fixture hand-places a finding on
+ * `agent-eligible-pipeline`, so the panel is never empty there and the
+ * `validated && !ok` branch is never the one that renders. The defect lived
+ * precisely in the gap between the two, which is why this is a value on the
+ * axis rather than a variation of one.
+ */
+function invalidElsewhere(state) {
+  const next = validated(state);
+  const findings = [
+    {
+      severity: "error",
+      message: "assignment `agent-eligible` names role `reviewer`, which no role file defines",
+      target: { kind: "assignment", assignment: "agent-eligible" },
+    },
+    { severity: "error", message: "repos.yaml: `bureau` has no credential" },
+  ];
+  next.validation = { ...next.validation, ok: false, errors: findings.map((item) => item.message) };
+  next.status = "Validation findings";
+  next.findings = findings;
+  next.findingsByItem = { "assignment:agent-eligible": [findings[0]] };
+  next.findingsByStep = {};
+  next.generalFindings = [findings[1]];
+  return next;
+}
+
+/**
  * Both classes at once. `mergeAdvisories` in `lib/actions.mjs` concatenates
  * advisories onto whatever `validate` returned, so a config really can hold
  * errors and advisories together — and adjacency is precisely when the two
@@ -443,6 +480,7 @@ export const FIXTURES = Object.fromEntries([
   entry("sample", "status", "the bundled sample exactly as the host serves it", sample),
   entry("validated", "status", "bureau validate ran and accepted the config", validated),
   entry("invalid", "status", "bureau validate rejected it; findings sit on what they name", invalid),
+  entry("invalid-elsewhere", "status", "bureau validate rejected it for reasons that name no step and no pipeline", invalidElsewhere),
   entry("advisory", "status", "an advisory that must never block a save", advisory),
   entry("invalid-advisory", "status", "validation errors and an advisory reported together", invalidAdvisory),
   entry("empty", "content", "no assignments, roles, repos or pipelines yet", empty),

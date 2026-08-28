@@ -22,6 +22,7 @@ import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
 import { drawableEdges } from "./graph-edges.mjs";
+import { emptyVerdict } from "./panel-verdict.mjs";
 import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
@@ -2002,28 +2003,9 @@ function SidePanel({ state, pipeline, name }) {
     { className: "side-panel" },
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
     h(AgentIdentities, { state, pipeline }),
-    h("section", { className: "panel-section", "data-testid": "panel-validation" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, emptyVerdict(state))),
+    h("section", { className: "panel-section", "data-testid": "panel-validation" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, emptyVerdict(state.validation))),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
   );
-}
-
-/*
- * What the panel says when this pipeline has no findings — and it is two
- * different statements, not one.
- *
- * "Clean" is a *result*, and a result requires a run. In the `fixture` state
- * there is no bureau binary, `bureau validate` was never invoked, and the
- * findings list is empty because nothing ever filled it. The panel claimed the
- * pass anyway, on the same screen whose header reads "Showing bundled sample;
- * bureau binary not available." — two statements a reader cannot reconcile,
- * and the panel's is the one taken as the verdict, because it is the section
- * headed "Validation".
- *
- * An empty findings list is an absence of evidence in one state and evidence
- * of absence in the other, and only `validation.state` tells them apart.
- */
-function emptyVerdict(state) {
-  return state.validation?.state === "validated" ? "clean — bureau validate would pass" : "not checked — bureau validate did not run";
 }
 
 function AgentIdentities({ state, pipeline }) {

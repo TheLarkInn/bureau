@@ -13,6 +13,9 @@
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
 import { FIELD_SAVE, RUN_END, RUN_HOLDS, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
+// The panel's own sentences, taken from the module the page renders rather
+// than restated here. See `PANEL_CLEAN` below.
+import * as VERDICTS from "../panel-verdict.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -135,9 +138,15 @@ function panelVerdict(combo, verdict) {
     : { shows: [S.panelValidationFinding], hides: [S.panelValidationClean] };
 }
 
-/** The two sentences an empty findings list can honestly carry. */
-const PANEL_CLEAN = "clean — bureau validate would pass";
-const PANEL_UNCHECKED = "not checked — bureau validate did not run";
+/** The three sentences an empty findings list can honestly carry.
+ *
+ * Imported from the module the page itself renders, never re-spelled here. A
+ * registry that writes its own copy of the sentence asserts agreement between
+ * two literals and proves nothing about the panel; wiring both ends to one
+ * export means a change to the wording fails the state that pins it, which is
+ * the only way this expectation can be a check rather than a duplicate.
+ */
+const { PANEL_CLEAN, PANEL_ELSEWHERE, PANEL_UNCHECKED } = VERDICTS;
 
 /**
  * D2 — where the config payload came from and whether the CLI accepted it.
@@ -172,6 +181,24 @@ const data = {
       copy: ["Validation findings"],
       shows: [".finding--validation"],
       derive: (combo) => panelVerdict(combo, null),
+    },
+    {
+      /*
+       * The case that separates a clean pipeline from a clean config.
+       * `validation.state` is `validated` for an accepted *and* a rejected
+       * config, and the panel's list is scoped to the open pipeline — so a
+       * rejection naming a role, an assignment or `repos.yaml` leaves this
+       * pipeline's list empty while the header reads "Validation findings". A
+       * verdict read off `state` alone called that a pass. `invalid` cannot
+       * catch it, because its fixture puts a finding on the very pipeline being
+       * viewed; only a value whose findings name nothing here renders the
+       * `validated && !ok` branch at all.
+       */
+      id: "invalid-elsewhere",
+      summary: "bureau validate rejected it for reasons that name nothing on this pipeline, so the panel reports the rejection rather than a pass",
+      copy: ["Validation findings"],
+      shows: [".finding--validation"],
+      derive: (combo) => panelVerdict(combo, PANEL_ELSEWHERE),
     },
     {
       id: "advisory",

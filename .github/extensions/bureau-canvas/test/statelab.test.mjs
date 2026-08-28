@@ -25,6 +25,7 @@ import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mj
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 import { VIEWPORTS, SELECTORS } from "../web/statelab/selectors.mjs";
+import { emptyVerdict, PANEL_CLEAN, PANEL_ELSEWHERE, PANEL_UNCHECKED } from "../web/panel-verdict.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -145,21 +146,21 @@ test("every count the branch reports about itself is what the registry holds", (
     { ...summary(), renders },
     {
       dimensions: 16,
-      dimensionValues: 97,
-      combinations: 627056640000,
+      dimensionValues: 98,
+      combinations: 705438720000,
       constraintRules: 33,
       structuralRules: 22,
       scopingRules: 7,
       harnessRules: 4,
-      excludedCombinations: 627056639793,
-      matrixStates: 207,
+      excludedCombinations: 705438719779,
+      matrixStates: 221,
       probes: 49,
-      states: 256,
+      states: 270,
       transitions: 137,
       entryTransitions: 101,
       returnTransitions: 36,
-      roots: 155,
-      renders: 512,
+      roots: 169,
+      renders: 540,
     },
   );
 });
@@ -569,7 +570,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 93, probe: 20, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 101, probe: 20, landing: 36, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1397,6 +1398,96 @@ test("a state where validate never ran does not claim the verdict of one where i
   assert.deepStrictEqual(
     [unchecked.length, clean.length, unchecked[0] === clean[0], /^not checked\b/u.test(unchecked[0]), /^clean\b/u.test(clean[0])],
     [1, 1, false, true, true],
+  );
+});
+
+/**
+ * The same defect one axis over: `validated` is not a verdict either.
+ *
+ * `lib/findings.mjs` sets `state: "validated"` whenever `bureau validate`
+ * returned JSON — accepted *and* rejected — and records which in `ok`. A
+ * verdict reading only `state` therefore says "clean" for a config the command
+ * rejected, and the panel's list is scoped to the open pipeline, so any
+ * rejection naming a role, an assignment, `repos.yaml` or another pipeline
+ * lands exactly there: empty list, `ok: false`, and a header on the same screen
+ * reading "Validation findings".
+ *
+ * The unrun case is included so all three sentences are pinned by one table.
+ * `{ state: "fixture", ok: true }` is the shape that makes the point — `ok` is
+ * true and nothing ran, so a rule reading `ok` alone would be as wrong as the
+ * one reading `state` alone, in the other direction.
+ */
+test("an empty findings list carries the verdict the run actually produced", () => {
+  const cases = [
+    [undefined, PANEL_UNCHECKED],
+    [{ state: "fixture", ok: true }, PANEL_UNCHECKED],
+    [{ state: "crash", ok: false }, PANEL_UNCHECKED],
+    [{ state: "validated", ok: true }, PANEL_CLEAN],
+    [{ state: "validated", ok: false }, PANEL_ELSEWHERE],
+  ];
+
+  assert.deepStrictEqual(cases.map(([validation]) => emptyVerdict(validation)), cases.map(([, sentence]) => sentence));
+});
+
+/**
+ * The three sentences stay three, and each stays the one it is.
+ *
+ * Sharing one export between the page and the registry is what stops them
+ * drifting apart — but it also means the table above compares `emptyVerdict`'s
+ * output against the very constants it returns, so both sides move together and
+ * the *wording* is asserted only against itself. Two of the three pairs happen
+ * to be pinned elsewhere: `unchecked` against `clean` by the derivation test,
+ * and `elsewhere` against `clean` by the direction column below. The third pair
+ * was pinned nowhere, so setting `PANEL_ELSEWHERE` to the unchecked sentence
+ * left every gate green — offline, browser and gallery alike — while the panel
+ * told a reader that a config the CLI *did* check and *did* reject "was not
+ * checked". That is the original defect with the labels exchanged, which is
+ * exactly what the derivation test's own comment warns a difference check alone
+ * cannot catch.
+ *
+ * So distinctness is asserted over the set, and each sentence is held to its own
+ * opening besides: a set of three survives any swap, and the shape pins are what
+ * make a swap fail.
+ */
+test("the three verdicts stay three distinct sentences", () => {
+  assert.deepStrictEqual(
+    [
+      new Set([PANEL_UNCHECKED, PANEL_CLEAN, PANEL_ELSEWHERE]).size,
+      /^not checked\b/u.test(PANEL_UNCHECKED),
+      /^clean\b/u.test(PANEL_CLEAN),
+      /^no findings for this pipeline\b/u.test(PANEL_ELSEWHERE),
+    ],
+    [3, true, true, true],
+  );
+});
+
+/**
+ * The state asserts its own premise, or it is green for the uninteresting
+ * reason.
+ *
+ * `invalid-elsewhere` only exercises the `validated && !ok` branch while its
+ * findings name nothing on the pipeline the fixture opens. If a later edit
+ * attached one to that pipeline, the panel would fill, the branch would stop
+ * rendering, and the state would keep passing while covering nothing — so the
+ * emptiness is checked here rather than assumed.
+ *
+ * The registry's sentence is compared against `emptyVerdict` applied to this
+ * fixture's own validation record, not against a literal. A test naming the
+ * sentence twice agrees with itself; only running the product's rule over the
+ * product's payload binds the expectation to the page. The last column pins the
+ * direction, since "not the clean one" is what collapsing the three sentences
+ * back into two would break first.
+ */
+test("a rejection that names nothing here is reported as a rejection, not a pass", async () => {
+  const base = await servedState();
+  const state = applyFixture(["invalid-elsewhere", "pipeline"], base);
+  const open = state.selectedPipeline.name;
+  const here = (state.findings ?? []).filter((finding) => (finding.target ?? {}).pipeline === open);
+  const said = (valueOf("data", "invalid-elsewhere").derive({ surface: "pipeline" }).copy ?? []).map((phrase) => phrase.text);
+
+  assert.deepStrictEqual(
+    [state.validation.state, state.validation.ok, here.length, said[0] === emptyVerdict(state.validation), said[0] === PANEL_CLEAN],
+    ["validated", false, 0, true, false],
   );
 });
 
@@ -2359,7 +2450,7 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 98 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 106 },
   );
 });
 
