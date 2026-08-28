@@ -402,8 +402,15 @@ quotes the first element the two disagree on. Before, a broken claim was a dead
 end: two screenshots, two hashes, and a difference that is usually one attribute
 on one element — the thing a person cannot find by eye and a diff finds at once.
 
-A render missing a settle record reads as proved, so a gallery published before
-this rule existed is not retroactively cast into doubt.
+A render whose record carries no settle evidence at all is the third finding,
+and it used to be none. `auditMotion` asked its two questions of the records
+carrying a boolean, so a record without the field fell out of both lists and was
+reported by neither — deleting the field from the record writer left the whole
+matrix green over five hundred renders the artefact then made no motion claim
+about. The leniency was written as backwards compatibility with galleries
+published before the rule existed, and there are none: the audit reads only the
+records this run staged. It protected nothing and hid the one thing it was
+watching for, so absent evidence is now `unproved` and reported with the rest.
 
 ### A mark can be attached, spelled right, and painted in nothing
 
@@ -697,6 +704,23 @@ someone has Edge. Both directions were measured on the same sabotage — a
 Independence is a property of the *call site*, and nothing inside `drawableEdges`
 can enforce it, so `test/graph-edges.test.mjs` holds it offline by reading how
 each of the three surfaces computes the attribute.
+
+### A laid-out edge is not a drawn one
+
+The other half of that comparison was `drawnPath`, and it asked SVG geometry:
+`path.getTotalLength() > 0`. Geometry was the right question for the barrier —
+*has the layout pass produced a path yet* — and it survives every way there is
+to not be on screen. One line of `.react-flow__edge-path { display: none }`
+took every edge off every graph in the matrix and each one still reported
+`drawn` equal to `declared`, on 653 green tests.
+
+Length was necessary and was being read as sufficient. It is now length *and*
+paint: `display` and `opacity` walked to the root, because neither resolves an
+ancestor's value into the child's computed one the way `visibility` does, and a
+stroke that is `none`, fully transparent or zero-wide is a line that was laid
+out and never inked. A client rect still cannot stand in for any of it — an edge
+between two vertically aligned handles is a straight vertical line with no
+width, which is the ordinary shape of a pipeline stacked in a column.
 
 ### The rule against self-reporting was itself only a mark
 
@@ -1187,6 +1211,15 @@ teardown. `offsite()` fails closed — a URL the parser cannot read is refused
 rather than waved through, since the one input nobody anticipated is exactly
 the one that must not be the one that passes.
 
+Both of those mechanisms are HTTP-shaped, and a WebSocket is not an HTTP
+request: it raises no `request` event and `page.route` never sees it. So a
+`new WebSocket("ws://192.0.2.1:9/")` added to `web/app.mjs` left the suite green
+with nothing recorded — the same hole, through the one door the first floor
+could not watch. `page.on("websocket")` and `page.routeWebSocket` now do the
+same two jobs for sockets, and `offsite()` judges `ws:`/`wss:` by the loopback
+set rather than by the scheme, because a socket to a remote host has left this
+machine and a socket to loopback has not.
+
 Rules that need a second repo or role to express — reordering repos, and the
 read-only-primary warning — are asserted in the offline suite instead, since
 the bundled sample registers only one repo.
@@ -1244,3 +1277,11 @@ Two ways a published gallery used to pass while being useless:
   the `IEND` chunk says the writer reached the end of it — which is the half a
   size check alone would miss, and the likelier accident, because it is what a
   worker killed mid-write leaves behind.
+- **Both ends and nothing between them.** Those two ends alone accepted the
+  sixteen bytes `iVBORw0KGgpJRU5ErkJggg==` decodes to: a signature with the
+  closing chunk stapled straight onto it. So the first chunk is read too. `IHDR`
+  must be the first chunk of every PNG, its data length is fixed at 13 by the
+  format, and it carries the dimensions — so a file too small to hold an image,
+  one whose first chunk is not a header, and one describing a picture of no size
+  are all caught. The head the teardown reads grew from 8 bytes to 33, which is
+  still a read of both ends rather than of tens of megabytes.

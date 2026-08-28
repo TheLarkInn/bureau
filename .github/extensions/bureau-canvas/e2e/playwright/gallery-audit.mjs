@@ -52,19 +52,51 @@ export function auditNames(expected, present) {
 }
 
 /**
- * The eight bytes every PNG opens with, and the eight its final chunk closes
- * with. Both ends, because they answer different questions: the header says a
- * file is a PNG at all, and `IEND` says the writer got to the end of it. A
- * worker killed mid-write leaves a file with a perfectly good header.
+ * The bytes that make a file a PNG, at both ends and in the one chunk whose
+ * shape the format fixes.
+ *
+ * The header alone says a file *starts* like a PNG and `IEND` says a writer
+ * reached the end of one, and for a while that pair was the whole test — which
+ * accepted the sixteen bytes `iVBORw0KGgpJRU5ErkJggg==` decodes to: a signature
+ * with the closing chunk stapled straight onto it and no image in between. Both
+ * ends were perfect and there was nothing between them.
+ *
+ * So the first chunk is read too. `IHDR` must be the first chunk of every PNG,
+ * its data length is fixed at 13 by the format, and it carries the dimensions —
+ * so a header that is present, well-formed and describes a picture of no size
+ * is caught as well.
  */
 const PNG_OPEN = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const PNG_CLOSE = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+const PNG_IHDR = [0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52];
+const PNG_IEND = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
 
 /** How many bytes of each end `auditBytes` needs to be given. */
-export const PNG_ENDS = PNG_OPEN.length;
+export const PNG_HEAD = PNG_OPEN.length + 4 + 4 + 13 + 4;
+export const PNG_TAIL = PNG_IEND.length;
+
+/**
+ * The smallest file that could hold a picture: signature, IHDR, one IDAT chunk
+ * of no data at all, IEND. Nothing this size is a real render, and a file below
+ * it cannot even be read at both ends without the two overlapping.
+ */
+const PNG_FLOOR = PNG_HEAD + 12 + PNG_TAIL;
 
 function matches(bytes, expected) {
   return expected.every((byte, index) => bytes?.[index] === byte);
+}
+
+/** A four-byte big-endian field, which is how PNG spells every number. */
+function uint32(bytes, at) {
+  return ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+}
+
+/** Whether these ends are the ends of one whole PNG. */
+function whole(shot) {
+  return shot.size >= PNG_FLOOR
+    && matches(shot.open, [...PNG_OPEN, ...PNG_IHDR])
+    && uint32(shot.open ?? [], 16) > 0
+    && uint32(shot.open ?? [], 20) > 0
+    && matches(shot.close, PNG_IEND);
 }
 
 /**
@@ -90,7 +122,7 @@ export function auditBytes(shots) {
   for (const shot of shots) {
     if (!shot.size) {
       empty.push(shot.name);
-    } else if (!matches(shot.open, PNG_OPEN) || !matches(shot.close, PNG_CLOSE)) {
+    } else if (!whole(shot)) {
       malformed.push(shot.name);
     }
   }
@@ -209,13 +241,22 @@ export function auditSettled(records) {
  * run and the exemption silently absorbs the regression. `state-matrix.spec.mjs`
  * fails per render on both, and this is the same claim made over the published
  * artefact, where a partial or reordered run cannot hide it.
+ *
+ * `unproved` is the third, and it is here because the first two were written as
+ * a filter on records that carry a boolean — so a record with no `settled` field
+ * at all fell out of both lists and was reported by neither. Deleting the field
+ * from the record writer left the whole matrix green: five hundred renders about
+ * which the artefact made no motion claim, and an audit that said so nowhere.
+ * Absent evidence is a finding, not a record to skip.
  */
 export function auditMotion(records, moving) {
   const declared = new Set(moving);
-  const names = Object.keys(records).filter((name) => typeof records[name]?.settled === "boolean");
+  const names = Object.keys(records);
+  const proved = names.filter((name) => typeof records[name]?.settled === "boolean");
   return {
-    stray: names.filter((name) => records[name].settled === false && !declared.has(name)).sort(),
-    still: names.filter((name) => records[name].settled === true && declared.has(name)).sort(),
+    stray: proved.filter((name) => records[name].settled === false && !declared.has(name)).sort(),
+    still: proved.filter((name) => records[name].settled === true && declared.has(name)).sort(),
+    unproved: names.filter((name) => typeof records[name]?.settled !== "boolean").sort(),
   };
 }
 

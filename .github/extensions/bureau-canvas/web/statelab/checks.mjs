@@ -314,20 +314,48 @@ export function collect(doc, request) {
   // graphs are skipped: a relation graph inside a shut disclosure has drawn no
   // edges and never will, and waiting on one would be a wait with no end.
   //
-  // An edge counts as drawn when its path has length, not when its box has
-  // area. React Flow puts an edge's element into the DOM before it has a path
-  // to draw, so presence answered "drawn: 4" about a graph the signature was
-  // describing with no edges on it at all — but a client rect cannot replace
-  // it, because an edge between two vertically aligned handles is a straight
-  // vertical line whose box is zero pixels wide. That is the ordinary shape
-  // here: `layoutPipeline` stacks a sequential pipeline in a column, so the
-  // rect test would have held back the graphs it was written to wait for and
-  // marked their renders unsettled for the whole budget. Length is the
-  // question actually being asked — has the layout pass produced geometry —
-  // and it is the same answer whichever direction the line runs.
+  // An edge counts as drawn when its path has length *and* that length is
+  // painted. `getTotalLength` is SVG geometry, and geometry survives every way
+  // there is to not be on screen: one line of `.react-flow__edge-path {
+  // display: none }` removed every edge from every graph in the matrix and each
+  // one still reported `drawn` equal to `declared`. Length was necessary and
+  // was being taken as sufficient.
+  //
+  // Each clause below is a different way for a path with perfect geometry to
+  // ink no pixel, and all of them are asked of the render rather than of one
+  // declaration. `display` and `opacity` are walked to the root because neither
+  // resolves an ancestor's value into the child's computed one, the way
+  // `visibility` does. A stroke that is `none`, fully transparent, or zero-wide
+  // is a line that was laid out and never drawn — and a `boxed` test still
+  // cannot stand in for any of it, because an edge between two vertically
+  // aligned handles is a straight vertical line with no width, which is the
+  // ordinary shape of a pipeline stacked in a column.
+  const shown = (node) => {
+    for (let item = node; item; item = item.parentElement) {
+      const style = view.getComputedStyle(item);
+      if (style.display === "none" || Number.parseFloat(style.opacity) === 0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const inked = (style) => {
+    const paint = style.stroke ?? "";
+    const alpha = paint.startsWith("rgba(") ? Number.parseFloat(paint.split(",")[3]) : 1;
+    return paint !== "none"
+      && paint !== "transparent"
+      && alpha !== 0
+      && Number.parseFloat(style.strokeOpacity ?? "1") !== 0
+      && Number.parseFloat(style.strokeWidth ?? "1") > 0;
+  };
   const drawnPath = (path) => {
     try {
-      return path.getTotalLength() > 0;
+      const style = view.getComputedStyle(path);
+      return path.getTotalLength() > 0
+        && style.visibility !== "hidden"
+        && style.visibility !== "collapse"
+        && shown(path)
+        && inked(style);
     } catch {
       return false;
     }

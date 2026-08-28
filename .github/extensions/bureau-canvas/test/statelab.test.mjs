@@ -1935,11 +1935,18 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
 const BASE_STYLE = {
   visibility: "visible",
   opacity: "1",
+  display: "block",
   overflowX: "visible",
   overflowY: "visible",
   backgroundColor: "rgb(255, 255, 255)",
   color: "rgb(0, 0, 0)",
   position: "static",
+  // What React Flow's stylesheet actually computes onto an edge path. Present
+  // in the base style because "drawn" now means laid out *and* inked, so an
+  // edge with no stroke declared anywhere would otherwise read as undrawn.
+  stroke: "rgb(177, 177, 183)",
+  strokeWidth: "1px",
+  strokeOpacity: "1",
 };
 
 /** A document that holds nothing but the elements it is given. */
@@ -2181,12 +2188,21 @@ function pageStub() {
   // column. `zeroLength` is the pending one — React Flow's path before layout
   // runs both ends from the same point — and `sideways` is a drawn edge whose
   // rect would have failed the old test.
+  //
+  // `hidden` and `unstroked` are the two that made length *insufficient*. Both
+  // have perfect geometry and neither puts a pixel on screen: one line of
+  // `.react-flow__edge-path { display: none }` took every edge off every graph
+  // in the matrix and each still reported drawn equal to declared. They are in
+  // the graph rather than in a test of their own so that the count below is the
+  // assertion — five paths in the document, two of them drawn.
   const laidOut = element({}, { getTotalLength: () => 128 });
   const sideways = element({}, { getTotalLength: () => 64, getClientRects: () => [{ width: 90, height: 0 }] });
   const zeroLength = element({}, { getTotalLength: () => 0 });
+  const hidden = element({ display: "none" }, { getTotalLength: () => 128 });
+  const unstroked = element({ stroke: "none" }, { getTotalLength: () => 128 });
   const graph = element({}, {
     getAttribute: (name) => ({ "data-graph-edges": "2", class: "relation-flow" })[name] ?? null,
-    querySelectorAll: () => [laidOut, sideways, zeroLength],
+    querySelectorAll: () => [laidOut, sideways, zeroLength, hidden, unstroked],
   });
 
   const matches = {

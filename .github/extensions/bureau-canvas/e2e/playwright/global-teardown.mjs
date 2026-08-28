@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings, PNG_ENDS } from "./gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL } from "./gallery-audit.mjs";
 import { applyMarks, escape, SETTLED_INK, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
@@ -205,8 +205,10 @@ function stringify(records, pick) {
  * needs to say whether a file has a whole PNG in it.
  *
  * Ends rather than whole files: five hundred screenshots is some tens of
- * megabytes, and reading all of it to look at sixteen bytes per file would put
- * a cost on the teardown that the check does not need.
+ * megabytes, and reading all of it to look at forty-five bytes per file would
+ * put a cost on the teardown that the check does not need. The head is the
+ * signature plus the whole `IHDR` chunk, because a signature on its own accepted
+ * a sixteen-byte file with the closing chunk stapled straight to it.
  *
  * A file that cannot be opened is reported as a render of no size rather than
  * allowed to throw. It is the same news to a reviewer — there is nothing behind
@@ -221,19 +223,19 @@ async function readEnds(dir, names) {
     }
     try {
       const { size } = await handle.stat();
-      return { name, size, open: await slice(handle, size, 0), close: await slice(handle, size, size - PNG_ENDS) };
+      return { name, size, open: await slice(handle, size, 0, PNG_HEAD), close: await slice(handle, size, size - PNG_TAIL, PNG_TAIL) };
     } finally {
       await handle.close();
     }
   }));
 }
 
-async function slice(handle, size, at) {
-  if (size < PNG_ENDS) {
+async function slice(handle, size, at, length) {
+  if (size < PNG_HEAD + PNG_TAIL) {
     return [];
   }
-  const buffer = Buffer.alloc(PNG_ENDS);
-  await handle.read(buffer, 0, PNG_ENDS, at);
+  const buffer = Buffer.alloc(length);
+  await handle.read(buffer, 0, length, at);
   return [...buffer];
 }
 
@@ -306,6 +308,7 @@ async function report(published, records, unreadable, outDir) {
     ...(unaudited.length ? [`${unaudited.length} render(s) were published without a record, so nothing is known about them: ${unaudited.slice(0, 5).join(", ")}`] : []),
     ...(motion.stray.length ? [`${motion.stray.length} render(s) never stopped changing and no state declares them in motion, so their screenshots are whichever frame the run caught: ${motion.stray.slice(0, 5).join(", ")}`] : []),
     ...(motion.still.length ? [`${motion.still.length} render(s) declare themselves in motion and came to rest, so the exemption is stale: ${motion.still.slice(0, 5).join(", ")}`] : []),
+    ...(motion.unproved.length ? [`${motion.unproved.length} render(s) filed a record carrying no settle evidence, so nothing says whether their screenshot is a result or whichever frame the run caught: ${motion.unproved.slice(0, 5).join(", ")}`] : []),
     ...parted.unchecked.map((finding) => `${finding.kind}: ${finding.detail}`),
   ];
   const lines = [...incomplete, ...parted.claims.map((finding) => `${finding.kind}: ${finding.detail}`)];

@@ -246,12 +246,19 @@ test("a gallery published without an index is a finding rather than a skipped au
  * and bytes that stop before the PNG does. The second is the one a size check
  * alone would miss, and it is the likelier of the two — it is what a worker
  * killed mid-write leaves behind.
+ *
+ * The fourth row is the one that got past the check when it read only the two
+ * ends: sixteen bytes that are a PNG signature with the closing chunk stapled
+ * straight onto it. Both ends were perfect and there was no image between them,
+ * so it is here rather than only in the unit table — this is the path a real
+ * file takes, through `readEnds` and off a real disk.
  */
 test("a render with no bytes, and one that stops before the PNG does, are both findings", async (t) => {
   const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
   const cases = [
     { bytes: Buffer.alloc(0), says: "no bytes in them" },
     { bytes: ONE_PIXEL.subarray(0, ONE_PIXEL.length - 4), says: "not a whole PNG" },
+    { bytes: Buffer.from("iVBORw0KGgpJRU5ErkJggg==", "base64"), says: "not a whole PNG" },
     { bytes: ONE_PIXEL, says: null },
   ];
 
@@ -262,7 +269,7 @@ test("a render with no bytes, and one that stops before the PNG does, are both f
     found.push(says ? named.length === 1 && named[0].includes(says) && named[0].includes(shot) : named.length === 0);
   }
 
-  assert.deepEqual(found, [true, true, true]);
+  assert.deepEqual(found, [true, true, true, true]);
 });
 
 /**

@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_ENDS, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
 import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
@@ -20,6 +20,21 @@ import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const VIEWPORTS = [{ id: "desktop" }, { id: "compact" }];
 const STATES = [{ id: "surface:config+card:expanded" }, { id: "probe--draft-bar" }];
+
+/** One real 1×1 PNG, as a genuine encoder wrote it. */
+const REAL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+/**
+ * A published file as the teardown reads it: its size and both ends, with the
+ * ends withheld when the file is too small to have two that do not overlap.
+ * Mirrors `readEnds` so the audit is tested on the shape it is really given
+ * rather than on a hand-written one that cannot be wrong.
+ */
+function ends(name, bytes) {
+  return bytes.length < PNG_HEAD + PNG_TAIL
+    ? { name, size: bytes.length }
+    : { name, size: bytes.length, open: bytes.slice(0, PNG_HEAD), close: bytes.slice(-PNG_TAIL) };
+}
 
 /**
  * One record per render, which is the shape the audit reads: a digest of what
@@ -860,7 +875,32 @@ test("an unsettled render is a finding unless a state declared it in motion", ()
     "desktop--ordinary.png": { settled: true },
   };
   const found = auditMotion(records, ["desktop--moving.png", "desktop--stale.png"]);
-  assert.deepStrictEqual(found, { stray: ["desktop--drifted.png"], still: ["desktop--stale.png"] });
+  assert.deepStrictEqual(found, { stray: ["desktop--drifted.png"], still: ["desktop--stale.png"], unproved: [] });
+});
+
+/**
+ * A record with no settle evidence is a third finding, and it exists because
+ * the two above were written as a filter on records carrying a boolean — so a
+ * record without the field fell out of both lists and was reported by neither.
+ * Deleting the field from the record writer left the whole matrix green over
+ * five hundred renders the artefact made no motion claim about at all.
+ *
+ * Absent and unreadable are the same news here: nothing says whether this
+ * screenshot is a result or whichever frame the run happened to catch.
+ */
+test("a record that carries no settle evidence is a finding rather than a record to skip", () => {
+  const records = {
+    "desktop--proved.png": { settled: true },
+    "desktop--silent.png": { signature: "abc" },
+    "desktop--wrongtype.png": { settled: "yes" },
+    "desktop--null.png": { settled: null },
+  };
+  const found = auditMotion(records, []);
+  assert.deepStrictEqual(found, {
+    stray: [],
+    still: [],
+    unproved: ["desktop--null.png", "desktop--silent.png", "desktop--wrongtype.png"],
+  });
 });
 
 /**
@@ -886,39 +926,52 @@ test("the renders entitled to move are the registry's own, at every viewport", (
  * had been sent to review was five hundred broken images under five hundred
  * headings.
  *
- * Table-driven over the four things a published file can be, because the
- * interesting one is the third: a file with a perfect PNG header that stops
- * before `IEND`. That is what a worker killed mid-write leaves behind, it is
- * indistinguishable from a whole render by size alone, and a check reading only
- * the first eight bytes would pass it.
+ * A published file is asked whether it holds a whole PNG.
+ *
+ * Table-driven over what a published file can be, and the interesting rows are
+ * the last two. `truncated` is what a worker killed mid-write leaves behind: a
+ * perfect header and no `IEND`, indistinguishable from a whole render by size
+ * alone. `endsOnly` is the one that got past the check when it read only the two
+ * ends — a signature with the closing chunk stapled straight onto it, both ends
+ * perfect and no image between them.
+ *
+ * The ends are taken from a real encoder's output the way the teardown takes
+ * them, so a typo in the constants cannot agree with a matching typo here.
  */
 test("a published render is asked whether it holds a whole PNG, not merely a name", () => {
-  const OPEN = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  const CLOSE = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const html = [...Buffer.from("<!DOCTYPE html><title>not a png</title><p>nothing to see</p>")];
   const found = auditBytes([
-    { name: "desktop--whole.png", size: 120, open: OPEN, close: CLOSE },
-    { name: "desktop--empty.png", size: 0 },
-    { name: "desktop--truncated.png", size: 90, open: OPEN, close: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77] },
-    { name: "desktop--notapng.png", size: 40, open: [0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54, 0x59, 0x50], close: CLOSE },
+    ends("desktop--whole.png", real),
+    ends("desktop--empty.png", []),
+    ends("desktop--truncated.png", [...real.slice(0, PNG_HEAD), ...new Array(80).fill(0x00)]),
+    ends("desktop--notapng.png", html),
+    ends("desktop--endsonly.png", [...Buffer.from("iVBORw0KGgpJRU5ErkJggg==", "base64")]),
   ]);
   assert.deepStrictEqual(found, {
     empty: ["desktop--empty.png"],
-    malformed: ["desktop--notapng.png", "desktop--truncated.png"],
+    malformed: ["desktop--endsonly.png", "desktop--notapng.png", "desktop--truncated.png"],
   });
 });
 
 /**
- * The two ends the audit compares against are the ones a real PNG has. Spelled
- * as bytes in the test and derived from a genuine encoder here, so a typo in the
- * constants cannot agree with a matching typo in the expectation.
+ * A header that is well-formed and describes a picture of no size is not a
+ * render either, and it is the one defect the chunk's *shape* cannot catch —
+ * every length and every type is right.
+ */
+test("a header describing a picture of no size is not a whole PNG", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const noWidth = [...real];
+  noWidth.splice(16, 4, 0x00, 0x00, 0x00, 0x00);
+  assert.deepStrictEqual(auditBytes([ends("desktop--nowidth.png", noWidth)]).malformed, ["desktop--nowidth.png"]);
+});
+
+/**
+ * The bytes the audit compares against are the ones a real PNG carries, and a
+ * real one passes.
  */
 test("the bytes a whole PNG opens and closes with are the ones a real one carries", () => {
-  const real = [...Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  )];
-  const found = auditBytes([
-    { name: "desktop--real.png", size: real.length, open: real.slice(0, PNG_ENDS), close: real.slice(-PNG_ENDS) },
-  ]);
-  assert.deepStrictEqual([found, real.length > PNG_ENDS], [{ empty: [], malformed: [] }, true]);
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const found = auditBytes([ends("desktop--real.png", real)]);
+  assert.deepStrictEqual([found, real.length > PNG_HEAD + PNG_TAIL], [{ empty: [], malformed: [] }, true]);
 });

@@ -24,14 +24,20 @@ import { LOOPBACK, offlineFindings, offsite } from "../e2e/playwright/offline.mj
  * The rows that matter are the last three. A URL the parser cannot read must be
  * *refused*, not waved through: returning "local" for the one input nobody
  * anticipated would make it the one input that passes, which is the shape of
- * hole this file exists to close. A scheme that is neither http(s) nor page-local
- * is refused for the same reason.
+ * hole this file exists to close. A scheme that is neither a network scheme nor
+ * page-local is refused for the same reason.
+ *
+ * The `ws:` rows are the pair, and they are a pair on purpose: a socket to a
+ * remote host is traffic that left the machine and must be named as such, and a
+ * socket to loopback is this machine by exactly the rule every other row uses.
+ * Judging sockets by scheme alone would have got the second one wrong.
  */
 test("a request is judged local only when it is provably this machine", () => {
   const cases = [
     ["http://127.0.0.1:4173/state", null],
     ["http://localhost:8080/app.mjs", null],
     ["http://[::1]:9000/events", null],
+    ["ws://127.0.0.1:4173/reload", null],
     ["data:text/css,body{}", null],
     ["about:blank", null],
     ["blob:http://127.0.0.1:4173/abcd", null],
@@ -39,6 +45,8 @@ test("a request is judged local only when it is provably this machine", () => {
     ["http://169.254.169.254/latest/meta-data", "http://169.254.169.254"],
     ["https://api.githubcopilot.com/chat/completions", "https://api.githubcopilot.com"],
     ["http://127.0.0.1.evil.test/state", "http://127.0.0.1.evil.test"],
+    ["ws://192.0.2.1:9/telemetry", "ws://192.0.2.1:9"],
+    ["wss://relay.example.com/socket", "wss://relay.example.com"],
     ["ftp://files.example.com/x", "a ftp request (ftp://files.example.com/x)"],
     ["not a url at all", "an unreadable URL (not a url at all)"],
   ];
