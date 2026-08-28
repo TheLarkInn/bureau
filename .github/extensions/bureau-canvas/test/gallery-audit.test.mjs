@@ -928,15 +928,25 @@ test("the renders entitled to move are the registry's own, at every viewport", (
  *
  * A published file is asked whether it holds a whole PNG.
  *
- * Table-driven over what a published file can be, and the interesting rows are
- * the last two. `truncated` is what a worker killed mid-write leaves behind: a
- * perfect header and no `IEND`, indistinguishable from a whole render by size
- * alone. `endsOnly` is the one that got past the check when it read only the two
- * ends — a signature with the closing chunk stapled straight onto it, both ends
- * perfect and no image between them.
+ * Table-driven over what a published file can be. `truncated` is what a worker
+ * killed mid-write leaves behind: a perfect header and no `IEND`,
+ * indistinguishable from a whole render by size alone. `endsOnly` is the one
+ * that got past the check when it read only the two ends — a signature with the
+ * closing chunk stapled straight onto it, both ends perfect and no image
+ * between them.
+ *
+ * `noIdat` and `badSig` are here because a conjunct no row fails *alone* is a
+ * conjunct no row pins. `endsOnly` and `notapng` each break several clauses at
+ * once, so the size floor and the signature/IHDR match were both deletable with
+ * this table still green. `noIdat` is the smallest file with two perfect ends
+ * and nothing in between — a header and an `IEND`, below the floor and whole by
+ * every other clause. `badSig` is the mirror: correct size, dimensions and
+ * close, and one wrong byte in the signature.
  *
  * The ends are taken from a real encoder's output the way the teardown takes
- * them, so a typo in the constants cannot agree with a matching typo here.
+ * them, so a typo in the constants cannot agree with a matching typo here —
+ * which is also why `noIdat` staples the real file's own tail on rather than a
+ * hand-written `IEND`.
  */
 test("a published render is asked whether it holds a whole PNG, not merely a name", () => {
   const real = [...Buffer.from(REAL_PNG, "base64")];
@@ -947,10 +957,18 @@ test("a published render is asked whether it holds a whole PNG, not merely a nam
     ends("desktop--truncated.png", [...real.slice(0, PNG_HEAD), ...new Array(80).fill(0x00)]),
     ends("desktop--notapng.png", html),
     ends("desktop--endsonly.png", [...Buffer.from("iVBORw0KGgpJRU5ErkJggg==", "base64")]),
+    ends("desktop--noidat.png", [...real.slice(0, PNG_HEAD), ...real.slice(-PNG_TAIL)]),
+    ends("desktop--badsig.png", [real[0] ^ 0xff, ...real.slice(1)]),
   ]);
   assert.deepStrictEqual(found, {
     empty: ["desktop--empty.png"],
-    malformed: ["desktop--endsonly.png", "desktop--notapng.png", "desktop--truncated.png"],
+    malformed: [
+      "desktop--badsig.png",
+      "desktop--endsonly.png",
+      "desktop--noidat.png",
+      "desktop--notapng.png",
+      "desktop--truncated.png",
+    ],
   });
 });
 
@@ -958,12 +976,23 @@ test("a published render is asked whether it holds a whole PNG, not merely a nam
  * A header that is well-formed and describes a picture of no size is not a
  * render either, and it is the one defect the chunk's *shape* cannot catch —
  * every length and every type is right.
+ *
+ * Both dimensions, separately. Zeroing only the width left the height clause
+ * unpinned: deleting `uint32(open, 20) > 0` kept all 43 tests green, this one
+ * included, under the very name that claims to reject a picture of no size. A
+ * `4x0` render is an ordinary broken-encoder output, and it was the half of the
+ * rule nothing asked about.
  */
 test("a header describing a picture of no size is not a whole PNG", () => {
   const real = [...Buffer.from(REAL_PNG, "base64")];
-  const noWidth = [...real];
-  noWidth.splice(16, 4, 0x00, 0x00, 0x00, 0x00);
-  assert.deepStrictEqual(auditBytes([ends("desktop--nowidth.png", noWidth)]).malformed, ["desktop--nowidth.png"]);
+  const zeroed = (at) => {
+    const bytes = [...real];
+    bytes.splice(at, 4, 0x00, 0x00, 0x00, 0x00);
+    return bytes;
+  };
+  const found = [["desktop--nowidth.png", 16], ["desktop--noheight.png", 20]]
+    .map(([name, at]) => auditBytes([ends(name, zeroed(at))]).malformed);
+  assert.deepStrictEqual(found, [["desktop--nowidth.png"], ["desktop--noheight.png"]]);
 });
 
 /**
