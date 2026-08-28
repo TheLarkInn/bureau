@@ -186,6 +186,7 @@ for (const viewport of VIEWPORT_LIST) {
 
         expect(describe(result.failures), `${state.id} @ ${viewport.id}`).toEqual([]);
         expect(unexpected(watched.errors, state), `${state.id} @ ${viewport.id} console`).toEqual([]);
+        expect(unexercised(watched.errors, state), `${state.id} @ ${viewport.id} console`).toEqual([]);
         expect(Boolean(result.settled), settleMessage(state, viewport)).toBe(mustSettle(state));
       });
     }
@@ -226,6 +227,29 @@ function settleMessage(state, viewport) {
 function unexpected(errors, state) {
   const allowed = state.expect.allowErrors ?? [];
   return errors.filter((error) => !allowed.some((pattern) => error.includes(pattern)));
+}
+
+/**
+ * The other half: an error allowance that excused nothing.
+ *
+ * `unexpected` is a one-way mark. It can only ever drop rows, so a state whose
+ * failing request has since been fixed — or whose route no longer installs —
+ * keeps its allowance, passes, and holds an open licence for whatever error
+ * arrives next. The patterns are broad by necessity (a blocked module logs one
+ * error naming the module and a separate "Failed to load resource", so they
+ * have to be matched disjunctively), which is exactly why the licence must not
+ * be allowed to outlive the failure it was written for.
+ *
+ * So a state that declares allowances has to produce at least one error they
+ * cover. It is the set rather than each pattern: the individual spellings are
+ * alternatives across one or two console rows, and requiring every one of them
+ * would be asserting the browser's phrasing rather than the product's
+ * behaviour.
+ */
+function unexercised(errors, state) {
+  const allowed = state.expect.allowErrors ?? [];
+  const used = errors.some((error) => allowed.some((pattern) => error.includes(pattern)));
+  return allowed.length && !used ? [`allows ${allowed.join(" / ")} but nothing failed`] : [];
 }
 
 /**

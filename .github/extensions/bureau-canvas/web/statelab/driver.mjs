@@ -73,6 +73,31 @@ export function isAction(op) {
   return !WAIT_VERBS.includes(op.op);
 }
 
+/**
+ * One spelling for operations that mean the same thing to this driver.
+ *
+ * `applyFixture` accepts a bare fixture id or a list of them, and treats
+ * `"orphans"` exactly as `["orphans"]`. Anything that compares two paths for
+ * equality has to know that, or it decides on spelling rather than on meaning
+ * — and the registry, which builds its DAG by comparing paths as JSON, did
+ * exactly that: a probe naming its fixture as a bare id could not match the
+ * enumerated screen above it that named the same fixture as a one-element list.
+ *
+ * The cost was not a missing edge alone. Such a state became a root, and roots
+ * are handed a *reason* — five collected "nobody's extension by construction",
+ * a sentence that was false of every one of them and that the lab printed to a
+ * reviewer as settled fact.
+ *
+ * It lives here rather than in the registry because this module owns the op
+ * vocabulary, so it is the one that can say when two ops are the same op
+ * without guessing — the same argument that moved `isAction` here. Only
+ * comparison keys are canonicalised; a state's own `ops` stay as written,
+ * because `HANDLERS.fixture` already accepts both.
+ */
+export function canonicalAction(op) {
+  return op.op === "fixture" ? { ...op, value: [op.value].flat().filter(Boolean) } : op;
+}
+
 export function assertAdapter(adapter) {
   const missing = ADAPTER_VERBS.filter((verb) => typeof adapter?.[verb] !== "function");
   if (missing.length) {

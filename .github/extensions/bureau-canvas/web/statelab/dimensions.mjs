@@ -1064,6 +1064,23 @@ const pick = {
  * reverts on a finding, so an unwired new step is saveable and then refused by
  * the CLI — which is the rule that the canvas never authors an error.
  */
+/**
+ * The single card collision a drag of 80,60 produces, per step kind picked.
+ *
+ * `sameKind` in `checks.mjs` numbers the boxes it compares in document order,
+ * so the pair is written the way that check will report it. Which pair it is
+ * follows from which card `SAMPLE_STEPS` puts under the drag: `implement` is
+ * the first card and lands on the second, `verify` the second and lands on the
+ * third. Only these two kinds reach `layout-moved` — a decision or concurrent
+ * step has to be added before it can be dragged, which a rule keeps out — so a
+ * pick that is not here is a modelling change, and yields an allowance that
+ * matches nothing and is reported as stale.
+ */
+const DRAGGED_ONTO = {
+  agent: ".editor-card #0 overlaps #1",
+  deterministic: ".editor-card #1 overlaps #2",
+};
+
 const edit = {
   id: "edit",
   title: "Editor mutation",
@@ -1159,11 +1176,17 @@ const edit = {
       // it is dropped, so the overlap is the editor obeying the mouse, not a
       // layout that computed a collision.
       //
-      // Named per selector rather than as a blanket exemption. Every other
-      // editor state is still held to a collision-free layout — see `permitted`
-      // in `checks.mjs` — so this cannot become a way for a real placement bug
-      // to pass, and it says out loud which regions the licence covers.
-      allowOverlap: [".editor-card"],
+      // The licence names the one colliding pair, and which pair it is depends
+      // on which card the reader picked up — so it is derived from `pick`
+      // rather than fixed. It was the bare selector `.editor-card` for a while,
+      // matched by prefix, which excused every editor-card collision on the
+      // render instead of the one the drag caused: a layout regression that
+      // piled all four cards together would have passed here, in the single
+      // state whose whole subject is card placement.
+      //
+      // An unlisted `pick` yields `undefined` here, which `permitted` reports
+      // as an allowance that excused nothing rather than silently widening.
+      derive: (combo) => ({ allowOverlap: [DRAGGED_ONTO[combo.pick]] }),
     },
     {
       id: "deleted",

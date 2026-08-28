@@ -466,7 +466,14 @@ export const PROBES = [
       { op: "click", selector: S.relationSummary },
       { op: "wait", selector: S.relationFlow },
     ],
-    expect: { shows: [S.relationFlow, S.assignmentDetail], hides: [], copy: [] },
+    // The same three regions the enumerated `disclosure:relation-open` value
+    // promises, plus the expanded card this crossing is about. It used to
+    // promise only the flow and the detail, which was a weaker claim than the
+    // state it crosses — and `.relation-section[open]` in particular is the
+    // region the summary toggle declares it reveals, so leaving it out meant
+    // the way back out of this state was a claim about a region this screen
+    // never mentioned.
+    expect: { shows: [S.relationSection, S.relationOpen, S.relationFlow, S.assignmentDetail], hides: [], copy: [] },
   }),
   crossing({
     id: "probe--orphans-under-expanded-card",

@@ -19,7 +19,7 @@ import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-sta
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
 import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
-import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
+import { ADAPTER_VERBS, canonicalAction, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
@@ -156,10 +156,10 @@ test("every count the branch reports about itself is what the registry holds", (
       matrixStates: 221,
       probes: 49,
       states: 270,
-      transitions: 137,
-      entryTransitions: 101,
-      returnTransitions: 36,
-      roots: 169,
+      transitions: 147,
+      entryTransitions: 108,
+      returnTransitions: 39,
+      roots: 162,
       renders: 540,
     },
   );
@@ -535,6 +535,51 @@ function hasCycle(edges) {
 }
 
 /**
+ * A root has to be a root for a reason about the product, never about spelling.
+ *
+ * `applyFixture` accepts `"orphans"` and `["orphans"]` as the same instruction,
+ * so two paths that differ only in that spelling reach the same screen. The DAG
+ * is built by comparing paths as JSON, which does not know that, and for a
+ * while seven states were therefore roots purely because a probe wrote its
+ * fixture as a bare id while the enumerated screen above it wrote a list.
+ *
+ * That is worse than a missing edge, because a root is never silent: it is
+ * handed to `ROOT_REASONS`, and five of the seven collected `probe` — "its path
+ * is nobody's extension by construction" — which was false of every one of
+ * them. The lab printed that sentence to a reviewer, and the suite never walked
+ * the step. Dismissing a refusal, opening the create bar over an expanded card
+ * and typing a work-source filter were all unwalked for that reason alone.
+ *
+ * Both halves are asserted, because the fix is only sound if the two spellings
+ * really do mean one thing: that `applyFixture` agrees about them, and that no
+ * root's canonical path is a proper prefix-extension of another state's.
+ */
+test("no state is a root merely for how it spelled its fixture", async () => {
+  const base = await servedState();
+  const sign = (state) => JSON.stringify(state.ops.filter(isAction).map(canonicalAction));
+  const byPath = new Map(STATES.map((state) => [sign(state), state.id]));
+  const byId = new Map(STATES.map((state) => [state.id, state]));
+  const parentOf = (state) => {
+    const acting = state.ops.filter(isAction).map(canonicalAction);
+    for (let count = acting.length - 1; count >= 1; count -= 1) {
+      const found = byPath.get(JSON.stringify(acting.slice(0, count)));
+      if (found && found !== state.id) {
+        return found;
+      }
+    }
+    return null;
+  };
+
+  assert.deepStrictEqual(
+    {
+      spellingsAgree: JSON.stringify(applyFixture("orphans", base)) === JSON.stringify(applyFixture(["orphans"], base)),
+      rootsWithAHiddenParent: ROOTS.map((root) => byId.get(root.id)).filter((state) => parentOf(state)).map((state) => state.id),
+    },
+    { spellingsAgree: true, rootsWithAHiddenParent: [] },
+  );
+});
+
+/**
  * `EXCLUSIONS` says why a combination is not a state. `ROOTS` says why nothing
  * reaches one first — the same question asked of the graph rather than the
  * product, and it went unasked for a while. The number it would have produced
@@ -570,7 +615,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 101, probe: 20, landing: 36, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 99, probe: 15, landing: 36, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -854,11 +899,20 @@ test("every edge's delta is preceded by work the parent has already done", () =>
   assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
 });
 
-/** Does every op of `needles` appear in `haystack`, in order? */
+/**
+ * Does every op of `needles` appear in `haystack`, in order?
+ *
+ * Compared as canonical ops rather than as raw JSON, for the same reason the
+ * DAG is built that way: `{ fixture: "orphans" }` and `{ fixture: ["orphans"] }`
+ * are one instruction to the driver, and a containment check that called them
+ * different would report every edge whose two ends spelled a fixture
+ * differently as a race the parent never ran.
+ */
 function isSubsequence(needles, haystack) {
+  const key = (op) => JSON.stringify(canonicalAction(op));
   let cursor = 0;
   for (const op of needles) {
-    const found = haystack.findIndex((item, index) => index >= cursor && JSON.stringify(item) === JSON.stringify(op));
+    const found = haystack.findIndex((item, index) => index >= cursor && key(item) === key(op));
     if (found === -1) {
       return false;
     }
@@ -911,6 +965,7 @@ test("every edge's delta is the child's path minus the parent's, and says so", (
  */
 test("every return edge mirrors an entry edge and undoes exactly one control", () => {
   const entries = new Set(ENTRY_TRANSITIONS.map((edge) => `${edge.from} -> ${edge.to}`));
+  const entryFor = new Map(ENTRY_TRANSITIONS.map((edge) => [`${edge.from} -> ${edge.to}`, edge]));
   const returns = TRANSITIONS.filter((edge) => edge.kind === "return");
   const shapeOf = (edge) => edge.delta.map((op) => op.op).join("+");
   const shapes = ["click+waitGone", "click+wait"];
@@ -920,11 +975,19 @@ test("every return edge mirrors an entry edge and undoes exactly one control", (
       misshapen: returns.filter((edge) => !shapes.includes(shapeOf(edge))).map((edge) => `${edge.from} -> ${edge.to}: ${shapeOf(edge)}`),
       unlabelled: returns.filter((edge) => edge.via !== `click ${edge.delta[0].selector}`).map((edge) => `${edge.from} -> ${edge.to}`),
       none: returns.length === 0,
+      // One press may only claim to reverse one press. A return derived from
+      // the last op of a two-op delta undoes the half it can reach and asserts
+      // the whole: pressing Cancel again on a create bar that was reopened
+      // after a refusal closes a clean form, and claims to have restored the
+      // refusal. See `returnEdge`.
+      fromMultiStep: returns
+        .filter((edge) => entryFor.get(`${edge.to} -> ${edge.from}`).delta.filter(isAction).length !== 1)
+        .map((edge) => `${edge.from} -> ${edge.to}`),
       // Both shapes must actually occur, or the pair above is one live branch
       // and one that has never been taken.
       restoring: returns.some((edge) => shapeOf(edge) === "click+wait"),
     },
-    { unmirrored: [], misshapen: [], unlabelled: [], none: false, restoring: true },
+    { unmirrored: [], misshapen: [], unlabelled: [], none: false, fromMultiStep: [], restoring: true },
   );
 });
 
@@ -2979,17 +3042,30 @@ test("playing the finished run to its end takes far longer than the settle budge
  * this holds it to the two things that keep it narrow: it drops the region it
  * names, and it keeps every other overlap on the same render.
  */
+/**
+ * The allowance is matched by equality, so a second collision of the same kind
+ * on the same render is still a defect. Under the `startsWith` form this
+ * replaced, the `.editor-card` licence swallowed both rows here and this test
+ * could not tell the two apart — it only ever proved that a *different*
+ * selector survived, which no plausible regression would have broken.
+ */
 test("a declared overlap is dropped and an undeclared one on the same render is not", () => {
   const found = [
     { kind: "overlap", detail: ".editor-card #0 overlaps #1" },
+    { kind: "overlap", detail: ".editor-card #2 overlaps #3" },
     { kind: "overlap", detail: ".assignment-card #0 overlaps #1" },
   ];
   const detailsOf = (list) => list.map((item) => item.detail);
   assert.deepStrictEqual(
     {
-      declared: detailsOf(permitted({ expect: { allowOverlap: [".editor-card"] } }, found)),
+      declared: detailsOf(permitted({ expect: { allowOverlap: [".editor-card #0 overlaps #1"] } }, found)),
       undeclared: detailsOf(permitted({ expect: { allowOverlap: [] } }, found)),
+      stale: detailsOf(permitted({ expect: { allowOverlap: [".editor-card #7 overlaps #8"] } }, [])),
     },
-    { declared: [".assignment-card #0 overlaps #1"], undeclared: detailsOf(found) },
+    {
+      declared: [".editor-card #2 overlaps #3", ".assignment-card #0 overlaps #1"],
+      undeclared: detailsOf(found),
+      stale: [".editor-card #7 overlaps #8 is excused here but did not happen"],
+    },
   );
 });

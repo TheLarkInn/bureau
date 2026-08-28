@@ -935,15 +935,27 @@ export function verdict(state, snapshot, options = {}) {
  * feature working. A node a user has dragged is theirs to place, and a rule that
  * forbade it would be asserting the opposite of what the surface offers.
  *
- * So the allowance is per selector rather than a flag, and it is declared by the
- * one dimension value that moves a card by hand. The claim it makes is narrow:
- * *these* cards may sit on one another in *this* state. An editor state that has
- * not been dragged still fails on a computed layout that collides, which is the
- * defect the check was added for and which nothing could see before.
+ * The allowance names the colliding pair exactly, and is matched by equality.
+ * It was a `startsWith` on the selector for a while, which read as narrow and
+ * was not: `.editor-card` is the prefix of *every* editor-card collision, so
+ * that one word excused the second and third as readily as the first, and a
+ * layout regression that scattered every card in this state could not fail it.
+ * The comment above already claimed the narrow reading — "*these* cards may sit
+ * on one another" — so the words were right and the code was not.
+ *
+ * The claim runs both ways. An allowance that matched nothing is reported as
+ * stale rather than passing quietly, because a licence for a collision that no
+ * longer happens is how the excuse outlives the reason and is waiting, already
+ * granted, for an unrelated defect to walk into it.
  */
 export function permitted(state, found) {
   const allowed = state.expect?.allowOverlap ?? [];
-  return allowed.length ? found.filter((problem) => !allowed.some((selector) => problem.detail.startsWith(selector))) : found;
+  return [
+    ...found.filter((problem) => !allowed.includes(problem.detail)),
+    ...allowed
+      .filter((detail) => !found.some((problem) => problem.detail === detail))
+      .map((detail) => ({ kind: "stale-overlap-allowance", detail: `${detail} is excused here but did not happen` })),
+  ];
 }
 
 /**

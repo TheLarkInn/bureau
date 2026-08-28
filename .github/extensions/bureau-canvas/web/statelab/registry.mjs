@@ -8,7 +8,7 @@
 
 import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
-import { isAction } from "./driver.mjs";
+import { isAction, canonicalAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
 import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
@@ -369,7 +369,7 @@ function buildTransitions() {
   const byPath = new Map(STATES.map((state) => [signature(state.ops), state.id]));
   const edges = [];
   for (const state of STATES) {
-    const acting = state.ops.filter(isAction);
+    const acting = state.ops.filter(isAction).map(canonicalAction);
     const found = nearestParent(byPath, acting, state.id);
     if (found) {
       const delta = deltaAfter(state.ops, found.actions);
@@ -405,10 +405,25 @@ function nearestParent(byPath, acting, id) {
   return null;
 }
 
-/** The way back out of `edge`, when the control it used declares an undo. */
+/**
+ * The way back out of `edge`, when the control it used declares an undo.
+ *
+ * Only when the delta *is* that one control. Undoing the last operation of a
+ * multi-step delta does not undo the delta: the first
+ * `probe--create-refusal-dismissed` edge arrives by pressing Cancel and then
+ * reopening the create bar, and pressing Cancel again closes a form that is now
+ * clean — it does not put back the refusal the first click dismissed, which is
+ * the very thing that probe exists to prove is gone. Derived from the last op
+ * alone, the graph claimed a way back to the error state, the lab drew it, and
+ * the suite walked it into four missing controls.
+ *
+ * So the arity is the guard, and it is the honest one: a return edge is a claim
+ * that one press reverses one press, and that claim is only available when the
+ * step across was a single press.
+ */
 function returnEdge(edge) {
-  const last = edge.delta.filter(isAction).at(-1);
-  const toggle = last?.op === "click" && REVERSIBLE.find((item) => item.via === last.selector);
+  const acting = edge.delta.filter(isAction);
+  const toggle = acting.length === 1 && acting[0].op === "click" && REVERSIBLE.find((item) => item.via === acting[0].selector);
   if (!toggle) {
     return null;
   }
@@ -443,7 +458,7 @@ function deltaAfter(ops, actions) {
 }
 
 function signature(ops) {
-  return JSON.stringify(ops.filter(isAction));
+  return JSON.stringify(ops.filter(isAction).map(canonicalAction));
 }
 
 /**
