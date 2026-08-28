@@ -14,7 +14,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, phrasesFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
@@ -661,7 +661,7 @@ function atDeadline(result, clean, sustained, looks) {
 async function sample(state, page) {
   const snapshot = await page.evaluate(
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
-    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST } },
+    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) } },
   );
   return { snapshot, failures: [...heldWrites(page), ...leftTheMachine(page), ...verdict(state, snapshot, { slack: 2 })] };
 }

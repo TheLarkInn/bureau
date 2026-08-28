@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unsettledReason, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, measureFor, phrasesFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unsettledReason, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { harnessNotes, violations } from "./constraints.mjs";
@@ -293,7 +293,7 @@ async function settledInspect(state) {
 }
 
 function inspect(state) {
-  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST });
+  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) });
   return { snapshot, failures: verdict(state, snapshot, { slack: 2 }) };
 }
 
@@ -397,7 +397,7 @@ function expectationList(state, result) {
   }
   for (const phrase of state.expect.copy) {
     const label = copyLabel(phrase);
-    const ok = !(result?.failures ?? []).some((item) => item.kind === "missing-copy" && item.detail === label);
+    const ok = !(result?.failures ?? []).some((item) => copyFailure(item, phrase, label));
     list.append(row(typeof phrase === "object" && phrase !== null ? label : `“${label}”`, "copy", ok));
   }
   box.append(list);

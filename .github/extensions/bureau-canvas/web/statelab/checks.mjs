@@ -25,9 +25,27 @@ export function collect(doc, request) {
   // `shows` and every scoped `copy` in this registry, which is the one failure
   // a review surface may not have: the gallery would show the control gone and
   // the matrix would call the state correct.
+  //
+  // `filter: opacity(0)` is the same erasure spelled a second way, and the walk
+  // above could not see it: the `opacity` property stays "1", so a control
+  // filtered to nothing satisfied every `shows`, and a promised sentence
+  // filtered to nothing was still reported readable. It is folded in here
+  // rather than treated as its own rule because it composes exactly like
+  // opacity does — down the ancestor chain, multiplicatively — and no
+  // stylesheet in this canvas declares a `filter`, so nothing legitimate is
+  // caught by reading one.
+  const filterAlpha = (value) => {
+    let product = 1;
+    for (const found of String(value ?? "").matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/giu)) {
+      const amount = Number.parseFloat(found[1]);
+      product *= found[2] ? amount / 100 : amount;
+    }
+    return product;
+  };
   const painted = (node) => {
     for (let item = node; item; item = item.parentElement) {
-      if (Number.parseFloat(view.getComputedStyle(item).opacity) === 0) {
+      const style = view.getComputedStyle(item);
+      if (Number.parseFloat(style.opacity) === 0 || filterAlpha(style.filter) === 0) {
         return false;
       }
     }
@@ -232,7 +250,8 @@ export function collect(doc, request) {
     const indent = Math.abs(Number.parseFloat(style.textIndent) || 0);
     let opacity = alpha(style.color) * alpha(style.webkitTextFillColor);
     for (let item = node; item; item = item.parentElement) {
-      opacity *= Number.parseFloat(view.getComputedStyle(item).opacity);
+      const chain = view.getComputedStyle(item);
+      opacity *= Number.parseFloat(chain.opacity) * filterAlpha(chain.filter);
     }
     return opacity === 1
       && (!style.fontSize || Number.parseFloat(style.fontSize) > 0)
@@ -281,6 +300,67 @@ export function collect(doc, request) {
       ink: found.every((node) => honestInk(node) && exposed(node) && !coveringLayer(node)),
       injected: [...new Set(found.flatMap(generatedAround))].join(" "),
     };
+  }
+  // The same question, asked of the promises that name no element.
+  //
+  // A plain phrase is settled against `doc.body.innerText`, which reports words
+  // no reader receives just as surely as `texts` did — transparent ink, a
+  // container at `opacity: 0`, a filter, a clip. Scoping the paint check to
+  // selectors left that hole open for the great majority of this registry's
+  // copy: most promises are plain, so most promised sentences were still being
+  // proved against the DOM alone.
+  //
+  // The words are found where they actually live: the element holding them in
+  // its *own* direct text, rather than any ancestor whose `innerText` merely
+  // contains them. That element is the one a reader is looking at, and it is
+  // also the only one whose paint answers for these words rather than for a
+  // whole subtree's.
+  //
+  // Two deliberate narrowings, and they are narrowings rather than oversights.
+  // Generated content is read from the carrier's own `::before`/`::after`
+  // instead of the neighbourhood sweep a scoped promise gets, and the
+  // covering-layer sweep is not applied at all. A scoped selector is one the
+  // registry chose and vouches for; a carrier is whatever element happened to
+  // hold the words, so sweeping its ancestors would report every decorative
+  // overlay in the product as a substituted sentence. The substitution this
+  // catches is the one painted on the words themselves.
+  const carriers = {};
+  const phrases = request.phrases ?? [];
+  if (phrases.length) {
+    const flat = (value) => String(value ?? "").replace(/\s+/gu, " ").trim().toLowerCase();
+    const ownText = (node) => [...(node.childNodes ?? [])]
+      .filter((child) => child.nodeType === 3)
+      .map((child) => child.data ?? "")
+      .join("");
+    // Walked once and reused, rather than re-queried per phrase: `collect` runs
+    // several times per render while the settle rule waits for the page to come
+    // to rest, so a per-phrase document walk is paid tens of thousands of times
+    // across a matrix run.
+    const owned = [...doc.querySelectorAll("*")].map((node) => ({ node, text: flat(ownText(node)) }));
+    // Readability here is about the ink, not the scroll position. A scoped
+    // promise names an element the registry vouches for being in view, so that
+    // one is also asked whether anything is in front of it; a plain phrase is
+    // carried by whatever element happens to hold the words, and in this product
+    // that is routinely a label inside a scrollable form — above the fold while
+    // the reader is looking at the bottom of it, which is not a defect and is
+    // not something this promise ever claimed. So `exposed` is deliberately not
+    // applied: what is asked is whether the words are painted at all.
+    const readable = (node) => visible(node) && honestInk(node);
+    const speaks = (node) => [generated(node, "::before"), generated(node, "::after")].filter(Boolean).join(" ");
+    for (const phrase of phrases) {
+      const wanted = flat(phrase);
+      const holders = owned.filter((entry) => entry.text.includes(wanted)).map((entry) => entry.node);
+      // A plain promise is a claim about the page, not about one element: the
+      // same words are drawn by every assignment card, and `absentCopy` settles
+      // them against the whole body. So one element painting them honestly
+      // keeps the promise, and only when *none* does is there something to
+      // report — otherwise a second, collapsed copy of the same label would
+      // convict a screen the reader can read perfectly well.
+      const honest = holders.find((node) => readable(node) && !speaks(node));
+      carriers[phrase] = holders.length
+        ? { found: true, ink: Boolean(honest) || readable(holders[0]), injected: honest ? "" : speaks(holders[0]) }
+        : { found: false, ink: true, injected: "" };
+    }
   }
   // Every `label[for]` beside the control it names, as two boxes. Gathered
   // here rather than derived from `boxes` because the pairing is the point: a
@@ -458,6 +538,7 @@ export function collect(doc, request) {
     counts,
     texts,
     paint,
+    carriers,
     boxes,
     contrast,
     labels,
@@ -834,6 +915,7 @@ export function verdict(state, snapshot, options = {}) {
     ...forbidden(state, snapshot),
     ...absentCopy(state, snapshot),
     ...paintedCopy(state, snapshot),
+    ...paintedPhrases(state, snapshot),
     ...promisedCopy(state, snapshot),
     ...lowContrast(snapshot, options),
     ...strandedLabels(snapshot),
@@ -1019,9 +1101,72 @@ function paintedCopy(state, snapshot) {
   });
 }
 
+/**
+ * The same judgement, for the promises that name no element.
+ *
+ * A plain phrase is settled against the body's `innerText`, so every way of
+ * showing a reader something other than the promised words was open to it —
+ * and most of this registry's copy is plain, which made the scoped check a
+ * guard over the minority of its own subject.
+ *
+ * A missing sample is still a failure in its own right, for the reason the
+ * scoped branch learned it: an absent measurement cannot support a pass. A
+ * carrier that was *looked for and not found* is different in kind, and is
+ * exempt: it means the words are split across several elements, which is a
+ * determination about the document rather than a measurement that never
+ * happened. `absentCopy` has already proved those words are on the page.
+ */
+function paintedPhrases(state, snapshot) {
+  return phrasesFor(state).flatMap((phrase) => {
+    const paint = snapshot.carriers?.[phrase];
+    if (!paint) {
+      return [{ kind: "unreadable-copy", detail: `“${phrase}” has no paint sample, so its words were not proved readable` }];
+    }
+    if (!paint.found) {
+      return [];
+    }
+    return [
+      ...(paint.ink === false ? [{ kind: "unreadable-copy", detail: `“${phrase}” is drawn in ink a reader cannot see` }] : []),
+      ...(paint.injected ? [{ kind: "substituted-copy", detail: `“${phrase}” has ${paint.injected} painted over it` }] : []),
+    ];
+  });
+}
+
 /** One stable string per expectation, so a failure names what was promised. */
 export function copyLabel(phrase) {
   return typeof phrase === "object" && phrase !== null ? `${phrase.selector} reads exactly “${phrase.text}”` : phrase;
+}
+
+/**
+ * Whether a failure is *about this promise*, in the terms a reviewer reads.
+ *
+ * The State Lab prints one row per promised sentence, and that row asked only
+ * whether the sentence was `missing-copy`. So the two verdicts this module
+ * gained for the screen rather than the DOM — words drawn in ink nobody can
+ * see, and words a generated layer paints in their place — arrived at the panel
+ * as a note *beneath* the list while the row naming the sentence stayed ticked.
+ * That is the wrong way round for a review surface: a reviewer looking at the
+ * line for that sentence was told it was fine.
+ *
+ * It was also the shape a check cannot keep. The note was the only consumer of
+ * either kind, so both could be dropped from its filter with every test in the
+ * repository still green and the panel merely more reassuring.
+ *
+ * Judged here rather than in `lab.mjs` because this module owns what a failure
+ * kind means; the lab owns how a row looks. The paint verdicts name their
+ * selector at the head of `detail`, which is the only handle they carry back to
+ * the promise that asked for them, so an unscoped phrase can never claim one.
+ */
+export function copyFailure(item, phrase, label) {
+  if (item.kind === "missing-copy") {
+    return item.detail === label;
+  }
+  if (!["unreadable-copy", "substituted-copy"].includes(item.kind)) {
+    return false;
+  }
+  return typeof phrase === "object" && phrase !== null
+    ? item.detail.startsWith(`${phrase.selector} `)
+    : item.detail.startsWith(`“${phrase}” `);
 }
 
 /**
@@ -1182,6 +1327,11 @@ export function selectorsFor(state) {
 /** The copy expectations that name an element rather than the whole page. */
 function scopedCopy(state) {
   return (state.expect?.copy ?? []).filter((phrase) => typeof phrase === "object" && phrase !== null);
+}
+
+/** The copy expectations that name only words, and so must be found by them. */
+export function phrasesFor(state) {
+  return [...new Set((state.expect?.copy ?? []).filter((phrase) => typeof phrase === "string"))];
 }
 
 /**

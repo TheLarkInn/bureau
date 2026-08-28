@@ -120,6 +120,15 @@ test("serves the bundled sample the state lab starts from", async () => {
  * carry one would satisfy it. `/state` must show each leak and `/sample` must
  * not, so this fails if the pin stops holding *and* if the leak stops being
  * producible — the second being how a gate quietly turns into scenery.
+ *
+ * The draft half reads the **config**, not only the summary. `state.plan` is
+ * what draws the draft bar, and it is computed from `pendingPlan` — so a pin
+ * applied to the summary alone leaves `plan: null` while the planned role is
+ * still overlaid onto `state.config`, and an assertion that read only the bar
+ * would call that pinned. That is the leak in the form a reviewer would
+ * actually meet it: the lab draws its roles from the config, so a sample
+ * carrying a role no fixture declares is a screen the registry never modelled,
+ * with or without a bar above it. Both are asserted, because they fail apart.
  */
 test("the bundled sample is pinned against the host's draft and saved layout", async () => {
     const instanceId = "bureau-sample-pinned-test";
@@ -143,14 +152,15 @@ test("the bundled sample is pinned against the host's draft and saved layout", a
         const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
         const shown = (state) => ({
             draft: state.plan !== null,
+            role: (state.config.view.roles ?? []).some((role) => role.name === "sample-pin-probe"),
             arranged: state.pipelines["agent-eligible-pipeline"]?.arrangement ?? {},
         });
         assert.deepStrictEqual(
             { planned: planned.ok, live: shown(await read("/state")), sample: shown(await read("/sample")) },
             {
                 planned: true,
-                live: { draft: true, arranged: arrangement },
-                sample: { draft: false, arranged: {} },
+                live: { draft: true, role: true, arranged: arrangement },
+                sample: { draft: false, role: false, arranged: {} },
             },
         );
     } finally {

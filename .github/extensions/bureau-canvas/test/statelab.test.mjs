@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1214,6 +1214,11 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
     viewport: { width: 800, height: 600 },
     overflowX: 40,
     contrast: [{ selector: ".kind-label", text: "AGENT", ratio: 1.07 }],
+    // The phrase is absent from this render, so no element carries it. That is
+    // `missing-copy`'s business; the carrier row is here so the absence is not
+    // *also* reported as an unproved paint sample, which would be one screen
+    // reported as two defects.
+    carriers: { "expected copy": { found: false, ink: true, injected: "" } },
     boxes: [
       { selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 },
       { selector: ".assignment-card", x: 50, y: 50, width: 100, height: 100 },
@@ -1266,6 +1271,7 @@ test("a scoped copy expectation tells a status from its own negation", () => {
     counts: { ".editor-status": 1 },
     texts: { ".editor-status": "unsaved edits" },
     paint: { ".editor-status": { ink: true, injected: "" } },
+    carriers: { saved: { found: true, ink: true, injected: "" } },
     text: "Pipeline editor unsaved edits",
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
@@ -1350,6 +1356,113 @@ test("a promised sentence has to be painted, and painted as itself", () => {
       kinds(undefined),
     ],
     [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy", "substituted-copy"], ["unreadable-copy"]],
+  );
+});
+
+/**
+ * A promised sentence the reader cannot read fails the row that promised it.
+ *
+ * The lab prints one row per copy expectation, and that row read only
+ * `missing-copy`. So the two verdicts added for the screen rather than the DOM
+ * — `unreadable-copy` and `substituted-copy` — reached the panel as a note
+ * *below* the list while the row naming the sentence stayed ticked, which tells
+ * a reviewer looking straight at that line that the sentence is fine. The note
+ * was also their only consumer, so both kinds could be deleted from its filter
+ * with every test in this repository green and the panel merely more
+ * reassuring.
+ *
+ * All five verdicts are put to both kinds of promise, because the scoping is
+ * what keeps this from over-reporting: a paint verdict belongs to the promise
+ * whose selector it names and to no other, and an unscoped phrase — which names
+ * no element, and so can never be paint-judged — must not inherit one.
+ */
+test("a sentence that is unreadable or overpainted fails its own copy row", () => {
+  const scoped = { selector: ".editor-status", text: "saved" };
+  const label = copyLabel(scoped);
+  const failures = [
+    { kind: "missing-copy", detail: label },
+    { kind: "unreadable-copy", detail: ".editor-status draws its own words in ink a reader cannot see" },
+    { kind: "substituted-copy", detail: '.editor-status paints "unsaved edits" in place of its own words' },
+    { kind: "unreadable-copy", detail: ".panel-validation draws its own words in ink a reader cannot see" },
+    { kind: "overlap", detail: ".editor-status prints over its sibling" },
+  ];
+
+  assert.deepStrictEqual(
+    [
+      failures.map((item) => copyFailure(item, scoped, label)),
+      failures.map((item) => copyFailure(item, "a loose phrase", "a loose phrase")),
+    ],
+    [
+      [true, true, true, false, false],
+      [false, false, false, false, false],
+    ],
+  );
+});
+
+/**
+ * And the lab is the one asking.
+ *
+ * Read from source because `lab.mjs` touches `document` at import time, so the
+ * offline suite cannot call its renderer. The rule above is only worth having
+ * if the panel routes its rows through it: a lab that kept its own inline
+ * `missing-copy` filter would satisfy every assertion in the test above and
+ * still tick the row for a sentence no reader can see.
+ *
+ * Both directions, as with the panel's own sentence — the call must be there,
+ * and the inline predicate it replaced must not be.
+ */
+test("the lab judges its copy rows with the shared rule instead of its own filter", async () => {
+  const source = await readFile(new URL("../web/statelab/lab.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes("copyFailure") && source.includes('from "./checks.mjs"'),
+      source.includes("copyFailure(item, phrase, label)"),
+      source.includes('item.kind === "missing-copy"'),
+    ],
+    [true, true, false],
+  );
+});
+
+/**
+ * The same promise, made without naming an element.
+ *
+ * Most of this registry's copy is plain, and a plain phrase is settled against
+ * the body's `innerText` — so every way of showing a reader something other
+ * than the promised words was open to the majority of the promises. The scoped
+ * check was a guard over the minority of its own subject.
+ *
+ * Four rows, because they are four different determinations and only one of
+ * them is a pass. The last is the exemption and the reason it is not the
+ * vacuity this module has already been caught by twice: a carrier looked for
+ * and not found means the words are split across elements, which `absentCopy`
+ * has already proved are on the page — whereas a carriers map that never
+ * arrived is a measurement that did not happen, and fails.
+ */
+test("a promise that names no element is still judged on the words a reader gets", () => {
+  const state = { expect: { shows: [], hides: [], copy: ["clean — bureau validate would pass"] } };
+  const phrase = "clean — bureau validate would pass";
+  const kinds = (carriers) => verdict(state, {
+    counts: {},
+    texts: {},
+    paint: {},
+    carriers,
+    text: phrase,
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    boxes: [],
+  }).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [
+      kinds({ [phrase]: { found: true, ink: true, injected: "" } }),
+      kinds({ [phrase]: { found: true, ink: false, injected: "" } }),
+      kinds({ [phrase]: { found: true, ink: true, injected: '"rejected"' } }),
+      kinds({ [phrase]: { found: false, ink: true, injected: "" } }),
+      kinds(undefined),
+    ],
+    [[], ["unreadable-copy"], ["substituted-copy"], [], ["unreadable-copy"]],
   );
 });
 
@@ -1929,6 +2042,7 @@ test("a render that matches the registry produces no findings", () => {
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
     contrast: [{ selector: ".kind-label", text: "AGENT", ratio: 5.2 }],
+    carriers: { "Work Source": { found: true, ink: true, injected: "" } },
     boxes: [{ selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 }],
   };
   assert.deepStrictEqual(verdict(state, snapshot), []);
@@ -2126,8 +2240,8 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1 },
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "nowhere at all"] }), {
+    counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
       ".d": "no findings for this pipeline",
@@ -2137,11 +2251,31 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       ".indent": "far away",
       ".cover": "under a lid",
       ".occluded": "behind a sibling",
+      ".fill": "filled away",
+      ".dim": "under a haze",
+      // Counted gone and quoted as nothing, which is the whole claim for this
+      // one: a control filtered to `opacity(0)` is as absent to a reader as one
+      // at `opacity: 0`, and `visible` is what has to say so.
+      ".filtered": "",
+      ".soft": "half there",
+      ".before": "under a before",
+      ".fixed": "under a fixed lid",
+      ".deep": "under its own child",
+      ".prefix": "own words",
+      ".descendant": "quiet parent",
     },
     // `.d` is the render that keeps its promise in the DOM and breaks it on the
     // screen: `texts` is exactly the sentence a scoped expectation asks for, and
     // a reader sees the opposite one an `::after` paints over transparent ink.
     // Gathering both is what lets `verdict` tell the two apart.
+    //
+    // The rows below it take one clause each, so no clause rides on another's
+    // fixture: `.fill` is the text-fill multiplier, `.dim` the ancestor-opacity
+    // walk at a value `visible` allows through, `.soft` the filter fold,
+    // `.before` a `::before` on the element itself, `.fixed` a fixed layer,
+    // `.deep` a descendant's layer carrying a background *image*, and the last
+    // two the generated-content sweep at both ends of the same neighbourhood —
+    // which report words rather than ink, because neither covers anything.
     paint: {
       ".a": { ink: true, injected: "" },
       ".d": { ink: false, injected: '"clean — bureau validate would pass"' },
@@ -2151,6 +2285,26 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       ".indent": { ink: false, injected: "" },
       ".cover": { ink: false, injected: "" },
       ".occluded": { ink: false, injected: "" },
+      ".fill": { ink: false, injected: "" },
+      ".dim": { ink: false, injected: "" },
+      ".filtered": { ink: true, injected: "" },
+      ".soft": { ink: false, injected: "" },
+      ".before": { ink: false, injected: "" },
+      ".fixed": { ink: false, injected: "" },
+      ".deep": { ink: false, injected: "" },
+      ".prefix": { ink: true, injected: '"a prefix"' },
+      ".descendant": { ink: true, injected: '"a descendant speaks"' },
+    },
+    // The promises that name no element, judged on whichever element holds the
+    // words in its own direct text. The last one is looked for and not found —
+    // words split across several elements — which is a determination about the
+    // document rather than a measurement that never happened, and is the one
+    // case `paintedPhrases` exempts.
+    carriers: {
+      "a plain promise": { found: true, ink: true, injected: "" },
+      "a hidden promise": { found: true, ink: false, injected: "" },
+      "a true promise": { found: true, ink: true, injected: '"a false promise"' },
+      "nowhere at all": { found: false, ink: true, injected: "" },
     },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
@@ -2406,6 +2560,61 @@ function pageStub() {
   });
   const overlay = element({});
 
+  // One fixture per clause `honestInk` and `coveringLayer` advertise, because a
+  // clause with no fixture of its own is a line of code rather than a check.
+  // The round that added them was covered by `.d` and `.alpha` between them, and
+  // the text-fill multiplier, the ancestor-opacity walk, `::before`, the
+  // descendant sweep, `fixed` layers and background-image layers could each be
+  // deleted with every test in this repository still green. Each element below
+  // fails on exactly one of them.
+  const filled = element({ webkitTextFillColor: "rgba(0, 0, 0, 0)" }, { innerText: "filled away" });
+  const dimmed = element({}, { innerText: "under a haze", parentElement: element({ opacity: "0.02" }) });
+  // The two halves of the filter fold, which fail apart. `opacity(0)` erases the
+  // control outright, so the claim there is that it is *counted* gone — the lie
+  // `opacity: 0` told, spelled a second way, and `visible` is what has to catch
+  // it. A partial filter leaves the control on screen with its words unreadable,
+  // which only `honestInk` can see, and it is written in per cent so the unit
+  // half of the parse is pinned too.
+  const filteredAway = element({ filter: "opacity(0)" }, { innerText: "filtered away" });
+  const softened = element({ filter: "opacity(50%)" }, { innerText: "half there" });
+  const beforeCover = element({}, { innerText: "under a before" });
+  pseudos.set(beforeCover, {
+    "::before": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const fixedCover = element({}, { innerText: "under a fixed lid" });
+  pseudos.set(fixedCover, {
+    "::after": { content: '""', position: "fixed", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const deepChild = element({});
+  const deepCover = element({}, { innerText: "under its own child", querySelectorAll: () => [deepChild] });
+  pseudos.set(deepChild, {
+    "::after": { content: '""', position: "absolute", backgroundImage: "url(lid.png)" },
+  });
+  // Generated content is gathered over the same neighbourhood the ink is judged
+  // on, so both ends of that walk get a fixture: a `::before` on the element
+  // itself, and an `::after` on a descendant. Neither covers anything — position
+  // stays static — so these two assert the words, not the ink.
+  const prefixed = element({}, { innerText: "own words" });
+  pseudos.set(prefixed, { "::before": { content: '"a prefix"' } });
+  const deepSpeaker = element({});
+  const deepWords = element({}, { innerText: "quiet parent", querySelectorAll: () => [deepSpeaker] });
+  pseudos.set(deepSpeaker, { "::after": { content: '"a descendant speaks"' } });
+
+  // The carrier walk, which is how a promise that names no element is judged.
+  // A plain phrase is found on the element holding it in its *own* direct text
+  // rather than on an ancestor whose `innerText` merely contains it, so these
+  // carry `childNodes` and the elements above do not. One honest, one drawn in
+  // ink no reader receives, and one with a different sentence painted straight
+  // over it by its own `::after`.
+  const words = (value) => [{ nodeType: 3, data: value }];
+  const plainly = element({}, { innerText: "a plain promise", childNodes: words("a plain promise") });
+  const invisibly = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a hidden promise",
+    childNodes: words("a hidden promise"),
+  });
+  const overpainted = element({}, { innerText: "a true promise", childNodes: words("a true promise") });
+  pseudos.set(overpainted, { "::after": { content: '"a false promise"' } });
+
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
     getBoundingClientRect: () => boxOf(0, 40, 60, 16),
@@ -2495,6 +2704,16 @@ function pageStub() {
     ".indent": [farAway],
     ".cover": [covered],
     ".occluded": [occluded],
+    ".fill": [filled],
+    ".dim": [dimmed],
+    ".filtered": [filteredAway],
+    ".soft": [softened],
+    ".before": [beforeCover],
+    ".fixed": [fixedCover],
+    ".deep": [deepCover],
+    ".prefix": [prefixed],
+    ".descendant": [deepWords],
+    "*": [plainly, invisibly, overpainted],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
