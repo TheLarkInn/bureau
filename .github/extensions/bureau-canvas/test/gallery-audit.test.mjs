@@ -11,8 +11,9 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import { crc32 } from "node:zlib";
 
-import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL, shotName, walkChunks } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
 import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
@@ -25,15 +26,16 @@ const STATES = [{ id: "surface:config+card:expanded" }, { id: "probe--draft-bar"
 const REAL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 /**
- * A published file as the teardown reads it: its size and both ends, with the
- * ends withheld when the file is too small to have two that do not overlap.
- * Mirrors `readEnds` so the audit is tested on the shape it is really given
- * rather than on a hand-written one that cannot be wrong.
+ * A published file as the teardown reads it: its size, both ends and the walked
+ * chunk stream, with everything but the size withheld when the file is too small
+ * to have two ends that do not overlap. Mirrors `readEnds` so the audit is
+ * tested on the shape it is really given rather than on a hand-written one that
+ * cannot be wrong.
  */
 function ends(name, bytes) {
   return bytes.length < PNG_HEAD + PNG_TAIL
     ? { name, size: bytes.length }
-    : { name, size: bytes.length, open: bytes.slice(0, PNG_HEAD), close: bytes.slice(-PNG_TAIL) };
+    : { name, size: bytes.length, open: bytes.slice(0, PNG_HEAD), close: bytes.slice(-PNG_TAIL), chunks: walkChunks(bytes) };
 }
 
 /**
@@ -1033,3 +1035,95 @@ test("the bytes a whole PNG opens and closes with are the ones a real one carrie
   const found = auditBytes([ends("desktop--real.png", real)]);
   assert.deepStrictEqual([found, real.length > PNG_HEAD + PNG_TAIL], [{ empty: [], malformed: [] }, true]);
 });
+
+/**
+ * The middle of the file, which the ends could never speak for.
+ *
+ * `whole()` read 33 bytes at the front and 12 at the back, and a render whose
+ * only `IDAT` chunk was renamed to `JUNK` — same length, same size, both ends
+ * untouched — passed every clause while Chromium refused it outright: *"the
+ * source image could not be decoded."* Five hundred undecodable figures could
+ * have been published and certified complete.
+ *
+ * Three rows, because the middle can lie in three ways. `renamed` keeps every
+ * length, every checksum and both ends and carries no image data — the defect
+ * the ends can never see. `corrupt` flips one byte *inside* a chunk's data,
+ * which no length and no end disagrees with; only the checksum does. `overrun`
+ * gives a chunk a length that runs past the end of the file, which is what a
+ * writer interrupted mid-chunk leaves behind.
+ *
+ * The CRCs are repaired after the rename, on purpose: a renamed chunk breaks its
+ * own checksum too, and a row that fails for two reasons pins neither. That row
+ * is a structurally perfect PNG that holds no picture. The other two are left
+ * unsealed for the same reason in reverse — repairing them would remove the very
+ * clause they exist to fail.
+ *
+ * `PNG_HEAD` is where the second chunk begins, because it is the signature plus
+ * the whole of `IHDR`. The fixture's own layout is `IHDR`, `IDAT`, `IEND`, so
+ * that offset is the image data this test edits.
+ */
+test("a render whose middle is not a picture is not a whole PNG", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const at = PNG_HEAD;
+  const renamed = resealed(real.map((byte, index) => (index >= at + 4 && index < at + 8 ? "JUNK".charCodeAt(index - at - 4) : byte)));
+  const corrupt = real.map((byte, index) => (index === at + 9 ? byte ^ 0xff : byte));
+  const overrun = real.map((byte, index) => (index === at + 3 ? 0xc8 : byte));
+  const found = [["renamed", renamed], ["corrupt", corrupt], ["overrun", overrun]]
+    .map(([name, bytes]) => auditBytes([ends(`desktop--${name}.png`, bytes)]).malformed);
+
+  assert.deepStrictEqual(found, [["desktop--renamed.png"], ["desktop--corrupt.png"], ["desktop--overrun.png"]]);
+});
+
+/**
+ * Each of those three rows leaves both ends and the size exactly as a real
+ * render has them, so the walk is the only clause that can be the reason.
+ *
+ * Without this, a fixture that also broke the header would pass the test above
+ * while pinning a conjunct that was already pinned — the precise defect the
+ * sixteen-byte header rows were added to close, one layer further in.
+ */
+test("a render broken only in its middle is whole at both of its ends", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const at = PNG_HEAD;
+  const rows = [
+    resealed(real.map((byte, index) => (index >= at + 4 && index < at + 8 ? "JUNK".charCodeAt(index - at - 4) : byte))),
+    real.map((byte, index) => (index === at + 9 ? byte ^ 0xff : byte)),
+    real.map((byte, index) => (index === at + 3 ? 0xc8 : byte)),
+  ].map((bytes) => [bytes.length, bytes.slice(0, PNG_HEAD), bytes.slice(-PNG_TAIL)]);
+
+  assert.deepStrictEqual(rows, rows.map(() => [real.length, real.slice(0, PNG_HEAD), real.slice(-PNG_TAIL)]));
+});
+
+/**
+ * A real render's stream is walked end to end and named for what it holds, so
+ * the rows above fail for the reason claimed rather than because the walk
+ * rejects everything handed to it.
+ */
+test("the chunk stream of a real PNG is walked to its end", () => {
+  assert.deepStrictEqual(walkChunks([...Buffer.from(REAL_PNG, "base64")]), ["IHDR", "IDAT", "IEND"]);
+});
+
+/** A four-byte big-endian field, as PNG spells every number. */
+function uint32(bytes, at) {
+  return ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+}
+
+/**
+ * Re-checksums every chunk of a file whose bytes have been edited, so a fixture
+ * breaks only the clause it is written to break.
+ *
+ * Computed with `zlib.crc32` rather than with the audit's own CRC: a fixture
+ * that borrowed the implementation under test would agree with any error in it,
+ * which is the same reason the fixtures above are cut from a real encoder's
+ * output rather than hand-written.
+ */
+function resealed(bytes) {
+  const sealed = [...bytes];
+  for (let at = 8; at + 12 <= sealed.length;) {
+    const end = at + 12 + uint32(sealed, at);
+    const sum = crc32(Buffer.from(sealed.slice(at + 4, end - 4)));
+    sealed.splice(end - 4, 4, (sum >>> 24) & 0xff, (sum >>> 16) & 0xff, (sum >>> 8) & 0xff, sum & 0xff);
+    at = end;
+  }
+  return sealed;
+}

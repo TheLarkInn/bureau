@@ -16,9 +16,10 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { crc32 } from "node:zlib";
 
 import globalTeardown, { auditGallery, resolveDirs, runAudit } from "../e2e/playwright/global-teardown.mjs";
-import { shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { PNG_HEAD, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { indexPage, rowsFor } from "../e2e/playwright/gallery-index.mjs";
 import { openGallery, publishGallery } from "../e2e/playwright/gallery.mjs";
 import { GALLERY, stagingFor, staging, STAGING_ENV } from "../e2e/playwright/gallery-paths.mjs";
@@ -252,6 +253,16 @@ test("a gallery published without an index is a finding rather than a skipped au
  * straight onto it. Both ends were perfect and there was no image between them,
  * so it is here rather than only in the unit table — this is the path a real
  * file takes, through `readEnds` and off a real disk.
+ *
+ * The fifth is the same lesson one layer in, and it is here for the same reason.
+ * `walkChunks` is proved in the unit table, but the unit table builds its own
+ * shots: nothing asked whether `readEnds` ever hands the walk's answer to the
+ * audit. Replacing `chunks: walkChunks(bytes)` with the constant `["IHDR",
+ * "IDAT", "IEND"]` left all 443 offline tests green, restoring the envelope-only
+ * audit through a line that still reads as if it walks. So a render that is
+ * whole at both ends, correct in every length and every checksum, and holds no
+ * image data at all goes in off a real disk — a file no clause but the walk can
+ * reject, through the one binding nothing had asked about.
  */
 test("a render with no bytes, and one that stops before the PNG does, are both findings", async (t) => {
   const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
@@ -259,6 +270,7 @@ test("a render with no bytes, and one that stops before the PNG does, are both f
     { bytes: Buffer.alloc(0), says: "no bytes in them" },
     { bytes: ONE_PIXEL.subarray(0, ONE_PIXEL.length - 4), says: "not a whole PNG" },
     { bytes: Buffer.from("iVBORw0KGgpJRU5ErkJggg==", "base64"), says: "not a whole PNG" },
+    { bytes: withoutImageData(), says: "not a whole PNG" },
     { bytes: ONE_PIXEL, says: null },
   ];
 
@@ -269,8 +281,28 @@ test("a render with no bytes, and one that stops before the PNG does, are both f
     found.push(says ? named.length === 1 && named[0].includes(says) && named[0].includes(shot) : named.length === 0);
   }
 
-  assert.deepEqual(found, [true, true, true, true]);
+  assert.deepEqual(found, [true, true, true, true, true]);
 });
+
+/**
+ * A structurally perfect PNG that holds no picture: the real one-pixel render
+ * with its only `IDAT` renamed, and every checksum repaired afterwards.
+ *
+ * Repaired, because a renamed chunk breaks its own CRC too and a fixture that
+ * fails for two reasons pins neither. The checksums come from `zlib.crc32`
+ * rather than from the audit's own table, so a fixture cannot agree with an
+ * error in the implementation it is meant to catch.
+ */
+function withoutImageData() {
+  const bytes = Buffer.from(ONE_PIXEL);
+  bytes.write("JUNK", PNG_HEAD + 4, "latin1");
+  for (let at = 8; at + 12 <= bytes.length;) {
+    const end = at + 12 + bytes.readUInt32BE(at);
+    bytes.writeUInt32BE(crc32(bytes.subarray(at + 4, end - 4)), end - 4);
+    at = end;
+  }
+  return bytes;
+}
 
 /**
  * A record that says nothing about settling is a finding, not a record to skip.

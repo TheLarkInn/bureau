@@ -91,8 +91,14 @@ export function offsite(url) {
  * The returned array is live: a caller reads it after the page has finished,
  * and an empty one is the proof the run was offline rather than the assumption
  * that it was.
+ *
+ * `sockets` is the glob the socket half is registered under, and it is a
+ * parameter for one reason: it is the only way to ask the socket *detector* a
+ * question. A real run always leaves it defaulted — the seam sits behind the
+ * default the way `runAudit`'s does — and `specs/offline-floor.spec.mjs` narrows
+ * it to reach the case a matching route hides.
  */
-export async function holdOffline(page) {
+export async function holdOffline(page, sockets = "**/*") {
   const reached = [];
   const record = (url) => {
     const away = offsite(url);
@@ -109,13 +115,22 @@ export async function holdOffline(page) {
   // the same hole this file was written to close, through the one door the
   // HTTP APIs cannot see.
   //
-  // Both WebSocket paths record, deliberately. Whether `websocket` still fires
-  // for a connection `routeWebSocket` has taken over is Playwright's business
-  // and not a thing this floor should depend on; `offlineFindings` reports one
-  // sentence per destination, so hearing it twice costs nothing and hearing it
-  // from only one of them is still hearing it.
+  // Both socket paths record, and which one does the recording is now measured
+  // rather than left to Playwright. The event fires for exactly the sockets no
+  // route answered: with a matching route installed it never fires at all, and
+  // with none — or with one whose pattern misses — it is the only thing that
+  // reports the destination. That makes it the same detector-behind-the-refusal
+  // the HTTP half has, covering the one failure the route cannot: a glob that
+  // stops matching something a page opens.
+  //
+  // One case is covered by neither, and it is a limit rather than a defence.
+  // Socket routes are consulted newest-first and `WebSocketRoute` has no
+  // `route.fallback()`, so a spec that registers its own replaces this one and
+  // the event stays silent underneath it. No state in the registry opens a
+  // socket, and the spec pins the gap so a change in that precedence is a
+  // failing test rather than a silent one.
   page.on("websocket", (socket) => record(socket.url()));
-  await page.routeWebSocket("**/*", (socket) => {
+  await page.routeWebSocket(sockets, (socket) => {
     if (record(socket.url())) {
       socket.close();
       return;

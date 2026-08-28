@@ -90,13 +90,103 @@ function uint32(bytes, at) {
   return ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
 }
 
-/** Whether these ends are the ends of one whole PNG. */
+/**
+ * PNG's own checksum, which is the ordinary CRC-32 over a chunk's type and data.
+ *
+ * Built once rather than written as a table of constants: a hand-copied table is
+ * 256 chances to introduce a typo that no fixture here would ever catch, and the
+ * generator is four lines.
+ */
+const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let round = 0; round < 8; round += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function crc32(bytes, from, to) {
+  let value = 0xffffffff;
+  for (let at = from; at < to; at += 1) {
+    value = CRC_TABLE[(value ^ bytes[at]) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * The chunk stream of a PNG, walked from the signature to the end of the file.
+ *
+ * The ends alone were never enough, and the hole was exactly the shape of the
+ * part they do not cover. `whole()` read 33 bytes at the front and 12 at the
+ * back; everything between was unread, so renaming a render's only `IDAT` chunk
+ * to `JUNK` — same length, same ends, same size — left the whole gallery suite
+ * green while Chromium refused the file outright with *"the source image could
+ * not be decoded."* A gallery of undecodable images passed as whole because
+ * nothing had ever looked at the middle of one.
+ *
+ * So the middle is walked. Every chunk carries a CRC over its type and data, and
+ * checking it is what makes this a claim about every byte rather than about the
+ * structure spanning them.
+ *
+ * The two length guards are guards and not claims, and the distinction is worth
+ * writing down. `end > bytes.length` stops the walk reading past the file — a
+ * corrupt length field is four bytes wide, so without it a broken render sends
+ * the checksum over four gigabytes of nothing. `at === bytes.length` is its
+ * companion at the other end. Neither can be the sole reason a file is rejected:
+ * a length that lies fails its own checksum too, and a stream that stops short
+ * leaves bytes at the end of the file that `close` already refuses. They are
+ * here to make the walk well-defined, and the suite is not asked to pretend
+ * otherwise.
+ *
+ * Returns the chunk types in order, or `null` when the walk cannot be completed.
+ */
+export function walkChunks(bytes) {
+  const types = [];
+  let at = PNG_OPEN.length;
+  while (at + 12 <= bytes.length) {
+    const end = at + 12 + uint32(bytes, at);
+    if (end > bytes.length || crc32(bytes, at + 4, end - 4) !== uint32(bytes, end - 4)) {
+      return null;
+    }
+    types.push(String.fromCharCode(...bytes.slice(at + 4, at + 8)));
+    at = end;
+  }
+  return at === bytes.length ? types : null;
+}
+
+/**
+ * Whether this file is one whole PNG.
+ *
+ * The ends are still read on their own, and deliberately: they name the two
+ * defects a reviewer meets most — a file that is not a PNG at all, and a header
+ * describing a picture of no size, which is the one break every length and every
+ * checksum agrees with.
+ */
 function whole(shot) {
   return shot.size >= PNG_FLOOR
     && matches(shot.open, [...PNG_OPEN, ...PNG_IHDR])
     && uint32(shot.open ?? [], 16) > 0
     && uint32(shot.open ?? [], 20) > 0
-    && matches(shot.close, PNG_IEND);
+    && matches(shot.close, PNG_IEND)
+    && wholeStream(shot.chunks);
+}
+
+/**
+ * What the walked stream adds: that it completed at all, and that the file is a
+ * picture rather than two good ends with nothing between them.
+ *
+ * `IDAT` is the conjunct the ends could never carry. A file can open with a
+ * perfect header, close with a perfect `IEND`, and hold no image data.
+ *
+ * The stream is deliberately *not* asked whether it opens with `IHDR` or closes
+ * with `IEND`. Both read like checks and neither can fail: the header comparison
+ * above already pins `IHDR` as the first chunk, byte for byte including its
+ * length, and `close` pins `IEND` as the last. Adding them was tried, and
+ * deleting either one left every test green — which is the definition of a mark
+ * this file exists to keep out.
+ */
+function wholeStream(types) {
+  return Array.isArray(types) && types.includes("IDAT");
 }
 
 /**

@@ -12,12 +12,12 @@
 // assert that the figures it links exist — it runs while other workers are
 // still rendering, and says so — and that is exactly the gap this closes.
 
-import { open, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL } from "./gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL, walkChunks } from "./gallery-audit.mjs";
 import { applyMarks, escape, SETTLED_INK, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
@@ -201,14 +201,22 @@ function stringify(records, pick) {
 }
 
 /**
- * The size and both ends of every published render, which is all `auditBytes`
- * needs to say whether a file has a whole PNG in it.
+ * The size, both ends and the walked chunk stream of every published render,
+ * which is what `auditBytes` needs to say whether a file has a whole PNG in it.
  *
- * Ends rather than whole files: five hundred screenshots is some tens of
- * megabytes, and reading all of it to look at forty-five bytes per file would
- * put a cost on the teardown that the check does not need. The head is the
- * signature plus the whole `IHDR` chunk, because a signature on its own accepted
- * a sixteen-byte file with the closing chunk stapled straight to it.
+ * Whole files, and the previous note here argued the opposite: reading tens of
+ * megabytes "to look at forty-five bytes per file" put a cost on the teardown
+ * that the check did not need. The cost was real and the conclusion was wrong,
+ * because forty-five bytes per file is not enough to answer the question. The
+ * ends of a render say nothing about its middle, and a render whose only `IDAT`
+ * chunk had been renamed passed as whole while a browser refused to decode it.
+ *
+ * So the middle is read. Sequentially rather than all at once: the walk needs a
+ * whole file in hand, and five hundred of those held together is memory this
+ * process has no reason to take. One at a time bounds it to the largest single
+ * render — a matrix run publishes 512 files totalling about 43 MB, the biggest
+ * of them 146 kB — and the reads and checksums together take about half a
+ * second against the three and a half minutes that produced them.
  *
  * A file that cannot be opened is reported as a render of no size rather than
  * allowed to throw. It is the same news to a reviewer — there is nothing behind
@@ -216,27 +224,20 @@ function stringify(records, pick) {
  * say so.
  */
 async function readEnds(dir, names) {
-  return Promise.all(names.map(async (name) => {
-    const handle = await open(join(dir, name), "r").catch(() => null);
-    if (!handle) {
-      return { name, size: 0 };
-    }
-    try {
-      const { size } = await handle.stat();
-      return { name, size, open: await slice(handle, size, 0, PNG_HEAD), close: await slice(handle, size, size - PNG_TAIL, PNG_TAIL) };
-    } finally {
-      await handle.close();
-    }
-  }));
+  const shots = [];
+  for (const name of names) {
+    const bytes = await readFile(join(dir, name)).catch(() => null);
+    shots.push(bytes ? shotOf(name, bytes) : { name, size: 0 });
+  }
+  return shots;
 }
 
-async function slice(handle, size, at, length) {
+function shotOf(name, bytes) {
+  const size = bytes.length;
   if (size < PNG_HEAD + PNG_TAIL) {
-    return [];
+    return { name, size };
   }
-  const buffer = Buffer.alloc(length);
-  await handle.read(buffer, 0, length, at);
-  return [...buffer];
+  return { name, size, open: [...bytes.subarray(0, PNG_HEAD)], close: [...bytes.subarray(size - PNG_TAIL)], chunks: walkChunks(bytes) };
 }
 
 /**

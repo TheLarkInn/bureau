@@ -26,6 +26,11 @@
 // claim only an installed floor can satisfy — a machine that happens to have no
 // route to the address cannot fake it, because failing to reach a host is
 // exactly the unclean ending this distinguishes itself from.
+//
+// Three tests, because the floor makes three separate claims about sockets: that
+// the pair records and refuses, that the detector alone still names a socket the
+// route did not answer, and — the one it cannot make — that a later route
+// replaces it entirely.
 
 import { expect, floorTest as test } from "../fixtures.mjs";
 import { holdOffline, offlineFindings } from "../offline.mjs";
@@ -59,4 +64,60 @@ test("a socket that would leave this machine is recorded and refused here", asyn
     "a request was made to ws://192.0.2.1:9, so this run is not offline",
   ]);
   expect(ended).toEqual({ errored: false, clean: true });
+});
+
+// The detector on its own, which the test above cannot speak for.
+//
+// `holdOffline` claims two socket mechanisms and the test above proves only
+// their sum: deleting `page.on("websocket")` left it green, because the route's
+// own `record` produced the same sentence. Measuring the two apart settles what
+// each is for. With a matching route installed the event never fires — the route
+// answers the socket and no event is raised — so through the default glob the
+// listener is unreachable and unaskable.
+//
+// It is reachable through the one case that matters: a socket no route matched.
+// That is the failure the route cannot cover, because it *is* the route failing,
+// and it is why the glob is a parameter. Narrowed to a pattern this socket does
+// not match, the refusal never runs, the connection goes to the network — an
+// `error` and an unclean close, TEST-NET-1 being routed nowhere — and the only
+// thing left that can name the destination is the listener. That the ending is
+// the *unclean* one is the proof the route really stood aside, so a listener
+// credited here cannot be a route quietly doing the work.
+test("a socket no route answered is still named by the floor", async ({ page, canvas }) => {
+  const reached = await holdOffline(page, "**/answered-by-nothing");
+  await page.goto(canvas.url);
+
+  const ended = await openSocket(page, OFFSITE);
+
+  expect([offlineFindings(reached).map((finding) => finding.detail), ended]).toEqual([
+    ["a request was made to ws://192.0.2.1:9, so this run is not offline"],
+    { errored: true, clean: false },
+  ]);
+});
+
+// The gap, written down so it cannot widen quietly.
+//
+// Socket routes are consulted newest-first and there is no `fallback()` to reach
+// the handler underneath, so a spec that registers its own replaces the floor's
+// for sockets — and the event stays silent, because a socket some route answered
+// raises none. Neither half reports it.
+//
+// Asserting the gap rather than a defence against it is the point: the floor
+// cannot close this one, and an assumption nobody re-reads is worse than a test
+// that fails the day it stops being true. If a future Playwright reverses that
+// precedence or grows a fallback, this test goes red and the floor gets its
+// cover back. `seen` and the clean close are asserted alongside so a run where
+// the spec's own route simply never fired cannot read as supersession.
+test("a socket a later route takes over is the floor's own recorded limit", async ({ page, canvas }) => {
+  const reached = await holdOffline(page);
+  const seen = [];
+  await page.routeWebSocket("**/*", (socket) => {
+    seen.push(socket.url());
+    socket.close();
+  });
+  await page.goto(canvas.url);
+
+  const ended = await openSocket(page, OFFSITE);
+
+  expect([offlineFindings(reached), seen, ended]).toEqual([[], [OFFSITE], { errored: false, clean: true }]);
 });
