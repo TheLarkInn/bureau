@@ -1446,8 +1446,13 @@ test("an empty findings list carries the verdict the run actually produced", () 
  * cannot catch.
  *
  * So distinctness is asserted over the set, and each sentence is held to its own
- * opening besides: a set of three survives any swap, and the shape pins are what
+ * opening besides: a set of three survives any swap, and the openings are what
  * make a swap fail.
+ *
+ * An opening is *only* what it says it is, though. Each of these sentences puts
+ * its subject first and its verdict after the dash, so a pin on the opening
+ * holds the subject and leaves the answer free — which is the half a reader
+ * takes the verdict from. That is the next test, not this one.
  */
 test("the three verdicts stay three distinct sentences", () => {
   assert.deepStrictEqual(
@@ -1458,6 +1463,78 @@ test("the three verdicts stay three distinct sentences", () => {
       /^no findings for this pipeline\b/u.test(PANEL_ELSEWHERE),
     ],
     [3, true, true, true],
+  );
+});
+
+/**
+ * Each sentence carries the answer it is *for*, and neither of the other two.
+ *
+ * Distinctness and the openings above are both satisfied by a sentence that
+ * reverses its own meaning. `PANEL_ELSEWHERE` opens "no findings for this
+ * pipeline" and its verdict is the clause after the dash, so rewriting that
+ * clause to "bureau validate accepted the config" kept the set at three, kept
+ * the opening, and left every gate green — offline, browser and gallery alike —
+ * while the panel reported a config the CLI had *rejected* as one it had
+ * accepted. That is round twenty-two's defect exactly, surviving round
+ * twenty-two's fix, because the fix pinned where each sentence starts and the
+ * defect lives in where it ends.
+ *
+ * The reason a pin here is worth anything at all is that these three clauses are
+ * spelled *in this file* rather than imported. Every other comparison in this
+ * suite reads `PANEL_*` — necessarily, since sharing the export is what stops
+ * the page and the registry drifting — and a comparison against the constant is
+ * a comparison the constant wins by definition. These literals are the only
+ * independent statement of what the sentences must mean, so they are the only
+ * thing a reversal can fail against.
+ *
+ * Asserted as an exact partition rather than three `includes` checks: each
+ * sentence must carry its own clause *and* neither of the others, so a verdict
+ * moved onto the wrong sentence fails on the row it arrived at as well as the
+ * one it left. Rewriting a clause away entirely leaves that sentence carrying
+ * none, which is a different failure and not a pass.
+ */
+test("each verdict says which answer the validator gave, and not another's", () => {
+  const clauses = { unchecked: "did not run", clean: "would pass", elsewhere: "rejected the config" };
+  const sentences = { unchecked: PANEL_UNCHECKED, clean: PANEL_CLEAN, elsewhere: PANEL_ELSEWHERE };
+  const carried = Object.values(sentences).map((sentence) =>
+    Object.keys(clauses).filter((kind) => sentence.includes(clauses[kind])),
+  );
+
+  assert.deepStrictEqual(carried, [["unchecked"], ["clean"], ["elsewhere"]]);
+});
+
+/**
+ * The page asks the rule, rather than saying it again itself.
+ *
+ * `panel-verdict.mjs` is pure and fully pinned above, and none of that reaches a
+ * reader unless `SidePanel` actually calls it. Nothing asserted that it did:
+ * putting the "clean" sentence back inline — the literal this module was
+ * extracted to delete — restored the original false verdict with all 450 offline
+ * tests green. `web-imports.test.mjs` sees the import, but an import is not a
+ * call, and a module can be imported and ignored.
+ *
+ * Read from source because `app.mjs` cannot be imported without a browser: it
+ * takes React and `@xyflow/react` through bare specifiers. The browser matrix
+ * does render these states and would catch a reverted call — but only the seven
+ * `surface:pipeline` states that reach a panel, six minutes and a Chromium
+ * later. A rule about which module owns a sentence is answerable from the text,
+ * and answering it here is what makes the offline suite a real floor under it.
+ *
+ * Both directions, because either alone is half a check. The call must be there,
+ * and the sentences must *not* be — an `emptyVerdict` call left beside a second
+ * inline copy is exactly the drift the extraction was for, and the call clause
+ * alone would pass it.
+ */
+test("the panel takes its empty-list sentence from the rule instead of spelling one", async () => {
+  const source = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes('import { emptyVerdict } from "./panel-verdict.mjs";'),
+      source.includes("emptyVerdict(state.validation)"),
+      [PANEL_UNCHECKED, PANEL_CLEAN, PANEL_ELSEWHERE].filter((sentence) => source.includes(sentence)),
+    ],
+    [true, true, []],
   );
 });
 

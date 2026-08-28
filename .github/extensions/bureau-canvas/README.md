@@ -348,7 +348,78 @@ none, so collapsing them left **every gate green** while the panel told a reader
 that a config the CLI had checked and rejected "was not checked". That is the
 original defect with the labels exchanged. Distinctness is now asserted over the
 set of three, and each sentence is held to its own opening besides — a set
-survives any swap, and the shape pins are what make a swap fail.
+survives any swap, and the openings are what make a swap fail.
+
+### An opening is not an answer
+
+Round twenty-three's finish review asked the same question of that fix, and
+returned the same defect one clause further along. Each of these three sentences
+puts its **subject** first and its **verdict** after the dash:
+
+```
+no findings for this pipeline — bureau validate rejected the config elsewhere
+└──────────── pinned ────────────┘└─────────── pinned by nothing ───────────┘
+```
+
+So rewriting only the tail satisfied every pin above it. `PANEL_ELSEWHERE`
+became `no findings for this pipeline — bureau validate accepted the config`:
+the set stayed three, the opening still matched, and **every gate stayed
+green** — offline, browser and gallery alike, because the page and the registry
+read the one constant and moved together. The panel reported a config the CLI
+had **rejected** as one it had accepted, under the heading a reader takes the
+verdict from. Round twenty-two's defect, surviving round twenty-two's fix,
+because the fix pinned where each sentence starts and the defect lives in where
+it ends.
+
+The verdict clause is now pinned as an exact **partition**: three clauses —
+`did not run`, `would pass`, `rejected the config` — spelled **in the test file**
+rather than imported, each required in its own sentence and absent from the
+other two. The literals are the point. Every other comparison in the suite reads
+`PANEL_*`, necessarily, and a comparison against the constant is one the
+constant wins by definition; these three are the only independent statement of
+what the sentences must *mean*, and so the only thing a reversal can fail
+against. A partition rather than three `includes` checks, so a verdict moved
+onto the wrong sentence fails on the row it arrived at as well as the one it
+left.
+
+### An import is not a call
+
+The same review asked what made the page *use* the rule, and nothing did.
+`panel-verdict.mjs` is pure and fully pinned, and none of that reaches a reader
+unless `SidePanel` calls it — so putting the clean sentence back inline, the
+literal the module was extracted to delete, restored the original false verdict
+with all **450 offline tests green**. `web-imports.test.mjs` sees the import,
+but an import is not a call, and a module can be imported and ignored.
+
+`app.mjs` cannot be imported without a browser — React and `@xyflow/react` come
+in through bare specifiers — so the rule is read from source, in both
+directions: the call must be **there**, and the three sentences must **not** be.
+Either clause alone is half a check, because an `emptyVerdict` call left beside
+a second inline copy is exactly the drift the extraction was for.
+
+| mutation | offline | browser | before this round |
+|---|---|---|---|
+| `PANEL_ELSEWHERE`'s tail rewritten to "accepted the config" | **1 failed** | **681 passed** | **450 passed, 0 failed** |
+| `PANEL_CLEAN`'s tail replaced with `did not run` | **1 failed** | — | **450 passed, 0 failed** |
+| `SidePanel` spelling the clean sentence inline | **1 failed** | — | **450 passed, 0 failed** |
+| restored | **452 passed** | **681 passed** | 450 |
+
+The browser column on the first row is **measured, not reasoned**: a full matrix
+run over the mutated constant — 540 renders, the whole gallery audited and
+reported complete — passed **681 of 681**. It is the expected answer and it is
+still worth the three minutes, because the reason it passes is the reason the
+defect is invisible: the page renders the constant and the registry asserts the
+same constant, so both sides move together and 28 renders drew a false verdict
+that every one of them approved. A browser cannot referee a claim whose two
+sides are one value; only a literal written somewhere else can.
+
+The second row is the vacuity guard: a clause moved onto the wrong sentence must
+fail as loudly as one deleted, or the partition is only a presence check wearing
+a partition's shape.
+
+**No production module changed.** `panel-verdict.mjs` and `app.mjs` are
+byte-for-byte what they were — the canvas renders exactly what it rendered
+before. What changed is whether two of its claims are able to fail.
 
 ### A render that was not proved settled says so
 
