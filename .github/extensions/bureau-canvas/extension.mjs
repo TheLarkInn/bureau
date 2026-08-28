@@ -185,7 +185,8 @@ export function createBureauCanvasOptions(getWorkspacePath = () => process.cwd()
 
 export async function buildState(input, options = {}) {
     const result = await loadConfigPayload(input.dir, options);
-    const config = configWithPlan(result.config, input.instanceId, input.dir);
+    const plan = pendingPlan(input.instanceId, options);
+    const config = configWithPlan(result.config, plan, input.dir);
     const payload = payloadFromResult({ ...result, config });
     const view = configView(payload);
     const layouts = await loadLayoutSidecar(input.dir, options);
@@ -200,13 +201,23 @@ export async function buildState(input, options = {}) {
         generalFindings: generalFindings(result.findings ?? []),
         config: { view, layout: configLayout(view), relation: relationView(payload) },
         pipelines,
-        plan: planSummary(input.instanceId),
+        plan: planSummary(plan),
     };
     return { ...state, selectedPipeline: selectedPipeline(state, input.pipeline) };
 }
 
-function configWithPlan(config, instanceId, dir) {
-    const plan = plans.get(instanceId);
+/**
+ * The unsaved work this state should overlay, and none when the payload is
+ * pinned. `sample: true` promises the bundled sample *as committed*, so the
+ * host's own pending writes must not reach it: the State Lab renders every
+ * modelled state from that one payload, and a leaked plan would draw a draft
+ * bar over the 200-odd states whose registry entry declares it has none.
+ */
+function pendingPlan(instanceId, options) {
+    return options.sample ? null : (plans.get(instanceId) ?? null);
+}
+
+function configWithPlan(config, plan, dir) {
     const next = structuredClone(config ?? { repos: {}, roles: {}, assignments: {}, pipelines: {} });
     if (!plan) {
         return next;
@@ -243,6 +254,9 @@ function overlayRemoval(config, removal) {
 async function loadLayoutSidecar(dir, options) {
     if (options.layouts) {
         return options.layouts;
+    }
+    if (options.sample) {
+        return {};
     }
     return readLayout(dir);
 }
@@ -810,6 +824,12 @@ async function runPlanIntent(entry, intent, response) {
  * so it is not a second fixture kept in step by hand — `fallbackResult` reads
  * the one committed payload, and the state is assembled by `buildState` like
  * any other. The lab asks for it by name and says which one it is showing.
+ *
+ * The pin covers the *whole* payload, not just the config load. A canvas
+ * session's unsaved `/intent` writes and the contributor's on-disk `layout.json`
+ * both feed `buildState` too, and either one reaching the lab would show a
+ * reviewer a screen the registry never modelled — a draft bar on a state that
+ * declares none, or an editor arranged by whoever last dragged a node here.
  */
 async function sendSample(entry, response, headOnly) {
     const input = { dir: entry.state.dir, pipeline: entry.state.pipeline ?? undefined, instanceId: entry.state.instanceId };
@@ -817,7 +837,8 @@ async function sendSample(entry, response, headOnly) {
     sendJson(response, state, headOnly);
 }
 
-async function refreshState(entry) {    const input = {
+async function refreshState(entry) {
+    const input = {
         dir: entry.state.dir,
         pipeline: entry.state.pipeline ?? undefined,
     };
@@ -826,8 +847,7 @@ async function refreshState(entry) {    const input = {
 }
 
 /** Pending, unsaved work, so the panel can show a draft rather than look saved. */
-function planSummary(instanceId) {
-    const plan = plans.get(instanceId);
+function planSummary(plan) {
     if (!plan || (plan.writes.length === 0 && plan.removals.length === 0)) {
         return null;
     }

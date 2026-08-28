@@ -104,7 +104,63 @@ test("serves the bundled sample the state lab starts from", async () => {
     }
 });
 
-test("Copilot canvas host remains frameable", async () => {    const instanceId = "bureau-embedded-frame-test";
+/**
+ * The pin `/sample` makes is over the *whole* payload, not just the config
+ * load. Two other host inputs reach `buildState`: this canvas session's
+ * unsaved `/intent` writes, and the contributor's `layout.json` on disk.
+ * Either one leaking would show a State Lab reviewer a screen the registry
+ * never modelled — a draft bar on one of the 200-odd states that declare
+ * `draft: "none"`, or an editor arranged by whoever last dragged a node in
+ * this checkout — and the lab's own base note would not catch it, because a
+ * plan overlay leaves the sample's assignment and pipelines exactly where
+ * `expectedByFixtures()` looks for them.
+ *
+ * Both halves are asserted in **both directions** against the same host, since
+ * "the sample carries no draft" is not the claim: a sample that could never
+ * carry one would satisfy it. `/state` must show each leak and `/sample` must
+ * not, so this fails if the pin stops holding *and* if the leak stops being
+ * producible — the second being how a gate quietly turns into scenery.
+ */
+test("the bundled sample is pinned against the host's draft and saved layout", async () => {
+    const instanceId = "bureau-sample-pinned-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-pin-"));
+    const arrangement = { implement: { x: 321, y: 654 } };
+    const sidecar = { pipelines: { "agent-eligible-pipeline": { steps: arrangement } } };
+    await writeFile(join(dir, "layout.json"), `${JSON.stringify(sidecar)}\n`);
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { dir } });
+    try {
+        const planned = await fetch(new URL("/intent", opened.url), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Bureau-Capability": canvas.servers.get(instanceId).capability,
+            },
+            body: JSON.stringify({
+                kind: "create",
+                input: { kind: "role", name: "sample-pin-probe" },
+            }),
+        }).then((response) => response.json());
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        const shown = (state) => ({
+            draft: state.plan !== null,
+            arranged: state.pipelines["agent-eligible-pipeline"]?.arrangement ?? {},
+        });
+        assert.deepStrictEqual(
+            { planned: planned.ok, live: shown(await read("/state")), sample: shown(await read("/sample")) },
+            {
+                planned: true,
+                live: { draft: true, arranged: arrangement },
+                sample: { draft: false, arranged: {} },
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("Copilot canvas host remains frameable", async () => {
+    const instanceId = "bureau-embedded-frame-test";
     const options = canvas.createBureauCanvasOptions(() => process.cwd());
     const opened = await options.open({ instanceId, input: {} });
     try {
