@@ -52,6 +52,52 @@ export function auditNames(expected, present) {
 }
 
 /**
+ * The eight bytes every PNG opens with, and the eight its final chunk closes
+ * with. Both ends, because they answer different questions: the header says a
+ * file is a PNG at all, and `IEND` says the writer got to the end of it. A
+ * worker killed mid-write leaves a file with a perfectly good header.
+ */
+const PNG_OPEN = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const PNG_CLOSE = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+
+/** How many bytes of each end `auditBytes` needs to be given. */
+export const PNG_ENDS = PNG_OPEN.length;
+
+function matches(bytes, expected) {
+  return expected.every((byte, index) => bytes?.[index] === byte);
+}
+
+/**
+ * Renders that are files in name only.
+ *
+ * `auditNames` is arithmetic over a *file list*, and a file list is the one
+ * thing a broken render still looks right in. Truncating every published PNG to
+ * zero bytes left the gallery suites green at 54 of 54: every expected name was
+ * present, every record parsed, every twin compared — and the artefact a human
+ * had been sent to review was five hundred broken images. Completeness had
+ * never once been asked whether the files had anything in them.
+ *
+ * Two lists rather than one, because they are two different accidents and read
+ * differently to whoever has to fix them: `empty` is a file that was created and
+ * never written, which is a run that fell over between the two; `malformed` is
+ * bytes that are not a whole PNG, which is a writer that was interrupted or an
+ * encoder that failed. Neither can come out differently on a contended machine,
+ * so both belong with the arithmetic the audit spec gates on.
+ */
+export function auditBytes(shots) {
+  const empty = [];
+  const malformed = [];
+  for (const shot of shots) {
+    if (!shot.size) {
+      empty.push(shot.name);
+    } else if (!matches(shot.open, PNG_OPEN) || !matches(shot.close, PNG_CLOSE)) {
+      malformed.push(shot.name);
+    }
+  }
+  return { empty: empty.sort(), malformed: malformed.sort() };
+}
+
+/**
  * Every render name a declared twin mentions.
  *
  * Used to decide which renders are worth filing a full signature for: only a

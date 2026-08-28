@@ -12,12 +12,12 @@
 // assert that the figures it links exist — it runs while other workers are
 // still rendering, and says so — and that is exactly the gap this closes.
 
-import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { RENDER_TWINS, STATES } from "../../web/statelab/registry.mjs";
 import { VIEWPORTS } from "../../web/statelab/selectors.mjs";
-import { auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings } from "./gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, movingShots, partitionFindings, PNG_ENDS } from "./gallery-audit.mjs";
 import { applyMarks, escape, SETTLED_INK, SETTLED_PHRASE } from "./gallery-index.mjs";
 import { publishGallery } from "./gallery.mjs";
 import { GALLERY, staging } from "./gallery-paths.mjs";
@@ -120,6 +120,17 @@ export function resolveDirs(dirs = {}) {
  * the offline suite asks which function was handed. As a seam it is answerable
  * twice over — a resolver that returns a pair unrelated to `dirs` must be the
  * pair audited, which an inline copy reading `dirs` directly cannot satisfy.
+ *
+ * There is exactly one way out of here without an audit, and it is that the run
+ * published nothing. A second one used to exist: a run that published renders
+ * but no `index.html` returned `ran: false`, on the reasoning that a narrow
+ * `--grep` can leave the index out and its renders are still worth keeping. The
+ * reasoning was sound and the return value was not — `ran: false` is what
+ * `specs/gallery.audit.spec.mjs` skips on, so deleting the staged index from a
+ * full matrix run turned a gallery with five hundred unaudited figures into a
+ * *skipped* check and a green run (3 passed, 1 skipped). The absence of the
+ * index was excusing the audit from noticing the absence of the index. A missing
+ * index is a finding now, reported with the rest.
  */
 export async function auditGallery(dirs, resolve) {
   const { staging: stageDir, gallery: outDir } = resolve(dirs);
@@ -134,14 +145,6 @@ export async function auditGallery(dirs, resolve) {
     return { ran: false, reason: "this run rendered no states, so there is no gallery to audit", incomplete: [], staging: stageDir };
   }
   console.log(`gallery: published ${published.length} file(s) to ${outDir}`);
-  // A full matrix run always writes the index, including a failing one — it is
-  // an ordinary test and nothing short-circuits the run. A narrower `--grep`
-  // can leave it out, and the renders are still worth keeping, so this says so
-  // rather than withholding them.
-  if (!published.includes("index.html")) {
-    console.log(`gallery: this run rendered no index; browse the files directly under ${outDir}`);
-    return { ran: false, reason: "this run rendered states but no index, so the gallery is not a matrix to audit", incomplete: [] };
-  }
   return { ...await report(published, records, unreadable, outDir), reason: null };
 }
 
@@ -198,6 +201,43 @@ function stringify(records, pick) {
 }
 
 /**
+ * The size and both ends of every published render, which is all `auditBytes`
+ * needs to say whether a file has a whole PNG in it.
+ *
+ * Ends rather than whole files: five hundred screenshots is some tens of
+ * megabytes, and reading all of it to look at sixteen bytes per file would put
+ * a cost on the teardown that the check does not need.
+ *
+ * A file that cannot be opened is reported as a render of no size rather than
+ * allowed to throw. It is the same news to a reviewer — there is nothing behind
+ * this figure — and a throw here would take down the audit that was about to
+ * say so.
+ */
+async function readEnds(dir, names) {
+  return Promise.all(names.map(async (name) => {
+    const handle = await open(join(dir, name), "r").catch(() => null);
+    if (!handle) {
+      return { name, size: 0 };
+    }
+    try {
+      const { size } = await handle.stat();
+      return { name, size, open: await slice(handle, size, 0), close: await slice(handle, size, size - PNG_ENDS) };
+    } finally {
+      await handle.close();
+    }
+  }));
+}
+
+async function slice(handle, size, at) {
+  if (size < PNG_ENDS) {
+    return [];
+  }
+  const buffer = Buffer.alloc(PNG_ENDS);
+  await handle.read(buffer, 0, PNG_ENDS, at);
+  return [...buffer];
+}
+
+/**
  * States the gallery links but does not hold, states it holds that the registry
  * does not, renders this run could not prove had stopped changing, and states
  * that draw one another's screen without saying so.
@@ -206,13 +246,15 @@ function stringify(records, pick) {
  * between them; they are answers to two different kinds of question.
  *
  * `incomplete` is arithmetic over a file list: did this run write every render
- * the registry asked for, does every published render belong to a state, and
- * did every published render file a record that can be read? None of that
- * depends on comparing one render against another, so none of it can drift, and
- * a run that gets it wrong has published an artefact that lies about its own
- * extent — the banner has always said so in red, and until now nothing was
- * answerable for it. A red notice carried only by a console line is the exact
- * defect this branch exists to remove, made by the instrument that reports it.
+ * the registry asked for, does every published render belong to a state, is
+ * there a whole PNG behind each of those names, does the gallery carry an index
+ * saying what it holds, and did every published render file a record that can be
+ * read? None of that depends on comparing one render against another, so none of
+ * it can drift, and a run that gets it wrong has published an artefact that lies
+ * about its own extent — the banner has always said so in red, and until now
+ * nothing was answerable for it. A red notice carried only by a console line is
+ * the exact defect this branch exists to remove, made by the instrument that
+ * reports it.
  *
  * `claims` — two states drawing one screen, or a declared twin that parted —
  * stays reported rather than asserted, and that remains a measured decision. It
@@ -246,6 +288,7 @@ async function report(published, records, unreadable, outDir) {
   const unsettled = auditSettled(records);
   const motion = auditMotion(records, movingShots(STATES, Object.values(VIEWPORTS)));
   const unaudited = auditUnaudited(expected, published, records, unreadable);
+  const bytes = auditBytes(await readEnds(outDir, published.filter((name) => name.endsWith(".png"))));
   // The two ways a render ends up with no usable record read differently to
   // whoever has to fix them, and identically to whoever has to review the
   // gallery: nothing is known about the screen either way. So they are reported
@@ -254,8 +297,11 @@ async function report(published, records, unreadable, outDir) {
   const parted = partitionFindings(twins);
   const drift = parted.drift.map((finding) => `${finding.kind}: ${finding.detail}`);
   const incomplete = [
+    ...(published.includes("index.html") ? [] : ["the gallery holds renders and no index, so nothing in it says which states it claims to hold"]),
     ...(names.missing.length ? [`${names.missing.length} render(s) were never written by this run`] : []),
     ...(names.stray.length ? [`${names.stray.length} render(s) belong to no state in the registry`] : []),
+    ...(bytes.empty.length ? [`${bytes.empty.length} render(s) were published with no bytes in them, so the gallery links a broken image: ${bytes.empty.slice(0, 5).join(", ")}`] : []),
+    ...(bytes.malformed.length ? [`${bytes.malformed.length} render(s) are not a whole PNG, so the writer never reached the end of them: ${bytes.malformed.slice(0, 5).join(", ")}`] : []),
     ...(unreadable.length ? [`${unreadable.length} render(s) filed a record this run could not read, so nothing is known about them: ${unreadable.slice(0, 5).join(", ")}`] : []),
     ...(unaudited.length ? [`${unaudited.length} render(s) were published without a record, so nothing is known about them: ${unaudited.slice(0, 5).join(", ")}`] : []),
     ...(motion.stray.length ? [`${motion.stray.length} render(s) never stopped changing and no state declares them in motion, so their screenshots are whichever frame the run caught: ${motion.stray.slice(0, 5).join(", ")}`] : []),

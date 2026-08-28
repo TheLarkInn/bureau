@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, shotName } from "../e2e/playwright/gallery-audit.mjs";
+import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_ENDS, shotName } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
 import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
 import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
@@ -875,4 +875,50 @@ test("the renders entitled to move are the registry's own, at every viewport", (
     { count: moving.length, expected: declared.length * Object.values(REAL_VIEWPORTS).length, unique: new Set(moving).size },
     { count: 2, expected: 2, unique: 2 },
   );
+});
+
+/**
+ * A name in a directory listing is not a picture.
+ *
+ * `auditNames` decides completeness from a file list, and a file list is the one
+ * place a broken render still looks right: truncating every published PNG to
+ * zero bytes left the gallery suites green at 54 of 54, and the artefact a human
+ * had been sent to review was five hundred broken images under five hundred
+ * headings.
+ *
+ * Table-driven over the four things a published file can be, because the
+ * interesting one is the third: a file with a perfect PNG header that stops
+ * before `IEND`. That is what a worker killed mid-write leaves behind, it is
+ * indistinguishable from a whole render by size alone, and a check reading only
+ * the first eight bytes would pass it.
+ */
+test("a published render is asked whether it holds a whole PNG, not merely a name", () => {
+  const OPEN = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const CLOSE = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+  const found = auditBytes([
+    { name: "desktop--whole.png", size: 120, open: OPEN, close: CLOSE },
+    { name: "desktop--empty.png", size: 0 },
+    { name: "desktop--truncated.png", size: 90, open: OPEN, close: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77] },
+    { name: "desktop--notapng.png", size: 40, open: [0x3c, 0x21, 0x44, 0x4f, 0x43, 0x54, 0x59, 0x50], close: CLOSE },
+  ]);
+  assert.deepStrictEqual(found, {
+    empty: ["desktop--empty.png"],
+    malformed: ["desktop--notapng.png", "desktop--truncated.png"],
+  });
+});
+
+/**
+ * The two ends the audit compares against are the ones a real PNG has. Spelled
+ * as bytes in the test and derived from a genuine encoder here, so a typo in the
+ * constants cannot agree with a matching typo in the expectation.
+ */
+test("the bytes a whole PNG opens and closes with are the ones a real one carries", () => {
+  const real = [...Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  )];
+  const found = auditBytes([
+    { name: "desktop--real.png", size: real.length, open: real.slice(0, PNG_ENDS), close: real.slice(-PNG_ENDS) },
+  ]);
+  assert.deepStrictEqual([found, real.length > PNG_ENDS], [{ empty: [], malformed: [] }, true]);
 });

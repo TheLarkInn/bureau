@@ -18,6 +18,7 @@ import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, SETTLE_BU
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
+import { holdOffline, offlineFindings } from "./offline.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
 /*
@@ -49,6 +50,9 @@ const FRESH = Symbol("fresh-session");
 
 /** Writes the floor had to hold because the state declared no intercept. */
 const UNGUARDED = Symbol("unguarded-writes");
+
+/** Destinations the page asked for that are not this machine. */
+const OFFSITE = Symbol("offsite-requests");
 
 async function bootCanvas() {
   const child = spawn(process.execPath, [SERVE, "--dir", CONFIG], {
@@ -89,16 +93,23 @@ export const test = base.extend({
   ],
 
   /**
-   * Every page in this suite sits on the write floor and stands still, before
-   * it is navigated and before any spec can add a route of its own.
+   * Every page in this suite sits on the write floor and on the offline floor,
+   * and stands still, before it is navigated and before any spec can add a
+   * route of its own.
    *
-   * Here rather than in `pageAdapter` because both are properties of the
+   * Here rather than in `pageAdapter` because all three are properties of the
    * *suite*, not of the driver: `specs/state-lab.spec.mjs` drives the lab
    * through its own `page.goto` and never builds an adapter, so a floor that
    * arrived with the adapter would have left the one spec that clicks through
    * a UI the registry does not enumerate as the only one uncovered.
+   *
+   * The offline floor goes down first so it is consulted last. Playwright runs
+   * route handlers newest-first, and a state's own intercept is entitled to the
+   * last word about a loopback path; nothing is entitled to the last word about
+   * a request that leaves the machine.
    */
   page: async ({ page }, use) => {
+    page[OFFSITE] = await holdOffline(page);
     await holdWrites(page);
     await freezeMotion(page);
     await use(page);
@@ -652,7 +663,7 @@ async function sample(state, page) {
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
     { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST } },
   );
-  return { snapshot, failures: [...heldWrites(page), ...verdict(state, snapshot, { slack: 2 })] };
+  return { snapshot, failures: [...heldWrites(page), ...leftTheMachine(page), ...verdict(state, snapshot, { slack: 2 })] };
 }
 
 /**
@@ -669,6 +680,19 @@ function heldWrites(page) {
     kind: "unguarded-write",
     detail: `\`${kind}\` was posted to ./intent with no intercept declared for it, so this path would have written to the host`,
   }));
+}
+
+/**
+ * Requests that left this machine, reported against the state that made them.
+ *
+ * Same shape as `heldWrites` and for the same reason: the floor already refused
+ * them, so without this the only trace would be some unrelated control missing
+ * from the render. Reported per state rather than once per run because the
+ * question a reader has is *which screen reached out*, and the matrix is the one
+ * instrument that can answer it.
+ */
+function leftTheMachine(page) {
+  return offlineFindings(page[OFFSITE] ?? []);
 }
 
 /**

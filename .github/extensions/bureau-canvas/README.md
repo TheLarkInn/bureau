@@ -1169,6 +1169,24 @@ that does not exist, so every run serves the same bundled sample with no
 `node_modules` is absent, so a fresh clone still runs every other gate; CI
 installs the browser, so there it always runs.
 
+That "no network" was an arrangement rather than a check until
+`e2e/playwright/offline.mjs` existed. The hermetic mode, the committed runs
+root and the absence of any fixture that asks for a host are all true, and none
+of them could be contradicted by a run: a `fetch("https://example.com/")` added
+to `web/app.mjs`, swallowing its own rejection, left all 147 browser tests
+green. Both fixture families now sit on an offline floor, in two parts because
+they fail in opposite directions. `page.on("request")` sees every request the
+page makes — including one a spec's own `route.continue()` sends straight out
+without consulting the handlers underneath it — and cannot be got round, which
+makes it the detector. A `page.route("**/*")` registered before any spec's
+routes is the refusal: Playwright runs handlers newest-first, so it is consulted
+last, and a request no state claimed is aborted before it leaves the machine.
+The matrix reports a destination as a per-state finding beside its held writes,
+so the news is *which screen reached out*; the PR suite throws at fixture
+teardown. `offsite()` fails closed — a URL the parser cannot read is refused
+rather than waved through, since the one input nobody anticipated is exactly
+the one that must not be the one that passes.
+
 Rules that need a second repo or role to express — reordering repos, and the
 read-only-primary warning — are asserted in the offline suite instead, since
 the bundled sample registers only one repo.
@@ -1208,3 +1226,21 @@ whatever was passed; and it deliberately does not consult a clock, because a
 filesystem that records mtime more coarsely than `Date.now()` reports it dates
 a shot written after the run began as older than it. A directory is empty or it
 is not.
+
+The audit is asked whether the artefact is real, not only whether it is named.
+Two ways a published gallery used to pass while being useless:
+
+- **No index.** `auditGallery` returned `ran: false` for a run that published
+  renders but no `index.html`, on the reasonable ground that a narrow `--grep`
+  can leave the index out. `ran: false` is what `specs/gallery.audit.spec.mjs`
+  *skips* on — so deleting the staged index from a full matrix run turned five
+  hundred unaudited figures into a **skipped check and a green run**. The
+  absence of the index was excusing the audit from noticing the absence of the
+  index. A missing index is a finding now, reported with the rest.
+- **No bytes.** Completeness was arithmetic over a *file list*, and a file list
+  is the one place a broken render still looks right. Truncating every published
+  PNG to zero bytes left the gallery suites green at **54 of 54**. `auditBytes`
+  reads both ends of every published render: the header says it is a PNG, and
+  the `IEND` chunk says the writer reached the end of it — which is the half a
+  size check alone would miss, and the likelier accident, because it is what a
+  worker killed mid-write leaves behind.

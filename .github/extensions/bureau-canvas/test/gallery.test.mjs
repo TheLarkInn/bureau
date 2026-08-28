@@ -98,6 +98,12 @@ test("each run stages under its own process, and a worker without one refuses", 
 const VIEWPORT_LIST = Object.values(VIEWPORTS);
 const SHOT = (state, viewport) => shotName(state.id, viewport.id);
 
+/** A whole, valid 1×1 PNG — header, one IDAT, and the IEND that closes it. */
+const ONE_PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 /** The index page the matrix really writes, over the real registry. */
 function realIndex() {
   return indexPage(rowsFor(STATES, VIEWPORT_LIST, SHOT), STATES, VIEWPORT_LIST);
@@ -110,14 +116,19 @@ function realIndex() {
  * has something to report and the alarm banner is raised — which is the only
  * condition under which a banner is written at all, and therefore the only way
  * to ask whether the written one reaches disk.
+ *
+ * The render is a real PNG rather than the word `png`, and that is load-bearing
+ * now: the audit reads both ends of every published file, so a fixture that is
+ * not a PNG would report a malformed render in every test here and drown the
+ * finding each one is actually about.
  */
-async function staged(t, index, shot) {
+async function staged(t, index, shot, bytes = ONE_PIXEL) {
   const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const stage = join(root, "staging");
   await mkdir(join(stage, "signatures"), { recursive: true });
   await writeFile(join(stage, "index.html"), index, "utf8");
-  await writeFile(join(stage, shot), "png", "utf8");
+  await writeFile(join(stage, shot), bytes);
   await writeFile(join(stage, "signatures", `${shot}.json`), JSON.stringify({ signature: "one", settled: false }), "utf8");
   return { staging: stage, gallery: join(root, "gallery") };
 }
@@ -190,6 +201,68 @@ test("an index whose anchors have drifted is a finding, not a quiet publish", as
     ],
     [true, false, false],
   );
+});
+
+/**
+ * A gallery with no index is audited, not excused.
+ *
+ * This is the shape of hole the whole branch is written against, made by the
+ * audit's own control flow. `auditGallery` used to return `ran: false` for a run
+ * that published renders and no `index.html`, and `ran: false` is what
+ * `specs/gallery.audit.spec.mjs` *skips* on — so removing the index from a full
+ * matrix run did not produce a failing audit, it produced a run with no audit in
+ * it at all, reported as `3 passed, 1 skipped` and a zero exit.
+ *
+ * The absence of the index was excusing the audit from noticing the absence of
+ * the index. So the run is audited either way, and the missing index is one of
+ * the findings — asserted here from the outside, on `ran` and on `incomplete`
+ * together, because a finding recorded on a result nobody reads is the same
+ * defect one step along.
+ */
+test("a gallery published without an index is a finding rather than a skipped audit", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const dirs = await staged(t, realIndex(), shot);
+  await rm(join(dirs.staging, "index.html"));
+
+  const audit = await audited(dirs);
+
+  assert.deepEqual(
+    [audit.ran, audit.incomplete.some((line) => line.includes("no index"))],
+    [true, true],
+  );
+});
+
+/**
+ * And a render with nothing in it is a hole in the gallery.
+ *
+ * Completeness was arithmetic over a *file list*, which is the one thing a
+ * broken render still looks correct in: truncating every published PNG to zero
+ * bytes left the gallery suites green at 54 of 54, because every expected name
+ * was present and no one had ever asked whether the files had anything behind
+ * them. A reviewer following that gallery meets five hundred broken images under
+ * five hundred headings.
+ *
+ * Both accidents are asked about in one table: a file created and never written,
+ * and bytes that stop before the PNG does. The second is the one a size check
+ * alone would miss, and it is the likelier of the two — it is what a worker
+ * killed mid-write leaves behind.
+ */
+test("a render with no bytes, and one that stops before the PNG does, are both findings", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const cases = [
+    { bytes: Buffer.alloc(0), says: "no bytes in them" },
+    { bytes: ONE_PIXEL.subarray(0, ONE_PIXEL.length - 4), says: "not a whole PNG" },
+    { bytes: ONE_PIXEL, says: null },
+  ];
+
+  const found = [];
+  for (const { bytes, says } of cases) {
+    const audit = await audited(await staged(t, realIndex(), shot, bytes));
+    const named = audit.incomplete.filter((line) => line.includes("no bytes in them") || line.includes("not a whole PNG"));
+    found.push(says ? named.length === 1 && named[0].includes(says) && named[0].includes(shot) : named.length === 0);
+  }
+
+  assert.deepEqual(found, [true, true, true]);
 });
 
 /**
