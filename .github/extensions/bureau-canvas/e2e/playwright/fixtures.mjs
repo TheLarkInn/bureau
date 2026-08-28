@@ -117,6 +117,17 @@ async function resetView(page, url) {
     }));
 }
 
+/** One canvas host and scratch config per test, so writes are always safe. */
+async function canvasHost({}, use) {
+  const dir = await scratchConfig();
+  const runs = await scratchRuns();
+  const { child, url } = await bootCanvas(dir, runs);
+  await use({ url, dir, runs });
+  child.kill("SIGTERM");
+  await rm(dir, { recursive: true, force: true });
+  await rm(runs, { recursive: true, force: true });
+}
+
 export const test = base.extend({
   /**
    * Every page in this suite sits on the offline floor before it is navigated.
@@ -142,15 +153,7 @@ export const test = base.extend({
   },
 
   /** One canvas host and scratch config per test, so writes are always safe. */
-  canvas: async ({}, use) => {
-    const dir = await scratchConfig();
-    const runs = await scratchRuns();
-    const { child, url } = await bootCanvas(dir, runs);
-    await use({ url, dir, runs });
-    child.kill("SIGTERM");
-    await rm(dir, { recursive: true, force: true });
-    await rm(runs, { recursive: true, force: true });
-  },
+  canvas: canvasHost,
 
   /** The canvas page with the assignment card expanded, watching for errors. */
   card: async ({ page, canvas }, use) => {
@@ -187,3 +190,17 @@ export const test = base.extend({
 });
 
 export { expect } from "@playwright/test";
+
+/**
+ * The same canvas host, on a page the floor has *not* already been installed on.
+ *
+ * Every other spec in this directory gets `page` from the override above, which
+ * puts `holdOffline` underneath it and throws if anything was reached. That is
+ * the right arrangement for a spec about the product and the wrong one for a
+ * spec about the floor itself: a test whose subject is a refused connection
+ * cannot use a fixture that fails the test when a connection is refused.
+ *
+ * So `specs/offline-floor.spec.mjs` installs the floor itself, on this, and
+ * reads what it recorded rather than being thrown by it.
+ */
+export const floorTest = base.extend({ canvas: canvasHost });

@@ -943,6 +943,9 @@ test("the renders entitled to move are the registry's own, at every viewport", (
  * every other clause. `badSig` is the mirror: correct size, dimensions and
  * close, and one wrong byte in the signature.
  *
+ * One wrong byte pins one byte, which is why `badSig` is not the whole of that
+ * claim. The test below corrupts each of the sixteen in turn.
+ *
  * The ends are taken from a real encoder's output the way the teardown takes
  * them, so a typo in the constants cannot agree with a matching typo here —
  * which is also why `noIdat` staples the real file's own tail on rather than a
@@ -993,6 +996,32 @@ test("a header describing a picture of no size is not a whole PNG", () => {
   const found = [["desktop--nowidth.png", 16], ["desktop--noheight.png", 20]]
     .map(([name, at]) => auditBytes([ends(name, zeroed(at))]).malformed);
   assert.deepStrictEqual(found, [["desktop--nowidth.png"], ["desktop--noheight.png"]]);
+});
+
+/**
+ * Every byte the header is compared against, corrupted on its own.
+ *
+ * `badSig` flips byte zero, and one row that fails on one byte pins one byte.
+ * The comparison is sixteen — the eight-byte signature and the eight that open
+ * `IHDR`, its fixed length of 13 and its type — and the other fifteen were
+ * marks: narrowing `matches(shot.open, [...PNG_OPEN, ...PNG_IHDR])` to
+ * `matches(shot.open, [PNG_OPEN[0]])` left all 43 tests green, `badSig`
+ * included. A file whose signature is right and whose first chunk claims a
+ * length of 14, or is not `IHDR` at all, would have been read as a whole render.
+ *
+ * A conjunct is pinned by a row that fails on it alone, so a sixteen-byte
+ * conjunct needs sixteen rows. Each flips one byte of a real encoder's output
+ * and nothing else: the size, both dimensions and the closing chunk stay exactly
+ * as they were, so the header comparison is the only clause that can be the
+ * reason, and it is the reason sixteen times.
+ */
+test("every byte of the header a whole PNG opens with is one the audit reads", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const header = real.slice(0, 16);
+  const flipped = (at) => real.map((byte, index) => (index === at ? byte ^ 0xff : byte));
+  const found = header.map((_, at) => auditBytes([ends(`desktop--byte${at}.png`, flipped(at))]).malformed);
+
+  assert.deepStrictEqual(found, header.map((_, at) => [`desktop--byte${at}.png`]));
 });
 
 /**

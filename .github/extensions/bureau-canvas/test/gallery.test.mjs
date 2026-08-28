@@ -122,14 +122,14 @@ function realIndex() {
  * not a PNG would report a malformed render in every test here and drown the
  * finding each one is actually about.
  */
-async function staged(t, index, shot, bytes = ONE_PIXEL) {
+async function staged(t, index, shot, bytes = ONE_PIXEL, record = { signature: "one", settled: false }) {
   const root = await mkdtemp(join(tmpdir(), "bureau-audit-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const stage = join(root, "staging");
   await mkdir(join(stage, "signatures"), { recursive: true });
   await writeFile(join(stage, "index.html"), index, "utf8");
   await writeFile(join(stage, shot), bytes);
-  await writeFile(join(stage, "signatures", `${shot}.json`), JSON.stringify({ signature: "one", settled: false }), "utf8");
+  await writeFile(join(stage, "signatures", `${shot}.json`), JSON.stringify(record), "utf8");
   return { staging: stage, gallery: join(root, "gallery") };
 }
 
@@ -270,6 +270,42 @@ test("a render with no bytes, and one that stops before the PNG does, are both f
   }
 
   assert.deepEqual(found, [true, true, true, true]);
+});
+
+/**
+ * A record that says nothing about settling is a finding, not a record to skip.
+ *
+ * `auditMotion` grew an `unproved` list for exactly this: its first two rules
+ * were written as filters over records carrying a boolean, so a record with no
+ * `settled` field fell out of both and was reported by neither. But the list was
+ * only ever asked for directly, in the unit table — no test carried such a
+ * record through `auditGallery`, so the line in `report` that turns it into a
+ * finding could be deleted with all 438 offline tests green. The rule was
+ * proved and its one consumer was not, which is the same hole one step along:
+ * a run could publish five hundred renders it can say nothing about and report
+ * it nowhere.
+ *
+ * So a record goes in without the field, through the real audit, off a real
+ * disk. Three rows, because absence is not the only way to say nothing: a
+ * non-boolean is evidence too and must read the same, and a record that *does*
+ * carry the proof must not be named — an `unproved` list that fires on
+ * everything would gate every run and be switched off within a week.
+ */
+test("a render whose record carries no settle evidence is a finding on the run's own artefact", async (t) => {
+  const shot = SHOT(STATES[0], VIEWPORT_LIST[0]);
+  const cases = [
+    [{ signature: "one" }, true],
+    [{ signature: "one", settled: "yes" }, true],
+    [{ signature: "one", settled: true }, false],
+  ];
+
+  const found = [];
+  for (const [record] of cases) {
+    const audit = await audited(await staged(t, realIndex(), shot, ONE_PIXEL, record));
+    found.push(audit.incomplete.some((line) => line.includes("no settle evidence") && line.includes(shot)));
+  }
+
+  assert.deepEqual(found, cases.map(([, named]) => named));
 });
 
 /**
