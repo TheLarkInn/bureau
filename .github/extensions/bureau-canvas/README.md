@@ -553,6 +553,49 @@ published before the rule existed, and there are none: the audit reads only the
 records this run staged. It protected nothing and hid the one thing it was
 watching for, so absent evidence is now `unproved` and reported with the rest.
 
+### The words are found where they live, not where they are contained
+
+A promise that names an element is checked on that element. Most of this
+registry's promises name none — **1,068 of 1,190** — and a plain phrase used to
+be settled against `body.innerText`, which reports words drawn in transparent
+ink, inside a container at `opacity: 0`, or behind a `filter`, exactly as the
+DOM-only check always did. So the rule the scoped promises get is the rule all
+of them get: a plain phrase is found on the element holding it in its **own
+direct text**, and judged on the ink that reaches the screen.
+
+*Own direct text* is the load-bearing half, and it is a narrowing in the
+**loosening** direction — which is why it needs a fixture rather than a comment.
+Reading `innerText` instead would add every ancestor that merely *contains* the
+words, and an ancestor is honest whatever the element actually holding them is
+painted in. Since one holder painting the words honestly keeps the promise, an
+innocent wrapper would vouch for a label the reader cannot see: a false
+negative, in the module that exists to catch exactly that.
+
+Both clauses now have a fixture that fails on them alone, and neither could
+before — every carrier fixture was a lone leaf, so the walk could have read
+`innerText` and agreed with all of them:
+
+| fixture | the screen | answer |
+|---|---|---|
+| `a masked promise` | the words in a leaf drawn in nothing, under an honestly-painted wrapper carrying no text node of its own | `ink: false` |
+| `a shared promise` | two holders of the same words, the unreadable one **first** | `ink: true` |
+
+| mutation | result | before this round |
+|---|---|---|
+| `ownText` reads `innerText` | **1 failed** — names `a masked promise` | **84 passed, 0 failed** |
+| `honest` judges `holders[0]` alone | **1 failed** | **84 passed, 0 failed** |
+| restored | **84 passed** | 84 |
+
+The second row is why the pair exists rather than one fixture. "One element
+painting the words honestly keeps the promise" is a claim about *all* the
+holders; with a single holder per phrase, a walk that judged the first one alone
+was indistinguishable from the rule, and would report a screen the reader can
+read perfectly well as unreadable.
+
+**No production module changed.** `checks.mjs` is byte-for-byte what it was, so
+the renders and their verdicts are identical. What changed is whether two of its
+clauses are able to fail.
+
 ### A mark can be attached, spelled right, and painted in nothing
 
 Every rule above binds where a mark attaches and what it says. None of them

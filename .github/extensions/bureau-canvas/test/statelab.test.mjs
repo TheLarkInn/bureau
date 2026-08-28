@@ -2240,7 +2240,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2296,14 +2296,21 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       ".descendant": { ink: true, injected: '"a descendant speaks"' },
     },
     // The promises that name no element, judged on whichever element holds the
-    // words in its own direct text. The last one is looked for and not found —
-    // words split across several elements — which is a determination about the
-    // document rather than a measurement that never happened, and is the one
-    // case `paintedPhrases` exempts.
+    // words in its own direct text. `a masked promise` is the narrowing itself:
+    // an ancestor contains those words and is painted honestly, and the answer
+    // is still `false`, because the element that actually holds them is drawn in
+    // nothing. `a shared promise` is the opposite direction — two holders, the
+    // unreadable one first — because one element painting the words honestly
+    // keeps a promise the whole page makes. The last one is looked for and not
+    // found — words split across several elements — which is a determination
+    // about the document rather than a measurement that never happened, and is
+    // the one case `paintedPhrases` exempts.
     carriers: {
       "a plain promise": { found: true, ink: true, injected: "" },
       "a hidden promise": { found: true, ink: false, injected: "" },
       "a true promise": { found: true, ink: true, injected: '"a false promise"' },
+      "a masked promise": { found: true, ink: false, injected: "" },
+      "a shared promise": { found: true, ink: true, injected: "" },
       "nowhere at all": { found: false, ink: true, injected: "" },
     },
     boxes: [
@@ -2614,6 +2621,30 @@ function pageStub() {
   });
   const overpainted = element({}, { innerText: "a true promise", childNodes: words("a true promise") });
   pseudos.set(overpainted, { "::after": { content: '"a false promise"' } });
+  // The narrowing itself, as a fixture rather than as a comment. Every carrier
+  // above is a leaf, so the walk could read `innerText` and agree with all of
+  // them — the clause that says *own direct text* had nothing that could tell
+  // the two apart, and it is the loosening direction that matters: an ancestor
+  // whose `innerText` merely contains the words is honest whatever the element
+  // actually holding them is painted in, so reading it would let a wrapper
+  // vouch for a label the reader cannot see. Here the words live in a leaf
+  // drawn in nothing, under a wrapper that carries no text node of its own.
+  // Direct text finds only the leaf and reports `ink: false`; `innerText`
+  // finds the wrapper too, and calls the screen honest.
+  const masked = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a masked promise",
+    childNodes: words("a masked promise"),
+  });
+  const masking = element({}, { innerText: "a masked promise", childNodes: [{ nodeType: 1 }] });
+  // And the rule one element painting the words honestly keeps the promise,
+  // which is a claim about *all* the holders and not about the first one. The
+  // invisible copy is listed first, so a walk that judged `holders[0]` alone
+  // would call this screen unreadable while a reader is looking straight at it.
+  const quietCopy = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a shared promise",
+    childNodes: words("a shared promise"),
+  });
+  const spokenCopy = element({}, { innerText: "a shared promise", childNodes: words("a shared promise") });
 
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
@@ -2713,7 +2744,7 @@ function pageStub() {
     ".deep": [deepCover],
     ".prefix": [prefixed],
     ".descendant": [deepWords],
-    "*": [plainly, invisibly, overpainted],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
