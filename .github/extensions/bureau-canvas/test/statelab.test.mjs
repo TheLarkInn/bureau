@@ -2240,7 +2240,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2301,7 +2301,10 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
     // is still `false`, because the element that actually holds them is drawn in
     // nothing. `a shared promise` is the opposite direction — two holders, the
     // unreadable one first — because one element painting the words honestly
-    // keeps a promise the whole page makes. The last one is looked for and not
+    // keeps a promise the whole page makes. `a spaced promise` holds its words
+    // wrapped across two source lines, the ordinary shape of real markup, and
+    // is the only one that asks whether runs of whitespace are folded before
+    // the words are looked for. The last one is looked for and not
     // found — words split across several elements — which is a determination
     // about the document rather than a measurement that never happened, and is
     // the one case `paintedPhrases` exempts.
@@ -2311,6 +2314,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "a true promise": { found: true, ink: true, injected: '"a false promise"' },
       "a masked promise": { found: true, ink: false, injected: "" },
       "a shared promise": { found: true, ink: true, injected: "" },
+      "a spaced promise": { found: true, ink: false, injected: "" },
       "nowhere at all": { found: false, ink: true, injected: "" },
     },
     boxes: [
@@ -2645,6 +2649,28 @@ function pageStub() {
     childNodes: words("a shared promise"),
   });
   const spokenCopy = element({}, { innerText: "a shared promise", childNodes: words("a shared promise") });
+  // And the flattening, which every carrier above was too tidy to ask about.
+  // Each of them holds its phrase as one already-flat string, so the collapse
+  // of runs of whitespace could be deleted and all of them would still be
+  // found — while in real markup a sentence wrapped across two source lines is
+  // the ordinary case, not the exotic one:
+  //
+  //     <p>
+  //       a spaced
+  //       promise
+  //     </p>
+  //
+  // The direction is what makes it matter. Without the collapse this text no
+  // longer contains the phrase, so the promise is reported `found: false` —
+  // and that is the one verdict `paintedPhrases` exempts, on the grounds that
+  // words split across several elements were never measured. So the words
+  // here, drawn in nothing, would be waved through as "not found" rather than
+  // convicted as unreadable: a false negative in the module whose whole
+  // purpose is catching copy that never reaches a reader.
+  const spaced = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a spaced promise",
+    childNodes: words("\n  a spaced\n  promise\n"),
+  });
 
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
@@ -2744,7 +2770,7 @@ function pageStub() {
     ".deep": [deepCover],
     ".prefix": [prefixed],
     ".descendant": [deepWords],
-    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
