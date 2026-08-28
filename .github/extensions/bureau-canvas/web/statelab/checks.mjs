@@ -281,14 +281,40 @@ export function collect(doc, request) {
     }
     return [...new Set(related)];
   };
-  const coveringLayer = (node) => relatedTo(node).some((item) =>
+  // Whether an element paints a positioned, filled layer of its own. Split out
+  // of `coveringLayer` because two callers need it at different reaches: a
+  // scoped promise asks it of a whole neighbourhood, and a carrier asks it of
+  // the one element proved to be in front of the words.
+  const layered = (item) =>
     ["::before", "::after"].some((part) => {
       const style = view.getComputedStyle(item, part);
       const exists = !["none", "normal"].includes(style.content);
       return exists
         && /absolute|fixed/u.test(style.position)
         && (opaque(style.backgroundColor) || (style.backgroundImage && style.backgroundImage !== "none"));
-    }));
+    });
+  const coveringLayer = (node) => relatedTo(node).some(layered);
+  // The element actually drawn in front of a node's centre, or nothing.
+  //
+  // `exposed` answers the same question as a boolean and treats "cannot tell"
+  // as exposed; this returns the blocker itself, so a caller can ask what it is
+  // rather than only that it exists.
+  const inFront = (node) => {
+    if (!doc.elementFromPoint) {
+      return null;
+    }
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    if (x < 0 || x > doc.documentElement.clientWidth || y < 0 || y > doc.documentElement.clientHeight) {
+      return null;
+    }
+    const front = doc.elementFromPoint(x, y);
+    return !front || front === node || node.contains(front) ? null : front;
+  };
   const generatedAround = (node) =>
     relatedTo(node)
       .flatMap((item) => [generated(item, "::before"), generated(item, "::after")])
@@ -424,6 +450,14 @@ export function collect(doc, request) {
     // perfectly and was reported readable, which is exactly the class of defect
     // this module exists to catch. The same `clipper` answers for a carrier as
     // for a box, so `auto` and `scroll` stay one gesture away rather than lost.
+    //
+    // Held to `clipped` rather than to `trimmed`, and the difference is
+    // deliberate. `trimmed` is waived on a pannable surface, because a graph
+    // card half out of frame is the surface working and the reader drags it
+    // back. Being *entirely* outside the frame is not waived there and never
+    // has been — "gone, whatever surface it is on" is the rule the measured
+    // boxes are already held to, and a phrase is not more readable than a
+    // control drawn in the same place.
     const framed = (node) => {
       const rect = node.getBoundingClientRect();
       const clip = clipper(node);
@@ -446,24 +480,47 @@ export function collect(doc, request) {
     // all — so it sits just above the ratio of ink that is literally its own
     // background. The grading gap is recorded as a limit, not closed here.
     const legible = (node) => {
+      // What cannot be measured is not convicted. `backdrop` reads
+      // `backgroundColor` and nothing else, so white text over a dark
+      // background *image* would read as white on the default white and fail a
+      // screen that is perfectly readable. An image's luminance is not
+      // available synchronously, so a phrase drawn over one is left alone and
+      // the gap is recorded as a limit.
+      for (let item = node; item; item = item.parentElement) {
+        const style = view.getComputedStyle(item);
+        if (style.backgroundImage && style.backgroundImage !== "none") {
+          return true;
+        }
+        if (opaque(style.backgroundColor)) {
+          break;
+        }
+      }
       const front = luminance(view.getComputedStyle(node).color);
       const back = luminance(backdrop(node));
       return (Math.max(front, back) + 0.05) / (Math.min(front, back) + 0.05) > 1.05;
     };
-    // An opaque layer of an ancestor's own, painted over the words themselves.
+    // An opaque layer painted over the words, by the element actually in front
+    // of them.
     //
-    // Neither half of this is usable alone, which is why the covering-layer
-    // sweep was left off carriers entirely. A sweep on its own reports every
-    // decorative overlay in the product as a substituted sentence, because a
-    // carrier is whatever element happened to hold the words rather than one
-    // the registry vouches for. `exposed` on its own convicts an ordinary
-    // label whose centre a legitimately positioned neighbour happens to cover.
-    // Asked together they are neither: a generated layer in the
-    // neighbourhood *and* something actually in front of the words at the
-    // point a reader looks at them. Ordinary decoration covers nothing and
-    // fails the second clause; an ordinary overlap paints no generated layer
-    // and fails the first.
-    const smothered = (node) => coveringLayer(node) && !exposed(node);
+    // Neither instrument is usable alone, which is why the covering-layer sweep
+    // was left off carriers entirely. `coveringLayer` sweeps a whole
+    // neighbourhood, so on its own it reports every decoration in the product
+    // as a substituted sentence — a carrier is whatever element happened to
+    // hold the words, not one the registry vouches for. A bare hit test is no
+    // better: it convicts any neighbour that legitimately covers a label's
+    // centre, a sticky bar or an open menu included.
+    //
+    // Asking them together is not enough either, and that was the first shape
+    // of this clause. An app shell with one decorative absolute `::before`
+    // anywhere above the carrier satisfies the sweep for *every* node beneath
+    // it, so the pair reduced to the bare hit test the moment such a layer
+    // existed. What is asked instead is that the element proved to be in front
+    // of the words is itself the one painting the layer, which is the only
+    // arrangement that substitutes anything for them.
+    const smothered = (node) => {
+      const front = inFront(node);
+      return Boolean(front) && layered(front);
+    };
     // Memoised because `spans` can offer the same element in several candidate
     // sets, and each of these clauses walks the element's whole ancestor chain.
     const verdicts = new Map();
@@ -942,6 +999,9 @@ export function settleStep(previous, snapshot) {
 export function unsettledReason(snapshot, undrawn) {
   if (undrawn.length) {
     return undrawn.map((item) => item.detail).join("; ");
+  }
+  if (!Array.isArray(snapshot?.graphs)) {
+    return "this render filed no measurement at all, so nothing about it was proved; a snapshot that was never taken is not a screen that failed";
   }
   if (!graphsDrawn(snapshot)) {
     return "a graph on this render has not drawn all of its edges, for too few looks yet to tell a late pass from a broken one";

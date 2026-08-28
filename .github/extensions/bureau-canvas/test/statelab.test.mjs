@@ -1947,8 +1947,14 @@ test("an unsettled render is told the reason that actually applies to it", () =>
       unsettledReason(behind, named),
       unsettledReason(behind, []).includes("too few looks"),
       unsettledReason(drawn, []).includes("never stopped changing"),
+      // The fourth cause, which arrived with the rule that a snapshot filing no
+      // graphs cannot be proved drawn. Without a sentence of its own it borrows
+      // the graph one, and sends a reviewer looking for a rendering defect in a
+      // render that was never measured at all.
+      unsettledReason(undefined, []).includes("filed no measurement"),
+      unsettledReason({}, []).includes("filed no measurement"),
     ],
-    ["g declared 2 edge(s) and drew 0", true, true],
+    ["g declared 2 edge(s) and drew 0", true, true, true, true],
   );
 });
 
@@ -2327,7 +2333,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a doubled promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a shadowed promise", "a painted promise", "a doubled promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2417,6 +2423,8 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "a clipped promise": { found: true, ink: false, injected: "", covered: false },
       "a bleached promise": { found: true, ink: false, injected: "", covered: false },
       "a smothered promise": { found: true, ink: true, injected: "", covered: true },
+      "a shadowed promise": { found: true, ink: true, injected: "", covered: false },
+      "a painted promise": { found: true, ink: true, injected: "", covered: false },
       "a doubled promise": { found: true, ink: true, injected: '"a louder promise"', covered: false },
       "nowhere at all": { found: false, ink: false, injected: "", covered: false },
     },
@@ -2808,9 +2816,30 @@ function pageStub() {
   });
   const smothered = element({}, {
     parentElement: smotherer,
-    getBoundingClientRect: () => boxOf(200, 200, 100, 20),
+    getBoundingClientRect: () => boxOf(400, 400, 100, 20),
     innerText: "a smothered promise",
     childNodes: words("a smothered promise"),
+  });
+  // The narrowing, as a fixture. Requiring only "a layer somewhere above, and
+  // something in front" reduces to the bare hit test the moment any ancestor
+  // carries one decorative absolute `::before` — every node beneath it then
+  // satisfies the sweep, so an ordinary sticky bar or open menu covering a
+  // label would convict it. Here the blocker paints no layer of its own, and
+  // the words are reported readable.
+  const shadowed = element({}, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(600, 400, 100, 20),
+    innerText: "a shadowed promise",
+    childNodes: words("a shadowed promise"),
+  });
+  // What cannot be measured is not convicted. `backdrop` reads only
+  // `backgroundColor`, so white words over a dark background *image* would be
+  // compared against the default white and reported unreadable — a false
+  // conviction of a screen that reads perfectly. An image's luminance is not
+  // available synchronously, so this one is left alone.
+  const imaged = element({ color: "rgb(255, 255, 255)", backgroundImage: 'url("data:image/svg+xml,x")' }, {
+    innerText: "a painted promise",
+    childNodes: words("a painted promise"),
   });
   // Which candidate the report is taken from, when none of them keeps the
   // promise. Two holders: the first drawn in nothing, the second painted and
@@ -2956,7 +2985,7 @@ function pageStub() {
     ".deep": [deepCover],
     ".prefix": [prefixed],
     ".descendant": [deepWords],
-    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, quietTwin, loudTwin],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, shadowed, imaged, quietTwin, loudTwin],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
@@ -2967,7 +2996,18 @@ function pageStub() {
     body: { innerText: "Bureau", childNodes: [splitBox, { nodeType: 3, data: "\n" }, joinedBox, { nodeType: 3, data: "\n" }, partialBox] },
     querySelectorAll: (selector) => matches[selector] ?? [],
     getElementById: (id) => (id === "field-1" ? control : null),
-    elementFromPoint: (x, y) => (x === 250 && y === 210 ? overlay : null),
+    elementFromPoint: (x, y) => {
+      if (x === 250 && y === 210) {
+        return overlay;
+      }
+      // The blocker over `smothered` is the element painting the layer; the one
+      // over `shadowed` paints nothing, which is the pair that tells the
+      // precise rule from the loose one.
+      if (x === 450 && y === 410) {
+        return smotherer;
+      }
+      return x === 650 && y === 410 ? overlay : null;
+    },
   };
 }
 
