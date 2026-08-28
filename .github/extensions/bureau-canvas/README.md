@@ -1283,5 +1283,26 @@ Two ways a published gallery used to pass while being useless:
   must be the first chunk of every PNG, its data length is fixed at 13 by the
   format, and it carries the dimensions — so a file too small to hold an image,
   one whose first chunk is not a header, and one describing a picture of no size
-  are all caught. The head the teardown reads grew from 8 bytes to 33, which is
-  still a read of both ends rather than of tens of megabytes.
+  are all caught.
+- **The middle, which no end speaks for.** Reading 33 bytes at the front and 12
+  at the back left everything between them unread, and that is where the picture
+  is: renaming a render's only `IDAT` chunk to `JUNK` — same length, same size,
+  both ends untouched — left every offline test green while Chromium refused the
+  file outright with *"the source image could not be decoded."* A run could
+  publish five hundred undecodable figures and certify the gallery complete. So
+  the chunk stream is walked from the signature to the end of the file, every
+  chunk checked against its own CRC, and at least one `IDAT` required — the one
+  conjunct two perfect ends can never carry. The reader takes whole files, which
+  reverses the note above about reading only their ends: 512 files, about 43 MB,
+  roughly half a second against the three and a half minutes that produced them.
+- **Clauses the walk answered for.** Adding that walk quietly retired three of
+  the checks above. A dimension, a chunk type and a declared length all live
+  *inside* `IHDR`, so a fixture that broke one broke the chunk's checksum with
+  it and the walk refused the file first — and deleting the header comparison,
+  either dimension clause or the closing-chunk comparison left all 443 tests
+  green. Each is pinned again by a row that **walks**: four flip one byte of the
+  first chunk's type and repair every checksum after, one is assembled with a
+  fourteen-byte first chunk and the real file's own `IDAT` and `IEND`, the
+  dimension rows are resealed, and the closing row drops `IEND` entirely and
+  still ends exactly where the file ends. A clause a passing suite cannot lose
+  is the thing this audit exists to keep out, one layer in.

@@ -987,13 +987,22 @@ test("a published render is asked whether it holds a whole PNG, not merely a nam
  * included, under the very name that claims to reject a picture of no size. A
  * `4x0` render is an ordinary broken-encoder output, and it was the half of the
  * rule nothing asked about.
+ *
+ * The rows are resealed, and without that neither clause is pinned at all. A
+ * dimension lives inside `IHDR`, so zeroing one breaks the chunk's own checksum
+ * and round nineteen's walk refuses the file before either comparison is
+ * reached: deleting both clauses left all 443 tests green, this test included,
+ * because it was the walk answering under this test's name. Repaired, each row
+ * is a structurally perfect PNG describing a picture of no size — the one break
+ * every length and every checksum agrees with, which is why it needs a clause
+ * of its own.
  */
 test("a header describing a picture of no size is not a whole PNG", () => {
   const real = [...Buffer.from(REAL_PNG, "base64")];
   const zeroed = (at) => {
     const bytes = [...real];
     bytes.splice(at, 4, 0x00, 0x00, 0x00, 0x00);
-    return bytes;
+    return resealed(bytes);
   };
   const found = [["desktop--nowidth.png", 16], ["desktop--noheight.png", 20]]
     .map(([name, at]) => auditBytes([ends(name, zeroed(at))]).malformed);
@@ -1014,8 +1023,16 @@ test("a header describing a picture of no size is not a whole PNG", () => {
  * A conjunct is pinned by a row that fails on it alone, so a sixteen-byte
  * conjunct needs sixteen rows. Each flips one byte of a real encoder's output
  * and nothing else: the size, both dimensions and the closing chunk stay exactly
- * as they were, so the header comparison is the only clause that can be the
- * reason, and it is the reason sixteen times.
+ * as they were.
+ *
+ * That makes the first eight rows isolating and the last eight not, and the
+ * difference is round nineteen's doing rather than this test's. Bytes 8–15 are
+ * inside `IHDR`, so flipping one breaks the chunk's own checksum and the walk
+ * refuses the file before the comparison is reached. Every row here is still
+ * true — such a file is malformed — but only the signature's eight can be *the
+ * reason*, and narrowing the comparison to `matches(shot.open, PNG_OPEN)` left
+ * all 443 tests green with this test among them. The two tests below pin the
+ * other half, on files that walk.
  */
 test("every byte of the header a whole PNG opens with is one the audit reads", () => {
   const real = [...Buffer.from(REAL_PNG, "base64")];
@@ -1034,6 +1051,83 @@ test("the bytes a whole PNG opens and closes with are the ones a real one carrie
   const real = [...Buffer.from(REAL_PNG, "base64")];
   const found = auditBytes([ends("desktop--real.png", real)]);
   assert.deepStrictEqual([found, real.length > PNG_HEAD + PNG_TAIL], [{ empty: [], malformed: [] }, true]);
+});
+
+/**
+ * A first chunk that walks, checksums and closes correctly, and is still not a
+ * header.
+ *
+ * The `IHDR` half of the header comparison was a mark. Narrowing
+ * `matches(shot.open, [...PNG_OPEN, ...PNG_IHDR])` to `matches(shot.open,
+ * PNG_OPEN)` left all 443 tests green, because every row that broke those eight
+ * bytes broke the chunk's own checksum with them and the walk answered first.
+ *
+ * So these rows walk. Four flip one byte of the chunk's *type* and repair every
+ * checksum afterwards; the fifth is assembled the way an encoder assembles a
+ * file, with a first chunk carrying fourteen bytes of data instead of thirteen,
+ * followed by the real file's own `IDAT` and `IEND` untouched. Each is
+ * structurally perfect — every length agrees, every checksum agrees, it holds
+ * image data and it closes — and its first chunk is still not `IHDR` with the
+ * length the format fixes. The comparison is the only clause left to say so.
+ *
+ * The type is flipped byte by byte and the length is not, and that asymmetry is
+ * a limit rather than an oversight. A file may claim any type in four bytes and
+ * still be walked, but it can only claim a *length* it actually carries: pinning
+ * byte 8 on its own would need a fixture of sixteen megabytes. The walk catches
+ * those, and this row pins that the length is compared at all.
+ */
+test("a first chunk that walks and is not a header of length 13 is not a whole PNG", () => {
+  const rows = notHeader();
+  const found = rows.map(([name, bytes]) => auditBytes([ends(`desktop--${name}.png`, bytes)]).malformed);
+
+  assert.deepStrictEqual(found, rows.map(([name]) => [`desktop--${name}.png`]));
+});
+
+/**
+ * Each of those rows is a whole render in every respect but the one it breaks:
+ * it walks to its end holding image data, it closes with the real file's own
+ * `IEND`, its header describes a picture with a size, and it clears the floor.
+ *
+ * Without this, a row that also broke the walk would pass the test above while
+ * pinning nothing — which is precisely how the sixteen-byte rows stopped
+ * pinning, one round earlier and one layer out.
+ */
+test("a file whose first chunk is not a header is whole in every other way", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const read = notHeader().map(([, bytes]) => [
+    walkChunks(bytes)?.includes("IDAT"),
+    bytes.slice(-PNG_TAIL),
+    [uint32(bytes, 16) > 0, uint32(bytes, 20) > 0, bytes.length >= PNG_HEAD + 12 + PNG_TAIL],
+  ]);
+
+  assert.deepStrictEqual(read, notHeader().map(() => [true, real.slice(-PNG_TAIL), [true, true, true]]));
+});
+
+/**
+ * A stream that walks to its end, holds a picture, and never closes.
+ *
+ * `matches(shot.close, PNG_IEND)` was the third mark: deleting it left all 443
+ * tests green. Every row that had lost its closing chunk had lost the walk with
+ * it — `truncated` stops in the middle of a chunk, `endsOnly` has no chunks at
+ * all, `noIdat` holds no picture — so the walk was always the reason and the
+ * comparison never was.
+ *
+ * Dropping the whole of `IEND` leaves a file that walks: `IHDR` and `IDAT`, both
+ * intact, ending exactly where the file ends. It holds image data, its header is
+ * a header, and it clears the floor by a byte. It simply never says it is
+ * finished, which is what a writer killed between chunks leaves behind. The
+ * walked stream is asserted beside the verdict, so the row is known to have
+ * failed on the closing chunk rather than on the walk.
+ */
+test("a stream that holds a picture and never closes is not a whole PNG", () => {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const unclosed = real.slice(0, real.length - PNG_TAIL);
+  const found = auditBytes([ends("desktop--unclosed.png", unclosed)]);
+
+  assert.deepStrictEqual(
+    [found, walkChunks(unclosed)],
+    [{ empty: [], malformed: ["desktop--unclosed.png"] }, ["IHDR", "IDAT"]],
+  );
 });
 
 /**
@@ -1126,4 +1220,41 @@ function resealed(bytes) {
     at = end;
   }
   return sealed;
+}
+
+/** A four-byte big-endian field, written as PNG writes every number. */
+function be32(value) {
+  return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+}
+
+/**
+ * One PNG chunk as an encoder writes it: its length, its type, its data and a
+ * checksum over the last two. Checksummed with `zlib.crc32` for the same reason
+ * `resealed` is — a fixture that borrowed the audit's own CRC would agree with
+ * any error in it.
+ */
+function chunk(type, data) {
+  const body = [...Buffer.from(type, "ascii"), ...data];
+  return [...be32(data.length), ...body, ...be32(crc32(Buffer.from(body)))];
+}
+
+/**
+ * Files whose first chunk is not `IHDR` carrying the thirteen bytes the format
+ * fixes, and which are whole in every other respect.
+ *
+ * The four type rows are the real file with one byte of the chunk's type
+ * flipped and every checksum repaired after. The length row is rebuilt rather
+ * than edited: a length field is what says where the next chunk begins, so
+ * changing it in place moves every chunk after it and the walk — not the header
+ * comparison — becomes the reason. Assembled instead, with a fourteen-byte
+ * first chunk and the real file's own `IDAT` and `IEND` following it, the file
+ * walks to its end and only its declared length is wrong.
+ */
+function notHeader() {
+  const real = [...Buffer.from(REAL_PNG, "base64")];
+  const typed = [12, 13, 14, 15].map((at) => [
+    `type${at}`,
+    resealed(real.map((byte, index) => (index === at ? byte ^ 0xff : byte))),
+  ]);
+  return [...typed, ["length14", [...real.slice(0, 8), ...chunk("IHDR", [...real.slice(16, 29), 0x00]), ...real.slice(33)]]];
 }
