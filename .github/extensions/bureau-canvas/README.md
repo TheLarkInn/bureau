@@ -596,6 +596,67 @@ read perfectly well as unreadable.
 the renders and their verdicts are identical. What changed is whether two of its
 clauses are able to fail.
 
+### A sentence broken across elements was exempt from all of it
+
+*Own direct text* is the load-bearing half of the clause above, and it has a
+second edge. A promised sentence with a `<strong>` in the middle of it is held
+by three text nodes and owned whole by **none** of them, so the walk found no
+holder and filed the carrier `found: false` — which `paintedPhrases` then
+**exempted**, on the recorded ground that the words were merely split and
+`absentCopy` had already proved them on the page.
+
+Both halves of that were wrong. `absentCopy` reads `innerText`, which is the
+DOM-not-reader standard this whole section exists to reject: it reports words
+drawn in transparent ink. So a promised sentence split across two elements and
+painted in nothing satisfied the presence check, was excused by the paint check,
+and left every gate green:
+
+```json
+{"text":"clean — bureau validate would pass","carrier":{"found":false,"ink":true},"failures":[]}
+```
+
+**And it excused nothing, which is why it lasted.** Measured across all 270
+states before anything was touched: **0 of 1,068** promised phrases are split.
+No render was falling into the hole, so no run could report it — and it would
+have opened silently the first time a component wrapped part of a promised
+sentence in an element of its own.
+
+Split words are found now rather than excused. Each contiguous run of text nodes
+whose joined text spans the phrase is one candidate set, and the elements those
+nodes belong to are its carriers. A set keeps the promise when **every** element
+in it paints honestly, because a sentence is only readable if all of its parts
+are — while a split sentence painted honestly is an ordinary correct render and
+must keep passing, so both directions are asked. Whitespace-only nodes are kept
+deliberately: they are the separators, and the newline a template leaves between
+two block tags is what tells the fold that the last word of one and the first
+word of the next are two words.
+
+The walk is lazy — built only for a phrase no single element owns, which in this
+registry is never — and it walks `childNodes` rather than a `TreeWalker`, because
+`collect` is rebuilt from its own source and run against a browser document and
+the offline stub alike.
+
+What reaches `found: false` now is a phrase **no run of text nodes carries**,
+and that is an absent measurement rather than a determination about the
+document. It fails, by the rule this module already applies to a missing sample.
+
+| fixture | the screen | answer |
+|---|---|---|
+| `a split promise` | two sibling elements, neither owning the sentence, both drawn in nothing | `ink: false` |
+| `a joined promise` | the same arrangement, painted honestly — an ordinary correct render | `ink: true` |
+| `nowhere at all` | carried by no element on the page | `found: false`, and now a failure |
+
+| mutation | result | before this round |
+|---|---|---|
+| the span walk is removed, so a split phrase has no carriers | **1 failed** | **84 passed, 0 failed** |
+| `found: false` is exempt again | **2 failed** | **84 passed, 0 failed** |
+| restored | **85 passed** | 84 |
+
+The stub needed rebuilding before either row was a check: its `body` had no
+children at all, so a span walk that did nothing whatsoever would have been
+green over an empty list. A fixture has to be able to *hold* the thing under
+test.
+
 ### A mark can be attached, spelled right, and painted in nothing
 
 Every rule above binds where a mark attaches and what it says. None of them
