@@ -337,6 +337,73 @@ export function collect(doc, request) {
     // to rest, so a per-phrase document walk is paid tens of thousands of times
     // across a matrix run.
     const owned = [...doc.querySelectorAll("*")].map((node) => ({ node, text: flat(ownText(node)) }));
+    // Every text node in document order, whitespace-only ones included, built
+    // at most once and only for a phrase no single element owns.
+    //
+    // The blank ones are the separators. The newline a template leaves between
+    // two block tags is what tells `flat` that the last word of one and the
+    // first word of the next are two words, so a run joined from raw `data`
+    // reads the way the screen does without this having to model block layout.
+    //
+    // Walked over `childNodes` rather than with a `TreeWalker`, because
+    // `collect` is rebuilt from its own source and run against both a browser
+    // document and the offline stub, and `childNodes`/`nodeType` is the whole
+    // DOM this module already asks of either — `ownText` above uses the same.
+    let runs = null;
+    const textRuns = () => {
+      if (!runs) {
+        runs = [];
+        const descend = (node) => {
+          for (const child of [...(node?.childNodes ?? [])]) {
+            if (child.nodeType === 3) {
+              runs.push(child);
+            } else {
+              descend(child);
+            }
+          }
+        };
+        descend(doc.body ?? doc);
+      }
+      return runs;
+    };
+    // The carriers of a phrase no single element owns.
+    //
+    // A promised sentence with a `<strong>` in the middle of it is held by
+    // three text nodes and owned whole by none of them. Such a phrase used to
+    // be *exempt*, and that exemption covered the one case this whole module
+    // exists to judge: a plain phrase is settled by `absentCopy` against
+    // `innerText`, which reports transparent ink, so a split sentence painted
+    // in nothing satisfied the presence check, was excused by the paint check,
+    // and left every gate green. It excused nothing in this registry on the day
+    // it was written — measured, 0 of 1,068 promised phrases — which is exactly
+    // why it survived: a hole is not visible from inside a run that never falls
+    // into it, and it would have opened silently the first time a component
+    // wrapped part of a promised sentence.
+    //
+    // Each contiguous run of text nodes whose joined text spans the phrase is
+    // one candidate set, and its carriers are the elements those nodes belong
+    // to. The scan starts a run at every node and stops extending it once the
+    // joined text is longer than the phrase could need, so this stays linear in
+    // the document rather than quadratic.
+    const spans = (wanted) => {
+      const sets = [];
+      const nodes = textRuns();
+      for (let start = 0; start < nodes.length; start += 1) {
+        const bound = flat(nodes[start].data).length + wanted.length;
+        let joined = "";
+        for (let end = start; end < nodes.length && flat(joined).length <= bound; end += 1) {
+          joined += nodes[end].data ?? "";
+          if (flat(joined).includes(wanted)) {
+            sets.push([...new Set(nodes.slice(start, end + 1)
+              .filter((node) => (node.data ?? "").trim())
+              .map((node) => node.parentElement)
+              .filter(Boolean))]);
+            break;
+          }
+        }
+      }
+      return sets.filter((set) => set.length);
+    };
     // Readability here is about the ink, not the scroll position. A scoped
     // promise names an element the registry vouches for being in view, so that
     // one is also asked whether anything is in front of it; a plain phrase is
@@ -356,10 +423,19 @@ export function collect(doc, request) {
       // keeps the promise, and only when *none* does is there something to
       // report — otherwise a second, collapsed copy of the same label would
       // convict a screen the reader can read perfectly well.
-      const honest = holders.find((node) => readable(node) && !speaks(node));
-      carriers[phrase] = holders.length
-        ? { found: true, ink: Boolean(honest) || readable(holders[0]), injected: honest ? "" : speaks(holders[0]) }
-        : { found: false, ink: true, injected: "" };
+      //
+      // A split phrase is judged the same way, one element short: a candidate
+      // set keeps the promise when *every* element in it paints honestly,
+      // because a sentence is only readable if all of its parts are.
+      const sets = holders.length ? holders.map((node) => [node]) : spans(wanted);
+      const honest = sets.find((set) => set.every(readable) && !set.some(speaks));
+      carriers[phrase] = sets.length
+        ? {
+          found: true,
+          ink: Boolean(honest) || sets[0].every(readable),
+          injected: honest ? "" : sets[0].map(speaks).filter(Boolean).join(" "),
+        }
+        : { found: false, ink: false, injected: "" };
     }
   }
   // Every `label[for]` beside the control it names, as two boxes. Gathered
@@ -1122,11 +1198,19 @@ function paintedCopy(state, snapshot) {
  * guard over the minority of its own subject.
  *
  * A missing sample is still a failure in its own right, for the reason the
- * scoped branch learned it: an absent measurement cannot support a pass. A
- * carrier that was *looked for and not found* is different in kind, and is
- * exempt: it means the words are split across several elements, which is a
- * determination about the document rather than a measurement that never
- * happened. `absentCopy` has already proved those words are on the page.
+ * scoped branch learned it: an absent measurement cannot support a pass.
+ *
+ * So is a phrase no element carries, and that is the correction this round
+ * made. `found: false` used to be *exempt*, on the reasoning that it meant the
+ * words were split across elements and `absentCopy` had already proved them on
+ * the page. Both halves of that were wrong. `absentCopy` reads `innerText`,
+ * which is the DOM-not-reader standard this module exists to reject — it
+ * reports words drawn in transparent ink — so the exemption excused precisely
+ * the defect the check was written for: a split sentence painted in nothing
+ * passed both. And split words are no longer routed here at all, because
+ * `collect` now finds the *set* of elements that carries them and judges every
+ * one. What reaches `found: false` now is a phrase no run of text nodes spans,
+ * which is a promise nothing on the page was measured against.
  */
 function paintedPhrases(state, snapshot) {
   return phrasesFor(state).flatMap((phrase) => {
@@ -1135,7 +1219,7 @@ function paintedPhrases(state, snapshot) {
       return [{ kind: "unreadable-copy", detail: `“${phrase}” has no paint sample, so its words were not proved readable` }];
     }
     if (!paint.found) {
-      return [];
+      return [{ kind: "unreadable-copy", detail: `“${phrase}” is carried by no element, so its words were not proved readable` }];
     }
     return [
       ...(paint.ink === false ? [{ kind: "unreadable-copy", detail: `“${phrase}” is drawn in ink a reader cannot see` }] : []),

@@ -1277,11 +1277,16 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
     viewport: { width: 800, height: 600 },
     overflowX: 40,
     contrast: [{ selector: ".kind-label", text: "AGENT", ratio: 1.07 }],
-    // The phrase is absent from this render, so no element carries it. That is
-    // `missing-copy`'s business; the carrier row is here so the absence is not
-    // *also* reported as an unproved paint sample, which would be one screen
-    // reported as two defects.
-    carriers: { "expected copy": { found: false, ink: true, injected: "" } },
+    // The phrase is absent from this render, so no element carries it. Both
+    // findings are correct and both are reported: the copy is missing, and its
+    // ink was never proved, because there was nothing to measure. This row used
+    // to say `ink: true` and expect the carrier to stay silent, on the ground
+    // that one screen should not be two defects — but "carried by nothing" is
+    // an *absent measurement*, and this module's rule for those is the one it
+    // already applies to a missing sample: an absent measurement cannot support
+    // a pass. Keeping it silent is what let a promised sentence split across
+    // elements and painted in nothing satisfy every gate.
+    carriers: { "expected copy": { found: false, ink: false, injected: "" } },
     boxes: [
       { selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 },
       { selector: ".assignment-card", x: 50, y: 50, width: 100, height: 100 },
@@ -1296,6 +1301,7 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
     "missing-copy",
     "overlap",
     "unexpected-control",
+    "unreadable-copy",
   ]);
 });
 
@@ -1495,12 +1501,13 @@ test("the lab judges its copy rows with the shared rule instead of its own filte
  * than the promised words was open to the majority of the promises. The scoped
  * check was a guard over the minority of its own subject.
  *
- * Four rows, because they are four different determinations and only one of
- * them is a pass. The last is the exemption and the reason it is not the
- * vacuity this module has already been caught by twice: a carrier looked for
- * and not found means the words are split across elements, which `absentCopy`
- * has already proved are on the page — whereas a carriers map that never
- * arrived is a measurement that did not happen, and fails.
+ * Five rows, because they are five different determinations and only three are
+ * a pass. The fourth used to be the exemption, and it was the vacuity this
+ * module has now been caught by three times: "carried by no element" was read
+ * as "split across several, which `absentCopy` has proved are on the page".
+ * `absentCopy` reads `innerText`, which reports transparent ink, so that pair
+ * excused exactly the defect this check exists to catch. Split words are found
+ * and judged by `collect` now, and a phrase nothing carries fails.
  */
 test("a promise that names no element is still judged on the words a reader gets", () => {
   const state = { expect: { shows: [], hides: [], copy: ["clean — bureau validate would pass"] } };
@@ -1522,10 +1529,10 @@ test("a promise that names no element is still judged on the words a reader gets
       kinds({ [phrase]: { found: true, ink: true, injected: "" } }),
       kinds({ [phrase]: { found: true, ink: false, injected: "" } }),
       kinds({ [phrase]: { found: true, ink: true, injected: '"rejected"' } }),
-      kinds({ [phrase]: { found: false, ink: true, injected: "" } }),
+      kinds({ [phrase]: { found: false, ink: false, injected: "" } }),
       kinds(undefined),
     ],
-    [[], ["unreadable-copy"], ["substituted-copy"], [], ["unreadable-copy"]],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy"], ["unreadable-copy"]],
   );
 });
 
@@ -2303,7 +2310,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2367,10 +2374,19 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
     // keeps a promise the whole page makes. `a spaced promise` holds its words
     // wrapped across two source lines, the ordinary shape of real markup, and
     // is the only one that asks whether runs of whitespace are folded before
-    // the words are looked for. The last one is looked for and not
-    // found — words split across several elements — which is a determination
-    // about the document rather than a measurement that never happened, and is
-    // the one case `paintedPhrases` exempts.
+    // the words are looked for.
+    //
+    // The next two are a sentence no single element owns, and they are the pair
+    // this round added. Both used to be `found: false` and both were exempt, so
+    // a promised sentence broken by a `<strong>` and painted in nothing passed
+    // every gate — the exact defect this module exists to catch, excused by the
+    // clause meant to catch it. They are found by their carriers now, and only
+    // the transparent one fails; the readable one must keep passing, because a
+    // split sentence painted honestly is an ordinary correct render.
+    //
+    // The last is carried by nothing at all, which is an absent measurement and
+    // no longer a pass: `missing-copy` reports the words, and this reports that
+    // their ink was never proved.
     carriers: {
       "a plain promise": { found: true, ink: true, injected: "" },
       "a hidden promise": { found: true, ink: false, injected: "" },
@@ -2378,7 +2394,9 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "a masked promise": { found: true, ink: false, injected: "" },
       "a shared promise": { found: true, ink: true, injected: "" },
       "a spaced promise": { found: true, ink: false, injected: "" },
-      "nowhere at all": { found: false, ink: true, injected: "" },
+      "a split promise": { found: true, ink: false, injected: "" },
+      "a joined promise": { found: true, ink: true, injected: "" },
+      "nowhere at all": { found: false, ink: false, injected: "" },
     },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
@@ -2735,6 +2753,29 @@ function pageStub() {
     childNodes: words("\n  a spaced\n  promise\n"),
   });
 
+  // The carriers of a sentence that no single element owns, which is what the
+  // walk over `body`'s text nodes exists for. Each half is an element of its
+  // own, the shape any `<strong>` inside a promised sentence produces, so the
+  // "words in one element's own direct text" question answers `no` for both.
+  //
+  // Two pairs, because only one of them may fail. The split pair is drawn in
+  // ink no reader receives and must be convicted; the joined pair is an
+  // ordinary, correct render of a split sentence and must pass, since a clause
+  // that convicts a correct screen is wrong however sound its reasoning. Before
+  // this round both were `found: false` and both were waved through.
+  //
+  // The blank node between the pairs is the separator a template leaves between
+  // two block tags, and it is load-bearing: without it the two sentences
+  // concatenate and a run starting in the first pair can reach into the second.
+  const carrying = (value, style = {}) => {
+    const node = element(style, { innerText: value });
+    node.childNodes = [{ nodeType: 3, data: value, parentElement: node }];
+    return node;
+  };
+  const hollow = { color: "rgba(0, 0, 0, 0)" };
+  const splitBox = element({}, { childNodes: [carrying("a split ", hollow), carrying("promise", hollow)] });
+  const joinedBox = element({}, { childNodes: [carrying("a joined "), carrying("promise")] });
+
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
     getBoundingClientRect: () => boxOf(0, 40, 60, 16),
@@ -2841,7 +2882,7 @@ function pageStub() {
   return {
     defaultView: { getComputedStyle: (node, part) => (part ? pseudos.get(node)?.[part] ?? { content: "none" } : styles.get(node) ?? BASE_STYLE) },
     documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
-    body: { innerText: "Bureau" },
+    body: { innerText: "Bureau", childNodes: [splitBox, { nodeType: 3, data: "\n" }, joinedBox] },
     querySelectorAll: (selector) => matches[selector] ?? [],
     getElementById: (id) => (id === "field-1" ? control : null),
     elementFromPoint: (x, y) => (x === 250 && y === 210 ? overlay : null),

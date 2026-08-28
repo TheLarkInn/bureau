@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RENDER_TWINS, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
+import { collect, verdict } from "../../../web/statelab/checks.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
 import { shotName, twinParticipants } from "../gallery-audit.mjs";
 import { indexPage, rowsFor, applyMarks, SETTLED_INK, SETTLED_PHRASE, SETTLED_SLOT } from "../gallery-index.mjs";
@@ -546,4 +547,53 @@ test("@matrix a run's notices are drawn where a reviewer will read them", async 
   }
 
   expect(read, "every notice a run writes is painted in ink a reviewer can read, and says what it promises").toEqual(NOTICE_CASES.map((found) => [found.drawn, true, 1, true, true]));
+});
+
+/**
+ * A promised sentence the markup breaks in half is still the reader's sentence.
+ *
+ * `collect` finds a plain phrase by asking which element holds it in its *own*
+ * direct text — and a sentence with a `<strong>` in the middle of it is held
+ * whole by none. That determination used to be an exemption, and it covered the
+ * exact defect the paint check exists to catch: `absentCopy` settles a plain
+ * phrase against `innerText`, which reports transparent ink, so a split
+ * sentence painted in nothing satisfied the presence check, was excused by the
+ * paint check, and left every gate green. Measured across the whole registry it
+ * excused nothing on the day it was written — 0 of 1,068 promised phrases are
+ * split — which is why it survived thirty rounds: a hole is invisible from
+ * inside a run that never falls into it.
+ *
+ * Four cases, and the middle two are why this is not simply "fail when no one
+ * element owns the words". A split phrase that is painted honestly is an
+ * ordinary, correct render and must pass; only the transparent one may fail.
+ * A clause that convicts a correct render is wrong even when its reasoning is
+ * sound, so both halves of the split case are asked.
+ *
+ * The whole judgement is taken from `verdict`, not from the snapshot, because
+ * a `carriers` entry nothing reads is a measurement and not a check.
+ */
+const SPLIT_CASES = [
+  { id: "one element, painted", html: "<p>clean — bureau validate would pass</p>", found: true, kinds: [] },
+  { id: "split across elements, painted", html: "<p>clean — <strong>bureau validate</strong> would pass</p>", found: true, kinds: [] },
+  { id: "split across elements, in no ink", html: "<p style='color:transparent'>clean — <strong>bureau validate</strong> would pass</p>", found: true, kinds: ["unreadable-copy"] },
+  { id: "carried by nothing at all", html: "<p>an unrelated sentence</p>", found: false, kinds: ["missing-copy", "unreadable-copy"] },
+];
+
+test("@matrix a promised sentence broken across elements is judged on its ink, not excused", async ({ page }) => {
+  const phrase = "clean — bureau validate would pass";
+  const state = { expect: { shows: [], hides: [], copy: [phrase] } };
+  const read = [];
+
+  for (const split of SPLIT_CASES) {
+    await page.setContent(split.html);
+    const snapshot = await page.evaluate(
+      ({ source, request }) => new Function(`return (${source})`)()(document, request),
+      { source: collect.toString(), request: { selectors: [], measure: [], contrast: [], phrases: [phrase] } },
+    );
+    read.push([snapshot.carriers[phrase].found, verdict(state, snapshot).map((item) => item.kind).sort()]);
+  }
+
+  expect(read, "a sentence split by markup is measured, and only the unreadable one fails").toEqual(
+    SPLIT_CASES.map((split) => [split.found, [...split.kinds].sort()]),
+  );
 });
