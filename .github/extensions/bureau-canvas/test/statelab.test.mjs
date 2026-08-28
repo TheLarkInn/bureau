@@ -1501,13 +1501,19 @@ test("the lab judges its copy rows with the shared rule instead of its own filte
  * than the promised words was open to the majority of the promises. The scoped
  * check was a guard over the minority of its own subject.
  *
- * Five rows, because they are five different determinations and only three are
- * a pass. The fourth used to be the exemption, and it was the vacuity this
+ * Seven rows, because they are seven different determinations and only one is
+ * a pass. The fifth used to be the exemption, and it was the vacuity this
  * module has now been caught by three times: "carried by no element" was read
  * as "split across several, which `absentCopy` has proved are on the page".
  * `absentCopy` reads `innerText`, which reports transparent ink, so that pair
  * excused exactly the defect this check exists to catch. Split words are found
  * and judged by `collect` now, and a phrase nothing carries fails.
+ *
+ * The sixth row is what makes the `found` branch a check rather than a mark.
+ * Every fixture for it also carried `ink: false`, so the branch could be
+ * deleted outright and the row below it would report the same kind — the
+ * clause claiming to guard absence was settled by a different clause entirely.
+ * `found: false` with honest ink is the only shape that asks it.
  */
 test("a promise that names no element is still judged on the words a reader gets", () => {
   const state = { expect: { shows: [], hides: [], copy: ["clean — bureau validate would pass"] } };
@@ -1529,10 +1535,12 @@ test("a promise that names no element is still judged on the words a reader gets
       kinds({ [phrase]: { found: true, ink: true, injected: "" } }),
       kinds({ [phrase]: { found: true, ink: false, injected: "" } }),
       kinds({ [phrase]: { found: true, ink: true, injected: '"rejected"' } }),
+      kinds({ [phrase]: { found: true, ink: true, injected: "", covered: true } }),
       kinds({ [phrase]: { found: false, ink: false, injected: "" } }),
+      kinds({ [phrase]: { found: false, ink: true, injected: "" } }),
       kinds(undefined),
     ],
-    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy"], ["unreadable-copy"]],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["substituted-copy"], ["unreadable-copy"], ["unreadable-copy"], ["unreadable-copy"]],
   );
 });
 
@@ -1865,9 +1873,18 @@ test("a render is settled only once every graph on it has drawn its edges", () =
   );
 });
 
-/** A snapshot from before the rule existed reads as drawn, not as unfinished. */
-test("a snapshot that files no graphs is not held back by the rule", () => {
-  assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined)], [true, true]);
+/**
+ * An absent measurement cannot support a pass, here as everywhere else.
+ *
+ * This used to read the other way — "a snapshot from before the rule existed
+ * reads as drawn, not as unfinished" — which was a fail-open default dressed as
+ * compatibility. `collect` files a `graphs` array on every render, the empty
+ * one included, so no real snapshot reaches this without one; what the default
+ * actually covered was a snapshot that was never taken, and four looks at
+ * nothing could report a render settled.
+ */
+test("a snapshot that files no graphs cannot be proved drawn", () => {
+  assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined), graphsDrawn({ graphs: [] })], [false, false, true]);
 });
 
 /**
@@ -2310,7 +2327,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a doubled promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2388,15 +2405,20 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
     // no longer a pass: `missing-copy` reports the words, and this reports that
     // their ink was never proved.
     carriers: {
-      "a plain promise": { found: true, ink: true, injected: "" },
-      "a hidden promise": { found: true, ink: false, injected: "" },
-      "a true promise": { found: true, ink: true, injected: '"a false promise"' },
-      "a masked promise": { found: true, ink: false, injected: "" },
-      "a shared promise": { found: true, ink: true, injected: "" },
-      "a spaced promise": { found: true, ink: false, injected: "" },
-      "a split promise": { found: true, ink: false, injected: "" },
-      "a joined promise": { found: true, ink: true, injected: "" },
-      "nowhere at all": { found: false, ink: false, injected: "" },
+      "a plain promise": { found: true, ink: true, injected: "", covered: false },
+      "a hidden promise": { found: true, ink: false, injected: "", covered: false },
+      "a true promise": { found: true, ink: true, injected: '"a false promise"', covered: false },
+      "a masked promise": { found: true, ink: false, injected: "", covered: false },
+      "a shared promise": { found: true, ink: true, injected: "", covered: false },
+      "a spaced promise": { found: true, ink: false, injected: "", covered: false },
+      "a split promise": { found: true, ink: false, injected: "", covered: false },
+      "a joined promise": { found: true, ink: true, injected: "", covered: false },
+      "a partial promise": { found: true, ink: false, injected: "", covered: false },
+      "a clipped promise": { found: true, ink: false, injected: "", covered: false },
+      "a bleached promise": { found: true, ink: false, injected: "", covered: false },
+      "a smothered promise": { found: true, ink: true, injected: "", covered: true },
+      "a doubled promise": { found: true, ink: true, injected: '"a louder promise"', covered: false },
+      "nowhere at all": { found: false, ink: false, injected: "", covered: false },
     },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
@@ -2752,6 +2774,59 @@ function pageStub() {
     innerText: "a spaced promise",
     childNodes: words("\n  a spaced\n  promise\n"),
   });
+  // Three carriers whose ink is perfectly honest and whose words are still not
+  // on the screen. Each isolates one clause, so none of them can pass by
+  // another's reasoning.
+  //
+  // Inside a lid: `visible` reads the carrier's own box, paint and visibility
+  // and never asks what cuts it away, so a phrase moved entirely outside an
+  // `overflow: hidden` ancestor measured perfectly and was called readable.
+  // The boxes above are judged on exactly this and a carrier was not, because
+  // a plain phrase names no selector to measure.
+  const lidded = element({}, {
+    parentElement: clip,
+    getBoundingClientRect: () => boxOf(300, 10, 50, 20),
+    innerText: "a clipped promise",
+    childNodes: words("a clipped promise"),
+  });
+  // White on white: fully opaque, contrast 1, and as gone as if it had never
+  // been drawn. `honestInk` reads alpha, which has nothing to say about it.
+  const bleached = element({ color: "rgb(255, 255, 255)" }, {
+    innerText: "a bleached promise",
+    childNodes: words("a bleached promise"),
+  });
+  // An opaque layer of an *ancestor's* own, proved to be in front of the words.
+  // `speaks` asks the carrier about its own generated content and stops there,
+  // so a wrapper painting a filled `::after` across its child said nothing.
+  // Neither half of the replacement is usable alone — a bare ancestor sweep
+  // convicts every decoration in the product, a bare hit test convicts every
+  // neighbour that overlaps a label's centre — so both are required, and this
+  // fixture satisfies both.
+  const smotherer = element({}, {});
+  pseudos.set(smotherer, {
+    "::after": { content: '"covering"', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const smothered = element({}, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(200, 200, 100, 20),
+    innerText: "a smothered promise",
+    childNodes: words("a smothered promise"),
+  });
+  // Which candidate the report is taken from, when none of them keeps the
+  // promise. Two holders: the first drawn in nothing, the second painted and
+  // then overprinted by its own `::after`. Reporting the *first* candidate —
+  // which is what the scan happens to find first, not what the reader is
+  // looking at — describes this screen as unreadable ink, a fact about a copy
+  // nobody can see. The candidate that came closest to keeping the promise is
+  // the painted one, and what is wrong with this screen is the sentence
+  // printed over it. Without this pair the choice is unobservable, because
+  // every other phrase here has one candidate or an honest one.
+  const quietTwin = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a doubled promise",
+    childNodes: words("a doubled promise"),
+  });
+  const loudTwin = element({}, { innerText: "a doubled promise", childNodes: words("a doubled promise") });
+  pseudos.set(loudTwin, { "::after": { content: '"a louder promise"' } });
 
   // The carriers of a sentence that no single element owns, which is what the
   // walk over `body`'s text nodes exists for. Each half is an element of its
@@ -2775,6 +2850,13 @@ function pageStub() {
   const hollow = { color: "rgba(0, 0, 0, 0)" };
   const splitBox = element({}, { childNodes: [carrying("a split ", hollow), carrying("promise", hollow)] });
   const joinedBox = element({}, { childNodes: [carrying("a joined "), carrying("promise")] });
+  // And the clause that says *every* part of a split sentence must be readable,
+  // which neither pair above can tell from `some`. Both of theirs agree — two
+  // transparent halves, two painted halves — so `every` could be relaxed to
+  // `some` with the whole suite still green, and a sentence half drawn in
+  // nothing would have passed. Here the first half is painted and the second is
+  // not, which is the only shape that separates the two.
+  const partialBox = element({}, { childNodes: [carrying("a partial "), carrying("promise", hollow)] });
 
   const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
@@ -2874,7 +2956,7 @@ function pageStub() {
     ".deep": [deepCover],
     ".prefix": [prefixed],
     ".descendant": [deepWords],
-    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, quietTwin, loudTwin],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
@@ -2882,7 +2964,7 @@ function pageStub() {
   return {
     defaultView: { getComputedStyle: (node, part) => (part ? pseudos.get(node)?.[part] ?? { content: "none" } : styles.get(node) ?? BASE_STYLE) },
     documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
-    body: { innerText: "Bureau", childNodes: [splitBox, { nodeType: 3, data: "\n" }, joinedBox] },
+    body: { innerText: "Bureau", childNodes: [splitBox, { nodeType: 3, data: "\n" }, joinedBox, { nodeType: 3, data: "\n" }, partialBox] },
     querySelectorAll: (selector) => matches[selector] ?? [],
     getElementById: (id) => (id === "field-1" ? control : null),
     elementFromPoint: (x, y) => (x === 250 && y === 210 ? overlay : null),

@@ -319,11 +319,13 @@ export function collect(doc, request) {
   // Two deliberate narrowings, and they are narrowings rather than oversights.
   // Generated content is read from the carrier's own `::before`/`::after`
   // instead of the neighbourhood sweep a scoped promise gets, and the
-  // covering-layer sweep is not applied at all. A scoped selector is one the
-  // registry chose and vouches for; a carrier is whatever element happened to
-  // hold the words, so sweeping its ancestors would report every decorative
-  // overlay in the product as a substituted sentence. The substitution this
-  // catches is the one painted on the words themselves.
+  // covering-layer sweep is applied only together with a hit test. A scoped
+  // selector is one the registry chose and vouches for; a carrier is whatever
+  // element happened to hold the words, so sweeping its ancestors alone would
+  // report every decorative overlay in the product as a substituted sentence.
+  // The substitution this catches is the one painted on the words themselves —
+  // either by the carrier, or by an ancestor layer proved to be in front of
+  // them.
   const carriers = {};
   const phrases = request.phrases ?? [];
   if (phrases.length) {
@@ -411,8 +413,66 @@ export function collect(doc, request) {
     // that is routinely a label inside a scrollable form — above the fold while
     // the reader is looking at the bottom of it, which is not a defect and is
     // not something this promise ever claimed. So `exposed` is deliberately not
-    // applied: what is asked is whether the words are painted at all.
-    const readable = (node) => visible(node) && honestInk(node);
+    // applied *on its own*: what is asked is whether the words are painted at
+    // all.
+    //
+    // Words inside a lid are not painted either, and nothing was asking. The
+    // boxes above are judged on their clipping ancestors, but a plain phrase
+    // names no selector, so it is never measured — and `visible` reads only the
+    // carrier's own box, paint and visibility. A promised sentence moved
+    // entirely outside an `overflow: hidden` ancestor therefore measured
+    // perfectly and was reported readable, which is exactly the class of defect
+    // this module exists to catch. The same `clipper` answers for a carrier as
+    // for a box, so `auto` and `scroll` stay one gesture away rather than lost.
+    const framed = (node) => {
+      const rect = node.getBoundingClientRect();
+      const clip = clipper(node);
+      const outsideX = clip.x && (rect.x >= clip.x.right || rect.x + rect.width <= clip.x.left);
+      const outsideY = clip.y && (rect.y >= clip.y.bottom || rect.y + rect.height <= clip.y.top);
+      return !outsideX && !outsideY;
+    };
+    // Ink that is opaque and still not there. `honestInk` reads alpha, so it
+    // catches `transparent` and every way of multiplying opacity to nothing,
+    // and it has nothing at all to say about white on white: the colour is
+    // fully opaque, the contrast is 1, and the words are as gone as if they
+    // had never been drawn.
+    //
+    // Deliberately not the WCAG grade `CONTRAST` applies. That list is two
+    // selectors the registry chose because their hue carries meaning, and it
+    // vouches for them at 4.5:1; a promised sentence is carried by whatever
+    // element happens to hold the words, and grading all of them is a design
+    // review this check has no standing to make. The threshold here is the
+    // same question the rest of the module asks — were the words painted at
+    // all — so it sits just above the ratio of ink that is literally its own
+    // background. The grading gap is recorded as a limit, not closed here.
+    const legible = (node) => {
+      const front = luminance(view.getComputedStyle(node).color);
+      const back = luminance(backdrop(node));
+      return (Math.max(front, back) + 0.05) / (Math.min(front, back) + 0.05) > 1.05;
+    };
+    // An opaque layer of an ancestor's own, painted over the words themselves.
+    //
+    // Neither half of this is usable alone, which is why the covering-layer
+    // sweep was left off carriers entirely. A sweep on its own reports every
+    // decorative overlay in the product as a substituted sentence, because a
+    // carrier is whatever element happened to hold the words rather than one
+    // the registry vouches for. `exposed` on its own convicts an ordinary
+    // label whose centre a legitimately positioned neighbour happens to cover.
+    // Asked together they are neither: a generated layer in the
+    // neighbourhood *and* something actually in front of the words at the
+    // point a reader looks at them. Ordinary decoration covers nothing and
+    // fails the second clause; an ordinary overlap paints no generated layer
+    // and fails the first.
+    const smothered = (node) => coveringLayer(node) && !exposed(node);
+    // Memoised because `spans` can offer the same element in several candidate
+    // sets, and each of these clauses walks the element's whole ancestor chain.
+    const verdicts = new Map();
+    const readable = (node) => {
+      if (!verdicts.has(node)) {
+        verdicts.set(node, visible(node) && honestInk(node) && framed(node) && legible(node));
+      }
+      return verdicts.get(node);
+    };
     const speaks = (node) => [generated(node, "::before"), generated(node, "::after")].filter(Boolean).join(" ");
     for (const phrase of phrases) {
       const wanted = flat(phrase);
@@ -428,14 +488,28 @@ export function collect(doc, request) {
       // set keeps the promise when *every* element in it paints honestly,
       // because a sentence is only readable if all of its parts are.
       const sets = holders.length ? holders.map((node) => [node]) : spans(wanted);
-      const honest = sets.find((set) => set.every(readable) && !set.some(speaks));
+      const honest = sets.find((set) => set.every(readable) && !set.some(speaks) && !set.some(smothered));
+      // When no set keeps the promise, the set reported is the one that came
+      // closest to keeping it, rather than whichever the scan happened to
+      // find first. `sets[0]` starts at the earliest text node, so it is the
+      // most over-broad candidate — and reporting from it let a phrase whose
+      // readable carriers were painted over be described by a *different*,
+      // unreadable set, and, where that first set carried neither fault, be
+      // described as clean while no set anywhere kept the promise.
+      //
+      // A set whose words are all painted can name what was drawn over them;
+      // only when no set is painted at all is the phrase unreadable ink. Since
+      // `honest` has already failed, an all-readable `nearest` must carry a
+      // `speaks` or a `smothered`, so this always reports something.
+      const nearest = sets.find((set) => set.every(readable)) ?? sets[0];
       carriers[phrase] = sets.length
         ? {
           found: true,
-          ink: Boolean(honest) || sets[0].every(readable),
-          injected: honest ? "" : sets[0].map(speaks).filter(Boolean).join(" "),
+          ink: Boolean(honest) || nearest.every(readable),
+          injected: honest ? "" : nearest.map(speaks).filter(Boolean).join(" "),
+          covered: honest ? false : nearest.some(smothered),
         }
-        : { found: false, ink: false, injected: "" };
+        : { found: false, ink: false, injected: "", covered: false };
     }
   }
   // Every `label[for]` beside the control it names, as two boxes. Gathered
@@ -777,10 +851,19 @@ export function deadlineVerdict({ lastFailed, sustained, sawClean }, repeats) {
  * asked is whether the draw pass has happened, and a surface that puts one more
  * element through that selector than it declared has plainly had it.
  *
+ * A snapshot that files no graphs at all is *not* drawn. It used to be, on the
+ * grounds that a render with no graph on it settles on stability alone — but
+ * `collect` files a `graphs` array on every render, empty one included, so the
+ * only way to reach this without one is an absent measurement, and this module
+ * already has a rule for those: an absent measurement cannot support a pass.
+ * The permissive default meant four looks at nothing could report a render
+ * settled, which is the same fail-open shape the paint checks were built to
+ * reject.
+ *
  * Pure, so the offline suite holds the rule without a browser.
  */
 export function graphsDrawn(snapshot) {
-  return (snapshot?.graphs ?? []).every((graph) => graph.drawn >= graph.declared);
+  return Array.isArray(snapshot?.graphs) && snapshot.graphs.every((graph) => graph.drawn >= graph.declared);
 }
 
 /**
@@ -1200,17 +1283,23 @@ function paintedCopy(state, snapshot) {
  * A missing sample is still a failure in its own right, for the reason the
  * scoped branch learned it: an absent measurement cannot support a pass.
  *
- * So is a phrase no element carries, and that is the correction this round
- * made. `found: false` used to be *exempt*, on the reasoning that it meant the
- * words were split across elements and `absentCopy` had already proved them on
- * the page. Both halves of that were wrong. `absentCopy` reads `innerText`,
- * which is the DOM-not-reader standard this module exists to reject — it
- * reports words drawn in transparent ink — so the exemption excused precisely
- * the defect the check was written for: a split sentence painted in nothing
- * passed both. And split words are no longer routed here at all, because
- * `collect` now finds the *set* of elements that carries them and judges every
- * one. What reaches `found: false` now is a phrase no run of text nodes spans,
- * which is a promise nothing on the page was measured against.
+ * So is a phrase no element carries, and that is the correction the previous
+ * round made. `found: false` used to be *exempt*, on the reasoning that it
+ * meant the words were split across elements and `absentCopy` had already
+ * proved them on the page. Both halves of that were wrong. `absentCopy` reads
+ * `innerText`, which is the DOM-not-reader standard this module exists to
+ * reject — it reports words drawn in transparent ink — so the exemption excused
+ * precisely the defect the check was written for: a split sentence painted in
+ * nothing passed both. And split words are no longer routed here at all,
+ * because `collect` now finds the *set* of elements that carries them and
+ * judges every one. What reaches `found: false` now is a phrase no run of text
+ * nodes spans, which is a promise nothing on the page was measured against.
+ *
+ * `covered` is the third verdict, and it is a substitution rather than an
+ * absence: the words are painted, honestly, and an ancestor's own generated
+ * layer is painted in front of them. `injected` cannot report it, because that
+ * one reads the carrier's own `::before`/`::after` and a wrapper's belongs to
+ * the wrapper.
  */
 function paintedPhrases(state, snapshot) {
   return phrasesFor(state).flatMap((phrase) => {
@@ -1224,6 +1313,7 @@ function paintedPhrases(state, snapshot) {
     return [
       ...(paint.ink === false ? [{ kind: "unreadable-copy", detail: `“${phrase}” is drawn in ink a reader cannot see` }] : []),
       ...(paint.injected ? [{ kind: "substituted-copy", detail: `“${phrase}” has ${paint.injected} painted over it` }] : []),
+      ...(paint.covered ? [{ kind: "substituted-copy", detail: `“${phrase}” has a layer of its own page painted over it` }] : []),
     ];
   });
 }
