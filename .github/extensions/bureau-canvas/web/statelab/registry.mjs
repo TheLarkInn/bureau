@@ -216,8 +216,40 @@ function pick(source, keys) {
   return Object.fromEntries(keys.map((key) => [key, source?.[key]]));
 }
 
+/**
+ * The empty value of every key an `expect` carries, and the whole of that shape.
+ *
+ * `settles` is the one that is not a list: absent means "this render must come
+ * to rest", which is what `settlement()` returns for all but one value in the
+ * matrix, and every reader spells the exemption `=== false` — so filling it
+ * with `true` states the default the code already applies rather than changing
+ * one.
+ */
+const EMPTY_EXPECT = { shows: [], hides: [], copy: [], allowErrors: [], allowPlaceholder: [], allowOverlap: [], settles: true };
+
+/**
+ * Every state carries the same `expect` shape, whichever way it was written.
+ *
+ * `expectations()` returns all seven keys always; a probe writes the literal
+ * clauses it is making and omits the rest. That difference was invisible to the
+ * gate, because `checks.mjs` defends each read (`?? []`) at all four of its call
+ * sites — and so the shape was never a property of the registry, only a habit of
+ * one reader. The lab is the other reader: its panel iterates
+ * `state.expect.hides` to draw a row per selector, four probes have no `hides`
+ * key, and selecting one threw `not iterable` into the catch that renders the
+ * panel as a red note. Four of the 271 states could not be opened on the surface
+ * built for opening them, and nothing said so.
+ *
+ * Normalising here rather than defending at each read means a new probe cannot
+ * reintroduce it, and the state a reviewer opens is the state the gate ran.
+ */
+function normalise(expect) {
+  const filled = Object.entries(EMPTY_EXPECT).map(([key, empty]) => [key, expect?.[key] ?? empty]);
+  return { ...expect, ...Object.fromEntries(filled) };
+}
+
 /** Reachable states: the matrix plus the deliberate crossing probes. */
-export const STATES = [...matrixStates, ...PROBES];
+export const STATES = [...matrixStates, ...PROBES.map((probe) => ({ ...probe, expect: normalise(probe.expect) }))];
 
 /**
  * Pairs of states that draw the same screen on purpose, and why.

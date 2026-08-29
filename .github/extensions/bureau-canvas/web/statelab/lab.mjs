@@ -6,7 +6,7 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyFailure, copyLabel, measureFor, phrasesFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unsettledReason, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, measureFor, phrasesFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unrowed, unsettledReason, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { harnessNotes, violations } from "./constraints.mjs";
@@ -243,7 +243,7 @@ const SETTLE_POLL_MS = 50;
  * the one where that mattered most. No expectation names a relation graph's
  * *edges* — React Flow draws them in a pass after it has measured the nodes —
  * so the loop could exit during the lull between the two, and the panel would
- * report "no overlap, clipping, low contrast…" beside a picture of steps
+ * report "nothing else…" beside a picture of steps
  * joined to nothing. That is the review surface vouching for a frame, which is
  * exactly the fault `settled` was introduced in the matrix to stop; the lab
  * making the opposite claim about the same registry is the contradiction.
@@ -432,10 +432,10 @@ function expectationList(state, result) {
     const detail = unsettledReason(result.snapshot, result.undrawn ?? []);
     box.append(el("p", "note note--warn", `Not proved settled: ${detail}. Re-run this state before reading its graph.`));
   }
-  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy", "unreadable-copy", "substituted-copy"].includes(item.kind));
+  const layout = unrowed(state, result?.failures ?? []);
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length
     ? layout.map((item) => `${item.kind}: ${item.detail}`).join("; ")
-    : "no overlap, clipping, low contrast, placeholder copy, unpainted or substituted words, or horizontal overflow"));
+    : "nothing else: every finding this render produced is a row above"));
   return box;
 }
 

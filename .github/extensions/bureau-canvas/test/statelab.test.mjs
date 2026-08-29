@@ -18,7 +18,7 @@ import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
 import { relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unsettledReason, verdict } from "../web/statelab/checks.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unrowed, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, canonicalAction, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
@@ -1523,6 +1523,86 @@ test("the lab judges its copy rows with the shared rule instead of its own filte
       source.includes('item.kind === "missing-copy"'),
     ],
     [true, true, false],
+  );
+});
+
+/**
+ * The same fault, one line further down the same panel, and it outlived the fix.
+ *
+ * The copy rows were routed through the shared rule; the note that closes the
+ * panel was not. It selected its contents with a literal list of seven kinds
+ * while `verdict` emits more, so `stranded-label`,
+ * `stale-overlap-allowance` and `stale-placeholder-allowance` were matched by no
+ * row and no list entry: the lab reported "all clear" for a render the matrix
+ * fails. Two surfaces disagreeing about one registry, with the review surface
+ * taking the softer view.
+ *
+ * The kinds are read out of `checks.mjs` rather than written here, because a
+ * list of kinds maintained by hand is the very thing that broke — a pin that
+ * needs editing whenever `verdict` grows is a pin that will one day be a
+ * comment. Deriving them means a new kind joins this assertion on the commit
+ * that introduces it, and must survive `unrowed` to pass.
+ *
+ * The three that were dropped are named as well, so this test still fails for
+ * the original defect even if the regex ever stops finding anything — a derived
+ * list that silently came back empty would otherwise pass vacuously, which is
+ * the shape of defect this whole round is about.
+ */
+test("every kind a verdict can emit reaches the lab's closing note", async () => {
+  const source = await readFile(new URL("../web/statelab/checks.mjs", import.meta.url), "utf8");
+  const kinds = [...new Set([...source.matchAll(/kind: "([a-z-]+)"/gu)].map((match) => match[1]))];
+  const bare = { expect: { shows: [], hides: [], copy: [] } };
+  const carried = kinds.filter((kind) => unrowed(bare, [{ kind, detail: "a finding" }]).length === 1);
+  const dropped = ["stranded-label", "stale-overlap-allowance", "stale-placeholder-allowance"];
+
+  assert.deepStrictEqual(
+    [carried, dropped.filter((kind) => kinds.includes(kind))],
+    [kinds, dropped],
+  );
+});
+
+/**
+ * And the lab closes with the leftovers rather than a list, in both directions.
+ *
+ * Extending the literal list would have fixed the three kinds above and kept
+ * the shape that produced them. This pins the shape: the partition is called,
+ * and the filter it replaced is gone.
+ */
+test("the lab closes its panel with what its rows did not claim", async () => {
+  const source = await readFile(new URL("../web/statelab/lab.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes("unrowed(state, result?.failures ?? [])"),
+      source.includes('"overlap", "clipped"'),
+      /includes\(item\.kind\)/u.test(source),
+    ],
+    [true, false, false],
+  );
+});
+
+/**
+ * One `expect` shape, however the state was written.
+ *
+ * `expectations()` fills all seven keys; a probe writes the clauses it is making
+ * and omits the rest. `checks.mjs` defends every read, so the gate never saw the
+ * difference — but the lab iterates `state.expect.hides` to draw its rows, and
+ * four probes had no `hides` key at all, so opening one of them on the surface
+ * built for opening states threw `not iterable` and drew a red note instead of
+ * the panel. Four of the states were unreviewable and nothing reported it.
+ *
+ * The second element is what keeps this from passing on an empty walk: both
+ * kinds of state must be present, so the check cannot be satisfied by a registry
+ * that lost its probes.
+ */
+test("every state carries the same expect shape, probe or matrix", () => {
+  const lists = ["shows", "hides", "copy", "allowErrors", "allowPlaceholder", "allowOverlap"];
+  const malformed = STATES.filter((state) => !lists.every((key) => Array.isArray(state.expect?.[key]))
+    || typeof state.expect?.settles !== "boolean");
+
+  assert.deepStrictEqual(
+    [malformed.map((state) => state.id), [...new Set(STATES.map((state) => state.kind))].sort()],
+    [[], ["matrix", "probe"]],
   );
 });
 

@@ -1277,6 +1277,54 @@ export function verdict(state, snapshot, options = {}) {
 }
 
 /**
+ * The findings a panel's own rows do not already speak for.
+ *
+ * The lab draws a row per promised control and per promised phrase, then closes
+ * with a note for everything else. That note used to select its contents with a
+ * literal list of seven kinds, and `verdict` emits more than seven: three —
+ * `stranded-label`, `stale-overlap-allowance`, `stale-placeholder-allowance` —
+ * matched no row and no list entry, so a state failing on one of them was
+ * reported by the lab as having nothing wrong. The review surface vouched for a
+ * render the matrix rejects, which is the one disagreement it may not have.
+ *
+ * Extending the list would have fixed those three and kept the shape that
+ * produced them, because the next kind added to `verdict` is dropped by a list
+ * written before it existed. So the panel is a partition instead: the rows claim
+ * what they can account for, and whatever is left over is reported *whatever its
+ * kind is*. A kind nobody anticipated is now over-reported rather than lost,
+ * which is the direction a review surface should fail in.
+ *
+ * The claim is exactly "no row above speaks for this". `missing-control` and
+ * `unexpected-control` are matched by the selector they name, and copy findings
+ * through the shared `copyFailure` the rows themselves use — so a finding about
+ * a *different* selector than any row promised still reaches the note.
+ *
+ * Pure, and takes the failures rather than a snapshot, so the offline suite can
+ * hand it one finding of every kind and see that none of them vanishes.
+ */
+export function unrowed(state, failures) {
+  const rowed = new Set();
+  const claim = (predicate) => {
+    for (const item of failures) {
+      if (predicate(item)) {
+        rowed.add(item);
+      }
+    }
+  };
+  for (const selector of state?.expect?.shows ?? []) {
+    claim((item) => item.kind === "missing-control" && item.detail === selector);
+  }
+  for (const selector of state?.expect?.hides ?? []) {
+    claim((item) => item.kind === "unexpected-control" && item.detail === selector);
+  }
+  for (const phrase of state?.expect?.copy ?? []) {
+    const label = copyLabel(phrase);
+    claim((item) => copyFailure(item, phrase, label));
+  }
+  return failures.filter((item) => !rowed.has(item));
+}
+
+/**
  * Drops the overlaps a state declared, and only those.
  *
  * Bringing `.editor-card` under the overlap rule immediately found a collision,

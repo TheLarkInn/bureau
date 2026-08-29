@@ -5,7 +5,7 @@
 // human. So the suite opens it, drives it, and asserts that what it reports
 // about a state matches what the registry says about that state.
 
-import { ENTRY_TRANSITIONS, rootReason, STATES, TRANSITIONS } from "../../../web/statelab/registry.mjs";
+import { ENTRY_TRANSITIONS, rootReason, STATES, summary, TRANSITIONS } from "../../../web/statelab/registry.mjs";
 import { CONSTRAINTS, harnessNotes } from "../../../web/statelab/constraints.mjs";
 import { servableInFrame } from "../../../web/statelab/intercept.mjs";
 import { VIEWPORTS } from "../../../web/statelab/selectors.mjs";
@@ -40,13 +40,88 @@ test("the lab lists every state in the registry and boots clean", async ({ page,
   await expect(page.locator("#base-note")).toBeHidden();
 });
 
-test("the lab reports the registry's own counts", async ({ page, host }) => {
-  await openLab(page, host);
-  const metrics = await page.locator("#summary .metric").allTextContents();
-  const joined = metrics.join(" ");
+/**
+ * Listing a state and being able to open it are two different claims, and only
+ * the first one was ever asserted.
+ *
+ * The suite drove about nine hand-picked states, so "the lab lists every state"
+ * was checked and "the lab can open one" was checked nine times. Four probes
+ * wrote an `expect` literal with no `hides` key — matrix states get theirs from
+ * `expectations()`, probes do not — and the panel's unguarded `for…of` over it
+ * threw into the catch that renders the panel as a red note. Four of the 271
+ * states could not be opened at all on the surface whose whole purpose is
+ * opening them, and every test passed.
+ *
+ * The registry now normalises the shape and `statelab.test.mjs` pins that
+ * offline for all 271, which is what makes the class impossible. This walk is
+ * the browser half: it opens every state the lab can drive and requires each one
+ * to produce its expectation list, so "the lab lists every state" is joined by
+ * the claim that was missing — that it can open every state it lists.
+ *
+ * Split into chunks so the run parallelises, and tagged `@matrix` so the cost
+ * lands in the exhaustive job rather than in the fast suite that gates
+ * `lint.sh`. The two states not walked are the ones needing the renderer module
+ * blocked, which the lab cannot install from inside its own frame; it blanks the
+ * stage and says so, and `state-lab.spec.mjs` asserts that separately.
+ *
+ * Console errors are deliberately not asserted here: a state may declare
+ * `allowErrors`, and judging those against a state's own allowances is the
+ * matrix's job. The claim under test is the narrower one that was missing —
+ * that the panel is drawn at all.
+ */
+const WALK_CHUNKS = 8;
 
-  expect(joined).toContain(String(STATES.length));
-  expect(await page.locator("#constraints details").count()).toBeGreaterThan(0);
+for (let chunk = 0; chunk < WALK_CHUNKS; chunk += 1) {
+  const group = DRIVABLE.filter((_state, index) => index % WALK_CHUNKS === chunk);
+
+  test(`@matrix the lab opens every state it lists (${chunk + 1}/${WALK_CHUNKS})`, async ({ page, host }) => {
+    test.setTimeout(240_000);
+    await openLab(page, host);
+    const unopened = [];
+    for (const state of group) {
+      // Selected by filtering and clicking, not by driving the hash. The lab
+      // registers its `hashchange` listener only after the first walk resolves,
+      // and the list a spec waits for is drawn before that — so a hash written
+      // in between is dropped, and the boot walk then stamps its own id back
+      // over it. The click path is the one a reviewer uses in any case.
+      await page.locator("#search").fill(state.id);
+      await page.locator(".state-item").filter({ has: page.getByText(state.id, { exact: true }) }).first().click();
+      await expect(page.locator("#detail h2")).toHaveText(state.id, { timeout: 20_000 });
+      const drew = await page.locator("#detail .expectations").waitFor({ timeout: 20_000 }).then(() => true, () => false);
+      if (!drew) {
+        unopened.push(`${state.id}: ${await page.locator("#detail .panel p").first().textContent()}`);
+      }
+    }
+
+    // Non-empty by construction, and every state lands in exactly one chunk, so
+    // a slicing mistake that walked nothing would fail here rather than pass.
+    expect([unopened, group.length > 0]).toEqual([[], true]);
+  });
+}
+
+/**
+ * The header a reviewer reads first, held to every number in it.
+ *
+ * This asserted one of `summary()`'s fifteen metrics, and only as a substring of
+ * all of them joined — so it did not even establish which metric carried the
+ * number — beside a bare `count() > 0` for the constraint list. Rewriting
+ * `renderSummary` to report `0` for the other fourteen left the test green while
+ * the lab told a reviewer there were no dimensions, no rules and no transitions.
+ *
+ * Read as label→value pairs and compared whole, so a metric that goes missing,
+ * gains a label, or reports the wrong number is a failure; and the constraint
+ * list is pinned to the registry's own length rather than to being non-empty.
+ */
+test("the lab reports every one of the registry's counts", async ({ page, host }) => {
+  await openLab(page, host);
+  const shown = await page.locator("#summary .metric").evaluateAll((nodes) => Object.fromEntries(
+    nodes.map((node) => [node.querySelector("span").textContent, node.querySelector("strong").textContent]),
+  ));
+  const expected = Object.fromEntries(Object.entries(summary())
+    .map(([key, value]) => [key.replace(/([A-Z])/gu, " $1").toLowerCase(), String(value)]));
+
+  expect(shown).toEqual(expected);
+  expect(await page.locator("#constraints details").count()).toBe(CONSTRAINTS.length);
 });
 
 test("selecting a state drives the production page and passes its own checks", async ({ page, host }) => {
@@ -58,6 +133,12 @@ test("selecting a state drives the production page and passes its own checks", a
   await page.locator("#detail .expectations").waitFor();
   await expect(page.locator("#detail .expectations li.bad")).toHaveCount(0);
   await expect(page.locator("#detail .expectations li.ok").first()).toBeVisible();
+  // The rows are not the panel. Its closing note carries every finding no row
+  // spoke for, and asserting only `li.bad` left that note unchecked: a state
+  // failing on a kind the rows do not cover was reported by the lab as clean
+  // while the matrix failed it, which is the one disagreement a review surface
+  // may not have.
+  await expect(page.locator("#detail .panel:has(.expectations) .note--err")).toHaveCount(0);
   // The rendered surface is the real page, inside the lab's frame.
   await expect(page.frameLocator("#stage-frame").locator(".limits-editor")).toBeVisible();
   expect(errors).toEqual([]);
@@ -70,6 +151,7 @@ test("a replay state with a run selected passes its checks in the lab too", asyn
   await page.locator(".state-item", { hasText: target.id }).first().click();
   await page.locator("#detail .expectations").waitFor();
   await expect(page.locator("#detail .expectations li.bad")).toHaveCount(0);
+  await expect(page.locator("#detail .panel:has(.expectations) .note--err")).toHaveCount(0);
   await expect(page.frameLocator("#stage-frame").locator(".replay-timeline")).toBeVisible();
   expect(errors).toEqual([]);
 });
