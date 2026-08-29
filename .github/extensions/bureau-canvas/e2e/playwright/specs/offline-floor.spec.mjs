@@ -31,6 +31,17 @@
 // the pair records and refuses, that the detector alone still names a socket the
 // route did not answer, and — the one it cannot make — that a later route
 // replaces it entirely.
+//
+// A fourth, because the HTTP half had the same hole. The header above calls
+// `page.on("request")` the *detector* and gives it one job the refusal cannot
+// do: see the requests a spec's own `route.continue()` sends straight to the
+// network without consulting the handlers underneath it. Playwright runs route
+// handlers newest-first and the floor registers first, so those requests really
+// are invisible to it — and `specs/live.spec.mjs` and `specs/controls.spec.mjs`
+// call `route.continue()` seven times between them. Deleting the listener left
+// the PR suite at 150 passed, because no spec in the suite had ever made a
+// request that left this machine. The socket half got a spec for exactly this
+// reason; the HTTP half is older and never got one.
 
 import { expect, floorTest as test } from "../fixtures.mjs";
 import { holdOffline, offlineFindings } from "../offline.mjs";
@@ -41,6 +52,9 @@ import { holdOffline, offlineFindings } from "../offline.mjs";
  * host that exists.
  */
 const OFFSITE = "ws://192.0.2.1:9/offline-floor-probe";
+
+/** The same address over HTTP, for the request the test lets past the refusal. */
+const OFFSITE_HTTP = "http://192.0.2.1:9/offline-floor-probe";
 
 /**
  * Opens one socket and reports how it ended, without waiting on a timeout.
@@ -135,4 +149,38 @@ test("a socket a later route takes over is the floor's own recorded limit", asyn
   const ended = await openSocket(page, OFFSITE);
 
   expect([offlineFindings(reached), seen, ended]).toEqual([[], [OFFSITE], { errored: false, clean: true }]);
+});
+
+// The HTTP detector, asked the one question only it can answer.
+//
+// The refusal is not the thing under test here — it is deliberately taken out
+// of the picture. A spec-level `page.route` registered after the floor is
+// consulted before it, and `route.continue()` does not fall back, so the floor's
+// `abort` never runs and this request goes to the network exactly as one from
+// `live.spec.mjs` would. `seen` is asserted for that reason: it is the proof the
+// spec's handler really answered, so a detector credited here cannot be the
+// refusal quietly doing the work.
+//
+// The request is fired and not awaited. `request` is raised when the request is
+// issued rather than when it ends, and this one is addressed at TEST-NET-1 —
+// routed nowhere, so waiting on its ending is waiting on a connection that will
+// not have one. Polling the recorded list is what makes that safe: the listener
+// fires on the Node side, after `evaluate` has already returned.
+test("a request a later route sent past the refusal is still named by the floor", async ({ page, canvas }) => {
+  const reached = await holdOffline(page);
+  const seen = [];
+  await page.route("**/offline-floor-probe", (route) => {
+    seen.push(route.request().url());
+    route.continue();
+  });
+  await page.goto(canvas.url);
+
+  await page.evaluate((url) => {
+    window.fetch(url).catch(() => {});
+  }, OFFSITE_HTTP);
+
+  await expect.poll(() => offlineFindings(reached).map((finding) => finding.detail)).toEqual([
+    "a request was made to http://192.0.2.1:9, so this run is not offline",
+  ]);
+  expect(seen).toEqual([OFFSITE_HTTP]);
 });
