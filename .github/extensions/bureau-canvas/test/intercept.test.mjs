@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BLOCKED_PREFLIGHT,
   installFloor,
   installIntercept,
   IN_FRAME,
@@ -118,6 +119,34 @@ test("a held preflight hangs the read and leaves every other intent alone", asyn
   );
 });
 
+/**
+ * The third answer of the three, scoped the same way and read the same way.
+ *
+ * This is the only one of them that is `ok`, which makes the scoping matter more
+ * here rather than less: a shim that claimed every `delete` would report the
+ * entity as blocked *and* answer the confirmed removal, so the page would
+ * believe a write it may not perform had been considered. The confirmed delete
+ * stays the floor's to refuse, because it writes.
+ */
+test("a blocking preflight answers the read with referrers and leaves every other intent alone", async () => {
+  const win = windowStub();
+  installIntercept(win, "block-preflight");
+
+  const answered = async (promise) => {
+    const value = await promise.catch(() => null);
+    return value === null ? "rejected" : (value.native ? "reached the host" : await value.json());
+  };
+
+  assert.deepEqual(
+    {
+      preflight: await answered(win.fetch(...del(false))),
+      confirmed: await answered(win.fetch(...del(true))),
+      read: await answered(win.fetch(...post("resolve-repo"))),
+    },
+    { preflight: BLOCKED_PREFLIGHT, confirmed: "rejected", read: "reached the host" },
+  );
+});
+
 test("every intercept the registry asks for is one this module names", () => {
   const asked = [...new Set(STATES.map((state) => state.intercept).filter(Boolean))].sort();
   const unservable = asked.filter((kind) => !servableInFrame(kind)).sort();
@@ -128,7 +157,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-preflight", "stall-runs", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-preflight", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-preflight", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],

@@ -154,13 +154,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 705438719779,
       matrixStates: 221,
-      probes: 50,
-      states: 271,
+      probes: 51,
+      states: 272,
       transitions: 153,
       entryTransitions: 108,
       returnTransitions: 45,
-      roots: 163,
-      renders: 542,
+      roots: 164,
+      renders: 544,
     },
   );
 });
@@ -647,7 +647,7 @@ test("no state is a root merely for how it spelled its fixture", async () => {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 99, probe: 16, landing: 36, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 100, probe: 16, landing: 36, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -3527,6 +3527,7 @@ const PROBE_ROUTES = {
   "probe--delete-refusal-dismissed": "fail-intent",
   "probe--delete-preflight-refused": "refuse-preflight",
   "probe--delete-preflight-checking": "stall-preflight",
+  "probe--delete-preflight-blocked": "block-preflight",
   "probe--repos-add-registering": "stall-intent",
   "probe--repos-add-refused": "fail-intent",
   "probe--reconcile-now-reported": "pass-intent",
@@ -3575,7 +3576,7 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 106 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 107 },
   );
 });
 

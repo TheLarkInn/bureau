@@ -16,7 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, deadlineVerdict, measureFor, phrasesFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
+import { BLOCKED_PREFLIGHT, isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 import { holdOffline, offlineFindings } from "./offline.mjs";
 
@@ -410,6 +410,16 @@ async function intercept(page, kind) {
     // stops a reader queueing three preflights against one card, and the only
     // one of this control's four screens that nothing rendered.
     "stall-preflight": () => page.route(/\/intent$/u, (route) => (isPreflight(intentBody(route)) ? undefined : route.fallback())),
+    // The third answer, and the one no config reachable from this landing can
+    // provoke: the host reporting that something still points at the entity.
+    // `DeleteControl` draws it as the sentence and the withheld Confirm that
+    // `field:delete-blocked` declares, and both places the control mounts are
+    // entities nothing refers to — so the mount point is what the harness
+    // supplies here, and the answer itself is the host's own, pinned to
+    // `referrers()` in `test/preflight.test.mjs`.
+    "block-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BLOCKED_PREFLIGHT) })
+      : route.fallback()),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.

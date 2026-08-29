@@ -1332,6 +1332,51 @@ one click on Move-up makes this editor dirty. It keeps its fixture; its
 disclosure gets its edges from the findings probe pair instead.
 
 
+### A screen held by its spelling, and the two notes nobody could tell apart
+
+`field:delete-blocked` is the one dimension value no combination of dimensions
+reaches: `DeleteControl` mounts on an assignment card and on the orphan strip,
+and both are entities nothing refers to, so the blocking preflight has no way to
+be clicked to. `delete-is-offered-only-where-nothing-refers` says exactly that,
+and it is still exact.
+
+What the rule then did was hand the *screen* to `test/preflight.test.mjs`, which
+held it by reading `web/app.mjs` for the spelling of its two lines. Spelling is
+not a render, and the measurement rather than the argument is the point: gating
+the sentence behind `preflight.blocking && false` leaves the literal in the file
+and the whole offline suite green at 471, and so does changing the Confirm's
+`disabled` to `preflight.blocking && false || busy`. Both are a screen that
+silently stopped working; neither is a file that stopped containing a string.
+
+So the screen is rendered instead. `block-preflight` is the third condition on
+the delete preflight, beside the refusal and the round trip, and
+`probe--delete-preflight-blocked` walks to it and holds what the value promises
+— spreading the registry's own `shows` and `copy` rather than restating them, so
+the declaration and the render answer for each other in both directions. The
+answer it stages is not invented: it is the host's own report for deleting the
+role `implementer` out of the committed sample, pinned in
+`test/preflight.test.mjs` against `referrers()` run over that same payload. What
+the harness supplies is the mount point, and only that. Both production
+mutations above now fail the render at both viewports.
+
+Two ends stay offline, because a render cannot hold them for itself: that the
+value declares a non-blank sentence at all — the probe spreads `copy`, so an
+empty list spreads into a promise that asks nothing — and that the staged answer
+is still the one `lib/preflight.mjs` produces.
+
+Rendering it also settled a question two selectors had been able to avoid.
+`DeleteControl` draws its refusal and its blocking sentence in the same
+`.note--err` class, one inside the prompt and one beside the Delete, and while
+nothing rendered a blocking preflight the vocabulary could not tell them apart:
+`deleteRefused` matched any `.note--err` under the prompt, and
+`deleteRefusedResting` matched any under `.assignment-actions` — which contains
+the prompt. Both would have reported a refusal on a screen where nothing was
+refused. They are separated now by the two things that actually differ: the
+refusal carries `role="alert"` because it reports what just happened, and the
+resting note is a direct child because it belongs to the other branch of the
+control.
+
+
 ## The step log
 
 Live and replay show what the focused step actually did, under the graph.

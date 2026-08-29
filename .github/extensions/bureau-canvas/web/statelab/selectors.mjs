@@ -127,13 +127,28 @@ export const SELECTORS = {
   deleteCancel: '[data-testid="delete-cancel"]',
   preflight: '[data-testid="preflight"]',
   // The refusal a confirmed delete comes back with, scoped to the preflight so
-  // it cannot be satisfied by an unrelated note elsewhere on the card.
-  deleteRefused: '[data-testid="preflight"] .note--err',
+  // it cannot be satisfied by an unrelated note elsewhere on the card — and to
+  // the alert role, because the blocking sentence below is drawn in the same
+  // class inside the same box. While no state rendered a blocking preflight the
+  // two were indistinguishable, so this selector would have been satisfied by a
+  // screen on which nothing was ever refused.
+  deleteRefused: '[data-testid="preflight"] .note--err[role="alert"]',
+  // The sentence a preflight that found referrers draws. It carries no `role`
+  // because it reports a standing fact about the config rather than the outcome
+  // of the action the reader just took, which is what tells it from the refusal.
+  deleteBlocked: '[data-testid="preflight"] .note--err:not([role="alert"])',
   // The same refusal after the prompt it belongs to has been dismissed. It is a
   // *different* place in the tree — `DeleteControl`'s `!preflight` branch draws
   // its own note beside an intact Delete — so `deleteRefused` cannot see it, and
   // a refusal that survives Cancel would be invisible to every assertion here.
-  deleteRefusedResting: ".assignment-actions .note--err",
+  //
+  // A direct child, because `DeleteControl` mounts directly inside
+  // `.assignment-actions` and so does the prompt: a descendant selector reached
+  // into the open preflight and matched the blocking sentence, which is a note
+  // in the other branch entirely. Nothing rendered a blocking preflight until
+  // `probe--delete-preflight-blocked` did, so the two were indistinguishable and
+  // this selector would have reported a refusal on a screen that had none.
+  deleteRefusedResting: ".assignment-actions > .note--err",
 
   orphanStrip: ".orphan-strip",
   relationSection: ".relation-section",

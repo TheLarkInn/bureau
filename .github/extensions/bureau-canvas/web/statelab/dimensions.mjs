@@ -556,12 +556,15 @@ const field = {
       suppress: ["data"],
     },
     /*
-     * The refusal, kept as a value so it is excluded by a named rule rathe
+     * The refusal, kept as a value so it is excluded by a named rule rather
      * than missing — `delete-is-offered-only-where-nothing-refers` says why.
      * It is a real screen of `DeleteControl`, and one no config the canvas can
      * reach draws: the two places the control mounts are an assignment card
      * and the orphan strip, and an orphan is by definition the config nothing
-     * references. `test/preflight.test.mjs` owns the blocking answer itself.
+     * references. `test/preflight.test.mjs` owns the blocking answer itself,
+     * and `probe--delete-preflight-blocked` renders what this value promises —
+     * spreading these very lists, so the declaration and the screen are held to
+     * each other rather than to a reading of the source that draws them.
      */
     {
       id: "delete-blocked",

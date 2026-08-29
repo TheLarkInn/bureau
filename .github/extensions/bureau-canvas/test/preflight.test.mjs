@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import { blocksDelete, referrers } from "../lib/preflight.mjs";
 import { valueOf } from "../web/statelab/dimensions.mjs";
+import { BLOCKED_PREFLIGHT } from "../web/statelab/intercept.mjs";
 
 const committed = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
 
@@ -70,41 +71,56 @@ test("preflight is advisory and orphaning alone does not block", () => {
 });
 
 /**
- * The one declared dimension value no state renders, held to what it claims.
+ * The one declared dimension value no combination of dimensions renders, held
+ * to what it claims — at the two ends a render cannot hold for itself.
  *
  * `field:delete-blocked` is kept in the registry so the screen is excluded by a
  * named rule rather than missing, and `delete-is-offered-only-where-nothing-
  * refers` says why: `DeleteControl` mounts on an assignment card and on the
- * orphan strip, and neither can answer with referrers. The consequence is that
- * the controls and copy that value declares are rendered by no state, so
- * nothing in the browser suite can fail for them.
+ * orphan strip, and neither can answer with referrers.
  *
- * That rule's `why` pointed at this file, which owned the blocking *answer* —
- * `blocksDelete` above — and not the *screen* the value describes. The two are
- * different claims, and only the first was held. So the screen is held here
- * too, against the source that draws it: the sentence is read out of the
- * registry rather than restated, so the declared copy and the shipped copy
- * cannot drift apart quietly, and the confirm is held to being withheld on
- * `blocking`, which is what `withheld(S.deleteConfirm)` promises.
+ * This test used to own the screen as well, by reading `web/app.mjs` for the
+ * spelling of its two lines. That was a mark, and the measurement is the
+ * argument: gating the sentence behind `preflight.blocking && false` left the
+ * literal in the source and this file green, and changing the Confirm's
+ * `disabled` to `preflight.blocking && false || busy` did the same. A file that
+ * still contains a line says nothing about whether the line reached a screen.
  *
- * `declaresCopy` is the half that was missing, and it is the half no other test
- * can supply. `copy` reads `declared.copy.every(...)`, which is vacuously true
- * of an empty list: emptying the registry's `copy` left this test — the only
- * holder this value has, since no state renders it — green on 7/7 and the whole
- * offline suite green on 469. Asserting the list is non-empty first makes the
- * `every` mean what it says in both directions.
+ * So the screen moved to `probe--delete-preflight-blocked`, which renders it
+ * from these very lists. Two ends remain that a render cannot hold for itself,
+ * and they are what is left here.
+ *
+ * `declaresCopy` is the first: the probe spreads `copy`, so an empty `copy`
+ * spreads into an empty set of claims and the render agrees with a promise that
+ * asks nothing. Emptying it left this file green at 7/7 and the whole offline
+ * suite green at 470; a blank string does the same while looking populated, so
+ * both are refused.
+ *
+ * `staged` is the second: the probe renders the host's answer, and a harness is
+ * free to invent one. This pins it to the answer `lib/preflight.mjs` actually
+ * produces for the role that sample references, so a change in what the host
+ * reports fails here rather than leaving a probe rendering a shape the product
+ * stopped producing — and `blocking` is checked against `blocksDelete` rather
+ * than asserted, because that is the rule the screen exists to obey.
  */
-test("the screen a blocked delete draws is the one the registry declares", async () => {
-  const source = (await readFile(new URL("../web/app.mjs", import.meta.url), "utf8")).replace(/\s+/gu, " ");
+test("the blocked delete declares a real sentence, and is staged from the host's own answer", () => {
   const declared = valueOf("field", "delete-blocked");
+  const staged = BLOCKED_PREFLIGHT.result;
 
   assert.deepEqual(
     {
-      declaresCopy: declared.copy.length > 0,
-      copy: declared.copy.every((line) => source.includes(JSON.stringify(line))),
-      withholdsConfirm: /disabled: preflight\.blocking/u.test(source),
+      declaresCopy: declared.copy.length > 0 && declared.copy.every((line) => typeof line === "string" && line.trim() !== ""),
+      declaresControls: declared.shows.length > 0,
+      referrers: staged.referrers,
+      blocking: staged.blocking === blocksDelete(staged.referrers),
       blocks: blocksDelete([{ severity: "referrer" }]),
     },
-    { declaresCopy: true, copy: true, withholdsConfirm: true, blocks: true },
+    {
+      declaresCopy: true,
+      declaresControls: true,
+      referrers: referrers(committed, "role", "implementer"),
+      blocking: true,
+      blocks: true,
+    },
   );
 });

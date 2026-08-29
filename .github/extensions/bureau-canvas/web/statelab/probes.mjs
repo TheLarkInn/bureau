@@ -24,6 +24,20 @@
 import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, viewerCardFor, withheld } from "./selectors.mjs";
 import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, RUN_STEP, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
 import { PASS_RUN } from "./intercept.mjs";
+import { valueOf } from "./dimensions.mjs";
+
+/**
+ * The one dimension value no combination of dimensions can carry, read here so
+ * that the declaration and the render are the same words.
+ *
+ * `probe--delete-preflight-blocked` renders what this value promises. Spreading
+ * it rather than restating it is the point: a sentence changed in the registry
+ * and not on screen fails the probe, and one changed on screen and not in the
+ * registry fails it too. `test/preflight.test.mjs` holds the remaining
+ * direction — that the value declares any sentence at all — because an empty
+ * `copy` spread into an empty `copy` asks nothing of either.
+ */
+const BLOCKED_FIELD = valueOf("field", "delete-blocked");
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -1296,6 +1310,62 @@ export const PROBES = [
       shows: [S.assignmentDetail, withheld(S.deleteStart)],
       hides: [S.preflight, S.deleteRefusedResting],
       copy: [{ selector: S.deleteStart, text: "Checking…" }],
+    },
+  }),
+  /*
+   * The same read, answered — and answered blocking.
+   *
+   * This is the screen `field:delete-blocked` declares, and until now the only
+   * one in the registry that nothing rendered.
+   * `delete-is-offered-only-where-nothing-refers` excludes it from the matrix,
+   * and that exclusion is still exact: no *combination of dimensions* reaches
+   * it, because both places `DeleteControl` mounts are entities nothing refers
+   * to. What the rule then did was hand the screen to `test/preflight.test.mjs`,
+   * which held it by reading `web/app.mjs` for the spelling of its two lines.
+   *
+   * Spelling is not a render, and the difference was measured rather than
+   * argued. Gating the sentence behind `preflight.blocking && false` left the
+   * literal in the source and the offline suite green at 470; so did changing
+   * the Confirm's `disabled` to `preflight.blocking && false || busy`. Both
+   * defects are invisible to a check that reads the file and obvious to one that
+   * looks at the screen.
+   *
+   * So the screen is rendered here, under the one thing the harness has to
+   * supply — the mount point. The answer is not invented: it is the host's own
+   * report for deleting the role `implementer` out of the committed sample,
+   * pinned in `test/preflight.test.mjs` against `referrers()` run over that same
+   * payload, so it cannot drift from what `lib/preflight.mjs` produces.
+   *
+   * The withheld Confirm is the claim that matters. A prompt that lists what it
+   * would break and still offers the button is worse than no prompt at all —
+   * and Cancel stays offered beside it, because a reader who cannot proceed must
+   * still be able to leave.
+   */
+  sample({
+    id: "probe--delete-preflight-blocked",
+    covers: "the delete preflight answering that something still refers to the entity — the screen `field:delete-blocked` declares and no combination of dimensions can reach",
+    summary: "the host reports two references and withholds the Confirm: the prompt names what to repoint, and the removal cannot be asked for until they are",
+    fixture: "validated",
+    intercept: "block-preflight",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: S.preflight },
+    ],
+    expect: {
+      shows: [S.assignmentDetail, ...BLOCKED_FIELD.shows, S.deleteBlocked, offered(S.deleteCancel)],
+      // The refusal's own note is absent in both of its places: nothing here was
+      // refused, and a screen that drew a refusal beside a blocked prompt would
+      // be reporting a removal that was never attempted.
+      hides: [S.deleteRefused, S.deleteRefusedResting],
+      copy: [
+        ...BLOCKED_FIELD.copy.map((text) => ({ selector: S.deleteBlocked, text })),
+        // Unscoped, because each is one row of a list the prompt draws rather
+        // than the whole of any element the vocabulary names: the count opens
+        // the prompt and the message is one referrer of the two.
+        "2 references",
+        "assignment `agent-eligible` runs role `implementer`",
+      ],
     },
   }),
   sample({
