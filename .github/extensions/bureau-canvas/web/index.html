@@ -987,7 +987,7 @@
         height: 0.65rem;
         border: 2px solid var(--background-color-default, #ffffff);
         background: var(--handle-color, var(--border-color-default, #d0d7de));
-        opacity: 0.18;
+        opacity: 0.55;
         transition: opacity 120ms ease;
       }
 
@@ -1005,7 +1005,7 @@
       .flow-edge--success { opacity: 0.8; }
       .flow-edge--failure,
       .flow-edge--blocked,
-      .flow-edge--no-work { opacity: 0.14; }
+      .flow-edge--no-work { opacity: 0.55; }
       .react-flow__edge {
         transition: opacity 120ms ease;
       }
@@ -1034,6 +1034,7 @@
           -1px 0 0 var(--background-color-default, #ffffff);
         pointer-events: none;
       }
+      .edge-caption--revealed { opacity: 1; }
 
       .react-flow__minimap { background: var(--background-color-default, #ffffff); border: 1px solid var(--border-color-default, #d0d7de); }
       .react-flow__controls { box-shadow: none; border: 1px solid var(--border-color-default, #d0d7de); }

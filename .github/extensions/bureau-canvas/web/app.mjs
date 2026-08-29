@@ -1540,6 +1540,7 @@ function Chip({ chip }) {
 function PipelineView({ state, selectedStep, setSelectedStep }) {
   const name = state.selectedPipeline.name;
   const pipeline = state.pipelines?.[name];
+  const [hoveredEdge, setHoveredEdge] = useState(null);
   // graph-overlays: design keeps the static graph; live and replay restyle
   // it from run events via the shared reducer in web/live/overlay.js.
   const [mode, setMode] = useState(() => {
@@ -1598,7 +1599,10 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
         { className: "pipeline-flow", "data-graph-edges": String(flow.declared) },
         h(ReactFlow, {
           nodes: flow.nodes,
-          edges: flow.edges,
+          edges: flow.edges.map((edge) => ({
+            ...edge,
+            data: { ...edge.data, revealed: edge.id === hoveredEdge },
+          })),
           nodeTypes: flowItemTypes,
           edgeTypes: flowEdgeTypes,
           fitView: true,
@@ -1610,6 +1614,8 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           elementsSelectable: true,
           proOptions: { hideAttribution: true },
           onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
+          onEdgeMouseEnter: (_, edge) => setHoveredEdge(edge.id),
+          onEdgeMouseLeave: () => setHoveredEdge(null),
         }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
       ),
       // graph-overlays: a run's steps left output; design mode has no run.
@@ -1816,7 +1822,7 @@ function routeIndexes(edges, route) {
   return indexes;
 }
 
-function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data = {} }) {
+function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, selected, animated, data = {} }) {
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -1830,7 +1836,7 @@ function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
   return h(React.Fragment, null,
     h(BaseEdge, { id, path, markerEnd }),
     data.label ? h(EdgeLabelRenderer, null, h("div", {
-      className: "react-flow__edge-label edge-caption",
+      className: `react-flow__edge-label edge-caption${data.revealed || selected || animated ? " edge-caption--revealed" : ""}`,
       style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
     }, data.label)) : null,
   );
