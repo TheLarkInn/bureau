@@ -10,6 +10,16 @@ import { emptyOverlay, stateUpTo } from "../live/overlay.js";
 
 const h = React.createElement;
 const SPEEDS = [1, 4, 16];
+/**
+ * How often the transport advances, and by how much of the run per step.
+ *
+ * The state registry depends on this number: `transport:playing` is the one
+ * state declared never to come to rest, and that is only safe while playing the
+ * committed run cannot finish inside the browser suite's settle budget. This
+ * module is browser-only — `react` resolves through the page's import map — so
+ * `test/statelab.test.mjs` reads the literal out of this file rather than
+ * importing it, and fails if it changes without the margin being rechecked.
+ */
 const TICK_MS = 100;
 
 export function useReplayOverlay(activity, pipeline) {

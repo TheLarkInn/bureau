@@ -21,6 +21,8 @@ import { stepOutput } from "./live/transcript.js";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
+import { drawableEdges } from "./graph-edges.mjs";
+import { emptyVerdict } from "./panel-verdict.mjs";
 import { MeasurementGuard } from "./graph-measure.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
@@ -538,7 +540,7 @@ function RefLink({ kind, name }) {
 
 function PipelineLink({ state, name }) {
   if (!name) {
-    return h("span", { className: "muted" }, "—");
+    return h("span", { className: "muted", "data-testid": "pipeline-unset" }, "—");
   }
   const summary = state.pipelines?.[name]?.summary ?? {};
   const counts = summary.kindCounts ?? {};
@@ -924,7 +926,12 @@ function ReposEditor({ state, assignment, onDone }) {
         publishLocalState(result);
         onDone();
       } else {
-        setError(result?.error ?? "could not save those repos");
+        // The refusal names the action that was taken, not the intent that
+        // carried it. Registering and reordering post the same `set-repos`, so
+        // both refusals used to say "could not save those repos" — which tells
+        // a reader who pressed "Add to registry and this assignment" that their
+        // ranked list failed to save, an edit they did not make.
+        setError(result?.error ?? (register ? `could not register ${register.name}` : "could not save those repos"));
       }
     });
   };
@@ -1299,12 +1306,24 @@ function LimitRow({ field, value, busy, onToggle, onChange }) {
  * The work source value, clickable: paste the board or issues page you are
  * already looking at and the fields are derived from it. Deriving is a
  * preview — nothing is written until the derivation is accepted.
+ *
+ * An assignment that names no work source says so in words. It used to render
+ * `? · ?`, which is the one row on the card that answered an absence with
+ * punctuation while every other row — `no filter`, `no approval label`,
+ * `branches: not set`, `no repos`, and the pipeline row's mark — answered it
+ * with a sentence. Two question marks read as a rendering fault rather than as
+ * a statement, on the field that decides whether the assignment does anything
+ * at all, and no state rendered it until `probe--bare-assignment-expanded`.
+ *
+ * A half-set source keeps the separator, because that really is a config with
+ * one of the two written: `github · ?` is a forge with no source, and saying
+ * "no work source" there would describe a file that is not on disk.
  */
 function WorkSourceField({ assignment }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setOpen, trigger);
-  const label = `${assignment.work?.forge ?? "?"} · ${assignment.work?.source ?? "?"}`;
+  const label = workSourceLabel(assignment.work);
   return h(
     "div",
     { className: "field-disclosure" },
@@ -1322,6 +1341,13 @@ function WorkSourceField({ assignment }) {
     ),
     open ? h(WorkSourceEditor, { assignment, onDone: close }) : null,
   );
+}
+
+function workSourceLabel(work) {
+  if (!work?.forge && !work?.source) {
+    return "no work source";
+  }
+  return `${work.forge ?? "?"} · ${work.source ?? "?"}`;
 }
 
 function closeDisclosure(setOpen, trigger) {
@@ -1461,17 +1487,34 @@ function OrphanStrip({ state, view }) {
   );
 }
 
-/** The full relation graph, collapsed by default as a secondary section. */
+/**
+ * The full relation graph, collapsed by default as a secondary section.
+ *
+ * The graph is mounted when the section is opened rather than kept behind a
+ * shut disclosure. A closed `<details>` keeps its subtree in the document and
+ * Chromium reports client rects for parts of it, so a React Flow instance
+ * nobody can see was still measuring nodes and laying out edges — and losing
+ * that race sometimes, which made two renders of one state describe different
+ * documents. The state matrix caught it as a twin that had stopped matching,
+ * over four edges inside a section that was shut on both screens.
+ *
+ * Reading `open` from the event rather than owning it: the disclosure is still
+ * the browser's, so `relationOpen` keeps reading the attribute, which is the
+ * only thing that can tell a shut section from an open one.
+ */
 function RelationSection({ state }) {
+  const [open, setOpen] = useState(false);
   return h(
     "details",
-    { className: "relation-section" },
+    { className: "relation-section", onToggle: (event) => setOpen(event.currentTarget.open) },
     h("summary", {}, "Relation graph"),
-    h(
-      "div",
-      { className: "config-flow", "aria-label": "Bureau config relation graph" },
-      h(RelationGraph, { relation: state.config?.relation }),
-    ),
+    open
+      ? h(
+        "div",
+        { className: "config-flow", "aria-label": "Bureau config relation graph" },
+        h(RelationGraph, { relation: state.config?.relation }),
+      )
+      : null,
   );
 }
 
@@ -1552,7 +1595,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
       ),
       h(
         "div",
-        { className: "pipeline-flow" },
+        { className: "pipeline-flow", "data-graph-edges": String(flow.declared) },
         h(ReactFlow, {
           nodes: flow.nodes,
           edges: flow.edges,
@@ -1625,16 +1668,27 @@ function toFlow(pipeline, state, selectedStep, decoration = null) {
   const terminals = layout.terminals.map((terminal) =>
     flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name]));
   const backIndexes = routeIndexes(layout.edges, "back");
+  const planned = overlayPlan(layout.edges, resolved);
+  const sources = [...(pipeline?.containers ?? []), ...layout.steps.filter((step) => visible.has(step.id)), ...layout.terminals];
   return {
     nodes: [...frames, ...steps, ...terminals],
-    edges: overlayEdges(layout.edges, handles, backIndexes, resolved),
+    edges: planned.map((item) => flowEdge(item.remapped, handles.edges[item.id], backIndexes.get(item.id) ?? 0, resolved, item.id)),
+    declared: drawableEdges(sources, planned.map((item) => item.remapped)),
   };
 }
 
-/** Remap hidden-member edges onto their group node and drop the duplicates. */
-function overlayEdges(edges, handles, backIndexes, resolved) {
+/**
+ * Remap hidden-member edges onto their group node and drop the duplicates.
+ *
+ * The semantic half of what used to be `overlayEdges`, kept apart from the
+ * React Flow projection so `declared` above can be counted from the layout this
+ * returns rather than from the array handed to the renderer — the independence
+ * `web/graph-edges.mjs` requires. The drops are the overlay's meaning and so
+ * belong on this side; `flowEdge` is the untrusted half.
+ */
+function overlayPlan(edges, resolved) {
   const seen = new Set();
-  const drawn = [];
+  const planned = [];
   for (const edge of edges) {
     const remapped = resolved ? { ...edge, source: resolved.remapEdge(edge.source), target: resolved.remapEdge(edge.target) } : edge;
     const key = `${remapped.source}->${remapped.target}:${remapped.outcome ?? remapped.relation}`;
@@ -1642,9 +1696,9 @@ function overlayEdges(edges, handles, backIndexes, resolved) {
       continue;
     }
     seen.add(key);
-    drawn.push(flowEdge(remapped, handles.edges[edge.id], backIndexes.get(edge.id) ?? 0, resolved, edge.id));
+    planned.push({ id: edge.id, remapped });
   }
-  return drawn;
+  return planned;
 }
 
 function flowFrame(frame) {
@@ -1949,7 +2003,7 @@ function SidePanel({ state, pipeline, name }) {
     { className: "side-panel" },
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
     h(AgentIdentities, { state, pipeline }),
-    h("section", { className: "panel-section" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, "clean — bureau validate would pass")),
+    h("section", { className: "panel-section", "data-testid": "panel-validation" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, emptyVerdict(state.validation))),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
   );
 }

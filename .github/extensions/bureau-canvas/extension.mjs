@@ -25,6 +25,36 @@ const REPO_ROOT = resolve(EXTENSION_DIR, "../../..");
 const FALLBACK_FIXTURE = resolve(EXTENSION_DIR, "test", "fixtures", "committed-payload.json");
 const TEST_MISSING_BUREAU = resolve(EXTENSION_DIR, "test", "fixtures", "missing-bureau");
 
+/**
+ * The run logs the pinned payload is paired with.
+ *
+ * `/sample` exists so the State Lab renders all 270 states over one payload
+ * rather than over the reader's own `.bureau/`, and the config half of that was
+ * already pinned: no pending plan, no layout sidecar, no host pipeline. The run
+ * half was not. Replay and Live do not read `/state` at all — they read `/runs`
+ * and `/runs/:id/events` — so every `mode:replay` and `mode:live` state in the
+ * lab was drawn over whatever runs the reader happened to have, and against an
+ * empty `~/.bureau/runs` they had no run to draw at all.
+ *
+ * These are the same committed logs the browser suite points the host at with
+ * `BUREAU_CANVAS_RUNS`, which is why CI could never see the gap: the harness
+ * pins by environment what the lab left unpinned by route.
+ */
+const SAMPLE_RUNS = resolve(EXTENSION_DIR, "test", "fixtures", "runs");
+
+/**
+ * The directory the pinned payload reports it came from.
+ *
+ * `fallbackResult` puts this straight into `state.dir`, which the header
+ * renders as `.config-path`. Passing the host's own directory made the one
+ * pinned payload carry one unpinned field, so the same state id drew a
+ * different header on every checkout — the defect `/sample` exists to remove,
+ * surviving in the single field a reader is most likely to read as ground
+ * truth. It is not a path on any machine, and says so, because the bundled
+ * sample was not loaded from one.
+ */
+const SAMPLE_DIR = "(bundled sample)";
+
 export const inputSchema = {
     type: "object",
     additionalProperties: false,
@@ -185,7 +215,8 @@ export function createBureauCanvasOptions(getWorkspacePath = () => process.cwd()
 
 export async function buildState(input, options = {}) {
     const result = await loadConfigPayload(input.dir, options);
-    const config = configWithPlan(result.config, input.instanceId, input.dir);
+    const plan = pendingPlan(input.instanceId, options);
+    const config = configWithPlan(result.config, plan, input.dir);
     const payload = payloadFromResult({ ...result, config });
     const view = configView(payload);
     const layouts = await loadLayoutSidecar(input.dir, options);
@@ -200,13 +231,23 @@ export async function buildState(input, options = {}) {
         generalFindings: generalFindings(result.findings ?? []),
         config: { view, layout: configLayout(view), relation: relationView(payload) },
         pipelines,
-        plan: planSummary(input.instanceId),
+        plan: planSummary(plan),
     };
     return { ...state, selectedPipeline: selectedPipeline(state, input.pipeline) };
 }
 
-function configWithPlan(config, instanceId, dir) {
-    const plan = plans.get(instanceId);
+/**
+ * The unsaved work this state should overlay, and none when the payload is
+ * pinned. `sample: true` promises the bundled sample *as committed*, so the
+ * host's own pending writes must not reach it: the State Lab renders every
+ * modelled state from that one payload, and a leaked plan would draw a draft
+ * bar over the 200-odd states whose registry entry declares it has none.
+ */
+function pendingPlan(instanceId, options) {
+    return options.sample ? null : (plans.get(instanceId) ?? null);
+}
+
+function configWithPlan(config, plan, dir) {
     const next = structuredClone(config ?? { repos: {}, roles: {}, assignments: {}, pipelines: {} });
     if (!plan) {
         return next;
@@ -244,10 +285,16 @@ async function loadLayoutSidecar(dir, options) {
     if (options.layouts) {
         return options.layouts;
     }
+    if (options.sample) {
+        return {};
+    }
     return readLayout(dir);
 }
 
 async function loadConfigPayload(dir, options) {
+    if (options.sample) {
+        return fallbackResult(dir, { state: "binary-missing" });
+    }
     if (options.payload) {
         return resultFromPayload(options.payload, dir);
     }
@@ -525,6 +572,13 @@ async function handleRequest(entry, request, response) {
 
     if (pathname === "/state") {
         sendJson(response, entry.state, request.method === "HEAD");
+    } else if (pathname === "/sample") {
+        await sendSample(entry, response, request.method === "HEAD");
+    } else if (pathname === "/sample/runs") {
+        sendJson(response, { runs: await listRuns(SAMPLE_RUNS) }, request.method === "HEAD");
+    } else if (pathname.startsWith("/sample/runs/") && pathname.endsWith("/events")) {
+        const runId = pathname.slice("/sample/runs/".length, -"/events".length);
+        await sendSampleRunEvents(runId, response, request.method === "HEAD");
     } else if (pathname === "/events") {
         sendEvents(entry, request, response);
     } else if (pathname === "/runs") {
@@ -789,6 +843,66 @@ async function runPlanIntent(entry, intent, response) {
     }
 }
 
+/**
+ * The bundled sample, built exactly as `/state` builds the host's own config.
+ *
+ * The State Lab exists to show a reviewer the states CI asserts, and it applies
+ * each fixture as a *transform* of whatever `/state` served. Against the
+ * bundled sample those two are the same payload. Against a contributor's real
+ * `.bureau/` they are not: the transforms reach for the sample's assignment by
+ * name, so a config that does not have one produced a different screen under
+ * the same state id — and an empty config made 57 of them throw outright, so
+ * the surface whose whole job is "browse every state" could not draw a fifth of
+ * them.
+ *
+ * This is the same fallback the host already serves when the binary is missing,
+ * so it is not a second fixture kept in step by hand — `fallbackResult` reads
+ * the one committed payload, and the state is assembled by `buildState` like
+ * any other. The lab asks for it by name and says which one it is showing.
+ *
+ * The pin covers the *whole* payload, not just the config load. A canvas
+ * session's unsaved `/intent` writes and the contributor's on-disk `layout.json`
+ * both feed `buildState` too, and either one reaching the lab would show a
+ * reviewer a screen the registry never modelled — a draft bar on a state that
+ * declares none, or an editor arranged by whoever last dragged a node here.
+ *
+ * The host's *navigation* is the third such input, and it is the one that
+ * decides the surface rather than dressing it. `buildState` derives
+ * `selectedPipeline` from `input.pipeline`, and `App` renders `PipelineView`
+ * whenever that is set — so a lab opened from a canvas that happened to be on a
+ * pipeline served every `surface:config` state as the pipeline viewer. No
+ * fixture could correct it: the config transforms never clear a selection,
+ * because on the payload they were written against there is none. The browser
+ * suite cannot see it either — it opens the lab with no pipeline, so the leaked
+ * value is always absent there — which is exactly why it is pinned here rather
+ * than left to a check that cannot fail. The selection-layer fixtures
+ * (`selectPipeline`, `missingPipeline`, `noPipeline`) set the selection they
+ * want, so the base owes them no selection at all.
+ */
+async function sendSample(entry, response, headOnly) {
+    const input = { dir: SAMPLE_DIR, instanceId: entry.state.instanceId };
+    const state = await buildState(input, { ...(entry.options ?? {}), sample: true });
+    sendJson(response, state, headOnly);
+}
+
+/**
+ * One committed run's log, read as a log and never through the binary.
+ *
+ * `sendRunEvents` asks `bureau show` first and falls back to the raw file, so
+ * on a machine that has a binary the same run id would answer from the CLI and
+ * on one that does not it would answer from disk. That is the right order for
+ * the host's own runs and the wrong one for a pinned payload: the whole promise
+ * of `/sample` is that what it serves does not depend on what is installed
+ * here. These logs are committed, so reading them is the answer.
+ */
+async function sendSampleRunEvents(runId, response, headOnly) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
+        sendStatus(response, 400);
+        return;
+    }
+    await sendRunEventsFromLog(runId, SAMPLE_RUNS, response, headOnly);
+}
+
 async function refreshState(entry) {
     const input = {
         dir: entry.state.dir,
@@ -799,8 +913,7 @@ async function refreshState(entry) {
 }
 
 /** Pending, unsaved work, so the panel can show a draft rather than look saved. */
-function planSummary(instanceId) {
-    const plan = plans.get(instanceId);
+function planSummary(plan) {
     if (!plan || (plan.writes.length === 0 && plan.removals.length === 0)) {
         return null;
     }

@@ -8,11 +8,11 @@
 
 import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
-import { isAction } from "./driver.mjs";
+import { isAction, canonicalAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, selectStep } from "./paths.mjs";
+import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, RUN_STEP, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
-import { SELECTORS as S } from "./selectors.mjs";
+import { SELECTORS as S, replayPositionAt, replaySpeed, replaySpeedActive } from "./selectors.mjs";
 
 const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
@@ -33,7 +33,7 @@ function pageFor(combo) {
  * surface simply does not draw.
  */
 function expectations(combo) {
-  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set() };
+  const bag = { shows: new Set(), hides: new Set(), copy: new Set(), allowErrors: new Set(), allowPlaceholder: new Set(), allowOverlap: new Set() };
   const absorb = (source) => {
     for (const [key, set] of Object.entries(bag)) {
       for (const item of source?.[key] ?? []) {
@@ -60,7 +60,22 @@ function expectations(combo) {
     copy: [...bag.copy],
     allowErrors: [...bag.allowErrors],
     allowPlaceholder: [...bag.allowPlaceholder],
+    allowOverlap: [...bag.allowOverlap],
+    settles: settlement(combo),
   };
+}
+
+/**
+ * Whether this state's render is required to come to rest.
+ *
+ * True for all but one value in the whole matrix, and it is a claim in both
+ * directions rather than a tolerance: see `transport:playing` in
+ * `dimensions.mjs` for why an exemption that only permitted instability would
+ * be a mark that cannot fail. A dimension value declaring `settles: false`
+ * makes the state's own motion the thing under test.
+ */
+function settlement(combo) {
+  return !ORDER.some((key) => valueOf(key, combo[key])?.settles === false);
 }
 
 /**
@@ -201,8 +216,40 @@ function pick(source, keys) {
   return Object.fromEntries(keys.map((key) => [key, source?.[key]]));
 }
 
+/**
+ * The empty value of every key an `expect` carries, and the whole of that shape.
+ *
+ * `settles` is the one that is not a list: absent means "this render must come
+ * to rest", which is what `settlement()` returns for all but one value in the
+ * matrix, and every reader spells the exemption `=== false` — so filling it
+ * with `true` states the default the code already applies rather than changing
+ * one.
+ */
+const EMPTY_EXPECT = { shows: [], hides: [], copy: [], allowErrors: [], allowPlaceholder: [], allowOverlap: [], settles: true };
+
+/**
+ * Every state carries the same `expect` shape, whichever way it was written.
+ *
+ * `expectations()` returns all seven keys always; a probe writes the literal
+ * clauses it is making and omits the rest. That difference was invisible to the
+ * gate, because `checks.mjs` defends each read (`?? []`) at all four of its call
+ * sites — and so the shape was never a property of the registry, only a habit of
+ * one reader. The lab is the other reader: its panel iterates
+ * `state.expect.hides` to draw a row per selector, four probes have no `hides`
+ * key, and selecting one threw `not iterable` into the catch that renders the
+ * panel as a red note. Four of the 271 states could not be opened on the surface
+ * built for opening them, and nothing said so.
+ *
+ * Normalising here rather than defending at each read means a new probe cannot
+ * reintroduce it, and the state a reviewer opens is the state the gate ran.
+ */
+function normalise(expect) {
+  const filled = Object.entries(EMPTY_EXPECT).map(([key, empty]) => [key, expect?.[key] ?? empty]);
+  return { ...expect, ...Object.fromEntries(filled) };
+}
+
 /** Reachable states: the matrix plus the deliberate crossing probes. */
-export const STATES = [...matrixStates, ...PROBES];
+export const STATES = [...matrixStates, ...PROBES.map((probe) => ({ ...probe, expect: normalise(probe.expect) }))];
 
 /**
  * Pairs of states that draw the same screen on purpose, and why.
@@ -214,7 +261,8 @@ export const STATES = [...matrixStates, ...PROBES];
  * that leaves with the run it was about leaves the screen it found. Saying so
  * here turns an unremarked coincidence into an assertion in both directions —
  * `e2e/playwright/gallery-audit.mjs` reports a declared twin that stops
- * matching exactly as loudly as an undeclared pair that starts.
+ * matching exactly as loudly as an undeclared pair that starts, and
+ * `specs/gallery.audit.spec.mjs` fails the run on either.
  *
  * `viewports` is per-pair rather than assumed, because the two layouts are two
  * screens: a claim that holds in one column may not hold in two.
@@ -329,6 +377,31 @@ export const REVERSIBLE = [
   // list precisely so that collapsing does not take the only button that could
   // undo it, and that claim is only under test if the matrix walks it back.
   { via: S.groupFold, undo: S.groupFold, hidden: S.groupMembers },
+  /*
+   * The two transport controls that were drawn by every replay state and
+   * pressed by none.
+   *
+   * `transport` exists because "replay's controls have to move the run; a
+   * timeline that only draws is the defect they hide" — and Step back was in
+   * the `shows` of two states and the `enter` of neither, so it was asserted to
+   * be *on the screen* and never asserted to do anything. Deleting its handler
+   * changed no verdict in the matrix, which is the exact shape of a control
+   * that is drawn and not checked. The same was true of returning to 1x: the
+   * 16x state took the speed and nothing ever gave it back.
+   *
+   * They belong here rather than as new dimension values because the claim is
+   * the one a return edge already makes: this press puts the page back. Step
+   * back lands on the resting position, and 1x lands on the resting speed, so
+   * both are held to `transport:rest`'s own expectations — the scrubber at the
+   * run's first event and the "+0.0s" readout, which is precisely what a
+   * no-op Step back would fail.
+   *
+   * Step back's region is a function of the run: `stepped` is at that run's
+   * `next` millisecond, and each of the three logs starts somewhere different,
+   * so a constant selector could only ever have been right for one of them.
+   */
+  { via: S.replayStepForward, undo: S.replayStepBack, gone: (child) => replayPositionAt(RUN_STEP[child.dimensions.run]?.next) },
+  { via: replaySpeed(16), undo: replaySpeed(1), gone: replaySpeedActive(16) },
 ];
 
 /**
@@ -351,16 +424,17 @@ export const ENTRY_TRANSITIONS = TRANSITIONS.filter((edge) => edge.kind === "ent
 
 function buildTransitions() {
   const byPath = new Map(STATES.map((state) => [signature(state.ops), state.id]));
+  const byId = new Map(STATES.map((state) => [state.id, state]));
   const edges = [];
   for (const state of STATES) {
-    const acting = state.ops.filter(isAction);
+    const acting = state.ops.filter(isAction).map(canonicalAction);
     const found = nearestParent(byPath, acting, state.id);
     if (found) {
       const delta = deltaAfter(state.ops, found.actions);
       edges.push({ kind: "enter", from: found.id, to: state.id, via: describe(delta), delta });
     }
   }
-  return [...edges, ...edges.map(returnEdge).filter(Boolean)];
+  return [...edges, ...edges.map((edge) => returnEdge(edge, byId.get(edge.to))).filter(Boolean)];
 }
 
 /**
@@ -389,19 +463,38 @@ function nearestParent(byPath, acting, id) {
   return null;
 }
 
-/** The way back out of `edge`, when the control it used declares an undo. */
-function returnEdge(edge) {
-  const last = edge.delta.filter(isAction).at(-1);
-  const toggle = last?.op === "click" && REVERSIBLE.find((item) => item.via === last.selector);
+/**
+ * The way back out of `edge`, when the control it used declares an undo.
+ *
+ * Only when the delta *is* that one control. Undoing the last operation of a
+ * multi-step delta does not undo the delta: the first
+ * `probe--create-refusal-dismissed` edge arrives by pressing Cancel and then
+ * reopening the create bar, and pressing Cancel again closes a form that is now
+ * clean — it does not put back the refusal the first click dismissed, which is
+ * the very thing that probe exists to prove is gone. Derived from the last op
+ * alone, the graph claimed a way back to the error state, the lab drew it, and
+ * the suite walked it into four missing controls.
+ *
+ * So the arity is the guard, and it is the honest one: a return edge is a claim
+ * that one press reverses one press, and that claim is only available when the
+ * step across was a single press.
+ */
+function returnEdge(edge, child) {
+  const acting = edge.delta.filter(isAction);
+  const toggle = acting.length === 1 && acting[0].op === "click" && REVERSIBLE.find((item) => item.via === acting[0].selector);
   if (!toggle) {
     return null;
   }
   // A toggle that revealed a region is undone when the region has gone; one
   // that removed a region is undone when it is back. Waiting the wrong way
   // round would be an edge that passes on the instant it is called.
-  const settled = toggle.gone
-    ? { op: "waitGone", selector: toggle.gone }
-    : { op: "wait", selector: toggle.hidden };
+  //
+  // Either may be a function of the state being left, because the transport's
+  // regions are addressed by the run they are showing: the scrubber a step back
+  // must return to is at a different millisecond in each run's log, so a
+  // constant selector could only have been written for one of them.
+  const gone = resolveRegion(toggle.gone, child);
+  const settled = gone ? { op: "waitGone", selector: gone } : { op: "wait", selector: resolveRegion(toggle.hidden, child) };
   return {
     kind: "return",
     from: edge.to,
@@ -409,6 +502,10 @@ function returnEdge(edge) {
     via: `click ${toggle.undo}`,
     delta: [{ op: "click", selector: toggle.undo }, settled],
   };
+}
+
+function resolveRegion(region, child) {
+  return typeof region === "function" ? region(child) : region;
 }
 
 /**
@@ -427,7 +524,7 @@ function deltaAfter(ops, actions) {
 }
 
 function signature(ops) {
-  return JSON.stringify(ops.filter(isAction));
+  return JSON.stringify(ops.filter(isAction).map(canonicalAction));
 }
 
 /**

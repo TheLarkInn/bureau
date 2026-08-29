@@ -9,7 +9,9 @@
 // Nothing here decides whether a pipeline is legal. `problems()` reports
 // hints for the editor chrome; the save path owns the final verdict.
 
-export const TERMINALS = ["done", "abort", "escalate"];
+import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+
+export const TERMINALS = TERMINAL_NAMES;
 export const OUTCOMES = ["success", "failure", "blocked", "no-work"];
 export const STEP_KINDS = ["deterministic", "agent", "decision", "concurrent"];
 
@@ -29,8 +31,9 @@ export function createStep(view, name, kind) {
   if (!STEP_KINDS.includes(kind)) {
     throw new Error(`unknown step kind \`${kind}\``);
   }
-  if (view.steps.some((step) => step.name === name)) {
-    throw new Error(`pipeline already has a step named \`${name}\``);
+  const problem = stepNameProblem(view.steps, name);
+  if (problem) {
+    throw new Error(problem.message);
   }
   return {
     ...view,
@@ -61,25 +64,48 @@ function decisionOn() {
   return Object.fromEntries(OUTCOMES.map((outcome) => [outcome, "abort"]));
 }
 
-/** Removes a step and every edge that touches it. */
+/**
+ * Removes a step, every edge that touches it, and every reference to it left in
+ * another step's fields.
+ *
+ * The fields are the half this used to miss, and they are the half a rename has
+ * always handled: `renamedFields` below retargets `over`, `on`, `members` and
+ * `inputsFrom` precisely so a rename never dangles, and a delete has the same
+ * obligation. The rule itself lives in `web/step-refs.mjs`, on the side of the
+ * served root the browser can reach, so the editor's draft delete and this one
+ * are the same rule rather than two copies of it.
+ *
+ * Edges to `terminal:<name>` are deliberately left alone. A step being deleted
+ * is never a terminal, so such an edge is some other step's route to the
+ * terminal and has nothing to do with this delete; the clause that dropped them
+ * did nothing at all except when a step shared a terminal's name, which is the
+ * one case where it was wrong.
+ */
 export function removeStep(view, name) {
   return {
     ...view,
-    steps: view.steps.filter((step) => step.name !== name),
-    edges: view.edges.filter((edge) => edge.source !== name && edge.target !== name && edge.target !== `${TERMINAL_PREFIX}${name}`),
+    steps: view.steps.filter((step) => step.name !== name).map((step) => withoutReferencesTo(step, name)),
+    edges: view.edges.filter((edge) => edge.source !== name && edge.target !== name),
   };
 }
 
 /**
  * Renames a step, retargeting every edge and `over`/members reference so a
  * rename never dangles. Edge ids are derived, so they are rebuilt too.
+ *
+ * The field half is `web/step-refs.mjs`, shared with the editor's draft rename,
+ * for the same reason the delete is: written out twice, the two copies were
+ * free to disagree, and one of them did. The *name* rule is shared from there
+ * too, so the host and the field editor refuse the same names for the same
+ * stated reason.
  */
 export function renameStep(view, from, to) {
   if (!to || to === from) {
     return view;
   }
-  if (view.steps.some((step) => step.name === to)) {
-    throw new Error(`pipeline already has a step named \`${to}\``);
+  const problem = stepNameProblem(view.steps, to, from);
+  if (problem) {
+    throw new Error(problem.message);
   }
   const steps = view.steps.map((step) => renamedStep(step, from, to));
   return { ...view, steps, edges: view.edges.map((edge) => renamedEdge(edge, from, to)) };
@@ -87,25 +113,7 @@ export function renameStep(view, from, to) {
 
 function renamedStep(step, from, to) {
   const renamed = step.name === from ? { ...step, id: to, name: to } : { ...step };
-  renamed.fields = renamedFields(step, from, to);
-  return renamed;
-}
-
-function renamedFields(step, from, to) {
-  const fields = { ...step.fields };
-  if (fields.over === from) {
-    fields.over = to;
-  }
-  if (fields.on && typeof fields.on === "object") {
-    fields.on = Object.fromEntries(Object.entries(fields.on).map(([outcome, target]) => [outcome, target === from ? to : target]));
-  }
-  if (Array.isArray(fields.members)) {
-    fields.members = fields.members.map((member) => (member === from ? to : member));
-  }
-  if (Array.isArray(fields.inputsFrom)) {
-    fields.inputsFrom = fields.inputsFrom.map((source) => (source === from ? to : source));
-  }
-  return fields;
+  return { ...renamed, fields: withReferencesRetargeted(step, from, to).fields };
 }
 
 function renamedEdge(edge, from, to) {

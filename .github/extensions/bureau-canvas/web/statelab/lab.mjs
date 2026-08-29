@@ -6,10 +6,10 @@
 // plain DOM on purpose — if it were built from the canvas's components it
 // could start to disagree with them.
 
-import { collect, CONTRAST, copyLabel, measureFor, selectorsFor, verdict } from "./checks.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, measureFor, phrasesFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unrowed, unsettledReason, verdict } from "./checks.mjs";
 import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
-import { violations } from "./constraints.mjs";
+import { harnessNotes, violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
 import { servableInFrame } from "./intercept.mjs";
 import { runPath } from "./driver.mjs";
@@ -36,7 +36,7 @@ const el = (tag, className, text) => {
 };
 
 async function boot() {
-  base = await fetch("./state", { cache: "no-store" }).then((response) => response.json());
+  base = await loadBase();
   renderBaseNote();
   renderSummary();
   renderList();
@@ -50,6 +50,37 @@ async function boot() {
       void show(next);
     }
   });
+}
+
+/**
+ * Every fixture is a *transform* of the payload the lab starts from, so which
+ * payload that is decides whether these renders are the ones CI asserts.
+ *
+ * It used to be `./state` — the host's own config — which made the lab a
+ * different surface depending on who opened it. Against the bundled sample the
+ * two agree; against a contributor's real `.bureau/` the transforms reached for
+ * an assignment that was not there, so the same state id drew a different
+ * screen, and against an empty config 57 of the 256 threw and drew nothing at
+ * all. A review surface that silently swaps its subject is worse than one that
+ * refuses, and one that cannot draw a fifth of the matrix is not a review
+ * surface at all.
+ *
+ * So it asks for `/sample`: the same committed payload the host itself falls
+ * back to when the binary is missing, assembled by the same `buildState`. The
+ * page in the frame is still the production page reading a real host — only the
+ * payload is pinned, which is the half that has to match CI for a comparison
+ * against the gallery to mean anything.
+ *
+ * The fallback to `./state` is for a host too old to answer `/sample`, and it
+ * is reported rather than absorbed: `renderBaseNote` then says out loud that
+ * these renders are the reader's own config in the shape of each state.
+ */
+async function loadBase() {
+  const sample = await fetch("./sample", { cache: "no-store" }).catch(() => null);
+  if (sample?.ok) {
+    return sample.json();
+  }
+  return fetch("./state", { cache: "no-store" }).then((response) => response.json());
 }
 
 /**
@@ -142,15 +173,33 @@ function stateButton(state) {
  * would fight over one iframe — a viewport switch mid-walk used to reload the
  * page underneath the walk in flight — so they are serialised on a promise
  * queue and each walk runs to completion before the next begins.
+ *
+ * `current` is set on *request* rather than when the walk reaches the front of
+ * the queue, and the difference is not academic. The viewport buttons and
+ * Reload both re-run `current`, so while it meant "the walk that has started"
+ * every one of those controls re-ran whichever state was still on screen rather
+ * than the one the reviewer had just clicked — and then said so in the panel,
+ * under the heading of a state the reviewer never asked to see. It was
+ * invisible only because walks used to finish before a second click could land;
+ * requiring a render to hold still before it is judged made the queue long
+ * enough to meet by hand. A control that acts on a stale selection is the
+ * ordinary shape of this defect, and a review surface is the last place it
+ * belongs.
  */
 function show(state) {
+  current = state;
+  // Written here rather than inside the walk, for the same reason `current` is.
+  // The hash and the selection have to move together: a walk that stamped the
+  // hash when it reached the front of a queue would announce state A while the
+  // reviewer had already asked for B, and the `hashchange` guard below — which
+  // compares against `current` — would read that as a *new* request and queue A
+  // all over again.
+  window.location.hash = encodeURIComponent(state.id);
   queue = queue.catch(() => {}).then(() => walk(state));
   return queue;
 }
 
 async function walk(state) {
-  current = state;
-  window.location.hash = encodeURIComponent(state.id);
   for (const node of document.querySelectorAll(".state-item")) {
     node.classList.toggle("is-active", node.querySelector(".state-id")?.textContent === state.id);
   }
@@ -189,19 +238,62 @@ const SETTLE_POLL_MS = 50;
  * a single `page.evaluate` rather than a locator, so nothing there retries
  * either; `matrix-fixtures.mjs` runs the same loop for the same reason. Both
  * report whatever the last look found, so a genuinely wrong state still fails.
+ *
+ * Leaving on the first failure-free look was not enough, and this surface is
+ * the one where that mattered most. No expectation names a relation graph's
+ * *edges* — React Flow draws them in a pass after it has measured the nodes —
+ * so the loop could exit during the lull between the two, and the panel would
+ * report "nothing else…" beside a picture of steps
+ * joined to nothing. That is the review surface vouching for a frame, which is
+ * exactly the fault `settled` was introduced in the matrix to stop; the lab
+ * making the opposite claim about the same registry is the contradiction.
+ *
+ * So the graph barrier is shared with the matrix, and whether it was ever
+ * reached is returned rather than kept: a render the loop could not prove is
+ * marked, not presented as verified.
+ *
+ * Sharing the barrier was not the whole of sharing the rule, and for a round it
+ * was mistaken for it. Settling is stability *and* a finished edge pass; only
+ * the second half came from `checks.mjs`, and the first was written out here as
+ * "leave on the first failure-free look" — which is no stability rule at all.
+ * So the two surfaces still disagreed, in the direction that matters most: the
+ * matrix recorded `transport:playing` as not proved settled, because its
+ * scrubber advances every 100ms and its signature never holds still, while this
+ * panel handed a reviewer its first frame with every line green. Both halves
+ * now come from `settleStep`, so the disagreement has nowhere left to live.
+ *
+ * The count of looks a graph spent incomplete is shared too, so the note can
+ * say *which* graph did not finish. "A graph on this render" is the same dead
+ * end the matrix's own failure was rewritten to remove: three surfaces publish
+ * the count, more than one can be on a render at once, and a reviewer told only
+ * that one of them is behind has nothing to go and look at.
+ *
+ * Still a mark here and a failure in the matrix, and that difference is
+ * deliberate rather than left over. The matrix renders into a controlled budget
+ * and gates a run; the lab renders one state at a time into a live frame a
+ * human is already watching, where a slow pass is ordinary and the panel's job
+ * is to say which renders may be believed. What the two must not do is disagree
+ * about the *fact*, and they no longer can: the barrier, the count, the
+ * threshold and the sentence all come from `checks.mjs`.
  */
 async function settledInspect(state) {
   const deadline = Date.now() + SETTLE_MS;
+  let looks = new Map();
+  let settle = null;
   let result = inspect(state);
-  while (result.failures.length && Date.now() < deadline) {
+  for (;;) {
+    settle = settleStep(settle, result.snapshot);
+    looks = undrawnLooks(looks, result.snapshot);
+    if ((settle.settled && !result.failures.length) || Date.now() >= deadline) {
+      return { ...result, settled: settle.settled, undrawn: undrawnFor(result.snapshot, looks, SETTLE_REPEATS) };
+    }
     await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
     result = inspect(state);
   }
-  return result;
 }
 
 function inspect(state) {
-  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST });
+  const snapshot = collect(frame.contentDocument, { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) });
   return { snapshot, failures: verdict(state, snapshot, { slack: 2 }) };
 }
 
@@ -305,7 +397,7 @@ function expectationList(state, result) {
   }
   for (const phrase of state.expect.copy) {
     const label = copyLabel(phrase);
-    const ok = !(result?.failures ?? []).some((item) => item.kind === "missing-copy" && item.detail === label);
+    const ok = !(result?.failures ?? []).some((item) => copyFailure(item, phrase, label));
     list.append(row(typeof phrase === "object" && phrase !== null ? label : `“${label}”`, "copy", ok));
   }
   box.append(list);
@@ -315,10 +407,35 @@ function expectationList(state, result) {
   if (result?.channel?.observed === false) {
     box.append(el("p", "note note--warn", `Not proved settled: ${result.channel.reason}. This render may have raced the host's own payload.`));
   }
-  const layout = (result?.failures ?? []).filter((item) => ["overlap", "clipped", "horizontal-overflow", "low-contrast", "placeholder-copy"].includes(item.kind));
+  // The graph half of the same claim, and the stability half beside it. A
+  // relation or pipeline surface that never finished its edge pass is a picture
+  // of steps joined to nothing, and a surface still moving when the window ran
+  // out is a frame rather than a screen — every other line in this panel would
+  // read green for both, because none of them names an edge and none of them
+  // looks twice. Marked rather than failed, because the lab renders one state
+  // at a time in a live frame, so a slow pass here is ordinary and the panel's
+  // job is to say which renders may be believed; the matrix, which gates a run
+  // inside a controlled budget, fails on the same fact.
+  //
+  // The reason is chosen by `unsettledReason` rather than assumed here. While
+  // `settled` meant a finished edge pass alone, "a graph has not drawn all of
+  // its edges" was the only thing it could mean; once stability joined it the
+  // same sentence became false for every state that animates by design, which
+  // is a review surface sending a reviewer after a defect that is not there.
+  //
+  // Named, because three surfaces publish the count and more than one can be on
+  // a render at once. An empty `undrawn` beside `settled: false` says only that
+  // no graph has been behind for long enough to tell — it is not a claim that
+  // any graph was ever complete, which is a thing this loop does not record and
+  // must not imply.
+  if (result?.settled === false) {
+    const detail = unsettledReason(result.snapshot, result.undrawn ?? []);
+    box.append(el("p", "note note--warn", `Not proved settled: ${detail}. Re-run this state before reading its graph.`));
+  }
+  const layout = unrowed(state, result?.failures ?? []);
   box.append(el("p", layout.length ? "note note--err" : "note", layout.length
     ? layout.map((item) => `${item.kind}: ${item.detail}`).join("; ")
-    : "no overlap, clipping, low contrast, placeholder copy or horizontal overflow"));
+    : "nothing else: every finding this render produced is a row above"));
   return box;
 }
 
@@ -410,10 +527,11 @@ function renderConstraints() {
     item.append(el("p", null, rule.why));
     if (rule.kind === "harness") {
       // A harness rule hides a screen a user really reaches, so it owes the
-      // reviewer both halves: what stops the harness, and where the same screen
-      // is rendered instead.
-      item.append(el("p", "note", `Harness limit — ${rule.limit}`));
-      item.append(el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+      // reviewer both halves: what stops the harness, and the nearest state
+      // this harness can reach instead. `harnessNotes` words both, once.
+      for (const note of harnessNotes(rule)) {
+        item.append(el("p", "note", note));
+      }
     }
     item.append(el("p", "muted", "“Pruned here” counts the tuples this rule was the first to reject, in walk order — not every tuple it forbids. Ask the picker below about a specific combination to see every rule that rejects it."));
     const example = counts[rule.id]?.example;
@@ -488,7 +606,7 @@ function renderPicker() {
       const entry = el("details");
       entry.append(el("summary", null, `${rule.id} · ${rule.kind}`), el("p", null, rule.why));
       if (rule.kind === "harness") {
-        entry.append(el("p", "note", `Harness limit — ${rule.limit}`), el("p", "note", `The same screen is rendered by ${rule.stands}.`));
+        entry.append(...harnessNotes(rule).map((note) => el("p", "note", note)));
       }
       parts.push(entry);
     }

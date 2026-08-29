@@ -2,6 +2,9 @@
 //! `fix-failing-test` pipeline loads, and every validation rule fails
 //! closed with the offending step named.
 
+#[path = "pipeline/terminal_names.rs"]
+mod terminal_names;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 

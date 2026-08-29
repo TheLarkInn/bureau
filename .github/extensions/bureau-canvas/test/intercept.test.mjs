@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BLOCKED_PREFLIGHT,
+  installFloor,
   installIntercept,
   IN_FRAME,
   isPreSurface,
@@ -94,6 +96,57 @@ test("a refused preflight refuses the read and leaves every other intent alone",
   );
 });
 
+/**
+ * The other end of the same scoping: held rather than refused.
+ *
+ * Read by whether each request settles, because that is the difference this
+ * condition makes. `DeleteControl` clears its `busy` flag in `.then`, so a
+ * preflight that never settles is the "Checking…" screen and nothing else can
+ * produce it — and the confirmed delete must still be refused by the floor
+ * rather than quietly held here, or the state would be two screens at once.
+ */
+test("a held preflight hangs the read and leaves every other intent alone", async () => {
+  const win = windowStub();
+  installIntercept(win, "stall-preflight");
+
+  assert.deepEqual(
+    {
+      preflight: await settles(win.fetch(...del(false))),
+      confirmed: await settles(win.fetch(...del(true))),
+      read: await settles(win.fetch(...post("resolve-repo"))),
+    },
+    { preflight: false, confirmed: true, read: true },
+  );
+});
+
+/**
+ * The third answer of the three, scoped the same way and read the same way.
+ *
+ * This is the only one of them that is `ok`, which makes the scoping matter more
+ * here rather than less: a shim that claimed every `delete` would report the
+ * entity as blocked *and* answer the confirmed removal, so the page would
+ * believe a write it may not perform had been considered. The confirmed delete
+ * stays the floor's to refuse, because it writes.
+ */
+test("a blocking preflight answers the read with referrers and leaves every other intent alone", async () => {
+  const win = windowStub();
+  installIntercept(win, "block-preflight");
+
+  const answered = async (promise) => {
+    const value = await promise.catch(() => null);
+    return value === null ? "rejected" : (value.native ? "reached the host" : await value.json());
+  };
+
+  assert.deepEqual(
+    {
+      preflight: await answered(win.fetch(...del(false))),
+      confirmed: await answered(win.fetch(...del(true))),
+      read: await answered(win.fetch(...post("resolve-repo"))),
+    },
+    { preflight: BLOCKED_PREFLIGHT, confirmed: "rejected", read: "reached the host" },
+  );
+});
+
 test("every intercept the registry asks for is one this module names", () => {
   const asked = [...new Set(STATES.map((state) => state.intercept).filter(Boolean))].sort();
   const unservable = asked.filter((kind) => !servableInFrame(kind)).sort();
@@ -104,7 +157,7 @@ test("every intercept the registry asks for is one this module names", () => {
       // `abort-intent` is asked for by probes alone. It was missing from this
       // list — and so unchecked against this module — for as long as a probe
       // carried its route on the page op and not on the state.
-      asked: ["abort-intent", "block-editor-renderer", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-runs", "stall-state"],
+      asked: ["abort-intent", "block-editor-renderer", "block-preflight", "block-renderer", "empty-runs", "fail-intent", "fail-runs", "fail-runs-later", "offer-ended-run", "pass-intent", "pass-starts-run", "refuse-preflight", "stall-intent", "stall-preflight", "stall-runs", "stall-state"],
       // The only condition an in-frame shim cannot stage: a module script is
       // not fetched through `window.fetch`.
       unservable: ["block-editor-renderer", "block-renderer"],
@@ -335,6 +388,72 @@ test("empty and unavailable run listings are different host conditions", async (
     ["empty-runs", 200, { runs: [] }, true],
     ["fail-runs", 503, { error: "run listing unavailable" }, true],
   ]);
+});
+
+/**
+ * The read half of the floor, and the reason it needs its own test.
+ *
+ * The lab renders every state over `/sample`, but no run screen reads `/state`:
+ * `modes.js` reads `./runs` and `replay.js` reads `./runs/:id/events`. Those
+ * answered from the reader's own `~/.bureau/runs`, so the config half of each
+ * replay and live state was pinned and the run half was not.
+ *
+ * The browser suite is structurally blind to it — `matrix-fixtures.mjs` points
+ * the host at the committed logs with `BUREAU_CANVAS_RUNS`, so both routes
+ * answer identically there and a check made in the matrix could never fail.
+ * Hence a unit claim on the rewrite itself, in both directions: the two run
+ * reads are redirected, and the requests that are not run reads are passed
+ * through untouched — a floor that rewrote everything would satisfy a
+ * redirect-only claim while breaking every other route in the frame.
+ */
+test("the floor reads runs from the pinned sample, and rewrites nothing else", async () => {
+  const win = windowStub();
+  installFloor(win);
+  const asked = ["./runs", "./runs/run-finished/events", "./state", "./events", "./sample", "./sample/runs"];
+  for (const url of asked) {
+    await win.fetch(url);
+  }
+
+  assert.deepEqual(
+    win.calls.map((call) => call.url),
+    [
+      // The two the run screens actually issue, pinned.
+      "./sample/runs",
+      "./sample/runs/run-finished/events",
+      // Everything else, exactly as the page spelled it.
+      "./state",
+      "./events",
+      "./sample",
+      // Already pinned: rewriting again would give `./sample/sample/runs`.
+      "./sample/runs",
+    ],
+  );
+});
+
+/**
+ * The run-condition shims sit *above* the pin and still see the page's own
+ * spelling, which is what lets them keep matching `./runs` while the body they
+ * project comes from the sample.
+ *
+ * `offer-ended-run` is the one that proves it: it matches the request, then
+ * delegates to `native` for the listing it relabels. If the pin were installed
+ * above it instead of beneath, that delegation would fetch the host's runs and
+ * the ended run would be relabelled in the wrong listing.
+ */
+test("a run condition still matches the page's spelling, and reads through the pin", async () => {
+  const win = windowStub();
+  const seen = [];
+  win.fetch = (input) => {
+    seen.push(String(input));
+    return Promise.resolve(new Response(JSON.stringify({ runs: [{ run_id: "run-finished", live: false }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  };
+  installIntercept(win, "offer-ended-run");
+  const served = await (await win.fetch("./runs")).json();
+
+  assert.deepEqual(
+    { asked: seen, served: served.runs.map((run) => [run.run_id, run.live]) },
+    { asked: ["./sample/runs"], served: [["run-finished", true]] },
+  );
 });
 
 test("a state that asked for no condition still sits on the write floor", async () => {

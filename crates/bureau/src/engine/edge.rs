@@ -90,3 +90,54 @@ pub(super) fn route_named(pipeline: &Pipeline, name: &str, outcome: StepOutcome)
     };
     route_after(step, outcome, None, pipeline)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Route, route_after};
+    use crate::config::{Pipeline, TERMINALS};
+    use crate::contract::StepOutcome;
+
+    /// A pipeline whose `start` step fails to `name`, and which *also* holds a
+    /// step called `name`. `config::validate` refuses this shape; the engine is
+    /// asked directly, because what is under test is which of the two `resolve`
+    /// picks when both exist.
+    ///
+    /// The collision is the whole premise, so the test asserts it rather than
+    /// trusting this string: without the second step the route below has only
+    /// one candidate, and a green run would say nothing about which wins.
+    fn failing_to(name: &str) -> Pipeline {
+        let text = format!(
+            "name: reserved\nsteps:\n  - name: start\n    type: deterministic\n    run: 'true'\n    next: done\n    on_failure: {name}\n  - name: {name}\n    type: deterministic\n    run: 'true'\n    next: done\n"
+        );
+        serde_yaml_ng::from_str(&text).expect("fixture pipeline")
+    }
+
+    /// Every name the loader reserves is a name `resolve` really settles first.
+    ///
+    /// `config::validate_pipeline::check_terminals` refuses a step named after
+    /// a terminal, and its whole justification is the match above: `resolve`
+    /// hard-codes the three arms and never reads `TERMINALS`, so nothing bound
+    /// the reservation to the behaviour it was reserving against. Add a fourth
+    /// route here and the loader silently stops reserving it — restoring the
+    /// exact defect that rule was added to remove, from the other side.
+    ///
+    /// Each pair is `(the pipeline holds a step of that name, the route
+    /// reached that step)`. The first half is asserted because it is the
+    /// premise: a fixture that quietly stopped colliding would leave the
+    /// second half true for the uninteresting reason.
+    #[test]
+    fn no_name_the_loader_reserves_can_route_to_a_step() {
+        let observed: Vec<(bool, bool)> = TERMINALS
+            .iter()
+            .map(|name| {
+                let pipeline = failing_to(name);
+                let collides = pipeline.steps.iter().any(|step| step.name == *name);
+                let start = &pipeline.steps[0];
+                let route = route_after(start, StepOutcome::Failure, None, &pipeline);
+                (collides, matches!(route, Route::Step(_)))
+            })
+            .collect();
+
+        assert_eq!(observed, vec![(true, false); TERMINALS.len()]);
+    }
+}

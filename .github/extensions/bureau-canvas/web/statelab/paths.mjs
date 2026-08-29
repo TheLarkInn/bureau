@@ -550,7 +550,7 @@ export function fixtureFor(combo) {
 }
 
 function statusLayer(combo) {
-  return { fixture: "sample", invalid: "invalid", advisory: "advisory", "invalid-advisory": "invalid-advisory" }[combo.data] ?? "validated";
+  return { fixture: "sample", invalid: "invalid", "invalid-elsewhere": "invalid-elsewhere", advisory: "advisory", "invalid-advisory": "invalid-advisory" }[combo.data] ?? "validated";
 }
 
 /**

@@ -127,6 +127,44 @@ export function withPassRun(payload, atMs) {
 export const PASS_STARTED = { ok: true, output: "started 1 run" };
 
 /**
+ * The host's blocking answer to a delete preflight.
+ *
+ * `lib/crud.mjs` `remove()` answers an unconfirmed delete with
+ * `{action, kind, name, confirmed: false, referrers, blocking}`, and `blocking`
+ * is `blocksDelete(found)` — true the moment anything still points at the
+ * entity. `DeleteControl` draws that answer as a screen the registry declared
+ * and nothing ever rendered: the count, the referrer list, the sentence saying
+ * to repoint them, and a Confirm that is withheld rather than merely
+ * discouraged.
+ *
+ * The referrers are not invented. They are the host's own report for deleting
+ * the role `implementer` out of the committed sample, and `test/preflight.test.mjs`
+ * pins this payload against `referrers()` run over that payload — so a change to
+ * what `lib/preflight.mjs` reports fails there rather than leaving a probe
+ * rendering a shape the host stopped producing.
+ *
+ * What the harness supplies is the *mount point*, and only that. The two places
+ * `DeleteControl` mounts are an assignment card and the orphan strip, and both
+ * are entities nothing refers to — which is exactly what
+ * `delete-is-offered-only-where-nothing-refers` says, and why this answer has to
+ * be staged rather than clicked to.
+ */
+export const BLOCKED_PREFLIGHT = {
+  ok: true,
+  result: {
+    action: "delete",
+    kind: "role",
+    name: "implementer",
+    confirmed: false,
+    referrers: [
+      { source: "preflight", severity: "referrer", kind: "assignment", name: "agent-eligible", message: "assignment `agent-eligible` runs role `implementer`" },
+      { source: "preflight", severity: "referrer", kind: "step", name: "agent-eligible-pipeline/implement", message: "step `implement` in `agent-eligible-pipeline` runs role `implementer`" },
+    ],
+    blocking: true,
+  },
+};
+
+/**
  * The kinds an in-frame shim can serve.
  *
  * `fetch` and `EventSource` are ordinary window properties, so a same-origin
@@ -135,7 +173,7 @@ export const PASS_STARTED = { ok: true, output: "started 1 run" };
  * blocking a renderer is the one condition that has to stay with the suite —
  * which is why it is absent here rather than silently failing.
  */
-export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "refuse-preflight", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
+export const IN_FRAME = new Set(["stall-state", "stall-intent", "fail-intent", "refuse-preflight", "stall-preflight", "block-preflight", "pass-intent", "pass-starts-run", "abort-intent", "offer-ended-run", "empty-runs", "stall-runs", "fail-runs", "fail-runs-later"]);
 
 /** Whether the lab can produce this state itself. */
 export function servableInFrame(kind) {
@@ -183,8 +221,8 @@ export function installIntercept(win, kind) {
     passStartsRun(win);
     return;
   }
-  if (kind === "refuse-preflight") {
-    refusePreflight(win);
+  if (kind === "refuse-preflight" || kind === "stall-preflight" || kind === "block-preflight") {
+    interceptPreflight(win, kind);
     return;
   }
   if (kind) {
@@ -193,29 +231,39 @@ export function installIntercept(win, kind) {
 }
 
 /**
- * The delete preflight refused.
+ * The delete preflight: held, refused, or answered with referrers.
  *
- * Every other refusal here goes through `stallIntent`, which only ever claims a
- * request `isWrite` says is one — and the unconfirmed delete deliberately is
+ * Every other condition here goes through `stallIntent`, which only ever claims
+ * a request `isWrite` says is one — and the unconfirmed delete deliberately is
  * not, because `reachesHost` lets it through so the confirmation prompt can
- * draw the referrers the host reports. That made this the one refusal no
- * condition could stage, and so the one note `DeleteControl` draws that no
- * state ever rendered.
+ * draw the referrers the host reports. That made these the conditions no other
+ * shim could stage, and so three of `DeleteControl`'s own screens that no state
+ * ever rendered: the refusal, the round trip before it, and the answer that
+ * comes back blocking.
+ *
+ * The round trip matters on its own. Pressing Delete does not open a prompt, it
+ * asks the host a question, and while that question is outstanding the button
+ * says "Checking…" and stops accepting presses — which is the whole of what
+ * stops a reader queueing three preflights against one card. It is the same
+ * two-ended contract the confirmation carries, on the request that comes first.
  *
  * Only the preflight is claimed. Everything else — including the confirmed
- * delete — falls through to the floor, so this stages one failed read rather
- * than a host that has stopped answering.
+ * delete — falls through to the floor, so this stages one slow, failed or
+ * blocking read rather than a host that has stopped answering.
  */
-function refusePreflight(win) {
+function interceptPreflight(win, kind) {
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
     if (!/\/intent$/u.test(urlOf(input)) || !isPreflight(bodyOf(init))) {
       return native(input, init);
     }
+    if (kind === "stall-preflight") {
+      return forever();
+    }
     // `Promise.resolve` rather than the bare response: `postIntent` calls
     // `.then` on whatever this returns, so a shim answering with the response
     // itself is a `TypeError` on the page rather than a refusal on the card.
-    return Promise.resolve(jsonIn(win, { ok: false }));
+    return Promise.resolve(jsonIn(win, kind === "block-preflight" ? BLOCKED_PREFLIGHT : { ok: false }));
   };
 }
 
@@ -304,12 +352,44 @@ function interceptRuns(win, kind) {
  * from an offline host would take.
  */
 export function installFloor(win) {
+  pinRuns(win);
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
     if (!/\/intent$/u.test(urlOf(input)) || reachesHost(bodyOf(init))) {
       return native(input, init);
     }
     return Promise.reject(new TypeError(`the state lab refused an unmodelled write to ./intent (${kindOf(init) ?? "unreadable body"})`));
+  };
+}
+
+/**
+ * The read half of the same floor: run reads go to the pinned sample.
+ *
+ * The lab renders every state over `/sample`, but Replay and Live never read
+ * `/state` — they read `./runs` and `./runs/:id/events`, which answer from the
+ * reader's own `~/.bureau/runs`. So the config half of each run state was
+ * pinned and the run half was not: `mode:replay` drew whatever runs this
+ * machine had, and on a machine with none it drew no run at all, under the same
+ * state id CI screenshots against four committed logs.
+ *
+ * Rewriting here rather than in the page keeps the frame the production page —
+ * it still asks for `./runs` — and puts the pin beside the write floor, which
+ * is the other property the lab guarantees about the host regardless of which
+ * state is being rendered.
+ *
+ * Installed *before* the write floor so it ends up underneath it, which is what
+ * the run-condition shims need: `offer-ended-run` and `pass-starts-run` match
+ * the page's own `./runs` spelling and then delegate to `native` for the body
+ * they project, so the listing they decorate has to be the sample's by the time
+ * that call lands.
+ */
+function pinRuns(win) {
+  const native = win.fetch.bind(win);
+  win.fetch = (input, init) => {
+    const url = urlOf(input);
+    return /\/runs(\/[A-Za-z0-9][A-Za-z0-9._-]*\/events)?$/u.test(url) && !/\/sample\/runs/u.test(url)
+      ? native(url.replace(/\/runs(?=$|\/)/u, "/sample/runs"), init)
+      : native(input, init);
   };
 }
 

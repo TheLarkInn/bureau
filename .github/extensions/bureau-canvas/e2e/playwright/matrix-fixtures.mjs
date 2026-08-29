@@ -14,10 +14,11 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
-import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../../web/statelab/checks.mjs";
+import { collect, CONTRAST, deadlineVerdict, measureFor, phrasesFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
-import { isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
+import { BLOCKED_PREFLIGHT, isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
+import { holdOffline, offlineFindings } from "./offline.mjs";
 
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
 /*
@@ -50,6 +51,9 @@ const FRESH = Symbol("fresh-session");
 /** Writes the floor had to hold because the state declared no intercept. */
 const UNGUARDED = Symbol("unguarded-writes");
 
+/** Destinations the page asked for that are not this machine. */
+const OFFSITE = Symbol("offsite-requests");
+
 async function bootCanvas() {
   const child = spawn(process.execPath, [SERVE, "--dir", CONFIG], {
     env: { ...process.env, BUREAU_CANVAS_TEST: "1", BUREAU_CANVAS_RUNS: RUNS },
@@ -75,6 +79,33 @@ async function bootCanvas() {
   return { child, url };
 }
 
+/**
+ * The one console row that names its subject somewhere other than its text.
+ *
+ * When a request completes with a failing status the browser logs an error of
+ * its own, and that row's text is the same sentence for every address in the
+ * world: "Failed to load resource: the server responded with a status of 503".
+ * The address is in `location()`, which this fixture used to discard — so a
+ * state that owned one such failure had to allow it by that sentence, and the
+ * allowance then covered every *other* resource that failed under the same
+ * state. That is the same blanket licence `requestfailed` rows were narrowed
+ * out of, left standing on the console channel.
+ *
+ * So a resource failure is recorded with the address it was for, under a prefix
+ * `unexpected` reads as an addressed row and excuses only by URL. Every other
+ * console error keeps its text: an application's own `console.error` says what
+ * went wrong in the text and names only the *script* in `location()`, so
+ * matching those by URL would excuse anything that file ever logged.
+ */
+const RESOURCE = "Failed to load resource";
+
+function consoleRow(message) {
+  const url = message.location()?.url ?? "";
+  return message.text().startsWith(RESOURCE) && url !== ""
+    ? `resource: ${url} ${message.text()}`
+    : `console: ${message.text()}`;
+}
+
 export const test = base.extend({
   /** One read-only host per worker, plus the payload every fixture projects. */
   host: [
@@ -89,16 +120,23 @@ export const test = base.extend({
   ],
 
   /**
-   * Every page in this suite sits on the write floor and stands still, before
-   * it is navigated and before any spec can add a route of its own.
+   * Every page in this suite sits on the write floor and on the offline floor,
+   * and stands still, before it is navigated and before any spec can add a
+   * route of its own.
    *
-   * Here rather than in `pageAdapter` because both are properties of the
+   * Here rather than in `pageAdapter` because all three are properties of the
    * *suite*, not of the driver: `specs/state-lab.spec.mjs` drives the lab
    * through its own `page.goto` and never builds an adapter, so a floor that
    * arrived with the adapter would have left the one spec that clicks through
    * a UI the registry does not enumerate as the only one uncovered.
+   *
+   * The offline floor goes down first so it is consulted last. Playwright runs
+   * route handlers newest-first, and a state's own intercept is entitled to the
+   * last word about a loopback path; nothing is entitled to the last word about
+   * a request that leaves the machine.
    */
   page: async ({ page }, use) => {
+    page[OFFSITE] = await holdOffline(page);
     await holdWrites(page);
     await freezeMotion(page);
     await use(page);
@@ -110,7 +148,7 @@ export const test = base.extend({
     page.on("pageerror", (error) => errors.push(`pageerror: ${error}`));
     page.on("console", (message) => {
       if (message.type() === "error") {
-        errors.push(`console: ${message.text()}`);
+        errors.push(consoleRow(message));
       }
     });
     page.on("requestfailed", (request) => {
@@ -290,6 +328,18 @@ const PRE_SURFACE = new Set(["block-renderer", "block-editor-renderer", "stall-s
  * merely blocked: aborting alone would surface as some unrelated control
  * failing its checks, which is a bug report nobody can read. `judge` turns each
  * recorded kind into a named failure against the state that provoked it.
+ *
+ * Unconditional needs the intercepts above to defer rather than to continue.
+ * Playwright runs handlers newest-first, and `route.continue()` goes to the
+ * network without consulting the ones underneath — so an intercept whose own
+ * predicate is narrower than `writes` had a hole exactly the width of the
+ * difference. `stall-intent` and its siblings key on `writes`, whose false
+ * branch is this floor's own read branch, so they were safe by coincidence;
+ * the two preflight conditions key on `isPreflight`, which is strictly
+ * narrower, and a confirmed delete falls on the other side of it. They all use
+ * `route.fallback()` instead, which is what makes "the floor is the last word"
+ * a property of the construction rather than of the predicates that happen to
+ * sit above it.
  */
 async function holdWrites(page) {
   page[UNGUARDED] = [];
@@ -338,10 +388,10 @@ async function intercept(page, kind) {
           : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) });
       });
     },
-    "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.continue()),
+    "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.fallback()),
     "fail-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(refusalFor(intentKind(route))) })
-      : route.continue()),
+      : route.fallback()),
     // The one refusal `fail-intent` cannot stage, because the request it is
     // about is deliberately not a write. `reachesHost` lets the unconfirmed
     // delete through to the host so the confirmation prompt has referrers to
@@ -351,7 +401,25 @@ async function intercept(page, kind) {
     // still answers normally: the state is one refused read, not a dead host.
     "refuse-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: false }) })
-      : route.continue()),
+      : route.fallback()),
+    // The same read, held rather than refused. `stall-intent` cannot stage it
+    // for the same reason `fail-intent` cannot stage the refusal: the preflight
+    // is not a write, so both let it through. Pressing Delete is a question to
+    // the host before it is a prompt, and while the question is outstanding the
+    // button says "Checking…" and takes no second press — the contract that
+    // stops a reader queueing three preflights against one card, and the only
+    // one of this control's four screens that nothing rendered.
+    "stall-preflight": () => page.route(/\/intent$/u, (route) => (isPreflight(intentBody(route)) ? undefined : route.fallback())),
+    // The third answer, and the one no config reachable from this landing can
+    // provoke: the host reporting that something still points at the entity.
+    // `DeleteControl` draws it as the sentence and the withheld Confirm that
+    // `field:delete-blocked` declares, and both places the control mounts are
+    // entities nothing refers to — so the mount point is what the harness
+    // supplies here, and the answer itself is the host's own, pinned to
+    // `referrers()` in `test/preflight.test.mjs`.
+    "block-preflight": () => page.route(/\/intent$/u, (route) => isPreflight(intentBody(route))
+      ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BLOCKED_PREFLIGHT) })
+      : route.fallback()),
     // The end a write can also have: it worked. Only the reconcile pass needs
     // it — its success is three sentences about what the pass did, and no state
     // rendered any of them, so `reconcileResult` was a selector nothing used.
@@ -359,7 +427,7 @@ async function intercept(page, kind) {
     // listing the report re-reads is unchanged and "claimed no work" is exact.
     "pass-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, output: "no eligible work" }) })
-      : route.continue()),
+      : route.fallback()),
     // The other end of a pass: it started a run, and said which. Both halves
     // are one condition — the listing withholds that run until the write has
     // answered, so `newRunSince` can attribute it to this click and the report
@@ -371,7 +439,7 @@ async function intercept(page, kind) {
       return Promise.all([
         page.route(/\/intent$/u, (route) => {
           if (!writes(route)) {
-            return route.continue();
+            return route.fallback();
           }
           answered = Date.now();
           return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PASS_STARTED) });
@@ -391,7 +459,7 @@ async function intercept(page, kind) {
     // whether the page cleared its `busy` flag.
     "abort-intent": () => page.route(/\/intent$/u, (route) => writes(route)
       ? route.abort("failed")
-      : route.continue()),
+      : route.fallback()),
   };
   await routes[kind]();
 }
@@ -455,7 +523,7 @@ export async function applyOps(ops, state, page, host) {
   return judge(state, page);
 }
 
-const SETTLE_MS = 5000;
+const SETTLE_MS = SETTLE_BUDGET_MS;
 const SETTLE_POLL_MS = 100;
 /**
  * How many consecutive samples must agree before a render is called finished.
@@ -475,8 +543,16 @@ const SETTLE_POLL_MS = 100;
  * instants — and measured 61 of 500, no better than the poll for an extra
  * round trip per sample. So the poll stays, the residue is #116, and that is
  * why the twin audit reports rather than gates.
+ *
+ * What the residue no longer does is masquerade as a finding. A render that
+ * never reaches this window is filed as unsettled, so the audit can tell a
+ * screen that differs from a frame that had not finished, and the gallery marks
+ * it rather than offering it for review as though it had.
+ *
+ * Defined in `checks.mjs` and imported, because the State Lab decides the same
+ * question about the same registry with the same number, and two constants that
+ * must be equal are one constant.
  */
-const SETTLE_REPEATS = 3;
 
 /**
  * Judges the render once it has settled, and settles on the render itself.
@@ -522,42 +598,109 @@ const SETTLE_REPEATS = 3;
  * screenshots a moment later and files a signature for. Handing back an earlier
  * snapshot filed a signature for a frame the gallery does not show, so the twin
  * audit compared descriptions of renders nobody could look at.
+ *
+ * Whether the window was ever reached is returned as well, and that is the part
+ * this loop used to keep to itself. A render that ran out of budget is a frame
+ * the page happened to be drawing, and it was handed to the gallery indexed,
+ * captioned and indistinguishable from a settled one — so a reviewer signed off
+ * on a possibly-raced screen, and the twin audit compared it as though it were
+ * evidence. `web/statelab/lab.mjs` has never done this: it says "Not proved
+ * settled" rather than presenting such a render as verified, and the two
+ * consumers of one registry disagreeing about that is the contradiction
+ * `settled` closes. It is stability alone, deliberately: "the DOM stopped
+ * changing" is the property the audit needs, and a state that settles on a
+ * wrong render is still a settled render — the failure is what reports that.
+ *
+ * Stability alone turned out not to be the whole of it. A still signature says
+ * the page stopped changing for three polls, and a React Flow surface between
+ * its node measurement and its edge pass satisfies that while showing a graph of
+ * disconnected boxes. Both states of one declared twin were filed settled on
+ * some runs with their four relation edges and on others without them — so the
+ * mark introduced to tell a screen from a frame was itself vouching for frames,
+ * and the audit published the difference as a finding about the UI. `graphsDrawn`
+ * closes it with the surface's own count, and the loop now waits for the pass
+ * rather than describing whatever it interrupted.
+ *
+ * Waiting for it is not the same as reporting it, and for a while only the
+ * first happened. A graph that would *never* draw its edges held the loop open
+ * to the deadline and then left with `settled: false` — an amber note saying
+ * the frame may have raced, which is a statement about the harness. Nothing
+ * failed. So the one condition this count was added to detect could hold
+ * permanently, on every run, and the matrix stayed green while the gallery
+ * published pipelines whose steps joined to nothing.
+ *
+ * A count of looks spent incomplete is what parts the two. A graph caught
+ * incomplete on one look is mid-relayout and merely unstable — that is the
+ * animating states, which must never fail for it. A graph that spent a
+ * meaningful part of the budget with its edges missing, and still has them
+ * missing at the end, is describing a broken screen, and `undrawnFor` says so
+ * as an ordinary failure.
+ *
+ * Counted per graph and as a total, and both halves were learned the hard way.
+ * A flag answered for the whole render, so a graph that drew excused a
+ * different graph that never did — `.editor-flow` complete, the click to
+ * Relations lands, `.relation-flow` mounts behind it and draws nothing. Keying
+ * by name fixed that. Making it a *run* of consecutive looks fixed the next
+ * layer, a latch being permanent, and left one more: a run is reset by any
+ * complete look, so a graph flashing its edges on and off for the whole budget
+ * never reached the threshold either. A total cannot be reset, and the
+ * tolerance that matters survives elsewhere — nothing is reported about a graph
+ * that is complete on the final look, whatever its history.
  */
 async function judge(state, page) {
   const deadline = Date.now() + SETTLE_MS;
   let result = await sample(state, page);
   let clean = result.failures.length ? null : result;
   let sustained = result.failures.length ? 1 : 0;
-  let agreed = 0;
-  let previous = null;
-  while (Date.now() < deadline) {
-    agreed = result.snapshot.signature === previous ? agreed + 1 : 0;
-    if (isSettled(result, agreed)) {
-      return result;
+  let settle = null;
+  let looks = new Map();
+  for (;;) {
+    settle = settleStep(settle, result.snapshot);
+    // Folded on every look rather than read once at the deadline, because the
+    // question is how much of the budget a graph spent behind and the deadline
+    // sees only the last look. `graphsDrawn`, inside `settleStep`, is the
+    // barrier — "is anything on this render still behind?" — and it answers
+    // `true` about a render carrying no graph at all, which is correct for
+    // deciding whether to keep waiting and was wrong for deciding whether
+    // anything had been observed. A render with no graph contributes no counts,
+    // so it still costs nothing.
+    looks = undrawnLooks(looks, result.snapshot);
+    if (settle.settled && !result.failures.length) {
+      return { ...result, settled: true };
     }
-    previous = result.snapshot.signature;
+    if (Date.now() >= deadline) {
+      return { ...atDeadline(result, clean, sustained, looks), settled: settle.settled };
+    }
     await page.waitForTimeout(SETTLE_POLL_MS);
     result = await sample(state, page);
     sustained = result.failures.length ? sustained + 1 : 0;
     clean ??= result.failures.length ? null : result;
   }
+}
+
+/**
+ * `looks` is folded in here rather than at the call site because the choice
+ * between the last look and the first clean one is about *flicker*, and a graph
+ * that spent the budget undrawn is the opposite of that. So it is appended to
+ * whichever look answers, including a clean one — a render cannot be clean and
+ * also have a graph whose edges never arrived.
+ */
+function atDeadline(result, clean, sustained, looks) {
   const source = deadlineVerdict(
     { lastFailed: result.failures.length > 0, sustained, sawClean: Boolean(clean) },
     SETTLE_REPEATS,
   );
-  return source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
-}
-
-function isSettled(result, agreed) {
-  return result.failures.length === 0 && agreed >= SETTLE_REPEATS;
+  const undrawn = undrawnFor(result.snapshot, looks, SETTLE_REPEATS);
+  const answer = source === "last" ? result : { snapshot: result.snapshot, failures: clean.failures };
+  return { ...answer, failures: [...answer.failures, ...undrawn] };
 }
 
 async function sample(state, page) {
   const snapshot = await page.evaluate(
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
-    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST } },
+    { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) } },
   );
-  return { snapshot, failures: [...heldWrites(page), ...verdict(state, snapshot, { slack: 2 })] };
+  return { snapshot, failures: [...heldWrites(page), ...leftTheMachine(page), ...verdict(state, snapshot, { slack: 2 })] };
 }
 
 /**
@@ -574,6 +717,19 @@ function heldWrites(page) {
     kind: "unguarded-write",
     detail: `\`${kind}\` was posted to ./intent with no intercept declared for it, so this path would have written to the host`,
   }));
+}
+
+/**
+ * Requests that left this machine, reported against the state that made them.
+ *
+ * Same shape as `heldWrites` and for the same reason: the floor already refused
+ * them, so without this the only trace would be some unrelated control missing
+ * from the render. Reported per state rather than once per run because the
+ * question a reader has is *which screen reached out*, and the matrix is the one
+ * instrument that can answer it.
+ */
+function leftTheMachine(page) {
+  return offlineFindings(page[OFFSITE] ?? []);
 }
 
 /**

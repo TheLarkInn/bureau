@@ -20,13 +20,16 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 
+import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
+import { stepNameProblem, TERMINAL_NAMES } from "../step-refs.mjs";
+import { removeStep, renameStep, syncSteps } from "../step-edit.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
 
 const h = React.createElement;
 const OUTCOMES = ["success", "failure", "blocked", "no-work"];
-const TERMINALS = ["done", "abort", "escalate"];
+const TERMINALS = TERMINAL_NAMES;
 const STEP_KINDS = ["deterministic", "agent", "decision", "concurrent"];
 const CONTROL_FIELDS = [
   ["next", "success"],
@@ -141,7 +144,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       { className: "editor-main" },
       h(
         "div",
-        { className: "editor-flow" },
+        { className: "editor-flow", "data-graph-edges": String(flow.declared) },
         h(
           ReactFlow,
           {
@@ -236,13 +239,6 @@ function setEdge(view, source, outcome, target) {
   return syncSteps({ ...view, steps, edges: [...others, edge] });
 }
 
-function syncSteps(view) {
-  return {
-    ...view,
-    steps: view.steps.map((step) => ({ ...step, outgoing: view.edges.filter((edge) => edge.relation === "control" && edge.source === step.name) })),
-  };
-}
-
 function addStep(name, view, kind, edit, setSelected) {
   const base = `step-${view.steps.length + 1}`;
   let candidate = base;
@@ -263,14 +259,6 @@ function addStep(name, view, kind, edit, setSelected) {
   }
   edit({ ...view, steps: [...view.steps, { id: candidate, name: candidate, type: "step", kind, order: view.steps.length, fields, outgoing: [] }] });
   setSelected(candidate);
-}
-
-function removeStep(view, stepName) {
-  return {
-    ...view,
-    steps: view.steps.filter((step) => step.name !== stepName),
-    edges: view.edges.filter((edge) => edge.source !== stepName && edge.target !== stepName),
-  };
 }
 
 function connect(view, connection, edit) {
@@ -312,6 +300,9 @@ function toFlow(view, positions, hints, saveResult) {
   return {
     nodes: auto.nodes.map((node) => flowNode(node, positions, marked)),
     edges: flowEdges(view),
+    // Counted from the view and its referenced terminals, never from the two
+    // arrays above: see `web/graph-edges.mjs`.
+    declared: drawableEdges([...view.steps.map((step) => ({ id: step.name })), ...terminals], edges),
   };
 }
 
@@ -602,11 +593,12 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
   const [name, setName] = useState(step.name);
   useEffect(() => setName(step.name), [step.name]);
   const set = (field, value) => onChange(setField(view, step.name, field, value));
-  const nameProblem = !name.trim()
-    ? "A step name cannot be empty."
-    : view.steps.some((candidate) => candidate.name !== step.name && candidate.name === name.trim())
-      ? `A step named \`${name.trim()}\` already exists.`
-      : null;
+  // The whole name rule, from the module both trees share, so the sentence the
+  // reader sees is the one the transform refuses on. Before this the field knew
+  // only "empty" and "taken", so a terminal's name passed the field, reached a
+  // rename that returned the view unchanged, and left the input showing a name
+  // the step had not taken with nothing saying why.
+  const nameProblem = stepNameProblem(view.steps, name, step.name)?.message ?? null;
   const commitName = () => {
     if (!nameProblem && name.trim() !== step.name) {
       onRename(name.trim());
@@ -674,39 +666,6 @@ function positiveInteger(value) {
 
 function numberInput(value) {
   return value === "" ? null : Number(value);
-}
-
-function renameStep(view, from, to) {
-  if (!to || to === from || view.steps.some((step) => step.name === to)) {
-    return view;
-  }
-  const steps = view.steps.map((step) => {
-    const fields = { ...step.fields };
-    if (fields.over === from) {
-      fields.over = to;
-    }
-    if (fields.on) {
-      fields.on = Object.fromEntries(Object.entries(fields.on).map(([outcome, target]) => [outcome, target === from ? to : target]));
-    }
-    if (Array.isArray(fields.members)) {
-      fields.members = fields.members.map((member) => (member === from ? to : member));
-    }
-    if (Array.isArray(fields.inputsFrom)) {
-      fields.inputsFrom = fields.inputsFrom.map((source) => (source === from ? to : source));
-    }
-    return { ...step, id: step.name === from ? to : step.id, name: step.name === from ? to : step.name, fields };
-  });
-  const edges = view.edges.map((edge) => ({
-    ...edge,
-    source: edge.source === from ? to : edge.source,
-    target: edge.target === from ? to : edge.target,
-  })).map((edge) => ({ ...edge, id: edgeIdentifier(edge) }));
-  return syncSteps({ ...view, steps, edges });
-}
-
-function edgeIdentifier(edge) {
-  const outcome = edge.outcome ? `:${edge.outcome}` : "";
-  return `${edge.relation}:${edge.source}${outcome}->${edge.target}`;
 }
 
 function KindFields({ view, step, roles, set }) {

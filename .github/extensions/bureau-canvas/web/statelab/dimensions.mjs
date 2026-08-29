@@ -13,6 +13,9 @@
 
 import { SELECTORS as S, editorCardFor, offered, relationCardFor, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, withheld } from "./selectors.mjs";
 import { FIELD_SAVE, RUN_END, RUN_HOLDS, RUN_REFUSALS, RUN_STEP, SAMPLE_STEPS, renamedStep, stepFor } from "./paths.mjs";
+// The panel's own sentences, taken from the module the page renders rather
+// than restated here. See `PANEL_CLEAN` below.
+import * as VERDICTS from "../panel-verdict.mjs";
 
 const NA = { id: "n/a", summary: "this axis does not exist on the chosen surface" };
 
@@ -106,6 +109,46 @@ const surface = {
 };
 
 /**
+ * What the pipeline side panel's validation section says, given what the CLI
+ * returned. Derived rather than declared per value because it is one claim in
+ * two directions: the panel reports findings exactly when there are findings
+ * for this pipeline, and says so out loud when there are none.
+ *
+ * `verdict` is the sentence it says when there are none, and there are two of
+ * them, because an empty findings list means two different things. Under
+ * `validated` the CLI ran and returned nothing, which is a pass. Under
+ * `fixture` there is no binary, nothing ever ran, and the list is empty for
+ * want of anyone to fill it. Wiring both to "clean — bureau validate would
+ * pass" made this registry certify, on fourteen renders, a verdict no
+ * validator ever gave — the same shape of mark-standing-in-for-a-check this
+ * branch exists to refuse, sitting inside the branch's own expectations.
+ *
+ * Only on the surface that draws the panel, and only on the three `data` values
+ * that reach it. `advisory` and `invalid-advisory` are not among them —
+ * `an-advisory-sits-on-the-item-it-names` confines both to the config surface,
+ * because `advisoryNote` targets the assignment — so wiring this to them would
+ * be a callback that can never run, claiming coverage the matrix does not have.
+ */
+function panelVerdict(combo, verdict) {
+  if (combo.surface !== "pipeline") {
+    return {};
+  }
+  return verdict
+    ? { shows: [S.panelValidationClean], hides: [S.panelValidationFinding], copy: [{ selector: S.panelValidationClean, text: verdict }] }
+    : { shows: [S.panelValidationFinding], hides: [S.panelValidationClean] };
+}
+
+/** The three sentences an empty findings list can honestly carry.
+ *
+ * Imported from the module the page itself renders, never re-spelled here. A
+ * registry that writes its own copy of the sentence asserts agreement between
+ * two literals and proves nothing about the panel; wiring both ends to one
+ * export means a change to the wording fails the state that pins it, which is
+ * the only way this expectation can be a check rather than a duplicate.
+ */
+const { PANEL_CLEAN, PANEL_ELSEWHERE, PANEL_UNCHECKED } = VERDICTS;
+
+/**
  * D2 — where the config payload came from and whether the CLI accepted it.
  *
  * `only` scopes these expectations to the surfaces that draw a status line and
@@ -130,9 +173,33 @@ const data = {
       // editor.html installs a different fallback, which `boot-editor` derives.
       only: ["boot"],
     },
-    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud", copy: ["bundled sample"] },
-    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"] },
-    { id: "invalid", summary: "bureau validate rejected it; findings sit on what they name", copy: ["Validation findings"], shows: [".finding--validation"] },
+    { id: "fixture", summary: "no bureau binary; the bundled sample, said out loud — and the panel says it was not checked rather than that it passed", copy: ["bundled sample"], derive: (combo) => panelVerdict(combo, PANEL_UNCHECKED) },
+    { id: "validated", summary: "bureau validate ran and accepted it", copy: ["Validated"], derive: (combo) => panelVerdict(combo, PANEL_CLEAN) },
+    {
+      id: "invalid",
+      summary: "bureau validate rejected it; findings sit on what they name",
+      copy: ["Validation findings"],
+      shows: [".finding--validation"],
+      derive: (combo) => panelVerdict(combo, null),
+    },
+    {
+      /*
+       * The case that separates a clean pipeline from a clean config.
+       * `validation.state` is `validated` for an accepted *and* a rejected
+       * config, and the panel's list is scoped to the open pipeline — so a
+       * rejection naming a role, an assignment or `repos.yaml` leaves this
+       * pipeline's list empty while the header reads "Validation findings". A
+       * verdict read off `state` alone called that a pass. `invalid` cannot
+       * catch it, because its fixture puts a finding on the very pipeline being
+       * viewed; only a value whose findings name nothing here renders the
+       * `validated && !ok` branch at all.
+       */
+      id: "invalid-elsewhere",
+      summary: "bureau validate rejected it for reasons that name nothing on this pipeline, so the panel reports the rejection rather than a pass",
+      copy: ["Validation findings"],
+      shows: [".finding--validation"],
+      derive: (combo) => panelVerdict(combo, PANEL_ELSEWHERE),
+    },
     {
       id: "advisory",
       summary: "an advisory, which never blocks a save",
@@ -320,12 +387,12 @@ const disclosure = {
     {
       id: "none",
       summary: "every secondary region closed",
-      // Collapsed is a state the disclosure itself records. The create form is
-      // absent from the DOM until it is opened; the relation graph is not — a
-      // closed `<details>` keeps its subtree mounted and still reports client
-      // rects for it, so `.relation-flow` cannot tell open from closed. Its
-      // own `open` can, and saying nothing at all here let a section that
-      // shipped `open` pass in every one of these states.
+      // Collapsed is a state the disclosure itself records, and both regions
+      // are now absent from the DOM until they are opened. `relationOpen`
+      // still reads the disclosure's own `open` rather than the graph's
+      // absence: `open` is what a section shipping open would contradict, and
+      // saying nothing at all here let exactly that pass in every one of
+      // these states.
       hides: [S.createBar, S.relationOpen],
     },
     {
@@ -489,12 +556,15 @@ const field = {
       suppress: ["data"],
     },
     /*
-     * The refusal, kept as a value so it is excluded by a named rule rathe
+     * The refusal, kept as a value so it is excluded by a named rule rather
      * than missing — `delete-is-offered-only-where-nothing-refers` says why.
      * It is a real screen of `DeleteControl`, and one no config the canvas can
      * reach draws: the two places the control mounts are an assignment card
      * and the orphan strip, and an orphan is by definition the config nothing
-     * references. `test/preflight.test.mjs` owns the blocking answer itself.
+     * references. `test/preflight.test.mjs` owns the blocking answer itself,
+     * and `probe--delete-preflight-blocked` renders what this value promises —
+     * spreading these very lists, so the declaration and the screen are held to
+     * each other rather than to a reading of the source that draws them.
      */
     {
       id: "delete-blocked",
@@ -618,11 +688,23 @@ const EDITOR_EDGES = [".editor-edge--success", ".editor-edge--failure", ".editor
 /**
  * D9 — the pipeline viewer's three graph modes.
  *
- * Design asserts the drawing's own semantics, not just that a graph appeared:
- * a control edge per outcome, the two relation edges the sample pipeline wires,
- * and a terminal pill for the terminal it ends on. Naming only `.pipeline-flow`
- * let a graph that drew every edge in one class — or dropped its terminals —
- * pass as the static config graph.
+ * Each mode asserts the drawing's own semantics, not just that a graph
+ * appeared: a control edge per outcome, the two relation edges the sample
+ * pipeline wires, and — in design — a terminal pill for the terminal it ends
+ * on. Naming only `.pipeline-flow` let a graph that drew every edge in one
+ * class — or dropped its terminals — pass as the static config graph.
+ *
+ * Live and Replay name the same classes, and that is not repetition of design.
+ * They are the only states that reach `toFlow` with an overlay resolved, and
+ * the overlay is a projection whose job is to *drop* edges: members that are
+ * hidden inside a collapsed group have their edges remapped onto the group
+ * node, self-loops and the duplicates that remap creates are discarded. The
+ * count those surfaces publish cannot hold that half — `declared` is counted
+ * from the same planned list the renderer is handed, so an overlay that
+ * dropped a whole relation lowers both numbers together and `undrawn-graph`
+ * still passes (`web/graph-edges.mjs` says where the independence does and
+ * does not hold). Naming the classes here is what fails such a drop: they are
+ * asserted on the screen the overlay actually drew.
  */
 const mode = {
   id: "mode",
@@ -646,14 +728,14 @@ const mode = {
       id: "live",
       summary: "one live run, streamed",
       enter: [{ op: "click", selector: S.modeLive }],
-      shows: [S.runControls, S.runPickerLive, S.reconcileNow],
+      shows: [S.runControls, S.runPickerLive, S.reconcileNow, ...VIEWER_EDGES],
       derive: (combo) => activityCount(combo.run === "ended" ? 3 : 2),
     },
     {
       id: "replay",
       summary: "any run, scrubbed on a timeline",
       enter: [{ op: "click", selector: S.modeReplay }],
-      shows: [S.replayControls, S.runPickerReplay],
+      shows: [S.replayControls, S.runPickerReplay, ...VIEWER_EDGES],
       derive: () => activityCount(2),
     },
   ],
@@ -901,6 +983,26 @@ const transport = {
       enter: [{ op: "click", selector: S.replayPlay }, { op: "wait", selector: S.replayPause }],
       shows: [S.replayPause, S.replayStepForward, S.replayStepBack],
       copy: ["Pause"],
+      // The one state in the matrix that must *not* hold still, declared here so
+      // the render loop can hold it to that rather than merely tolerating it.
+      //
+      // Every other state is required to settle, which is what makes an
+      // unsettled render a failure instead of a note. Exempting this one by
+      // name would have made the exemption a free pass: were Play to stop
+      // advancing the run — the timeline that "only draws", which is the very
+      // defect this dimension exists to catch — the state would settle, and an
+      // allowance phrased as "may be unsettled" would pass on the regression.
+      // So the claim is two-directional: this state settling is a failure too.
+      //
+      // Safe to assert because the margin is not a coincidence. `run:finished`
+      // spans RUN_END - RUN_STEP.start = 10,000ms of run time, and the overlay
+      // advances TICK_MS of run time per TICK_MS of wall time at 1x, so playing
+      // it to the end — where `useReplayOverlay` sets `playing` false and the
+      // signature would come to rest — takes ~10s against the browser suite's
+      // 5s settle budget. `test/statelab.test.mjs` derives both numbers from the
+      // committed log, `replay.js` and `matrix-fixtures.mjs`, and fails if that
+      // 2x margin ever narrows, so the claim cannot rot into a flake.
+      settles: false,
     },
   ],
 };
@@ -977,6 +1079,23 @@ const pick = {
  * reverts on a finding, so an unwired new step is saveable and then refused by
  * the CLI — which is the rule that the canvas never authors an error.
  */
+/**
+ * The single card collision a drag of 80,60 produces, per step kind picked.
+ *
+ * `sameKind` in `checks.mjs` numbers the boxes it compares in document order,
+ * so the pair is written the way that check will report it. Which pair it is
+ * follows from which card `SAMPLE_STEPS` puts under the drag: `implement` is
+ * the first card and lands on the second, `verify` the second and lands on the
+ * third. Only these two kinds reach `layout-moved` — a decision or concurrent
+ * step has to be added before it can be dragged, which a rule keeps out — so a
+ * pick that is not here is a modelling change, and yields an allowance that
+ * matches nothing and is reported as stale.
+ */
+const DRAGGED_ONTO = {
+  agent: ".editor-card #0 overlaps #1",
+  deterministic: ".editor-card #1 overlaps #2",
+};
+
 const edit = {
   id: "edit",
   title: "Editor mutation",
@@ -1066,6 +1185,23 @@ const edit = {
       // distinguish it from an issue count appearing anywhere on the page.
       copy: [{ selector: S.editorStatus, text: "unsaved edits" }],
       hides: [S.editorIssues],
+      // The one state that may draw two cards on top of one another, because
+      // its entry path is the reader doing exactly that: a drag of 80,60 lands
+      // the chosen card on its neighbour. React Flow places a dragged node where
+      // it is dropped, so the overlap is the editor obeying the mouse, not a
+      // layout that computed a collision.
+      //
+      // The licence names the one colliding pair, and which pair it is depends
+      // on which card the reader picked up — so it is derived from `pick`
+      // rather than fixed. It was the bare selector `.editor-card` for a while,
+      // matched by prefix, which excused every editor-card collision on the
+      // render instead of the one the drag caused: a layout regression that
+      // piled all four cards together would have passed here, in the single
+      // state whose whole subject is card placement.
+      //
+      // An unlisted `pick` yields `undefined` here, which `permitted` reports
+      // as an allowance that excused nothing rather than silently widening.
+      derive: (combo) => ({ allowOverlap: [DRAGGED_ONTO[combo.pick]] }),
     },
     {
       id: "deleted",

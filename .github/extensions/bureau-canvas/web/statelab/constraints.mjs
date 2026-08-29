@@ -41,11 +41,14 @@
 //
 //   limit  — the harness mechanism that stops it, named precisely enough to
 //            re-read when that mechanism changes.
-//   stands — the state that renders the *same screen* at a point on the axis
-//            the harness can reach. That is what keeps the screen asserted
-//            somewhere; an offline test requires the state to exist, and
-//            requires every harness rule to actually hide a renderable
-//            combination, re-enumerating without it to prove the cost is real.
+//   stands — the nearest state this harness *can* reach: one that satisfies
+//            the rule and sits one named axis away from a combination the rule
+//            rejects. Not the same screen — it differs by exactly that axis, on
+//            purpose, because the axis is what the harness cannot reach. That
+//            is what keeps the region asserted somewhere adjacent; an offline
+//            test holds the adjacency, and requires every harness rule to
+//            actually hide a renderable combination, re-enumerating without it
+//            to prove the cost is real.
 //
 // Those checks all start from the label, though, so a harness limit kinded
 // `structural` is asked for none of them — and that is where the error recurs,
@@ -340,7 +343,7 @@ export const CONSTRAINTS = [
     kind: "structural",
     reads: ["field"],
     title: "A blocked preflight has no mount point on the landing",
-    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
+    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. So no combination of dimensions reaches this screen. The screen itself is real, and it is rendered by `probe--delete-preflight-blocked`, which stages the host's own blocking answer against the mount point this landing does have: the sentence and the withheld confirm are asserted on the render, not read out of `web/app.mjs`. `test/preflight.test.mjs` keeps the two ends honest — that the value declares a sentence at all, and that the staged answer is the one `lib/preflight.mjs` produces.",
     holds: (combo) => combo.field !== "delete-blocked",
   },
   {
@@ -470,6 +473,35 @@ function lifecycleAllows(field, fieldState) {
 }
 
 export const CONSTRAINT_IDS = CONSTRAINTS.map((rule) => rule.id);
+
+/**
+ * The two sentences a harness rule owes a reviewer, worded once.
+ *
+ * A harness rule hides a screen a user really reaches, so the lab must say both
+ * what stops the harness and where to look instead. What it must *not* say is
+ * that the standing state renders the same screen. Nothing holds that, and
+ * `test/statelab.test.mjs` says so at length: `stands` is held to satisfying the
+ * rule and sitting *adjacent* to the excluded region — changing exactly one axis
+ * the rule reads must produce a combination the rule rejects — and the screens
+ * differ by that axis on purpose, because the axis is what the harness cannot
+ * reach. The clean selection of a decision step stands on a *created* one, which
+ * carries a dirty bar the excluded screen would not have.
+ *
+ * So the lab said "The same screen is rendered by …" about two screens its own
+ * suite proves are not the same. On a review surface that is the worst place for
+ * an overclaim: a reviewer told the screens match has been given a reason not to
+ * look at the difference, which is the one thing they are here to do.
+ *
+ * Returned as data rather than written at each call site because the lab printed
+ * it twice — once per rule in the constraint list, once per rejecting rule in the
+ * picker — and two copies of one sentence are free to disagree.
+ */
+export function harnessNotes(rule) {
+  return [
+    `Harness limit — ${rule.limit}`,
+    `Rendered instead by ${rule.stands}, which is one named axis away: the nearest state this harness can reach, not the same screen.`,
+  ];
+}
 
 /** Every rule a fully-assigned combination breaks. Empty means reachable. */
 export function violations(combo) {

@@ -21,9 +21,23 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replaySpanFor, viewerCardFor, withheld } from "./selectors.mjs";
-import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, viewerCardFor, withheld } from "./selectors.mjs";
+import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, RUN_STEP, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
 import { PASS_RUN } from "./intercept.mjs";
+import { valueOf } from "./dimensions.mjs";
+
+/**
+ * The one dimension value no combination of dimensions can carry, read here so
+ * that the declaration and the render are the same words.
+ *
+ * `probe--delete-preflight-blocked` renders what this value promises. Spreading
+ * it rather than restating it is the point: a sentence changed in the registry
+ * and not on screen fails the probe, and one changed on screen and not in the
+ * registry fails it too. `test/preflight.test.mjs` holds the remaining
+ * direction — that the value declares any sentence at all — because an empty
+ * `copy` spread into an empty `copy` asks nothing of either.
+ */
+const BLOCKED_FIELD = valueOf("field", "delete-blocked");
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
 const CONFIG_BASE = {
@@ -426,6 +440,104 @@ export const PROBES = [
     },
   }),
   /*
+   * Pausing a run that is playing.
+   *
+   * `transport:playing` presses Play and declares `settles: false`, which is
+   * what holds Play to actually advancing the run. Nothing pressed the button
+   * again. So Pause was drawn by that state, named by its own selector, and
+   * asserted by nothing — replacing `onPlay` with `() => setPlaying(true)`
+   * left the whole matrix green.
+   *
+   * It cannot be a return edge, and the reason is the point: a return edge
+   * holds the child to the *parent's* expectations, and pausing does not put
+   * the page back. `transport:rest` is parked at the run's first event, and a
+   * paused run is wherever the clock reached — stopping is not rewinding, and a
+   * Pause that returned to the start would be a worse defect than one that did
+   * nothing.
+   *
+   * The Pause claim is the label round trip in the path, and it is bounded by
+   * the position: `waitGone` on the Pause spelling is *not* enough on its own,
+   * which was measured rather than assumed. Replacing `onPlay` with
+   * `() => setPlaying(true)` left the button offering Pause — but the interval
+   * clamps at `range.end` and clears `playing` by itself, so the wait was
+   * satisfied ten seconds later by the run finishing, and the probe passed on
+   * the mutation it exists to catch. So the next op requires the run to be
+   * *short of its end* at the moment Pause was honoured: a Pause that did
+   * nothing can only have got there by playing to the end, and fails here.
+   *
+   * Then it plays on at 16x to the end, and that is about the *render* rather
+   * than the control. Where a pause lands is the clock's: `TICK_MS` is 100 and
+   * the run spans 10,000ms, so pausing immediately leaves the scrubber either
+   * exactly at the start or one tick — a full percent — past it, depending on
+   * how many intervals fired between two clicks. Screenshotted there, this
+   * state was an undeclared twin of `probe--replay-opened-from-a-pass` on the
+   * runs where no tick fired and not on the runs where one did, which is a
+   * gallery claim that would have flickered rather than held. `positionRef`
+   * clamps to `range.end` and clears `playing` when the run runs out, so the
+   * end is the one position on this timeline that does not depend on timing at
+   * all — and it is a screen nothing else in the matrix draws.
+   *
+   * That timing is also why the run is *stepped* before it is played. "Short of
+   * its end" catches a Pause that did nothing; it does not catch a Pause that
+   * rewound, which is the defect this probe exists rather than a return edge to
+   * avoid asserting. Played from the start the two are indistinguishable — the
+   * start is where an honest pause may legitimately be sitting — so a Pause
+   * that reset the position passed. One forward step moves the run onto its
+   * second event on the log's own clock, and play only ever advances from
+   * there, so the first event is a position an honoured Pause cannot be at and
+   * a rewinding one always is. The read is placed *before* the play-out, since
+   * a rewound run reaches the same end a moment later and the end would excuse
+   * it.
+   */
+  sample({
+    id: "probe--replay-paused-after-playing",
+    covers: "Pause: the only replay control whose press was drawn by a state and asserted by none",
+    summary: "a replayed run paused by its own control while still short of its end, then played out to its last event",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeReplay },
+      ...runOps("replay", "finished"),
+      // Play from a position that is not the start, so that a Pause which
+      // rewound is a thing this path can tell apart from one that never moved.
+      // Stepping is the deterministic half of the transport: it lands on the
+      // run's second event exactly, on a clock nothing here shares.
+      { op: "click", selector: S.replayStepForward },
+      { op: "wait", selector: replayPositionAt(RUN_STEP.finished.next) },
+      { op: "click", selector: S.replayPlay },
+      { op: "wait", selector: S.replayPause },
+      { op: "click", selector: S.replayPause },
+      { op: "waitGone", selector: S.replayPause },
+      // Stopping is not rewinding, and this is where that is read. Play only
+      // ever advances, so a Pause that honoured its own meaning cannot be at
+      // the run's first event — while a Pause that reset the position is
+      // parked there, and is held here rather than excused by the end it would
+      // still go on to reach.
+      { op: "waitGone", selector: replayPositionAt(RUN_STEP.finished.start) },
+      { op: "waitGone", selector: replayPositionAt(RUN_END.finished) },
+      { op: "click", selector: replaySpeed(16) },
+      { op: "click", selector: S.replayPlay },
+      { op: "wait", selector: replayPositionAt(RUN_END.finished) },
+    ],
+    expect: {
+      shows: [
+        S.replayControls,
+        S.replayTimeline,
+        // The button offers Play again, by its own label rather than by the
+        // testid both conditions share.
+        S.replayResumed,
+        S.replayStepForward,
+        S.replayStepBack,
+        replaySpeedActive(16),
+        replayPositionAt(RUN_END.finished),
+        replaySpanFor(RUN_END.finished),
+      ],
+      hides: [S.replayPause],
+      copy: ["Play"],
+    },
+  }),
+  /*
    * The badge before it has a number.
    *
    * Every other run-listing state is an answer — empty, failed, failed-later.
@@ -466,7 +578,14 @@ export const PROBES = [
       { op: "click", selector: S.relationSummary },
       { op: "wait", selector: S.relationFlow },
     ],
-    expect: { shows: [S.relationFlow, S.assignmentDetail], hides: [], copy: [] },
+    // The same three regions the enumerated `disclosure:relation-open` value
+    // promises, plus the expanded card this crossing is about. It used to
+    // promise only the flow and the detail, which was a weaker claim than the
+    // state it crosses — and `.relation-section[open]` in particular is the
+    // region the summary toggle declares it reveals, so leaving it out meant
+    // the way back out of this state was a claim about a region this screen
+    // never mentioned.
+    expect: { shows: [S.relationSection, S.relationOpen, S.relationFlow, S.assignmentDetail], hides: [], copy: [] },
   }),
   crossing({
     id: "probe--orphans-under-expanded-card",
@@ -863,6 +982,126 @@ export const PROBES = [
     },
   }),
   /*
+   * The two ends of the registration itself.
+   *
+   * Registering writes through a control that is not a field editor's Save, so
+   * neither end of it could be reached through the `fieldState` lifecycle:
+   * `FIELD_SAVE` has no entry for the adder, and `field: repos-add` declares
+   * the single lifecycle value `n/a`. That left "Add to registry and this
+   * assignment" with a `busy` flag, an in-flight verb and a refusal that
+   * nothing in the registry had ever drawn — the last of that family still
+   * missing it, after the draft bar's Saving… and the delete confirmation's
+   * Deleting…
+   *
+   * The URL resolves in both: `resolve-repo` is a `READ_INTENT`, so it reaches
+   * the host under `stall-intent` and under `fail-intent` alike, and only the
+   * `set-repos` that carries the registration is claimed. That is what makes
+   * these two screens of the adder rather than two screens of a dead host.
+   */
+  sample({
+    id: "probe--repos-add-registering",
+    covers: "the registration in flight — the last write with no field-editor Save behind it left undrawn",
+    summary: "a repo being registered: the button names the work it is doing and takes no second press, so one paste cannot write repos.yaml twice",
+    fixture: "multi-repo",
+    intercept: "stall-intent",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "fill", selector: S.reposUrl, value: REPO_ADD_URL },
+      { op: "wait", selector: S.reposPreview },
+      { op: "click", selector: S.reposRegister },
+      { op: "wait", selector: withheld(S.reposRegister) },
+    ],
+    expect: {
+      shows: [S.reposUrl, S.reposPreview, withheld(S.reposRegister)],
+      hides: [S.reposAddRefused],
+      copy: [{ selector: S.reposRegister, text: "Adding…" }],
+    },
+  }),
+  /*
+   * The refusal, and the sentence it had to be given.
+   *
+   * Reordering and registering post the same `set-repos`, and `ReposEditor`
+   * answered both with one fallback — "could not save those repos". A reader
+   * who pressed "Add to registry and this assignment" was therefore told that
+   * their ranked list had failed to save, an edit they had not made and which
+   * is not what was refused. The refusal now names the action that was taken,
+   * and this is the state that holds it to that.
+   */
+  sample({
+    id: "probe--repos-add-refused",
+    covers: "a registration the host refused, and the words it is refused in",
+    summary: "a refused registration: the button comes back, the paste is still there to retry, and the failure names registering rather than a repo list nobody reordered",
+    fixture: "multi-repo",
+    intercept: "fail-intent",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.reposValue },
+      { op: "click", selector: S.reposAdd },
+      { op: "fill", selector: S.reposUrl, value: REPO_ADD_URL },
+      { op: "wait", selector: S.reposPreview },
+      { op: "click", selector: S.reposRegister },
+      { op: "wait", selector: S.reposAddRefused },
+    ],
+    expect: {
+      shows: [S.reposUrl, S.reposPreview, S.reposAddRefused, offered(S.reposRegister)],
+      copy: [{ selector: S.reposAddRefused, text: "could not register rushstack" }],
+    },
+  }),
+  /*
+   * The two screens on which the canvas describes an absence.
+   *
+   * Every other state in this registry renders a config that has something in
+   * it, so the sentences the card draws when a field is unset — `no source`,
+   * `no pipeline`, `no filter`, `no approval label`, `branches: not set`,
+   * `no repos`, and the dash `PipelineLink` draws instead of a door — were
+   * rendered by nothing and asserted by nothing. Deleting any of them and
+   * letting the glance read `undefined · undefined · 0 repos · 0 limits` would
+   * have passed all 502 renders, and that is the screen a reader lands on
+   * immediately after writing an `assignments/*.yaml` and before filling it in.
+   *
+   * The glance is asserted as the *whole* line rather than as substrings, and
+   * that is the point of scoping it: a card that dropped one fallback and kept
+   * the other three would satisfy every substring it still drew.
+   */
+  sample({
+    id: "probe--bare-assignment",
+    covers: "an assignment that names nothing yet — the one screen whose glance line is built entirely from fallbacks",
+    summary: "a newly written assignment beside a configured one: the glance says what is missing rather than reading blank",
+    fixture: "bare-assignment",
+    ops: [{ op: "wait", selector: S.bareGlance }],
+    expect: {
+      shows: [S.assignmentCardSecond, S.bareHead],
+      hides: [S.bareDetail],
+      copy: [{ selector: S.bareGlance, text: "no source · no pipeline · 0 repos · 0 limits" }],
+    },
+  }),
+  sample({
+    id: "probe--bare-assignment-expanded",
+    covers: "the unset fields inside the card — the chips and rows that have to say what is missing",
+    summary: "the unconfigured card opened: every row names what it has not been given, and it offers no door into a pipeline that does not exist",
+    fixture: "bare-assignment",
+    ops: [
+      { op: "click", selector: S.bareHead },
+      { op: "wait", selector: S.bareDetail },
+    ],
+    expect: {
+      shows: [S.bareDetail, S.bareRepos, S.bareWorkSource, S.barePipelineUnset],
+      copy: [
+        "no filter",
+        "no approval label",
+        "branches: not set",
+        // The row that used to answer with punctuation. Compared exactly and
+        // scoped, so a return to `? · ?` fails here by name rather than being
+        // absorbed by a substring of the card's own body.
+        { selector: S.bareWorkSource, text: "no work source" },
+        { selector: S.bareRepos, text: "no repos" },
+        { selector: S.barePipelineUnset, text: "—" },
+      ],
+    },
+  }),
+  /*
    * The step log with nothing selected, and with a step that produced nothing.
    *
    * The log occupies the full width below the graph on every overlay screen, so
@@ -1042,6 +1281,93 @@ export const PROBES = [
       copy: [{ selector: S.deleteRefusedResting, text: "could not inspect agent-eligible" }],
     },
   }),
+  /*
+   * The same read, still outstanding.
+   *
+   * Pressing Delete is a question to the host before it is a prompt, and this
+   * is the screen between the press and the answer: the button names the work
+   * it is doing and stops accepting presses, which is the whole of what stops
+   * three preflights being queued against one card. `DeleteControl` has four
+   * screens — asking, asked, removing, refused — and the registry drew three.
+   *
+   * The prompt is asserted absent for the same reason the refusal asserts it
+   * absent: a card that drew a confirmation before the referrer report arrived
+   * would be offering to remove something on the strength of an answer it does
+   * not have.
+   */
+  sample({
+    id: "probe--delete-preflight-checking",
+    covers: "the delete preflight in flight — the round trip a confirmation is asked for through",
+    summary: "Delete pressed and the host not yet answered: the button says what it is doing and refuses a second press, so one card cannot queue three preflights",
+    fixture: "validated",
+    intercept: "stall-preflight",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: withheld(S.deleteStart) },
+    ],
+    expect: {
+      shows: [S.assignmentDetail, withheld(S.deleteStart)],
+      hides: [S.preflight, S.deleteRefusedResting],
+      copy: [{ selector: S.deleteStart, text: "Checking…" }],
+    },
+  }),
+  /*
+   * The same read, answered — and answered blocking.
+   *
+   * This is the screen `field:delete-blocked` declares, and until now the only
+   * one in the registry that nothing rendered.
+   * `delete-is-offered-only-where-nothing-refers` excludes it from the matrix,
+   * and that exclusion is still exact: no *combination of dimensions* reaches
+   * it, because both places `DeleteControl` mounts are entities nothing refers
+   * to. What the rule then did was hand the screen to `test/preflight.test.mjs`,
+   * which held it by reading `web/app.mjs` for the spelling of its two lines.
+   *
+   * Spelling is not a render, and the difference was measured rather than
+   * argued. Gating the sentence behind `preflight.blocking && false` left the
+   * literal in the source and the offline suite green at 470; so did changing
+   * the Confirm's `disabled` to `preflight.blocking && false || busy`. Both
+   * defects are invisible to a check that reads the file and obvious to one that
+   * looks at the screen.
+   *
+   * So the screen is rendered here, under the one thing the harness has to
+   * supply — the mount point. The answer is not invented: it is the host's own
+   * report for deleting the role `implementer` out of the committed sample,
+   * pinned in `test/preflight.test.mjs` against `referrers()` run over that same
+   * payload, so it cannot drift from what `lib/preflight.mjs` produces.
+   *
+   * The withheld Confirm is the claim that matters. A prompt that lists what it
+   * would break and still offers the button is worse than no prompt at all —
+   * and Cancel stays offered beside it, because a reader who cannot proceed must
+   * still be able to leave.
+   */
+  sample({
+    id: "probe--delete-preflight-blocked",
+    covers: "the delete preflight answering that something still refers to the entity — the screen `field:delete-blocked` declares and no combination of dimensions can reach",
+    summary: "the host reports two references and withholds the Confirm: the prompt names what to repoint, and the removal cannot be asked for until they are",
+    fixture: "validated",
+    intercept: "block-preflight",
+    ops: [
+      { op: "click", selector: S.assignmentHead },
+      { op: "click", selector: S.deleteStart },
+      { op: "wait", selector: S.preflight },
+    ],
+    expect: {
+      shows: [S.assignmentDetail, ...BLOCKED_FIELD.shows, S.deleteBlocked, offered(S.deleteCancel)],
+      // The refusal's own note is absent in both of its places: nothing here was
+      // refused, and a screen that drew a refusal beside a blocked prompt would
+      // be reporting a removal that was never attempted.
+      hides: [S.deleteRefused, S.deleteRefusedResting],
+      copy: [
+        ...BLOCKED_FIELD.copy.map((text) => ({ selector: S.deleteBlocked, text })),
+        // Unscoped, because each is one row of a list the prompt draws rather
+        // than the whole of any element the vocabulary names: the count opens
+        // the prompt and the message is one referrer of the two.
+        "2 references",
+        "assignment `agent-eligible` runs role `implementer`",
+      ],
+    },
+  }),
   sample({
     id: "probe--reconcile-now-running",
     covers: "the immediate reconcile pass while its process is still running",
@@ -1159,7 +1485,10 @@ export const PROBES = [
         { selector: S.runActivityTitle, text: "Run list unavailable" },
         "a run already open keeps streaming",
       ],
-      allowErrors: ["Failed to load resource", "503"],
+      // The listing, by its own address, and anchored there. Unanchored it
+      // would also cover `./runs/<id>/events` — the endpoint this state exists
+      // to prove is still working, whose failure it must not be able to excuse.
+      allowErrors: ["/runs$"],
     },
   }),
   sample({
@@ -1184,8 +1513,10 @@ export const PROBES = [
       copy: [{ selector: S.runActivityTitle, text: "Run list unavailable" }, "a run already open keeps streaming"],
       // The refused request is the state. The browser logs the 503 itself, and
       // a state that stages a failing response has to own the console line it
-      // causes — the way the blocked-renderer states do.
-      allowErrors: ["Failed to load resource", "503"],
+      // causes — the way the blocked-renderer states do. By the address it was
+      // for: the sentence that row carries names no endpoint, so allowing it by
+      // text would have excused every other resource that failed here too.
+      allowErrors: ["/runs$"],
     },
   }),
 ];

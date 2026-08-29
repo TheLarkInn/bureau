@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { blocksDelete, referrers } from "../lib/preflight.mjs";
+import { valueOf } from "../web/statelab/dimensions.mjs";
+import { BLOCKED_PREFLIGHT } from "../web/statelab/intercept.mjs";
 
 const committed = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
 
@@ -65,5 +67,60 @@ test("preflight is advisory and orphaning alone does not block", () => {
   assert.deepEqual(
     { orphansOnly: blocksDelete(orphansOnly), referenced: blocksDelete(referenced), marked: referrers(committed, "role", "implementer")[0].source },
     { orphansOnly: false, referenced: true, marked: "preflight" },
+  );
+});
+
+/**
+ * The one declared dimension value no combination of dimensions renders, held
+ * to what it claims — at the two ends a render cannot hold for itself.
+ *
+ * `field:delete-blocked` is kept in the registry so the screen is excluded by a
+ * named rule rather than missing, and `delete-is-offered-only-where-nothing-
+ * refers` says why: `DeleteControl` mounts on an assignment card and on the
+ * orphan strip, and neither can answer with referrers.
+ *
+ * This test used to own the screen as well, by reading `web/app.mjs` for the
+ * spelling of its two lines. That was a mark, and the measurement is the
+ * argument: gating the sentence behind `preflight.blocking && false` left the
+ * literal in the source and this file green, and changing the Confirm's
+ * `disabled` to `preflight.blocking && false || busy` did the same. A file that
+ * still contains a line says nothing about whether the line reached a screen.
+ *
+ * So the screen moved to `probe--delete-preflight-blocked`, which renders it
+ * from these very lists. Two ends remain that a render cannot hold for itself,
+ * and they are what is left here.
+ *
+ * `declaresCopy` is the first: the probe spreads `copy`, so an empty `copy`
+ * spreads into an empty set of claims and the render agrees with a promise that
+ * asks nothing. Emptying it left this file green at 7/7 and the whole offline
+ * suite green at 470; a blank string does the same while looking populated, so
+ * both are refused.
+ *
+ * `staged` is the second: the probe renders the host's answer, and a harness is
+ * free to invent one. This pins it to the answer `lib/preflight.mjs` actually
+ * produces for the role that sample references, so a change in what the host
+ * reports fails here rather than leaving a probe rendering a shape the product
+ * stopped producing — and `blocking` is checked against `blocksDelete` rather
+ * than asserted, because that is the rule the screen exists to obey.
+ */
+test("the blocked delete declares a real sentence, and is staged from the host's own answer", () => {
+  const declared = valueOf("field", "delete-blocked");
+  const staged = BLOCKED_PREFLIGHT.result;
+
+  assert.deepEqual(
+    {
+      declaresCopy: declared.copy.length > 0 && declared.copy.every((line) => typeof line === "string" && line.trim() !== ""),
+      declaresControls: declared.shows.length > 0,
+      referrers: staged.referrers,
+      blocking: staged.blocking === blocksDelete(staged.referrers),
+      blocks: blocksDelete([{ severity: "referrer" }]),
+    },
+    {
+      declaresCopy: true,
+      declaresControls: true,
+      referrers: referrers(committed, "role", "implementer"),
+      blocking: true,
+      blocks: true,
+    },
   );
 });

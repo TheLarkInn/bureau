@@ -38,6 +38,25 @@ fn check_step_names(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipeli
     }
 }
 
+/// A step may not take a terminal's name.
+///
+/// `engine::edge::resolve` matches `done`, `abort` and `escalate` before it
+/// looks at `pipeline.steps`, so a bare terminal name in an edge is the
+/// terminal wherever it is written and a step of that name is unreachable
+/// through it. `check_edge` returned as soon as the target named a step, so
+/// such a pipeline passed every rule here — reachability included, which
+/// counted the edge as arriving — while the engine stopped the run instead.
+/// The canvas refuses the name on the way in (`web/step-refs.mjs`); a config
+/// already on disk needs it too, the canvas not being the only way to write one.
+fn check_terminals(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipeline, path: &Path) {
+    let detail = "is a terminal, so a step cannot take that name";
+    for step in &pipeline.steps {
+        if TERMINALS.contains(&step.name.as_str()) {
+            step_err(errors, path, name, &step.name, detail);
+        }
+    }
+}
+
 fn check_assignment_pipeline(
     errors: &mut Vec<ConfigError>,
     config: &Config,
@@ -256,6 +275,7 @@ fn check_reachable(errors: &mut Vec<ConfigError>, name: &str, pipeline: &Pipelin
 fn check_pipeline(errors: &mut Vec<ConfigError>, config: &Config, name: &str, pipeline: &Pipeline) {
     let path = path_of("pipelines", name);
     check_step_names(errors, name, pipeline, &path);
+    check_terminals(errors, name, pipeline, &path);
     let order = step_order(pipeline);
     for (index, step) in pipeline.steps.iter().enumerate() {
         check_step(errors, config, name, index, step, &order, &path);

@@ -108,6 +108,43 @@ function advisory(state) {
 }
 
 /**
+ * A config the CLI rejected for reasons that name nothing on the pipeline being
+ * viewed — a role, an assignment and `repos.yaml`, and no step and no pipeline.
+ *
+ * This is not a narrower `invalid`; it is the case that separates two claims
+ * the panel had been making with one sentence. `pipelineFindings` scopes the
+ * panel's list to the open pipeline, so this payload leaves that list empty
+ * while `validation.ok` is `false` and the header reads "Validation findings".
+ * A verdict that reads only `validation.state` calls that "clean — bureau
+ * validate would pass", which is the command's answer inverted, on the screen
+ * a reader takes the verdict from.
+ *
+ * `invalid` cannot expose it: that fixture hand-places a finding on
+ * `agent-eligible-pipeline`, so the panel is never empty there and the
+ * `validated && !ok` branch is never the one that renders. The defect lived
+ * precisely in the gap between the two, which is why this is a value on the
+ * axis rather than a variation of one.
+ */
+function invalidElsewhere(state) {
+  const next = validated(state);
+  const findings = [
+    {
+      severity: "error",
+      message: "assignment `agent-eligible` names role `reviewer`, which no role file defines",
+      target: { kind: "assignment", assignment: "agent-eligible" },
+    },
+    { severity: "error", message: "repos.yaml: `bureau` has no credential" },
+  ];
+  next.validation = { ...next.validation, ok: false, errors: findings.map((item) => item.message) };
+  next.status = "Validation findings";
+  next.findings = findings;
+  next.findingsByItem = { "assignment:agent-eligible": [findings[0]] };
+  next.findingsByStep = {};
+  next.generalFindings = [findings[1]];
+  return next;
+}
+
+/**
  * Both classes at once. `mergeAdvisories` in `lib/actions.mjs` concatenates
  * advisories onto whatever `validate` returned, so a config really can hold
  * errors and advisories together — and adjacency is precisely when the two
@@ -206,6 +243,50 @@ function twoAssignments(state) {
   next.config.relation = {
     nodes: [...relation.nodes, { id: ref, kind: "assignment", name: extra.name }],
     edges: [...relation.edges, ...assignmentEdges(extra)],
+  };
+  return next;
+}
+
+/**
+ * A second assignment that names nothing yet.
+ *
+ * This is the only screen on which the canvas describes an absence, and there
+ * were seven such sentences — `no source`, `no pipeline`, `no filter`, `no
+ * approval label`, `branches: not set`, `no repos`, and the em dash the
+ * pipeline row draws — none of which any state rendered. The matrix enumerated
+ * what a config *contains* and never what it lacks, so every one of them
+ * shipped asserted by nothing: deleting the fallback and leaving the glance
+ * line reading `undefined · undefined` would have passed all 502 renders.
+ *
+ * It is added *beside* the configured card rather than emptying that one, and
+ * that is the truthful direction. Stripping `agent-eligible` would leave the
+ * pipeline, the roles and the repo referenced by nobody — a payload whose
+ * orphan strip and relation graph both have to move with it — whereas an
+ * assignment that names nothing takes nothing with it, which is exactly what a
+ * newly-written `assignments/*.yaml` looks like before it is filled in. It
+ * also puts the configured card and the unconfigured one on one screen, which
+ * is the comparison a reviewer wants.
+ *
+ * No relation edges: `relationEdges` in `lib/view.mjs` keeps only edges whose
+ * source and target are both nodes, so an assignment with no pipeline and no
+ * repos emits a card and no lines. Adding one here would draw a `pipeline:`
+ * edge into a node that does not exist.
+ */
+function bareAssignment(state) {
+  const next = clone(state);
+  const bare = {
+    name: "unconfigured",
+    work: { forge: null, source: null, filter: null, approvalLabel: null, abortLabel: null, escalateLabel: null },
+    pipeline: null,
+    branchPrefix: null,
+    repos: [],
+    limits: {},
+  };
+  next.config.view.assignments = [...next.config.view.assignments, bare];
+  const relation = next.config.relation ?? { nodes: [], edges: [] };
+  next.config.relation = {
+    ...relation,
+    nodes: [...relation.nodes, { id: `assignment:${bare.name}`, kind: "assignment", name: bare.name }],
   };
   return next;
 }
@@ -399,11 +480,13 @@ export const FIXTURES = Object.fromEntries([
   entry("sample", "status", "the bundled sample exactly as the host serves it", sample),
   entry("validated", "status", "bureau validate ran and accepted the config", validated),
   entry("invalid", "status", "bureau validate rejected it; findings sit on what they name", invalid),
+  entry("invalid-elsewhere", "status", "bureau validate rejected it for reasons that name no step and no pipeline", invalidElsewhere),
   entry("advisory", "status", "an advisory that must never block a save", advisory),
   entry("invalid-advisory", "status", "validation errors and an advisory reported together", invalidAdvisory),
   entry("empty", "content", "no assignments, roles, repos or pipelines yet", empty),
   entry("orphans", "content", "a role and a repo nothing references", orphans),
   entry("two-assignments", "content", "two assignment cards in the stack", twoAssignments),
+  entry("bare-assignment", "content", "a second assignment that names nothing yet", bareAssignment),
   entry("multi-repo", "content", "two repos, so rank and reorder are meaningful", multiRepo),
   entry("read-only-primary", "content", "the primary repo is registered read-only", readOnlyPrimary),
   entry("unknown-primary", "content", "the primary repo is not in repos.yaml", unknownPrimary),

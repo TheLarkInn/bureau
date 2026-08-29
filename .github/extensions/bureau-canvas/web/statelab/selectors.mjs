@@ -25,6 +25,31 @@ export const SELECTORS = {
   assignmentHead: ".assignment-head",
   assignmentDetail: ".assignment-detail",
   assignmentEmpty: ".view-shell--config > .muted",
+  /*
+   * The second card, addressed as a whole and in the two places that describe
+   * an absence.
+   *
+   * `bare-assignment` appends its card, so the sibling combinator is what makes
+   * "the unconfigured one" addressable without naming an assignment. The glance
+   * and the pipeline row are separate selectors because they are separate
+   * claims: the glance is a sentence built from four fallbacks at once, and the
+   * pipeline row is the one place a missing reference is drawn as a mark rather
+   * than as words.
+   */
+  bareHead: ".assignment-card + .assignment-card .assignment-head",
+  bareGlance: ".assignment-card + .assignment-card .assignment-glance",
+  bareDetail: ".assignment-card + .assignment-card .assignment-detail",
+  bareRepos: ".assignment-card + .assignment-card .repos-value",
+  bareWorkSource: ".assignment-card + .assignment-card .ws-value",
+  /*
+   * The pipeline row on a card that names no pipeline.
+   *
+   * `PipelineLink` returns the mark *instead of* the button, so asserting the
+   * mark present is the same claim as asserting the door absent — and it is the
+   * claim in the direction that can fail. A `hides` on the button would be
+   * satisfied by a card that drew nothing at all in that row.
+   */
+  barePipelineUnset: '.assignment-card + .assignment-card [data-testid="pipeline-unset"]',
   // The door from an assignment into its pipeline. It is the one control that
   // carries the assignment-first mental model — the graph is reached through a
   // card, never from a nav — and it was promised by no state, so a card that
@@ -76,6 +101,12 @@ export const SELECTORS = {
   reposSave: '[data-testid="repos-save"]',
   reposAdd: '[data-testid="repos-add"]',
   reposUrl: '[aria-label="Repository URL"]',
+  // The button that writes a new entry into repos.yaml, and the refusal it
+  // comes back with. Registering writes through a control that is not a field
+  // editor's Save, so neither end of it could be reached through the
+  // `fieldState` lifecycle.
+  reposRegister: ".repos-editor .actions .btn--primary",
+  reposAddRefused: ".repos-editor > .note--err",
   // The resolved preview: the one place a `.detail-row` is drawn inside
   // another, which is why it is the render that exercises the overlap rule's
   // containment case.
@@ -96,22 +127,38 @@ export const SELECTORS = {
   deleteCancel: '[data-testid="delete-cancel"]',
   preflight: '[data-testid="preflight"]',
   // The refusal a confirmed delete comes back with, scoped to the preflight so
-  // it cannot be satisfied by an unrelated note elsewhere on the card.
-  deleteRefused: '[data-testid="preflight"] .note--err',
+  // it cannot be satisfied by an unrelated note elsewhere on the card — and to
+  // the alert role, because the blocking sentence below is drawn in the same
+  // class inside the same box. While no state rendered a blocking preflight the
+  // two were indistinguishable, so this selector would have been satisfied by a
+  // screen on which nothing was ever refused.
+  deleteRefused: '[data-testid="preflight"] .note--err[role="alert"]',
+  // The sentence a preflight that found referrers draws. It carries no `role`
+  // because it reports a standing fact about the config rather than the outcome
+  // of the action the reader just took, which is what tells it from the refusal.
+  deleteBlocked: '[data-testid="preflight"] .note--err:not([role="alert"])',
   // The same refusal after the prompt it belongs to has been dismissed. It is a
   // *different* place in the tree — `DeleteControl`'s `!preflight` branch draws
   // its own note beside an intact Delete — so `deleteRefused` cannot see it, and
   // a refusal that survives Cancel would be invisible to every assertion here.
-  deleteRefusedResting: ".assignment-actions .note--err",
+  //
+  // A direct child, because `DeleteControl` mounts directly inside
+  // `.assignment-actions` and so does the prompt: a descendant selector reached
+  // into the open preflight and matched the blocking sentence, which is a note
+  // in the other branch entirely. Nothing rendered a blocking preflight until
+  // `probe--delete-preflight-blocked` did, so the two were indistinguishable and
+  // this selector would have reported a refusal on a screen that had none.
+  deleteRefusedResting: ".assignment-actions > .note--err",
 
   orphanStrip: ".orphan-strip",
   relationSection: ".relation-section",
   relationSummary: ".relation-section > summary",
   relationFlow: ".relation-flow",
   // Collapsed is read from the disclosure's own `open`, not from the graph's
-  // presence: a closed `<details>` keeps its subtree mounted and still reports
-  // client rects for it, so counting `.relation-flow` cannot tell the two
-  // apart. This can, and it fails the moment the section ships `open`.
+  // absence. The graph is now mounted only when the section is opened, so
+  // presence would answer too — but `open` is the claim that fails the moment
+  // the section ships open, which is the thing worth catching, and it does not
+  // depend on how the contents happen to be mounted.
   relationOpen: ".relation-section[open]",
 
   pipelineView: ".view-shell--pipeline",
@@ -120,6 +167,19 @@ export const SELECTORS = {
   pipelineBack: '[data-testid="pipeline-back"]',
   pipelineEditLink: ".editor-link",
   sidePanel: ".side-panel",
+  /*
+   * The side panel's own verdict on the pipeline it is describing, and the two
+   * shapes it takes.
+   *
+   * The panel is drawn on every pipeline-viewer state and its validation
+   * section was promised by none of them, so the sentence it says when there is
+   * nothing to report — the only place in this UI that states a *negative*
+   * result — was rendered several hundred times and asserted zero. A section
+   * that had stopped reporting findings at all would have read as clean and
+   * passed every one of them.
+   */
+  panelValidationClean: '[data-testid="panel-validation"] .muted',
+  panelValidationFinding: '[data-testid="panel-validation"] .finding--validation',
   modeSwitcher: ".mode-switcher",
   modeDesign: '[data-testid="mode-design"]',
   modeLive: '[data-testid="mode-live"]',
@@ -170,6 +230,11 @@ export const SELECTORS = {
   // The same button once it is running. The label is the whole difference, and
   // it is what a state asserting "playing" would have to read.
   replayPause: '[data-testid="replay-play"][aria-label="Pause replay"]',
+  // And the same button once it has been stopped again. Not the bare testid:
+  // `replayPlay` matches the button in *either* condition, so a probe asserting
+  // that Pause worked has to name the label it went back to, or it would be
+  // satisfied by a run that never stopped.
+  replayResumed: '[data-testid="replay-play"][aria-label="Play replay"]',
   // The timeline renders the moment a run is picked, with an empty range; the
   // log arrives afterwards. `max` is the only signal that the events landed,
   // so it is what a replay path waits on rather than the timeline itself.

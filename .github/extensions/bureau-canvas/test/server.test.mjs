@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -67,6 +67,250 @@ test("serves config page and state", async () => {
         );
     } finally {
         await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+/**
+ * `/sample` is what the State Lab starts from, and the claim it makes is that
+ * the payload is the bundled one rather than whatever config the host was
+ * opened on. Asserted against the *committed fixture's* own assignment names,
+ * not a literal list here, so the two cannot drift: the lab's fixtures reach
+ * into this payload by name, and a sample that stopped carrying them would take
+ * a fifth of the matrix down with it.
+ *
+ * The comparison is with `/state` from the same host, because "it served
+ * something" is not the claim — "it served the sample even though the host has
+ * its own config" is. Under `BUREAU_CANVAS_TEST=1` the binary is missing, so
+ * `/state` already falls back to the same payload; what this pins is that
+ * `/sample` reaches it by its own route rather than by that coincidence.
+ */
+test("serves the bundled sample the state lab starts from", async () => {
+    const instanceId = "bureau-sample-test";
+    const opened = await canvas.openBureauCanvas({ instanceId, input: {} });
+    try {
+        const sample = await fetch(new URL("/sample", opened.url)).then((response) => response.json());
+        const fixture = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
+        const named = (config) => Object.keys(config?.assignments ?? {}).sort();
+        assert.deepStrictEqual(
+            {
+                assignments: sample.config.view.assignments.map((item) => item.name).sort(),
+                state: sample.validation.state,
+                instanceId: sample.instanceId,
+            },
+            { assignments: named(fixture.config), state: "fixture", instanceId },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+/**
+ * The pin `/sample` makes is over the *whole* payload, not just the config
+ * load. Two other host inputs reach `buildState`: this canvas session's
+ * unsaved `/intent` writes, and the contributor's `layout.json` on disk.
+ * Either one leaking would show a State Lab reviewer a screen the registry
+ * never modelled — a draft bar on one of the 200-odd states that declare
+ * `draft: "none"`, or an editor arranged by whoever last dragged a node in
+ * this checkout — and the lab's own base note would not catch it, because a
+ * plan overlay leaves the sample's assignment and pipelines exactly where
+ * `expectedByFixtures()` looks for them.
+ *
+ * Both halves are asserted in **both directions** against the same host, since
+ * "the sample carries no draft" is not the claim: a sample that could never
+ * carry one would satisfy it. `/state` must show each leak and `/sample` must
+ * not, so this fails if the pin stops holding *and* if the leak stops being
+ * producible — the second being how a gate quietly turns into scenery.
+ *
+ * The draft half reads the **config**, not only the summary. `state.plan` is
+ * what draws the draft bar, and it is computed from `pendingPlan` — so a pin
+ * applied to the summary alone leaves `plan: null` while the planned role is
+ * still overlaid onto `state.config`, and an assertion that read only the bar
+ * would call that pinned. That is the leak in the form a reviewer would
+ * actually meet it: the lab draws its roles from the config, so a sample
+ * carrying a role no fixture declares is a screen the registry never modelled,
+ * with or without a bar above it. Both are asserted, because they fail apart.
+ */
+/**
+ * The third host input the pin has to cover, and the only one that decides
+ * which *surface* the lab draws rather than what is drawn on it.
+ *
+ * `buildState` derives `selectedPipeline` from `input.pipeline`, and `App`
+ * renders `PipelineView` whenever that is set. So a State Lab opened from a
+ * canvas session that was sitting on a pipeline served every `surface:config`
+ * state as the pipeline viewer — the landing, the create flow, the assignment
+ * cards, the relation graph, all of them the wrong screen under the right
+ * state id. The fixtures cannot correct it, because the config transforms have
+ * no selection to clear on the payload they were written against.
+ *
+ * The browser suite is structurally blind to this: it opens the lab with no
+ * pipeline, so the leaked value is absent in every run and a check made there
+ * could never fail. That is what puts the claim here, on the route itself.
+ *
+ * Both directions against the same host, for the reason the draft and layout
+ * pin gives: "the sample has no selection" would be satisfied by a sample that
+ * could never carry one. `/state` must show the host's open pipeline and
+ * `/sample` must not, so this fails if the pin stops holding *and* if the leak
+ * stops being producible.
+ */
+test("the bundled sample is pinned against the pipeline the host is open on", async () => {
+    const instanceId = "bureau-sample-navigation-test";
+    const pipeline = "agent-eligible-pipeline";
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { pipeline } });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        // The name and the surface it selects, not merely whether one is set:
+        // a `missing: true` selection draws `MissingPipeline`, which is a third
+        // screen again, so the assertion names which one the host is showing.
+        const shown = (state) => ({
+            selected: state.selectedPipeline?.name ?? null,
+            missing: state.selectedPipeline?.missing ?? null,
+        });
+        assert.deepStrictEqual(
+            { live: shown(await read("/state")), sample: shown(await read("/sample")) },
+            {
+                live: { selected: pipeline, missing: false },
+                sample: { selected: null, missing: null },
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+/**
+ * The other half of the same pin, on the routes Replay and Live actually read.
+ *
+ * The config pin above covers `/state`, and no run screen reads it. `modes.js`
+ * reads `./runs` and `replay.js` reads `./runs/:id/events`, both of which
+ * answered from the reader's own `~/.bureau/runs` — so every `mode:replay` and
+ * `mode:live` state in the State Lab drew whatever runs this machine had, and
+ * on a machine with none drew no run at all, under the same state id the
+ * gallery screenshots against four committed logs.
+ *
+ * CI could not have found it: `matrix-fixtures.mjs` points the host at those
+ * committed logs with `BUREAU_CANVAS_RUNS`, so the harness pins by environment
+ * exactly what the lab left unpinned by route, and the leaked value is absent
+ * from all 540 renders.
+ *
+ * Both directions against one host, for the reason every other pin here gives:
+ * "the sample serves the committed runs" would be satisfied by a host that had
+ * no others. So the host is given a run of its own that the sample must not
+ * carry, and `/runs` must carry it — this fails if the pin stops holding *and*
+ * if the leak stops being producible.
+ */
+test("the sample's runs are the committed logs, not the host's", async () => {
+    const instanceId = "bureau-sample-runs-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-runs-"));
+    const hostRun = "run-only-this-host-has";
+    await mkdir(join(dir, hostRun), { recursive: true });
+    await writeFile(
+        join(dir, hostRun, "events.jsonl"),
+        `${JSON.stringify({
+            kind: "run_started",
+            seq: 0,
+            at_ms: 1740000200000,
+            data: { run_id: hostRun, assignment: "agent-eligible" },
+        })}\n`,
+    );
+    const previous = process.env.BUREAU_CANVAS_RUNS;
+    process.env.BUREAU_CANVAS_RUNS = dir;
+    const opened = await canvas.openBureauCanvas({ instanceId });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        const ids = (payload) => payload.runs.map((run) => run.run_id).sort();
+        // The events route as well as the listing: a sample that offered four
+        // run ids and then answered each of them from the host's directory
+        // would satisfy a listing-only claim while still drawing host data.
+        // A run only the host has is not found there, and is found on `/runs`.
+        const status = (route) => fetch(new URL(route, opened.url)).then((response) => response.status);
+        assert.deepStrictEqual(
+            {
+                host: ids(await read("/runs")),
+                sample: ids(await read("/sample/runs")),
+                hostRunFromSample: await status(`/sample/runs/${hostRun}/events`),
+                hostRunFromHost: await status(`/runs/${hostRun}/events`),
+            },
+            {
+                host: [hostRun],
+                sample: ["run-finished", "run-group", "run-live", "run-paused"],
+                hostRunFromSample: 404,
+                hostRunFromHost: 200,
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        if (previous === undefined) {
+            delete process.env.BUREAU_CANVAS_RUNS;
+        } else {
+            process.env.BUREAU_CANVAS_RUNS = previous;
+        }
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+/**
+ * The one field of the pinned payload that still came from this machine.
+ *
+ * `fallbackResult` puts `dir` straight into `state.dir`, and the header renders
+ * it as `.config-path`. So the payload every lab render starts from carried one
+ * value that differs on every checkout, in the field a reader is most likely to
+ * read as ground truth about what they are looking at.
+ *
+ * Both directions again: `/state` must report the directory the host was opened
+ * on, and `/sample` must report the same pinned string on every machine.
+ */
+test("the bundled sample is pinned against the host's own directory", async () => {
+    const instanceId = "bureau-sample-dir-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-dir-"));
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { dir } });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        assert.deepStrictEqual(
+            { live: (await read("/state")).dir, sample: (await read("/sample")).dir },
+            { live: dir, sample: "(bundled sample)" },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+test("the bundled sample is pinned against the host's draft and saved layout", async () => {
+    const instanceId = "bureau-sample-pinned-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-pin-"));
+    const arrangement = { implement: { x: 321, y: 654 } };
+    const sidecar = { pipelines: { "agent-eligible-pipeline": { steps: arrangement } } };
+    await writeFile(join(dir, "layout.json"), `${JSON.stringify(sidecar)}\n`);
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { dir } });
+    try {
+        const planned = await fetch(new URL("/intent", opened.url), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Bureau-Capability": canvas.servers.get(instanceId).capability,
+            },
+            body: JSON.stringify({
+                kind: "create",
+                input: { kind: "role", name: "sample-pin-probe" },
+            }),
+        }).then((response) => response.json());
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        const shown = (state) => ({
+            draft: state.plan !== null,
+            role: (state.config.view.roles ?? []).some((role) => role.name === "sample-pin-probe"),
+            arranged: state.pipelines["agent-eligible-pipeline"]?.arrangement ?? {},
+        });
+        assert.deepStrictEqual(
+            { planned: planned.ok, live: shown(await read("/state")), sample: shown(await read("/sample")) },
+            {
+                planned: true,
+                live: { draft: true, role: true, arranged: arrangement },
+                sample: { draft: false, role: false, arranged: {} },
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        await rm(dir, { recursive: true, force: true });
     }
 });
 

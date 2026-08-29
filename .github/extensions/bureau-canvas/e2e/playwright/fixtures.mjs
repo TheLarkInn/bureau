@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 
+import { holdOffline, offlineFindings } from "./offline.mjs";
+
 const SERVE = fileURLToPath(new URL("../../serve.mjs", import.meta.url));
 const SCRATCH_ROOT = fileURLToPath(new URL("../../../../../target/canvas-playwright/", import.meta.url));
 const CONFIG_FIXTURE = fileURLToPath(new URL("../../../../../.bureau/", import.meta.url));
@@ -115,17 +117,43 @@ async function resetView(page, url) {
     }));
 }
 
+/** One canvas host and scratch config per test, so writes are always safe. */
+async function canvasHost({}, use) {
+  const dir = await scratchConfig();
+  const runs = await scratchRuns();
+  const { child, url } = await bootCanvas(dir, runs);
+  await use({ url, dir, runs });
+  child.kill("SIGTERM");
+  await rm(dir, { recursive: true, force: true });
+  await rm(runs, { recursive: true, force: true });
+}
+
 export const test = base.extend({
-  /** One canvas host and scratch config per test, so writes are always safe. */
-  canvas: async ({}, use) => {
-    const dir = await scratchConfig();
-    const runs = await scratchRuns();
-    const { child, url } = await bootCanvas(dir, runs);
-    await use({ url, dir, runs });
-    child.kill("SIGTERM");
-    await rm(dir, { recursive: true, force: true });
-    await rm(runs, { recursive: true, force: true });
+  /**
+   * Every page in this suite sits on the offline floor before it is navigated.
+   *
+   * The header above has claimed this suite is offline since it was written, and
+   * nothing in it could contradict the claim: a `fetch` to a public host added
+   * to `web/app.mjs`, swallowing its own rejection, left all 147 tests green.
+   * The floor refuses the request and the throw below is what makes the refusal
+   * a check — an abort on its own shows up as some unrelated control missing,
+   * which is a bug report nobody can read.
+   *
+   * It is asserted after `use` rather than inside a spec so that it holds for
+   * every test in the suite including ones written later, and so no spec has to
+   * remember to ask.
+   */
+  page: async ({ page }, use) => {
+    const reached = await holdOffline(page);
+    await use(page);
+    const findings = offlineFindings(reached);
+    if (findings.length) {
+      throw new Error(findings.map((finding) => finding.detail).join("\n"));
+    }
   },
+
+  /** One canvas host and scratch config per test, so writes are always safe. */
+  canvas: canvasHost,
 
   /** The canvas page with the assignment card expanded, watching for errors. */
   card: async ({ page, canvas }, use) => {
@@ -162,3 +190,17 @@ export const test = base.extend({
 });
 
 export { expect } from "@playwright/test";
+
+/**
+ * The same canvas host, on a page the floor has *not* already been installed on.
+ *
+ * Every other spec in this directory gets `page` from the override above, which
+ * puts `holdOffline` underneath it and throws if anything was reached. That is
+ * the right arrangement for a spec about the product and the wrong one for a
+ * spec about the floor itself: a test whose subject is a refused connection
+ * cannot use a fixture that fails the test when a connection is refused.
+ *
+ * So `specs/offline-floor.spec.mjs` installs the floor itself, on this, and
+ * reads what it recorded rather than being thrown by it.
+ */
+export const floorTest = base.extend({ canvas: canvasHost });

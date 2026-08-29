@@ -13,18 +13,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-import { CONSTRAINT_IDS, CONSTRAINTS, violations } from "../web/statelab/constraints.mjs";
+import { CONSTRAINT_IDS, CONSTRAINTS, harnessNotes, violations } from "../web/statelab/constraints.mjs";
 import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
-import { relationView } from "../lib/view.mjs";
-import { DIMENSIONS, valuesOf } from "../web/statelab/dimensions.mjs";
-import { collect, CONTRAST, deadlineVerdict, measureFor, selectorsFor, verdict } from "../web/statelab/checks.mjs";
-import { ADAPTER_VERBS, isAction } from "../web/statelab/driver.mjs";
+import { pipelineView, relationView } from "../lib/view.mjs";
+import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
+import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unrowed, unsettledReason, verdict } from "../web/statelab/checks.mjs";
+import { ADAPTER_VERBS, canonicalAction, isAction } from "../web/statelab/driver.mjs";
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
 import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 import { VIEWPORTS, SELECTORS } from "../web/statelab/selectors.mjs";
+import { emptyVerdict, PANEL_CLEAN, PANEL_ELSEWHERE, PANEL_UNCHECKED } from "../web/panel-verdict.mjs";
 
 const PAYLOAD = new URL("./fixtures/committed-payload.json", import.meta.url);
 const CONCURRENT_PAYLOAD = new URL("./fixtures/concurrent-payload.json", import.meta.url);
@@ -145,21 +146,21 @@ test("every count the branch reports about itself is what the registry holds", (
     { ...summary(), renders },
     {
       dimensions: 16,
-      dimensionValues: 97,
-      combinations: 627056640000,
+      dimensionValues: 98,
+      combinations: 705438720000,
       constraintRules: 33,
       structuralRules: 22,
       scopingRules: 7,
       harnessRules: 4,
-      excludedCombinations: 627056639793,
-      matrixStates: 207,
-      probes: 44,
-      states: 251,
-      transitions: 136,
-      entryTransitions: 100,
-      returnTransitions: 36,
-      roots: 151,
-      renders: 502,
+      excludedCombinations: 705438719779,
+      matrixStates: 221,
+      probes: 51,
+      states: 272,
+      transitions: 153,
+      entryTransitions: 108,
+      returnTransitions: 45,
+      roots: 164,
+      renders: 544,
     },
   );
 });
@@ -501,6 +502,38 @@ test("the sample pipeline still has the step count the registry addresses", asyn
   assert.equal(payload.config.pipelines["agent-eligible-pipeline"].steps.length, SAMPLE_STEP_COUNT);
 });
 
+/**
+ * The viewer's edge vocabulary omits `.flow-edge--observes`, and `dimensions.mjs`
+ * gives the reason twice: an `observes` edge needs a decision step with an
+ * `over`, the sample every viewer state renders has none, and `pick: decision`
+ * grows one in the editor and asserts it there instead.
+ *
+ * Both halves were prose. Give the sample a decision with an `over` and the
+ * viewer starts drawing a relation class nothing asserts, with the exemption
+ * still reading as true; drop the editor's `.editor-edge--observes` and the
+ * compensation the exemption points at is gone, equally quietly. Either way the
+ * registry would be silently omitting an edge class rather than excluding it by
+ * a rule that holds — which is the one thing the matrix is not allowed to do.
+ *
+ * So the premise is read from the payload the viewer renders and the
+ * compensation from the registry itself, and the exemption fails the day either
+ * stops holding. The relation list is pinned whole rather than by
+ * `has("observes")` alone: a projection that dropped every relation edge would
+ * satisfy "no observes here" while drawing nothing at all.
+ */
+test("the viewer's missing observes edge is earned by the sample, and paid for by the editor", async () => {
+  const payload = JSON.parse(await readFile(PAYLOAD, "utf8"));
+  const relations = pipelineView(payload, "agent-eligible-pipeline").edges.map((edge) => edge.relation);
+  assert.deepStrictEqual(
+    {
+      viewerRelations: [...new Set(relations)].sort(),
+      viewerVocabulary: valuesOf("mode").every((value) => !(value.shows ?? []).includes(".flow-edge--observes")),
+      editorPays: valueOf("pick", "decision").shows.includes(".editor-edge--observes"),
+    },
+    { viewerRelations: ["control", "data"], viewerVocabulary: true, editorPays: true },
+  );
+});
+
 test("the transition DAG only names states the registry holds", () => {
   const ids = new Set(STATES.map((state) => state.id));
   const dangling = TRANSITIONS.filter((edge) => !ids.has(edge.from) || !ids.has(edge.to));
@@ -532,6 +565,51 @@ function hasCycle(edges) {
   };
   return [...next.keys()].some((node) => walk(node, new Set()));
 }
+
+/**
+ * A root has to be a root for a reason about the product, never about spelling.
+ *
+ * `applyFixture` accepts `"orphans"` and `["orphans"]` as the same instruction,
+ * so two paths that differ only in that spelling reach the same screen. The DAG
+ * is built by comparing paths as JSON, which does not know that, and for a
+ * while seven states were therefore roots purely because a probe wrote its
+ * fixture as a bare id while the enumerated screen above it wrote a list.
+ *
+ * That is worse than a missing edge, because a root is never silent: it is
+ * handed to `ROOT_REASONS`, and five of the seven collected `probe` — "its path
+ * is nobody's extension by construction" — which was false of every one of
+ * them. The lab printed that sentence to a reviewer, and the suite never walked
+ * the step. Dismissing a refusal, opening the create bar over an expanded card
+ * and typing a work-source filter were all unwalked for that reason alone.
+ *
+ * Both halves are asserted, because the fix is only sound if the two spellings
+ * really do mean one thing: that `applyFixture` agrees about them, and that no
+ * root's canonical path is a proper prefix-extension of another state's.
+ */
+test("no state is a root merely for how it spelled its fixture", async () => {
+  const base = await servedState();
+  const sign = (state) => JSON.stringify(state.ops.filter(isAction).map(canonicalAction));
+  const byPath = new Map(STATES.map((state) => [sign(state), state.id]));
+  const byId = new Map(STATES.map((state) => [state.id, state]));
+  const parentOf = (state) => {
+    const acting = state.ops.filter(isAction).map(canonicalAction);
+    for (let count = acting.length - 1; count >= 1; count -= 1) {
+      const found = byPath.get(JSON.stringify(acting.slice(0, count)));
+      if (found && found !== state.id) {
+        return found;
+      }
+    }
+    return null;
+  };
+
+  assert.deepStrictEqual(
+    {
+      spellingsAgree: JSON.stringify(applyFixture("orphans", base)) === JSON.stringify(applyFixture(["orphans"], base)),
+      rootsWithAHiddenParent: ROOTS.map((root) => byId.get(root.id)).filter((state) => parentOf(state)).map((state) => state.id),
+    },
+    { spellingsAgree: true, rootsWithAHiddenParent: [] },
+  );
+});
 
 /**
  * `EXCLUSIONS` says why a combination is not a state. `ROOTS` says why nothing
@@ -569,7 +647,7 @@ function hasCycle(edges) {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 90, probe: 19, landing: 30, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 100, probe: 16, landing: 36, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -674,12 +752,34 @@ test("every scoping rule is held to account by a crossing probe that really brea
 
 /**
  * A `harness` rule is the one kind that excludes a screen a user really
- * reaches, so it is the one kind that can quietly cost coverage. Three claims
- * are checked, and the third is the one that cannot be talked around: enumerate
+ * reaches, so it is the one kind that can quietly cost coverage. Four claims
+ * are checked. The third is the one that cannot be talked around: enumerate
  * again without the rule, and if the kept set does not grow then the rule hides
  * nothing of its own and is claiming a cost it does not impose.
+ *
+ * The fourth closes the hole the other three left. `stands` was asked for
+ * nothing but *existence* — any state id in the registry satisfied it — so the
+ * field that is supposed to say "here is the excluded screen, reached from
+ * somewhere this harness can get to" could name a state with no relation to the
+ * exclusion at all, and the check would still read green. A name that reads as
+ * evidence and is not is the exact defect `unbroken` was written to remove from
+ * crossings, left standing on the rule kind where the cost is highest.
+ *
+ * So the standing state is held to two properties instead. It must satisfy the
+ * rule — a state the rule itself excludes is not somewhere the harness can
+ * reach — and it must sit *adjacent* to the excluded region: changing exactly
+ * one of the axes the rule reads must produce a combination the rule rejects.
+ * That is the strongest thing that is actually true here, and it is worth being
+ * exact about why it is not "renders the same screen". These screens differ by
+ * one axis on purpose, because the axis is what the harness cannot reach: the
+ * clean selection of a decision step stands on a *created* one, which carries a
+ * dirty bar the excluded screen would not have. Claiming the two renders match
+ * would be the same overclaim in the other direction. What `stands` promises,
+ * and what this now holds it to, is that a reviewer looking at it is one named
+ * axis away from the screen the rule removed, rather than somewhere else
+ * entirely.
  */
-test("every harness rule names its limit, stands on a rendered screen, and really hides one", () => {
+test("every harness rule names its limit, stands next to the screen it hides, and really hides one", () => {
   const harness = CONSTRAINTS.filter((rule) => rule.kind === "harness");
   const rendered = new Set(STATES.map((state) => state.id));
   const base = enumerate(ORDER, valuesOf).kept.length;
@@ -689,15 +789,82 @@ test("every harness rule names its limit, stands on a rendered screen, and reall
     {
       unnamed: harness.filter((rule) => !rule.limit?.trim()).map((rule) => rule.id),
       unstood: harness.filter((rule) => !rendered.has(rule.stands)).map((rule) => rule.id),
+      // Reported only for a rule whose standing state exists, so a bad name is
+      // one finding rather than two.
+      unadjacent: harness.filter((rule) => rendered.has(rule.stands) && !standsNextTo(rule)).map((rule) => rule.id),
       costless: harness.filter((rule) => withoutRule(rule) <= base).map((rule) => rule.id),
       // The obligations belong to the kind. A structural or scoping rule
       // carrying them reads as a harness limit that was never re-kinded.
       mislabelled: CONSTRAINTS.filter((rule) => rule.kind !== "harness" && (rule.limit || rule.stands)).map((rule) => rule.id),
       unknownKind: CONSTRAINTS.filter((rule) => !["structural", "scoping", "harness"].includes(rule.kind)).map((rule) => rule.id),
     },
-    { unnamed: [], unstood: [], costless: [], mislabelled: [], unknownKind: [] },
+    { unnamed: [], unstood: [], unadjacent: [], costless: [], mislabelled: [], unknownKind: [] },
   );
 });
+
+/**
+ * And that the lab tells the reviewer the claim above, not a stronger one.
+ *
+ * The test above is careful that `stands` promises adjacency and not sameness —
+ * "these screens differ by one axis on purpose, because the axis is what the
+ * harness cannot reach". The lab said the opposite, in both places it printed a
+ * harness rule: *"The same screen is rendered by …"*. The suite held the weaker,
+ * true claim while the review surface handed a reviewer the stronger, false one,
+ * which is the worst place for it: someone told two screens match has been given
+ * a reason not to look at the difference, and looking is the whole job.
+ *
+ * Held here rather than in the browser spec because the sentence is data now:
+ * one function, read by both call sites, so neither can drift and the offline
+ * suite can ask what it says without a lab to render it.
+ */
+test("the lab's harness note names the limit and the nearest state, and claims no more", () => {
+  const harness = CONSTRAINTS.filter((rule) => rule.kind === "harness");
+  const said = harness.map((rule) => ({ rule: rule.id, notes: harnessNotes(rule).join(" ") }));
+
+  assert.deepStrictEqual(
+    {
+      silent: said.filter(({ notes }) => !notes.includes("Harness limit —")).map(({ rule }) => rule),
+      unattributed: said.filter(({ rule, notes }) => !notes.includes(CONSTRAINTS.find((item) => item.id === rule).stands)).map(({ rule }) => rule),
+      // The overclaim itself, named rather than described, because a sentence
+      // that asserts the two renders match is the one thing nothing here holds.
+      overclaiming: said.filter(({ notes }) => /the same screen is rendered/iu.test(notes)).map(({ rule }) => rule),
+      unqualified: said.filter(({ notes }) => !notes.includes("not the same screen")).map(({ rule }) => rule),
+    },
+    { silent: [], unattributed: [], overclaiming: [], unqualified: [] },
+  );
+});
+
+/**
+ * Whether a rule's standing state is reachable past that rule and one axis away
+ * from a combination *this rule alone* rejects.
+ *
+ * Asked against the rule's own predicate rather than against an enumerated
+ * example, because `enumerate` keeps one worked example per rule and which
+ * tuple that is depends on `ORDER`. A check that compared `stands` against that
+ * example would pass or fail on the walk order rather than on the registry,
+ * which is a mark rather than a check by a different route.
+ *
+ * The neighbour must also satisfy every *other* constraint, and that half was
+ * missing. Adjacency asked only `!rule.holds(neighbour)`, so a state qualified
+ * by sitting next to a combination that some unrelated rule already excluded —
+ * a combination that is not a screen this harness rule hides, and in one
+ * measured case the only neighbour a `stands` had. The lab then told a reviewer
+ * "the nearest state this harness can reach" about a state adjacent to nothing
+ * the harness was keeping from them. A witness that is itself not a screen
+ * proves nothing about the screen being stood in for.
+ */
+function standsNextTo(rule) {
+  const stands = STATES.find((state) => state.id === rule.stands);
+  if (!stands?.dimensions || !rule.holds(stands.dimensions)) {
+    return false;
+  }
+  const others = CONSTRAINTS.filter((item) => item.id !== rule.id);
+  return rule.reads.some((axis) =>
+    valuesOf(axis).some((value) => {
+      const neighbour = { ...stands.dimensions, [axis]: value.id };
+      return !rule.holds(neighbour) && others.every((item) => item.holds(neighbour));
+    }));
+}
 
 /**
  * The blind spot the check above leaves, closed from the other side.
@@ -764,11 +931,20 @@ test("every edge's delta is preceded by work the parent has already done", () =>
   assert.deepStrictEqual(broken.map((edge) => `${edge.from} -> ${edge.to}`), []);
 });
 
-/** Does every op of `needles` appear in `haystack`, in order? */
+/**
+ * Does every op of `needles` appear in `haystack`, in order?
+ *
+ * Compared as canonical ops rather than as raw JSON, for the same reason the
+ * DAG is built that way: `{ fixture: "orphans" }` and `{ fixture: ["orphans"] }`
+ * are one instruction to the driver, and a containment check that called them
+ * different would report every edge whose two ends spelled a fixture
+ * differently as a race the parent never ran.
+ */
 function isSubsequence(needles, haystack) {
+  const key = (op) => JSON.stringify(canonicalAction(op));
   let cursor = 0;
   for (const op of needles) {
-    const found = haystack.findIndex((item, index) => index >= cursor && JSON.stringify(item) === JSON.stringify(op));
+    const found = haystack.findIndex((item, index) => index >= cursor && key(item) === key(op));
     if (found === -1) {
       return false;
     }
@@ -821,6 +997,7 @@ test("every edge's delta is the child's path minus the parent's, and says so", (
  */
 test("every return edge mirrors an entry edge and undoes exactly one control", () => {
   const entries = new Set(ENTRY_TRANSITIONS.map((edge) => `${edge.from} -> ${edge.to}`));
+  const entryFor = new Map(ENTRY_TRANSITIONS.map((edge) => [`${edge.from} -> ${edge.to}`, edge]));
   const returns = TRANSITIONS.filter((edge) => edge.kind === "return");
   const shapeOf = (edge) => edge.delta.map((op) => op.op).join("+");
   const shapes = ["click+waitGone", "click+wait"];
@@ -830,11 +1007,19 @@ test("every return edge mirrors an entry edge and undoes exactly one control", (
       misshapen: returns.filter((edge) => !shapes.includes(shapeOf(edge))).map((edge) => `${edge.from} -> ${edge.to}: ${shapeOf(edge)}`),
       unlabelled: returns.filter((edge) => edge.via !== `click ${edge.delta[0].selector}`).map((edge) => `${edge.from} -> ${edge.to}`),
       none: returns.length === 0,
+      // One press may only claim to reverse one press. A return derived from
+      // the last op of a two-op delta undoes the half it can reach and asserts
+      // the whole: pressing Cancel again on a create bar that was reopened
+      // after a refusal closes a clean form, and claims to have restored the
+      // refusal. See `returnEdge`.
+      fromMultiStep: returns
+        .filter((edge) => entryFor.get(`${edge.to} -> ${edge.from}`).delta.filter(isAction).length !== 1)
+        .map((edge) => `${edge.from} -> ${edge.to}`),
       // Both shapes must actually occur, or the pair above is one live branch
       // and one that has never been taken.
       restoring: returns.some((edge) => shapeOf(edge) === "click+wait"),
     },
-    { unmirrored: [], misshapen: [], unlabelled: [], none: false, restoring: true },
+    { unmirrored: [], misshapen: [], unlabelled: [], none: false, fromMultiStep: [], restoring: true },
   );
 });
 
@@ -888,12 +1073,17 @@ test("every reversible control names a region both of its states account for", (
     }
     const child = byId.get(edge.to)?.expect ?? { shows: [], hides: [] };
     const parent = byId.get(edge.from)?.expect ?? { shows: [], hides: [] };
+    // Resolved against the state being left, exactly as `returnEdge` resolves
+    // it. A region named by a function is still one region per edge; asking the
+    // toggle for its literal here would compare a closure to a selector and
+    // report every run-addressed transport edge as unpromised.
+    const region = (side) => (typeof side === "function" ? side(byId.get(edge.to)) : side);
     if (toggle.gone) {
-      return child.shows.includes(toggle.gone) ? [] : [`${edge.to} does not show ${toggle.gone}`];
+      return child.shows.includes(region(toggle.gone)) ? [] : [`${edge.to} does not show ${region(toggle.gone)}`];
     }
     return [
-      ...(child.hides.includes(toggle.hidden) ? [] : [`${edge.to} does not name ${toggle.hidden} absent`]),
-      ...(parent.shows.includes(toggle.hidden) ? [] : [`${edge.from} does not show ${toggle.hidden}`]),
+      ...(child.hides.includes(region(toggle.hidden)) ? [] : [`${edge.to} does not name ${region(toggle.hidden)} absent`]),
+      ...(parent.shows.includes(region(toggle.hidden)) ? [] : [`${edge.from} does not show ${region(toggle.hidden)}`]),
     ];
   });
   assert.deepStrictEqual(unpromised, []);
@@ -1124,6 +1314,16 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
     viewport: { width: 800, height: 600 },
     overflowX: 40,
     contrast: [{ selector: ".kind-label", text: "AGENT", ratio: 1.07 }],
+    // The phrase is absent from this render, so no element carries it. Both
+    // findings are correct and both are reported: the copy is missing, and its
+    // ink was never proved, because there was nothing to measure. This row used
+    // to say `ink: true` and expect the carrier to stay silent, on the ground
+    // that one screen should not be two defects — but "carried by nothing" is
+    // an *absent measurement*, and this module's rule for those is the one it
+    // already applies to a missing sample: an absent measurement cannot support
+    // a pass. Keeping it silent is what let a promised sentence split across
+    // elements and painted in nothing satisfy every gate.
+    carriers: { "expected copy": { found: false, ink: false, injected: "" } },
     boxes: [
       { selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 },
       { selector: ".assignment-card", x: 50, y: 50, width: 100, height: 100 },
@@ -1138,6 +1338,7 @@ test("the verdict reports missing controls, missing copy, low contrast, overlap 
     "missing-copy",
     "overlap",
     "unexpected-control",
+    "unreadable-copy",
   ]);
 });
 
@@ -1162,6 +1363,34 @@ test("the verdict catches one landing region printing over another", () => {
 });
 
 /**
+ * The allowance excuses a sentence, not the render.
+ *
+ * `allowPlaceholder` exists because the body searched includes config the
+ * canvas is quoting rather than authoring — a `run:` command may legitimately
+ * say "reserved for". It was a `.length` test for a while, which switched all
+ * four patterns off for the whole render, so the stub the rule was written to
+ * catch could have been reintroduced beside the quoted command and passed.
+ * Row three is exactly that mutation, and it is the row the old shape fails.
+ *
+ * Row four is the claim in the other direction, the one `permitted()` already
+ * makes for overlap: an excuse for a sentence that is no longer on the screen
+ * is reported stale rather than granted quietly to whatever walks into it next.
+ */
+test("a placeholder allowance excuses its own sentence and nothing else", () => {
+  const quoted = "run: echo reserved for later";
+  const stub = "trust flow - reserved for trust analysis.";
+  const judge = (text, allowPlaceholder) => verdict(
+    { expect: { shows: [], hides: [], copy: [], allowPlaceholder } },
+    { counts: {}, text, viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes: [] },
+  ).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [judge(stub, []), judge(quoted, [quoted]), judge(`${quoted} ${stub}`, [quoted]), judge("nothing promised here", [quoted])],
+    [["placeholder-copy"], [], ["placeholder-copy"], ["stale-placeholder-allowance"]],
+  );
+});
+
+/**
  * The defect that made this shape necessary, held so it cannot come back.
  *
  * A whole-body substring cannot tell a word from its own negation: "unsaved
@@ -1175,6 +1404,8 @@ test("a scoped copy expectation tells a status from its own negation", () => {
   const dirty = {
     counts: { ".editor-status": 1 },
     texts: { ".editor-status": "unsaved edits" },
+    paint: { ".editor-status": { ink: true, injected: "" } },
+    carriers: { saved: { found: true, ink: true, injected: "" } },
     text: "Pipeline editor unsaved edits",
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
@@ -1198,6 +1429,7 @@ test("a scoped copy expectation passes the element it names", () => {
   const clean = {
     counts: { ".editor-status": 1 },
     texts: { ".editor-status": " Saved " },
+    paint: { ".editor-status": { ink: true, injected: "" } },
     text: "Pipeline editor saved",
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
@@ -1206,6 +1438,255 @@ test("a scoped copy expectation passes the element it names", () => {
   };
 
   assert.deepStrictEqual(verdict({ expect: { shows: [], hides: [], copy: [{ selector: ".editor-status", text: "saved" }] } }, clean), []);
+});
+
+/**
+ * A promised sentence is painted, and painted as itself.
+ *
+ * Every scoped copy expectation above is settled by `texts`, and `texts` is
+ * `innerText` — which answers for the DOM rather than for a reader. `innerText`
+ * reports words drawn in transparent ink, and it does not report a `::before` or
+ * `::after` at all. So a stylesheet that colours the panel's own sentence
+ * `transparent` and spells a different one in generated content leaves
+ * `innerText` exactly right, and with it every gate: 681 browser checks and 452
+ * offline ones stayed green while the panel showed a config `bureau validate`
+ * had *rejected* as `clean — bureau validate would pass`. The promise was kept
+ * in the DOM and broken on the screen, which is the one failure a review surface
+ * may not have — the gallery would show the false sentence and the matrix would
+ * call the state correct.
+ *
+ * This is the family `visible()` already defends against, one level down. That
+ * walk asks whether a promised element paints *anything*; these rows ask whether
+ * what it paints is its *own words*.
+ *
+ * Every row keeps `texts` truthful, because that is the entire point: the
+ * expectation the registry states is satisfied and the render is still a lie.
+ * The first row is the vacuity guard — a mark that fired on an honest render
+ * could never be kept green. The middle rows pin that the two clauses are
+ * independent, since either alone is half a check. The last refuses to call an
+ * absent paint sample readable.
+ */
+test("a promised sentence has to be painted, and painted as itself", () => {
+  const kinds = (paint) => verdict(
+    { expect: { shows: [], hides: [], copy: [{ selector: SELECTORS.panelValidationClean, text: PANEL_ELSEWHERE }] } },
+    {
+      counts: { [SELECTORS.panelValidationClean]: 1 },
+      texts: { [SELECTORS.panelValidationClean]: PANEL_ELSEWHERE },
+      paint: { [SELECTORS.panelValidationClean]: paint },
+      text: PANEL_ELSEWHERE,
+      viewport: { width: 1280, height: 900 },
+      overflowX: 0,
+      contrast: [],
+      boxes: [],
+    },
+  ).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [
+      kinds({ ink: true, injected: "" }),
+      kinds({ ink: false, injected: "" }),
+      kinds({ ink: true, injected: `"${PANEL_CLEAN}"` }),
+      kinds({ ink: false, injected: `"${PANEL_CLEAN}"` }),
+      kinds(undefined),
+    ],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["unreadable-copy", "substituted-copy"], ["unreadable-copy"]],
+  );
+});
+
+/**
+ * A promised sentence the reader cannot read fails the row that promised it.
+ *
+ * The lab prints one row per copy expectation, and that row read only
+ * `missing-copy`. So the two verdicts added for the screen rather than the DOM
+ * — `unreadable-copy` and `substituted-copy` — reached the panel as a note
+ * *below* the list while the row naming the sentence stayed ticked, which tells
+ * a reviewer looking straight at that line that the sentence is fine. The note
+ * was also their only consumer, so both kinds could be deleted from its filter
+ * with every test in this repository green and the panel merely more
+ * reassuring.
+ *
+ * All five verdicts are put to both kinds of promise, because the scoping is
+ * what keeps this from over-reporting: a paint verdict belongs to the promise
+ * whose selector it names and to no other, and an unscoped phrase — which names
+ * no element, and so can never be paint-judged — must not inherit one.
+ */
+test("a sentence that is unreadable or overpainted fails its own copy row", () => {
+  const scoped = { selector: ".editor-status", text: "saved" };
+  const label = copyLabel(scoped);
+  const failures = [
+    { kind: "missing-copy", detail: label },
+    { kind: "unreadable-copy", detail: ".editor-status draws its own words in ink a reader cannot see" },
+    { kind: "substituted-copy", detail: '.editor-status paints "unsaved edits" in place of its own words' },
+    { kind: "unreadable-copy", detail: ".panel-validation draws its own words in ink a reader cannot see" },
+    { kind: "overlap", detail: ".editor-status prints over its sibling" },
+  ];
+
+  assert.deepStrictEqual(
+    [
+      failures.map((item) => copyFailure(item, scoped, label)),
+      failures.map((item) => copyFailure(item, "a loose phrase", "a loose phrase")),
+    ],
+    [
+      [true, true, true, false, false],
+      [false, false, false, false, false],
+    ],
+  );
+});
+
+/**
+ * And the lab is the one asking.
+ *
+ * Read from source because `lab.mjs` touches `document` at import time, so the
+ * offline suite cannot call its renderer. The rule above is only worth having
+ * if the panel routes its rows through it: a lab that kept its own inline
+ * `missing-copy` filter would satisfy every assertion in the test above and
+ * still tick the row for a sentence no reader can see.
+ *
+ * Both directions, as with the panel's own sentence — the call must be there,
+ * and the inline predicate it replaced must not be.
+ */
+test("the lab judges its copy rows with the shared rule instead of its own filter", async () => {
+  const source = await readFile(new URL("../web/statelab/lab.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes("copyFailure") && source.includes('from "./checks.mjs"'),
+      source.includes("copyFailure(item, phrase, label)"),
+      source.includes('item.kind === "missing-copy"'),
+    ],
+    [true, true, false],
+  );
+});
+
+/**
+ * The same fault, one line further down the same panel, and it outlived the fix.
+ *
+ * The copy rows were routed through the shared rule; the note that closes the
+ * panel was not. It selected its contents with a literal list of seven kinds
+ * while `verdict` emits more, so `stranded-label`,
+ * `stale-overlap-allowance` and `stale-placeholder-allowance` were matched by no
+ * row and no list entry: the lab reported "all clear" for a render the matrix
+ * fails. Two surfaces disagreeing about one registry, with the review surface
+ * taking the softer view.
+ *
+ * The kinds are read out of `checks.mjs` rather than written here, because a
+ * list of kinds maintained by hand is the very thing that broke — a pin that
+ * needs editing whenever `verdict` grows is a pin that will one day be a
+ * comment. Deriving them means a new kind joins this assertion on the commit
+ * that introduces it, and must survive `unrowed` to pass.
+ *
+ * The three that were dropped are named as well, so this test still fails for
+ * the original defect even if the regex ever stops finding anything — a derived
+ * list that silently came back empty would otherwise pass vacuously, which is
+ * the shape of defect this whole round is about.
+ */
+test("every kind a verdict can emit reaches the lab's closing note", async () => {
+  const source = await readFile(new URL("../web/statelab/checks.mjs", import.meta.url), "utf8");
+  const kinds = [...new Set([...source.matchAll(/kind: "([a-z-]+)"/gu)].map((match) => match[1]))];
+  const bare = { expect: { shows: [], hides: [], copy: [] } };
+  const carried = kinds.filter((kind) => unrowed(bare, [{ kind, detail: "a finding" }]).length === 1);
+  const dropped = ["stranded-label", "stale-overlap-allowance", "stale-placeholder-allowance"];
+
+  assert.deepStrictEqual(
+    [carried, dropped.filter((kind) => kinds.includes(kind))],
+    [kinds, dropped],
+  );
+});
+
+/**
+ * And the lab closes with the leftovers rather than a list, in both directions.
+ *
+ * Extending the literal list would have fixed the three kinds above and kept
+ * the shape that produced them. This pins the shape: the partition is called,
+ * and the filter it replaced is gone.
+ */
+test("the lab closes its panel with what its rows did not claim", async () => {
+  const source = await readFile(new URL("../web/statelab/lab.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes("unrowed(state, result?.failures ?? [])"),
+      source.includes('"overlap", "clipped"'),
+      /includes\(item\.kind\)/u.test(source),
+    ],
+    [true, false, false],
+  );
+});
+
+/**
+ * One `expect` shape, however the state was written.
+ *
+ * `expectations()` fills all seven keys; a probe writes the clauses it is making
+ * and omits the rest. `checks.mjs` defends every read, so the gate never saw the
+ * difference — but the lab iterates `state.expect.hides` to draw its rows, and
+ * four probes had no `hides` key at all, so opening one of them on the surface
+ * built for opening states threw `not iterable` and drew a red note instead of
+ * the panel. Four of the states were unreviewable and nothing reported it.
+ *
+ * The second element is what keeps this from passing on an empty walk: both
+ * kinds of state must be present, so the check cannot be satisfied by a registry
+ * that lost its probes.
+ */
+test("every state carries the same expect shape, probe or matrix", () => {
+  const lists = ["shows", "hides", "copy", "allowErrors", "allowPlaceholder", "allowOverlap"];
+  const malformed = STATES.filter((state) => !lists.every((key) => Array.isArray(state.expect?.[key]))
+    || typeof state.expect?.settles !== "boolean");
+
+  assert.deepStrictEqual(
+    [malformed.map((state) => state.id), [...new Set(STATES.map((state) => state.kind))].sort()],
+    [[], ["matrix", "probe"]],
+  );
+});
+
+/**
+ * The same promise, made without naming an element.
+ *
+ * Most of this registry's copy is plain, and a plain phrase is settled against
+ * the body's `innerText` — so every way of showing a reader something other
+ * than the promised words was open to the majority of the promises. The scoped
+ * check was a guard over the minority of its own subject.
+ *
+ * Seven rows, because they are seven different determinations and only one is
+ * a pass. The fifth used to be the exemption, and it was the vacuity this
+ * module has now been caught by three times: "carried by no element" was read
+ * as "split across several, which `absentCopy` has proved are on the page".
+ * `absentCopy` reads `innerText`, which reports transparent ink, so that pair
+ * excused exactly the defect this check exists to catch. Split words are found
+ * and judged by `collect` now, and a phrase nothing carries fails.
+ *
+ * The sixth row is what makes the `found` branch a check rather than a mark.
+ * Every fixture for it also carried `ink: false`, so the branch could be
+ * deleted outright and the row below it would report the same kind — the
+ * clause claiming to guard absence was settled by a different clause entirely.
+ * `found: false` with honest ink is the only shape that asks it.
+ */
+test("a promise that names no element is still judged on the words a reader gets", () => {
+  const state = { expect: { shows: [], hides: [], copy: ["clean — bureau validate would pass"] } };
+  const phrase = "clean — bureau validate would pass";
+  const kinds = (carriers) => verdict(state, {
+    counts: {},
+    texts: {},
+    paint: {},
+    carriers,
+    text: phrase,
+    viewport: { width: 1280, height: 900 },
+    overflowX: 0,
+    contrast: [],
+    boxes: [],
+  }).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [
+      kinds({ [phrase]: { found: true, ink: true, injected: "" } }),
+      kinds({ [phrase]: { found: true, ink: false, injected: "" } }),
+      kinds({ [phrase]: { found: true, ink: true, injected: '"rejected"' } }),
+      kinds({ [phrase]: { found: true, ink: true, injected: "", covered: true } }),
+      kinds({ [phrase]: { found: false, ink: false, injected: "" } }),
+      kinds({ [phrase]: { found: false, ink: true, injected: "" } }),
+      kinds(undefined),
+    ],
+    [[], ["unreadable-copy"], ["substituted-copy"], ["substituted-copy"], ["unreadable-copy"], ["unreadable-copy"], ["unreadable-copy"]],
+  );
 });
 
 /**
@@ -1278,6 +1759,290 @@ function selectorsOf(ops) {
   return (ops ?? []).map((op) => op.selector).filter(Boolean);
 }
 
+/** The keys `expectations()` absorbs from an axis, so "contributes" is its word. */
+const CONTRIBUTIONS = ["shows", "hides", "copy", "allowErrors", "allowPlaceholder", "allowOverlap"];
+
+/**
+ * Whether one axis of one combination gives `expectations()` anything to merge.
+ *
+ * `only` is read here for the same reason `expectations()` reads it, and the
+ * omission was the audit's own version of the fault it exists to catch. A value
+ * scoped to another surface is skipped by the merge outright, so on this screen
+ * a suppression of that axis removes nothing — and an audit that credited the
+ * scoped-away promise anyway would report a stale suppression as one doing work.
+ * Scoping `data:validated` to `only: ["pipeline"]` made `field:delete → data`
+ * suppress nothing on any of its config states and left the whole offline suite
+ * green at 470.
+ */
+function contributesTo(axis, combo) {
+  const value = valueOf(axis, combo[axis]);
+  if (value?.only && !value.only.includes(combo.surface)) {
+    return false;
+  }
+  return [value, value?.derive?.(combo)].some((part) => CONTRIBUTIONS.some((key) => (part?.[key] ?? []).length > 0));
+}
+
+/**
+ * `suppress` is the one exemption in this registry that nothing held to account.
+ *
+ * Four exemptions live here and three already answer for themselves: `permitted`
+ * reports a `stale-overlap-allowance` for an `allowOverlap` that excused
+ * nothing, `promisedCopy` reports a `stale-placeholder-allowance` for an unused
+ * `allowPlaceholder`, and `unexercised` in the matrix spec fails a state whose
+ * `allowErrors` caught nothing. `suppress` had neither a staleness check nor a
+ * scope one — and it is the only one of the four that deletes *promises* rather
+ * than excusing *findings*, so it is the only one whose failure mode is a
+ * quietly lowered bar rather than a noisy one.
+ *
+ * Measured, not reasoned. Adding `"surface"` and `"nosuchaxis"` to
+ * `edit:deleted`'s suppression took each of its four states from eighteen
+ * promised controls to thirteen and left the whole offline suite green: five
+ * controls dropped out of what the registry claims that screen draws, and
+ * nothing said so. The browser suite cannot catch it by construction — removing
+ * a selector from `shows` removes its `missing-control` finding along with it,
+ * so the render agrees with a claim that no longer asks anything.
+ *
+ * Both halves are asked here. `unnamedAxis` refuses a suppression of an axis
+ * that does not exist, which is inert today and reads exactly like one that
+ * works. `stale` refuses one that removes nothing from any state it applies to,
+ * which is the same staleness the other three exemptions already report. The
+ * count is pinned because both lists are empty when nothing is declared at all:
+ * without it, a `suppress` that stopped being read would pass as compliance.
+ *
+ * The third bucket is the one this check found on its first run. A suppression
+ * declared by a value the matrix never carries is neither exercised nor stale —
+ * it is unreachable, and `field:delete-blocked` is unreachable on purpose:
+ * `delete-is-offered-only-where-nothing-refers` excludes its screen by name and
+ * `test/preflight.test.mjs` holds the screen instead. Folding it into `stale`
+ * would report a rule that is working as a defect; leaving it unnamed would let
+ * "no state carries this value" excuse any suppression at all. So it is listed,
+ * and a second value dropping out of the matrix has to be added here to pass.
+ */
+test("every suppression names a real axis and drops something a state was promising", () => {
+  const declared = DIMENSIONS.flatMap((dimension) => dimension.values.flatMap(
+    (value) => (value.suppress ?? []).map((axis) => ({ where: `${dimension.id}:${value.id} → ${axis}`, key: dimension.id, id: value.id, axis })),
+  ));
+  const audited = declared.map((entry) => {
+    const carried = STATES.filter((state) => state.kind === "matrix" && state.dimensions[entry.key] === entry.id);
+    return {
+      where: entry.where,
+      names: ORDER.includes(entry.axis),
+      rendered: carried.length > 0,
+      drops: carried.some((state) => contributesTo(entry.axis, state.dimensions)),
+    };
+  });
+
+  assert.deepStrictEqual(
+    {
+      declared: audited.length,
+      unnamedAxis: audited.filter((entry) => !entry.names).map((entry) => entry.where),
+      stale: audited.filter((entry) => entry.rendered && !entry.drops).map((entry) => entry.where),
+      unrendered: audited.filter((entry) => !entry.rendered).map((entry) => entry.where),
+    },
+    { declared: 3, unnamedAxis: [], stale: [], unrendered: ["field:delete-blocked → data"] },
+  );
+});
+
+/**
+ * A verdict is a result, and a result requires a run.
+ *
+ * The pipeline panel says a sentence when it has no findings for this
+ * pipeline, and an empty findings list arrives two different ways. Under
+ * `data:validated` the CLI ran and returned nothing, which is a pass. Under
+ * `data:fixture` there is no bureau binary, nothing ever ran, and the list is
+ * empty for want of anyone to fill it — on the same screen whose header says
+ * "Showing bundled sample; bureau binary not available."
+ *
+ * Both were wired to "clean — bureau validate would pass", so this registry
+ * certified a verdict no validator gave, across seven states and fourteen
+ * renders, in the state a user lands on precisely when the binary is missing.
+ * That is a mark standing in for a check that was never made — the shape this
+ * branch exists to refuse — sitting inside the branch's own expectations.
+ *
+ * Asked of the two values' own derivations rather than against a pair of
+ * literals, because what is under test is that they *disagree*: a test naming
+ * both sentences goes on agreeing with itself after someone makes them one
+ * sentence again. The direction is pinned too — which of the two is the unrun
+ * one — since a check for "they differ" alone is satisfied by swapping them,
+ * and swapped is the same overclaim with the labels exchanged.
+ */
+test("a state where validate never ran does not claim the verdict of one where it did", () => {
+  const said = (id) => (valueOf("data", id).derive({ surface: "pipeline" }).copy ?? []).map((phrase) => phrase.text);
+  const [unchecked, clean] = [said("fixture"), said("validated")];
+
+  assert.deepStrictEqual(
+    [unchecked.length, clean.length, unchecked[0] === clean[0], /^not checked\b/u.test(unchecked[0]), /^clean\b/u.test(clean[0])],
+    [1, 1, false, true, true],
+  );
+});
+
+/**
+ * The same defect one axis over: `validated` is not a verdict either.
+ *
+ * `lib/findings.mjs` sets `state: "validated"` whenever `bureau validate`
+ * returned JSON — accepted *and* rejected — and records which in `ok`. A
+ * verdict reading only `state` therefore says "clean" for a config the command
+ * rejected, and the panel's list is scoped to the open pipeline, so any
+ * rejection naming a role, an assignment, `repos.yaml` or another pipeline
+ * lands exactly there: empty list, `ok: false`, and a header on the same screen
+ * reading "Validation findings".
+ *
+ * The unrun case is included so all three sentences are pinned by one table.
+ * `{ state: "fixture", ok: true }` is the shape that makes the point — `ok` is
+ * true and nothing ran, so a rule reading `ok` alone would be as wrong as the
+ * one reading `state` alone, in the other direction.
+ */
+test("an empty findings list carries the verdict the run actually produced", () => {
+  const cases = [
+    [undefined, PANEL_UNCHECKED],
+    [{ state: "fixture", ok: true }, PANEL_UNCHECKED],
+    [{ state: "crash", ok: false }, PANEL_UNCHECKED],
+    [{ state: "validated", ok: true }, PANEL_CLEAN],
+    [{ state: "validated", ok: false }, PANEL_ELSEWHERE],
+  ];
+
+  assert.deepStrictEqual(cases.map(([validation]) => emptyVerdict(validation)), cases.map(([, sentence]) => sentence));
+});
+
+/**
+ * The three sentences stay three, and each stays the one it is.
+ *
+ * Sharing one export between the page and the registry is what stops them
+ * drifting apart — but it also means the table above compares `emptyVerdict`'s
+ * output against the very constants it returns, so both sides move together and
+ * the *wording* is asserted only against itself. Two of the three pairs happen
+ * to be pinned elsewhere: `unchecked` against `clean` by the derivation test,
+ * and `elsewhere` against `clean` by the direction column below. The third pair
+ * was pinned nowhere, so setting `PANEL_ELSEWHERE` to the unchecked sentence
+ * left every gate green — offline, browser and gallery alike — while the panel
+ * told a reader that a config the CLI *did* check and *did* reject "was not
+ * checked". That is the original defect with the labels exchanged, which is
+ * exactly what the derivation test's own comment warns a difference check alone
+ * cannot catch.
+ *
+ * So distinctness is asserted over the set, and each sentence is held to its own
+ * opening besides: a set of three survives any swap, and the openings are what
+ * make a swap fail.
+ *
+ * An opening is *only* what it says it is, though. Each of these sentences puts
+ * its subject first and its verdict after the dash, so a pin on the opening
+ * holds the subject and leaves the answer free — which is the half a reader
+ * takes the verdict from. That is the next test, not this one.
+ */
+test("the three verdicts stay three distinct sentences", () => {
+  assert.deepStrictEqual(
+    [
+      new Set([PANEL_UNCHECKED, PANEL_CLEAN, PANEL_ELSEWHERE]).size,
+      /^not checked\b/u.test(PANEL_UNCHECKED),
+      /^clean\b/u.test(PANEL_CLEAN),
+      /^no findings for this pipeline\b/u.test(PANEL_ELSEWHERE),
+    ],
+    [3, true, true, true],
+  );
+});
+
+/**
+ * Each sentence carries the answer it is *for*, and neither of the other two.
+ *
+ * Distinctness and the openings above are both satisfied by a sentence that
+ * reverses its own meaning. `PANEL_ELSEWHERE` opens "no findings for this
+ * pipeline" and its verdict is the clause after the dash, so rewriting that
+ * clause to "bureau validate accepted the config" kept the set at three, kept
+ * the opening, and left every gate green — offline, browser and gallery alike —
+ * while the panel reported a config the CLI had *rejected* as one it had
+ * accepted. That is round twenty-two's defect exactly, surviving round
+ * twenty-two's fix, because the fix pinned where each sentence starts and the
+ * defect lives in where it ends.
+ *
+ * The reason a pin here is worth anything at all is that these three clauses are
+ * spelled *in this file* rather than imported. Every other comparison in this
+ * suite reads `PANEL_*` — necessarily, since sharing the export is what stops
+ * the page and the registry drifting — and a comparison against the constant is
+ * a comparison the constant wins by definition. These literals are the only
+ * independent statement of what the sentences must mean, so they are the only
+ * thing a reversal can fail against.
+ *
+ * Asserted as an exact partition rather than three `includes` checks: each
+ * sentence must carry its own clause *and* neither of the others, so a verdict
+ * moved onto the wrong sentence fails on the row it arrived at as well as the
+ * one it left. Rewriting a clause away entirely leaves that sentence carrying
+ * none, which is a different failure and not a pass.
+ */
+test("each verdict says which answer the validator gave, and not another's", () => {
+  const clauses = { unchecked: "did not run", clean: "would pass", elsewhere: "rejected the config" };
+  const sentences = { unchecked: PANEL_UNCHECKED, clean: PANEL_CLEAN, elsewhere: PANEL_ELSEWHERE };
+  const carried = Object.values(sentences).map((sentence) =>
+    Object.keys(clauses).filter((kind) => sentence.includes(clauses[kind])),
+  );
+
+  assert.deepStrictEqual(carried, [["unchecked"], ["clean"], ["elsewhere"]]);
+});
+
+/**
+ * The page asks the rule, rather than saying it again itself.
+ *
+ * `panel-verdict.mjs` is pure and fully pinned above, and none of that reaches a
+ * reader unless `SidePanel` actually calls it. Nothing asserted that it did:
+ * putting the "clean" sentence back inline — the literal this module was
+ * extracted to delete — restored the original false verdict with all 450 offline
+ * tests green. `web-imports.test.mjs` sees the import, but an import is not a
+ * call, and a module can be imported and ignored.
+ *
+ * Read from source because `app.mjs` cannot be imported without a browser: it
+ * takes React and `@xyflow/react` through bare specifiers. The browser matrix
+ * does render these states and would catch a reverted call — but only the seven
+ * `surface:pipeline` states that reach a panel, six minutes and a Chromium
+ * later. A rule about which module owns a sentence is answerable from the text,
+ * and answering it here is what makes the offline suite a real floor under it.
+ *
+ * Both directions, because either alone is half a check. The call must be there,
+ * and the sentences must *not* be — an `emptyVerdict` call left beside a second
+ * inline copy is exactly the drift the extraction was for, and the call clause
+ * alone would pass it.
+ */
+test("the panel takes its empty-list sentence from the rule instead of spelling one", async () => {
+  const source = await readFile(new URL("../web/app.mjs", import.meta.url), "utf8");
+
+  assert.deepStrictEqual(
+    [
+      source.includes('import { emptyVerdict } from "./panel-verdict.mjs";'),
+      source.includes("emptyVerdict(state.validation)"),
+      [PANEL_UNCHECKED, PANEL_CLEAN, PANEL_ELSEWHERE].filter((sentence) => source.includes(sentence)),
+    ],
+    [true, true, []],
+  );
+});
+
+/**
+ * The state asserts its own premise, or it is green for the uninteresting
+ * reason.
+ *
+ * `invalid-elsewhere` only exercises the `validated && !ok` branch while its
+ * findings name nothing on the pipeline the fixture opens. If a later edit
+ * attached one to that pipeline, the panel would fill, the branch would stop
+ * rendering, and the state would keep passing while covering nothing — so the
+ * emptiness is checked here rather than assumed.
+ *
+ * The registry's sentence is compared against `emptyVerdict` applied to this
+ * fixture's own validation record, not against a literal. A test naming the
+ * sentence twice agrees with itself; only running the product's rule over the
+ * product's payload binds the expectation to the page. The last column pins the
+ * direction, since "not the clean one" is what collapsing the three sentences
+ * back into two would break first.
+ */
+test("a rejection that names nothing here is reported as a rejection, not a pass", async () => {
+  const base = await servedState();
+  const state = applyFixture(["invalid-elsewhere", "pipeline"], base);
+  const open = state.selectedPipeline.name;
+  const here = (state.findings ?? []).filter((finding) => (finding.target ?? {}).pipeline === open);
+  const said = (valueOf("data", "invalid-elsewhere").derive({ surface: "pipeline" }).copy ?? []).map((phrase) => phrase.text);
+
+  assert.deepStrictEqual(
+    [state.validation.state, state.validation.ok, here.length, said[0] === emptyVerdict(state.validation), said[0] === PANEL_CLEAN],
+    ["validated", false, 0, true, false],
+  );
+});
+
 /**
  * Which look answers when the settle window runs out.
  *
@@ -1307,6 +2072,290 @@ test("a render that never settled is answered by the look that is telling the tr
   );
 });
 
+/**
+ * The other half of settling: a still page whose graph has not drawn yet.
+ *
+ * Stability alone was not enough. React Flow lays its edges out in a pass after
+ * it has measured the nodes, and between the nodes landing and that pass
+ * starting there is a real lull — long enough for three agreeing samples. So a
+ * render could be filed settled on a graph of disconnected boxes, the gallery
+ * published it for review, and the twin audit compared it as evidence: two
+ * states declared twins were reported as no longer drawing the same screen when
+ * one had drawn its four relation edges and the other had not.
+ *
+ * Table-driven over what a graph declared against what it has drawn. The empty
+ * row is the one that keeps this usable: a state with no graph on screen, or a
+ * graph with nothing to join, settles on stability alone as before.
+ */
+test("a render is settled only once every graph on it has drawn its edges", () => {
+  const cases = [
+    [[], true],
+    [[{ declared: 0, drawn: 0 }], true],
+    [[{ declared: 4, drawn: 4 }], true],
+    [[{ declared: 4, drawn: 0 }], false],
+    [[{ declared: 4, drawn: 4 }, { declared: 2, drawn: 1 }], false],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([graphs]) => graphsDrawn({ graphs })),
+    cases.map(([, expected]) => expected),
+  );
+});
+
+/**
+ * An absent measurement cannot support a pass, here as everywhere else.
+ *
+ * This used to read the other way — "a snapshot from before the rule existed
+ * reads as drawn, not as unfinished" — which was a fail-open default dressed as
+ * compatibility. `collect` files a `graphs` array on every render, the empty
+ * one included, so no real snapshot reaches this without one; what the default
+ * actually covered was a snapshot that was never taken, and four looks at
+ * nothing could report a render settled.
+ */
+test("a snapshot that files no graphs cannot be proved drawn", () => {
+  assert.deepStrictEqual([graphsDrawn({}), graphsDrawn(undefined), graphsDrawn({ graphs: [] })], [false, false, true]);
+});
+
+/**
+ * Settling is stability *and* a finished edge pass, and both halves belong to
+ * both consumers.
+ *
+ * Only the second half was ever shared. The matrix required `SETTLE_REPEATS`
+ * consecutive looks with an unchanged signature; the lab required nothing and
+ * left on the first failure-free look, so the surface a human reviews certified
+ * renders the run that gates CI marked. `transport:playing` is the case that
+ * makes it concrete: its scrubber advances every 100ms, its signature never
+ * holds still, and the two surfaces gave a reviewer opposite answers about the
+ * same render.
+ *
+ * Table-driven over one run of looks, because what is under test is a fold: an
+ * unchanged signature has to accumulate, a changed one has to reset the count
+ * to zero rather than decrement it, and the threshold is reached on the look
+ * where agreement — not sampling — reaches `SETTLE_REPEATS`.
+ */
+test("a render is settled once its signature has held still and its graphs have drawn", () => {
+  const looks = ["a", "a", "a", "a", "b", "b"];
+  const walked = [];
+  let settle = null;
+  for (const signature of looks) {
+    settle = settleStep(settle, { signature, graphs: [{ name: "g", declared: 2, drawn: 2 }] });
+    walked.push([settle.agreed, settle.settled]);
+  }
+
+  assert.deepStrictEqual(walked, [[0, false], [1, false], [2, false], [3, true], [0, false], [1, false]]);
+});
+
+/** A held signature over a graph still drawing is not settled either. */
+test("a still signature does not settle a render whose graph has not finished", () => {
+  const drawing = { signature: "a", graphs: [{ name: "g", declared: 2, drawn: 0 }] };
+  let settle = null;
+  for (let index = 0; index < 6; index += 1) {
+    settle = settleStep(settle, drawing);
+  }
+
+  assert.deepStrictEqual([settle.agreed >= 3, settle.settled], [true, false]);
+});
+
+/**
+ * Why a render was not proved settled, said in words that are true of it.
+ *
+ * The note read "a graph on this render has not drawn all of its edges"
+ * whenever `settled` was false. That was accurate while `settled` meant the
+ * edge pass alone, and became a false statement the moment stability joined it:
+ * a replay whose scrubber is advancing has drawn every edge it declared, and
+ * sending a reviewer to inspect its graph sends them after a defect that is not
+ * there. Three causes, three sentences.
+ */
+test("an unsettled render is told the reason that actually applies to it", () => {
+  const drawn = { graphs: [{ name: "g", declared: 2, drawn: 2 }] };
+  const behind = { graphs: [{ name: "g", declared: 2, drawn: 0 }] };
+  const named = [{ kind: "undrawn-graph", name: "g", detail: "g declared 2 edge(s) and drew 0" }];
+
+  assert.deepStrictEqual(
+    [
+      unsettledReason(behind, named),
+      unsettledReason(behind, []).includes("too few looks"),
+      unsettledReason(drawn, []).includes("never stopped changing"),
+      // The fourth cause, which arrived with the rule that a snapshot filing no
+      // graphs cannot be proved drawn. Without a sentence of its own it borrows
+      // the graph one, and sends a reviewer looking for a rendering defect in a
+      // render that was never measured at all.
+      unsettledReason(undefined, []).includes("filed no measurement"),
+      unsettledReason({}, []).includes("filed no measurement"),
+    ],
+    ["g declared 2 edge(s) and drew 0", true, true, true, true],
+  );
+});
+
+/**
+ * Waiting for the edge pass is not the same as reporting that it never came.
+ *
+ * `graphsDrawn` decides when a render is finished, and for a while that was all
+ * the count did: a graph that would never draw held the loop to its deadline
+ * and then left with `settled: false` — an amber mark whose sentence is about
+ * the harness ("this frame may have raced"), not about the screen. Nothing
+ * failed. So the one condition the count exists to detect could hold on every
+ * run of every state and the matrix would still be green, which is the exact
+ * shape of defect this registry is written against: a mark standing in for a
+ * check that found something.
+ *
+ * The rule names the graph and both numbers, because "a graph did not finish"
+ * is not actionable and "the relation graph declared 3, drew 1" is. Three
+ * surfaces publish the count and the editor can have two of them on one render,
+ * so the numbers alone do not say which screen to go and look at.
+ */
+test("a graph that never drew its edges is named as a failure, not a note", () => {
+  assert.deepStrictEqual(
+    undrawnGraphs({
+      graphs: [
+        { name: "editor-flow", declared: 4, drawn: 4 },
+        { name: "Config relation graph", declared: 3, drawn: 1 },
+      ],
+    }),
+    [{
+      kind: "undrawn-graph",
+      name: "Config relation graph",
+      detail: "Config relation graph declared 3 edge(s) and drew 1",
+    }],
+  );
+});
+
+/** A snapshot from before graphs carried a name still reads as a sentence. */
+test("an unnamed graph is still reported", () => {
+  assert.deepStrictEqual(
+    undrawnGraphs({ graphs: [{ declared: 2, drawn: 0 }] }).map((finding) => finding.detail),
+    ["a graph declared 2 edge(s) and drew 0"],
+  );
+});
+
+/**
+ * The barrier and the report are two questions over one count.
+ *
+ * `graphsDrawn` is an `every`, so a render with no graph on it yet answers
+ * "nothing is behind" — correct for deciding whether to keep waiting, and wrong
+ * for deciding whether the draw pass ever happened. The look that parts them is
+ * the one taken between a `<details>` toggle and React committing the graph,
+ * and it is reachable on every state that opens one.
+ *
+ * Counted per graph, because a render's graph set changes while it is being
+ * sampled and the thing being excused is a graph. A render carrying none
+ * contributes no runs, so it still costs nothing.
+ */
+test("a look is counted per graph, and carried across one it is absent from", () => {
+  const first = undrawnLooks(new Map(), { graphs: [{ name: "a", declared: 4, drawn: 0 }, { name: "b", declared: 2, drawn: 2 }] });
+  const second = undrawnLooks(first, { graphs: [{ name: "a", declared: 4, drawn: 4 }, { name: "b", declared: 2, drawn: 0 }] });
+  const gone = undrawnLooks(second, { graphs: [] });
+
+  assert.deepStrictEqual(
+    [first.get("a"), second.get("a"), gone.get("a"), gone.get("b"), [...undrawnLooks(new Map(), undefined)]],
+    [
+      { looks: 1, missed: 1, run: 1 },
+      { looks: 2, missed: 1, run: 0 },
+      { looks: 2, missed: 1, run: 0 },
+      { looks: 2, missed: 1, run: 1 },
+      [],
+    ],
+  );
+});
+
+/**
+ * A graph that drew does not excuse a different graph that never did, does not
+ * excuse *itself* forever, and cannot buy the exemption back by flashing or by
+ * unmounting.
+ *
+ * Every simpler shape had the defect somewhere else in it. A flag per render
+ * let `.editor-flow` answer for the `.relation-flow` that mounted behind it. A
+ * run of consecutive looks was reset by any complete look, so a graph flashing
+ * on and off never reached the threshold. A bare total was never reset, and so
+ * was spent by two harmless early relayouts — turning one ordinary late miss
+ * into a hard failure on the animating states that must never fail for it. So
+ * two questions are asked of three numbers: did it break and stay broken, and
+ * was it broken for a material share of the time it was on screen.
+ */
+test("a graph is failed for breaking and staying broken, or for breaking chronically", () => {
+  const broken = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
+  const cases = [
+    [{ looks: 9, missed: 3, run: 3 }, 1],
+    [{ looks: 50, missed: 25, run: 1 }, 1],
+    [{ looks: 50, missed: 3, run: 1 }, 0],
+    [{ looks: 3, missed: 2, run: 2 }, 0],
+    [undefined, 0],
+  ];
+
+  assert.deepStrictEqual(
+    cases.map(([tally]) => undrawnFor(broken, new Map(tally ? [["g", tally]] : []), 3).length),
+    cases.map(([, expected]) => expected),
+  );
+});
+
+/**
+ * The two sequences the rule exists to tell apart, folded rather than asserted
+ * as tallies, so the fold and the verdict are held together.
+ *
+ * A graph blinking on and off for the whole budget is the case a run could not
+ * reach; two early relayouts and one late miss is the case a bare total called
+ * broken. Both end incomplete, and only the first is a screen.
+ */
+test("flashing all budget fails where a few scattered relayouts do not", () => {
+  const on = { graphs: [{ name: "g", declared: 4, drawn: 4 }] };
+  const off = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
+  const fold = (pick) => {
+    let looks = new Map();
+    for (let index = 0; index < 50; index += 1) {
+      looks = undrawnLooks(looks, pick(index) ? off : on);
+    }
+    return undrawnFor(off, looks, 3).length;
+  };
+
+  assert.deepStrictEqual(
+    [fold((index) => index % 2 === 1), fold((index) => index < 2 || index === 49)],
+    [1, 0],
+  );
+});
+
+/**
+ * Unmounting is not a reset either. A graph alternating between absent and
+ * incomplete accumulated nothing while the tally was rebuilt from each look,
+ * so a surface blinking in and out of the document for the whole budget was
+ * exempt — the same escape as the others, through the one door left open.
+ */
+test("a graph that blinks in and out of the document is not exempt", () => {
+  const off = { graphs: [{ name: "g", declared: 4, drawn: 0 }] };
+  let looks = new Map();
+  for (let index = 0; index < 50; index += 1) {
+    looks = undrawnLooks(looks, index % 2 === 0 ? { graphs: [] } : off);
+  }
+
+  assert.deepStrictEqual([looks.get("g"), undrawnFor(off, looks, 3).length], [{ looks: 25, missed: 25, run: 25 }, 1]);
+});
+
+/**
+ * And the tolerance all of this exists to preserve. A graph complete on the
+ * final look is reported by nothing, whatever its history — which is what keeps
+ * a healthy surface caught mid-relayout on the way past from being an
+ * accusation, and what lets the thresholds be strict without being flaky.
+ */
+test("a graph that finished is not accused of how raggedly it got there", () => {
+  assert.deepStrictEqual(
+    undrawnFor({ graphs: [{ name: "g", declared: 4, drawn: 4 }] }, new Map([["g", { looks: 50, missed: 40, run: 0 }]]), 3),
+    [],
+  );
+});
+
+/**
+ * The states that animate by design must not fail for it.
+ *
+ * `transport:playing` advances a scrubber on an interval, so its signature
+ * never goes still and it reaches the deadline on every run — but its graph
+ * draws its edges like any other. Reporting an unsettled render as an undrawn
+ * graph would light this rule on exactly the states it has nothing to say
+ * about, so the question is asked of the graphs and never of the stability.
+ */
+test("a page that never stops moving is not accused of an undrawn graph", () => {
+  const drawn = [{ name: "pipeline-flow", declared: 4, drawn: 4 }, { name: "editor-flow", declared: 0, drawn: 0 }];
+  assert.deepStrictEqual([undrawnGraphs({ graphs: drawn }), undrawnGraphs({}), undrawnGraphs(undefined)], [[], [], []]);
+});
+
 test("a render that matches the registry produces no findings", () => {
   const state = { expect: { shows: [".present"], hides: [".leaked"], copy: ["Work Source"] } };
   const snapshot = {
@@ -1315,6 +2364,7 @@ test("a render that matches the registry produces no findings", () => {
     viewport: { width: 1280, height: 900 },
     overflowX: 0,
     contrast: [{ selector: ".kind-label", text: "AGENT", ratio: 5.2 }],
+    carriers: { "Work Source": { found: true, ink: true, injected: "" } },
     boxes: [{ selector: ".assignment-card", x: 0, y: 0, width: 100, height: 100 }],
   };
   assert.deepStrictEqual(verdict(state, snapshot), []);
@@ -1512,9 +2562,113 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a"], measure: [".b"], contrast: [".c"] }), {
-    counts: { ".a": 2 },
-    texts: { ".a": "saved wrapped" },
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a shadowed promise", "a shielded promise", "a panelled promise", "a sheltered promise", "a scrolled promise", "a sidelined promise", "a nested promise", "a curtained promise", "a glazed promise", "a veiled promise", "a floated promise", "an anchored promise", "a pinned promise", "a painted promise", "a doubled promise", "nowhere at all"] }), {
+    counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
+    texts: {
+      ".a": "saved wrapped",
+      ".d": "no findings for this pipeline",
+      ".alpha": "faint",
+      ".font": "flat",
+      ".clip": "cut away",
+      ".indent": "far away",
+      ".cover": "under a lid",
+      ".occluded": "behind a sibling",
+      ".fill": "filled away",
+      ".dim": "under a haze",
+      // Counted gone and quoted as nothing, which is the whole claim for this
+      // one: a control filtered to `opacity(0)` is as absent to a reader as one
+      // at `opacity: 0`, and `visible` is what has to say so.
+      ".filtered": "",
+      ".soft": "half there",
+      ".before": "under a before",
+      ".fixed": "under a fixed lid",
+      ".deep": "under its own child",
+      ".prefix": "own words",
+      ".descendant": "quiet parent",
+    },
+    // `.d` is the render that keeps its promise in the DOM and breaks it on the
+    // screen: `texts` is exactly the sentence a scoped expectation asks for, and
+    // a reader sees the opposite one an `::after` paints over transparent ink.
+    // Gathering both is what lets `verdict` tell the two apart.
+    //
+    // The rows below it take one clause each, so no clause rides on another's
+    // fixture: `.fill` is the text-fill multiplier, `.dim` the ancestor-opacity
+    // walk at a value `visible` allows through, `.soft` the filter fold,
+    // `.before` a `::before` on the element itself, `.fixed` a fixed layer,
+    // `.deep` a descendant's layer carrying a background *image*, and the last
+    // two the generated-content sweep at both ends of the same neighbourhood —
+    // which report words rather than ink, because neither covers anything.
+    paint: {
+      ".a": { ink: true, injected: "" },
+      ".d": { ink: false, injected: '"clean — bureau validate would pass"' },
+      ".alpha": { ink: false, injected: "" },
+      ".font": { ink: false, injected: "" },
+      ".clip": { ink: false, injected: "" },
+      ".indent": { ink: false, injected: "" },
+      ".cover": { ink: false, injected: "" },
+      ".occluded": { ink: false, injected: "" },
+      ".fill": { ink: false, injected: "" },
+      ".dim": { ink: false, injected: "" },
+      ".filtered": { ink: true, injected: "" },
+      ".soft": { ink: false, injected: "" },
+      ".before": { ink: false, injected: "" },
+      ".fixed": { ink: false, injected: "" },
+      ".deep": { ink: false, injected: "" },
+      ".prefix": { ink: true, injected: '"a prefix"' },
+      ".descendant": { ink: true, injected: '"a descendant speaks"' },
+    },
+    // The promises that name no element, judged on whichever element holds the
+    // words in its own direct text. `a masked promise` is the narrowing itself:
+    // an ancestor contains those words and is painted honestly, and the answer
+    // is still `false`, because the element that actually holds them is drawn in
+    // nothing. `a shared promise` is the opposite direction — two holders, the
+    // unreadable one first — because one element painting the words honestly
+    // keeps a promise the whole page makes. `a spaced promise` holds its words
+    // wrapped across two source lines, the ordinary shape of real markup, and
+    // is the only one that asks whether runs of whitespace are folded before
+    // the words are looked for.
+    //
+    // The next two are a sentence no single element owns, and they are the pair
+    // this round added. Both used to be `found: false` and both were exempt, so
+    // a promised sentence broken by a `<strong>` and painted in nothing passed
+    // every gate — the exact defect this module exists to catch, excused by the
+    // clause meant to catch it. They are found by their carriers now, and only
+    // the transparent one fails; the readable one must keep passing, because a
+    // split sentence painted honestly is an ordinary correct render.
+    //
+    // The last is carried by nothing at all, which is an absent measurement and
+    // no longer a pass: `missing-copy` reports the words, and this reports that
+    // their ink was never proved.
+    carriers: {
+      "a plain promise": { found: true, ink: true, injected: "", covered: false },
+      "a hidden promise": { found: true, ink: false, injected: "", covered: false },
+      "a true promise": { found: true, ink: true, injected: '"a false promise"', covered: false },
+      "a masked promise": { found: true, ink: false, injected: "", covered: false },
+      "a shared promise": { found: true, ink: true, injected: "", covered: false },
+      "a spaced promise": { found: true, ink: false, injected: "", covered: false },
+      "a split promise": { found: true, ink: false, injected: "", covered: false },
+      "a joined promise": { found: true, ink: true, injected: "", covered: false },
+      "a partial promise": { found: true, ink: false, injected: "", covered: false },
+      "a clipped promise": { found: true, ink: false, injected: "", covered: false },
+      "a bleached promise": { found: true, ink: false, injected: "", covered: false },
+      "a smothered promise": { found: true, ink: true, injected: "", covered: true },
+      "a shadowed promise": { found: true, ink: true, injected: "", covered: false },
+      "a shielded promise": { found: true, ink: true, injected: "", covered: false },
+      "a panelled promise": { found: true, ink: true, injected: "", covered: true },
+      "a sheltered promise": { found: true, ink: true, injected: "", covered: false },
+      "a scrolled promise": { found: true, ink: true, injected: "", covered: false },
+      "a sidelined promise": { found: true, ink: true, injected: "", covered: false },
+      "a nested promise": { found: true, ink: true, injected: "", covered: false },
+      "a curtained promise": { found: true, ink: true, injected: "", covered: true },
+      "a glazed promise": { found: true, ink: true, injected: "", covered: false },
+      "a veiled promise": { found: true, ink: true, injected: "", covered: true },
+      "a floated promise": { found: true, ink: true, injected: "", covered: true },
+      "an anchored promise": { found: true, ink: true, injected: "", covered: false },
+      "a pinned promise": { found: true, ink: true, injected: "", covered: true },
+      "a painted promise": { found: true, ink: true, injected: "", covered: false },
+      "a doubled promise": { found: true, ink: true, injected: '"a louder promise"', covered: false },
+      "nowhere at all": { found: false, ink: false, injected: "", covered: false },
+    },
     boxes: [
       { selector: ".b", id: "node-0", x: 10, y: 10, width: 100, height: 20, parent: "parent-0", within: [], flow: true, clipped: false, trimmed: 0 },
       { selector: ".b", id: "node-1", x: 300, y: 10, width: 50, height: 20, parent: "parent-0", within: [], flow: true, clipped: true, trimmed: 150 },
@@ -1534,6 +2688,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "DETAILS|class=relation-section,open=|||",
       "P|class=fallback-error|TypeError: Failed to fetch dynamically imported module: http://canvas.invalid/app.mjs||",
     ].join("\n"),
+    graphs: [{ name: "relation-flow", declared: 2, drawn: 2 }],
     text: "Bureau",
     overflowX: 0,
     viewport: { width: 1280, height: 900 },
@@ -1543,12 +2698,81 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
 const BASE_STYLE = {
   visibility: "visible",
   opacity: "1",
+  display: "block",
   overflowX: "visible",
   overflowY: "visible",
   backgroundColor: "rgb(255, 255, 255)",
   color: "rgb(0, 0, 0)",
+  webkitTextFillColor: "rgb(0, 0, 0)",
+  fontSize: "14px",
+  clipPath: "none",
+  textIndent: "0px",
   position: "static",
+  // What React Flow's stylesheet actually computes onto an edge path. Present
+  // in the base style because "drawn" now means laid out *and* inked, so an
+  // edge with no stroke declared anywhere would otherwise read as undrawn.
+  stroke: "rgb(177, 177, 183)",
+  strokeWidth: "1px",
+  strokeOpacity: "1",
 };
+
+/** A document that holds nothing but the elements it is given. */
+function docOf(nodes) {
+  return {
+    defaultView: { getComputedStyle: () => BASE_STYLE },
+    documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
+    body: { innerText: "" },
+    querySelectorAll: (selector) => (selector === "body *" ? nodes : []),
+    getElementById: () => null,
+  };
+}
+
+/** One element, as the signature walk reads it. */
+function signed(className, text) {
+  return {
+    tagName: "DIV",
+    attributes: [{ name: "class", value: className }],
+    getAttribute: (name) => (name === "class" ? className : null),
+    childElementCount: 0,
+    textContent: text,
+    getClientRects: () => [{ width: 40, height: 16 }],
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 40, height: 16, left: 0, top: 0, right: 40, bottom: 16 }),
+    contains: () => false,
+    parentElement: null,
+  };
+}
+
+/**
+ * An edge caption's place in the document is the portal's business, not the
+ * screen's.
+ *
+ * `EdgeLabelRenderer` puts every caption in one container in mount order, and
+ * the `transform` that actually positions them is excluded from the signature
+ * on purpose. So two paths to one screen could sign differently over nothing:
+ * the tab round trip and the direct edit, declared twins and both proved
+ * settled, were reported broken because `success` and `failure` had swapped
+ * indices while both captions were on both screens.
+ *
+ * Order dropped, content kept — so a caption that is genuinely missing or
+ * renamed still parts the two, which is the second and third case here.
+ */
+test("edge captions sign as a set, so a portal's mount order is not a difference", () => {
+  const caption = (text) => signed("react-flow__edge-label edge-caption", text);
+  const sign = (nodes) => collect(docOf(nodes), { selectors: [], measure: [], contrast: [] }).signature;
+  const success = caption("success");
+  const failure = caption("failure");
+  const body = signed("step-card", "verify");
+
+  assert.deepStrictEqual(
+    [
+      sign([body, success, failure]) === sign([body, failure, success]),
+      sign([body, success, failure]) === sign([body, success]),
+      sign([body, success, failure]) === sign([body, success, caption("blocked")]),
+      sign([body, success]) === sign([signed("step-card", "review"), success]),
+    ],
+    [true, false, false, false],
+  );
+});
 
 /**
  * The claim the fold actually makes: a state signs the same whichever port the
@@ -1594,6 +2818,7 @@ const AREA = [{ width: 100, height: 20 }];
  */
 function pageStub() {
   const styles = new Map();
+  const pseudos = new Map();
   const element = (style, own = {}) => {
     const node = {
       getClientRects: () => AREA,
@@ -1669,8 +2894,400 @@ function pageStub() {
   );
   const wordless = element({}, { parentElement: painted, textContent: "   " });
 
-  const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });
-  const label = element({}, {
+  // The way a promised sentence stays perfect in the DOM and false on screen.
+  // `innerText` reports this node's own words and a reader sees none of them —
+  // the ink is transparent — while an `::after` paints a different sentence
+  // that `innerText` does not report at all. Both halves are here because
+  // `collect` has to gather both: the ink, and the words put in their place.
+  const ghostParent = element({});
+  const ghost = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "no findings for this pipeline",
+    parentElement: ghostParent,
+  });
+  pseudos.set(ghostParent, { "::after": { content: '"clean — bureau validate would pass"' } });
+  const faint = element({ color: "rgba(0, 0, 0, 0.01)" }, { innerText: "faint" });
+  const flat = element({ fontSize: "0px" }, { innerText: "flat" });
+  const cutAway = element({ clipPath: "inset(100%)" }, { innerText: "cut away" });
+  const farAway = element(
+    { textIndent: "-9999px" },
+    { innerText: "far away", getBoundingClientRect: () => boxOf(0, 0, 100, 20) },
+  );
+  const coverParent = element({});
+  const covered = element({}, { innerText: "under a lid", parentElement: coverParent });
+  pseudos.set(coverParent, {
+    "::after": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const occluded = element({}, {
+    innerText: "behind a sibling",
+    getBoundingClientRect: () => boxOf(200, 200, 100, 20),
+  });
+  // A blocker that paints nothing of its own. Left at the base style, every
+  // element in this stub carries an opaque white background — so once an
+  // ordinary background counts as covering, "the blocker paints nothing" has to
+  // be spelled rather than assumed, or the fixture for the loose rule quietly
+  // becomes a second fixture for the strict one.
+  const overlay = element({ backgroundColor: "rgba(0, 0, 0, 0)" });
+
+  // One fixture per clause `honestInk` and `coveringLayer` advertise, because a
+  // clause with no fixture of its own is a line of code rather than a check.
+  // The round that added them was covered by `.d` and `.alpha` between them, and
+  // the text-fill multiplier, the ancestor-opacity walk, `::before`, the
+  // descendant sweep, `fixed` layers and background-image layers could each be
+  // deleted with every test in this repository still green. Each element below
+  // fails on exactly one of them.
+  const filled = element({ webkitTextFillColor: "rgba(0, 0, 0, 0)" }, { innerText: "filled away" });
+  const dimmed = element({}, { innerText: "under a haze", parentElement: element({ opacity: "0.02" }) });
+  // The two halves of the filter fold, which fail apart. `opacity(0)` erases the
+  // control outright, so the claim there is that it is *counted* gone — the lie
+  // `opacity: 0` told, spelled a second way, and `visible` is what has to catch
+  // it. A partial filter leaves the control on screen with its words unreadable,
+  // which only `honestInk` can see, and it is written in per cent so the unit
+  // half of the parse is pinned too.
+  const filteredAway = element({ filter: "opacity(0)" }, { innerText: "filtered away" });
+  const softened = element({ filter: "opacity(50%)" }, { innerText: "half there" });
+  const beforeCover = element({}, { innerText: "under a before" });
+  pseudos.set(beforeCover, {
+    "::before": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const fixedCover = element({}, { innerText: "under a fixed lid" });
+  pseudos.set(fixedCover, {
+    "::after": { content: '""', position: "fixed", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const deepChild = element({});
+  const deepCover = element({}, { innerText: "under its own child", querySelectorAll: () => [deepChild] });
+  pseudos.set(deepChild, {
+    "::after": { content: '""', position: "absolute", backgroundImage: "url(lid.png)" },
+  });
+  // Generated content is gathered over the same neighbourhood the ink is judged
+  // on, so both ends of that walk get a fixture: a `::before` on the element
+  // itself, and an `::after` on a descendant. Neither covers anything — position
+  // stays static — so these two assert the words, not the ink.
+  const prefixed = element({}, { innerText: "own words" });
+  pseudos.set(prefixed, { "::before": { content: '"a prefix"' } });
+  const deepSpeaker = element({});
+  const deepWords = element({}, { innerText: "quiet parent", querySelectorAll: () => [deepSpeaker] });
+  pseudos.set(deepSpeaker, { "::after": { content: '"a descendant speaks"' } });
+
+  // The carrier walk, which is how a promise that names no element is judged.
+  // A plain phrase is found on the element holding it in its *own* direct text
+  // rather than on an ancestor whose `innerText` merely contains it, so these
+  // carry `childNodes` and the elements above do not. One honest, one drawn in
+  // ink no reader receives, and one with a different sentence painted straight
+  // over it by its own `::after`.
+  const words = (value) => [{ nodeType: 3, data: value }];
+  const plainly = element({}, { innerText: "a plain promise", childNodes: words("a plain promise") });
+  const invisibly = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a hidden promise",
+    childNodes: words("a hidden promise"),
+  });
+  const overpainted = element({}, { innerText: "a true promise", childNodes: words("a true promise") });
+  pseudos.set(overpainted, { "::after": { content: '"a false promise"' } });
+  // The narrowing itself, as a fixture rather than as a comment. Every carrier
+  // above is a leaf, so the walk could read `innerText` and agree with all of
+  // them — the clause that says *own direct text* had nothing that could tell
+  // the two apart, and it is the loosening direction that matters: an ancestor
+  // whose `innerText` merely contains the words is honest whatever the element
+  // actually holding them is painted in, so reading it would let a wrapper
+  // vouch for a label the reader cannot see. Here the words live in a leaf
+  // drawn in nothing, under a wrapper that carries no text node of its own.
+  // Direct text finds only the leaf and reports `ink: false`; `innerText`
+  // finds the wrapper too, and calls the screen honest.
+  const masked = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a masked promise",
+    childNodes: words("a masked promise"),
+  });
+  const masking = element({}, { innerText: "a masked promise", childNodes: [{ nodeType: 1 }] });
+  // And the rule one element painting the words honestly keeps the promise,
+  // which is a claim about *all* the holders and not about the first one. The
+  // invisible copy is listed first, so a walk that judged `holders[0]` alone
+  // would call this screen unreadable while a reader is looking straight at it.
+  const quietCopy = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a shared promise",
+    childNodes: words("a shared promise"),
+  });
+  const spokenCopy = element({}, { innerText: "a shared promise", childNodes: words("a shared promise") });
+  // And the flattening, which every carrier above was too tidy to ask about.
+  // Each of them holds its phrase as one already-flat string, so the collapse
+  // of runs of whitespace could be deleted and all of them would still be
+  // found — while in real markup a sentence wrapped across two source lines is
+  // the ordinary case, not the exotic one:
+  //
+  //     <p>
+  //       a spaced
+  //       promise
+  //     </p>
+  //
+  // The direction is what makes it matter. Without the collapse this text no
+  // longer contains the phrase, so the promise is reported `found: false` —
+  // and that is the one verdict `paintedPhrases` exempts, on the grounds that
+  // words split across several elements were never measured. So the words
+  // here, drawn in nothing, would be waved through as "not found" rather than
+  // convicted as unreadable: a false negative in the module whose whole
+  // purpose is catching copy that never reaches a reader.
+  const spaced = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a spaced promise",
+    childNodes: words("\n  a spaced\n  promise\n"),
+  });
+  // Three carriers whose ink is perfectly honest and whose words are still not
+  // on the screen. Each isolates one clause, so none of them can pass by
+  // another's reasoning.
+  //
+  // Inside a lid: `visible` reads the carrier's own box, paint and visibility
+  // and never asks what cuts it away, so a phrase moved entirely outside an
+  // `overflow: hidden` ancestor measured perfectly and was called readable.
+  // The boxes above are judged on exactly this and a carrier was not, because
+  // a plain phrase names no selector to measure.
+  const lidded = element({}, {
+    parentElement: clip,
+    getBoundingClientRect: () => boxOf(300, 10, 50, 20),
+    innerText: "a clipped promise",
+    childNodes: words("a clipped promise"),
+  });
+  // White on white: fully opaque, contrast 1, and as gone as if it had never
+  // been drawn. `honestInk` reads alpha, which has nothing to say about it.
+  const bleached = element({ color: "rgb(255, 255, 255)" }, {
+    innerText: "a bleached promise",
+    childNodes: words("a bleached promise"),
+  });
+  // An opaque layer of an *ancestor's* own, proved to be in front of the words.
+  // `speaks` asks the carrier about its own generated content and stops there,
+  // so a wrapper painting a filled `::after` across its child said nothing.
+  // Neither half of the replacement is usable alone — a bare ancestor sweep
+  // convicts every decoration in the product, a bare hit test convicts every
+  // neighbour that overlaps a label's centre — so both are required, and this
+  // fixture satisfies both.
+  const smotherer = element({}, {});
+  pseudos.set(smotherer, {
+    "::after": { content: '"covering"', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const smothered = element({}, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(400, 400, 100, 20),
+    innerText: "a smothered promise",
+    childNodes: words("a smothered promise"),
+  });
+  // The narrowing, as a fixture. Requiring only "a layer somewhere above, and
+  // something in front" reduces to the bare hit test the moment any ancestor
+  // carries one decorative absolute `::before` — every node beneath it then
+  // satisfies the sweep, so an ordinary sticky bar or open menu covering a
+  // label would convict it. Here the blocker paints no layer of its own, and
+  // the words are reported readable.
+  const shadowed = element({}, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(600, 400, 100, 20),
+    innerText: "a shadowed promise",
+    childNodes: words("a shadowed promise"),
+  });
+  // A carrier the hit test cannot see, and the ancestor it reports instead.
+  // `pointer-events: none` makes the browser skip the node and answer with
+  // whatever stands behind it — here the same decorative layer every app shell
+  // carries. Read as an occluder, that answer convicts words a reader can read
+  // perfectly, which is the exact defect the narrowing was meant to remove,
+  // arriving through a different door.
+  const shielded = element({ pointerEvents: "none" }, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(800, 400, 100, 20),
+    innerText: "a shielded promise",
+    childNodes: words("a shielded promise"),
+  });
+  // These three stand *inside* the blocker, and until now every fake element
+  // answered `contains` with a flat `false` — so an ancestor was being asked
+  // the question a browser only ever asks of a sibling.
+  smotherer.contains = (node) => [smothered, shadowed, shielded].includes(node);
+  // The plainest way there is to cover words, and the one the narrowed clause
+  // reported as perfectly readable: an ordinary panel beside them, painting its
+  // own opaque background over the top. Nothing generated is involved, so
+  // requiring a `::before` or `::after` of the blocker walked straight past it.
+  const panel = element({}, { innerText: "something else entirely" });
+  const panelled = element({}, {
+    getBoundingClientRect: () => boxOf(1000, 400, 100, 20),
+    innerText: "a panelled promise",
+    childNodes: words("a panelled promise"),
+  });
+  // And the reason that strictness is spent only on elements beside the words.
+  // An ancestor's own background is painted *behind* its descendants, so it
+  // hides nothing — and an ancestor wins the hit test whenever the words do not
+  // fill their own box, which is every sentence that wraps. Asking `fills` of
+  // one convicts an ordinary card.
+  const plainShell = element({}, {});
+  const sheltered = element({}, {
+    parentElement: plainShell,
+    getBoundingClientRect: () => boxOf(400, 600, 100, 20),
+    innerText: "a sheltered promise",
+    childNodes: words("a sheltered promise"),
+  });
+  plainShell.contains = (node) => node === sheltered;
+  // A phrase scrolled above the fold of a pane, with the page's own toolbar
+  // painted where its box now sits. This is the case the matrix found on a real
+  // screen: `pick:concurrent+edit:delete-confirm` scrolls the inspector down to
+  // put the confirmation in view, and "completion" goes above the fold, where
+  // the toolbar is drawn. The words are one gesture away — this module's
+  // settled standard, which is why `clipper` reads only `hidden` and `clip` —
+  // and nothing is covering them, because none of them are drawn there.
+  const pane = element({ overflowX: "auto", overflowY: "auto" }, { getBoundingClientRect: () => boxOf(1000, 600, 200, 200) });
+  const toolbar = element({}, {});
+  const scrolledAway = element({}, {
+    parentElement: pane,
+    getBoundingClientRect: () => boxOf(1000, 500, 100, 20),
+    innerText: "a scrolled promise",
+    childNodes: words("a scrolled promise"),
+  });
+  // The same rule on the other axis, and on a pane that says `scroll` rather
+  // than `auto`. Both halves of the guard and both keywords were unreachable
+  // from `scrolledAway` alone: its pane's x-range contains the probe, so the
+  // `x` comparison could be deleted outright, and `scroll`, `hidden` and `clip`
+  // could all be struck from the regex with every test still green.
+  const sidePane = element({ overflowX: "scroll", overflowY: "scroll" }, {
+    getBoundingClientRect: () => boxOf(200, 700, 100, 100),
+  });
+  const sidelined = element({}, {
+    parentElement: sidePane,
+    getBoundingClientRect: () => boxOf(400, 700, 100, 20),
+    innerText: "a sidelined promise",
+    childNodes: words("a sidelined promise"),
+  });
+  // Two panes, and the inner one is no protection. The intersection could be
+  // replaced by "whichever pane the walk saw last" and nothing noticed, because
+  // no fixture had more than one. Here the words are inside the inner pane and
+  // outside the outer one, so only the folded region answers correctly.
+  // Two panes, and the inner one is the shorter. The intersection could be
+  // replaced by "whichever pane the walk saw last" and nothing noticed, because
+  // no fixture had more than one. Here the words are below the inner pane's
+  // fold but well inside the outer one, so only the folded region declines to
+  // answer; the outer pane alone would ask, and convict.
+  const outerPane = element({ overflowY: "auto" }, { getBoundingClientRect: () => boxOf(600, 700, 300, 300) });
+  const innerPane = element({ overflowY: "auto" }, {
+    parentElement: outerPane,
+    getBoundingClientRect: () => boxOf(600, 700, 300, 60),
+  });
+  const nested = element({}, {
+    parentElement: innerPane,
+    getBoundingClientRect: () => boxOf(600, 800, 100, 20),
+    innerText: "a nested promise",
+    childNodes: words("a nested promise"),
+  });
+  // A blocker that paints nothing of its own and everything through a layer.
+  // `fills` folds two reaches together, and its `layered` half was unreachable:
+  // the only other sibling blocker is caught by its plain background, so the
+  // half could be deleted with every test still green.
+  const curtain = element({ backgroundColor: "rgba(0, 0, 0, 0)" }, {});
+  pseudos.set(curtain, {
+    "::after": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const curtained = element({}, {
+    getBoundingClientRect: () => boxOf(200, 800, 100, 20),
+    innerText: "a curtained promise",
+    childNodes: words("a curtained promise"),
+  });
+  // The other half of `curtain`: a positioned generated layer that paints
+  // nothing. A pseudo-element with content and a position but no fill is an
+  // arrow, a caret, a hairline — decoration, not a lid. Reading an absent
+  // `backgroundColor` as fully opaque would call every such layer a covering
+  // one, and the stub is where that shows, because a browser always resolves a
+  // colour and these sparse pseudo styles do not.
+  const glaze = element({ backgroundColor: "rgba(0, 0, 0, 0)" }, {});
+  pseudos.set(glaze, { "::after": { content: '""', position: "absolute" } });
+  const glazed = element({}, {
+    getBoundingClientRect: () => boxOf(400, 100, 100, 20),
+    innerText: "a glazed promise",
+    childNodes: words("a glazed promise"),
+  });
+  // A carrier the hit test cannot see, with a real blocker beside it. Declining
+  // to answer for such a carrier at all is a blanket amnesty: this product
+  // marks its whole edge-caption layer `pointer-events: none`, and that layer
+  // would leave the check entirely. What the browser cannot tell us is whether
+  // the node's own *ancestors* are over it or behind it; a sibling is a sibling
+  // either way, so the stack is read past the ancestors instead of abandoned.
+  const veiled = element({ pointerEvents: "none" }, {
+    getBoundingClientRect: () => boxOf(700, 100, 100, 20),
+    innerText: "a veiled promise",
+    childNodes: words("a veiled promise"),
+  });
+  // Three carriers for which the scrollport must decide differently, because an
+  // overflow ancestor clips only what it is the containing block for. Bounding
+  // a node CSS does not bound excuses real occlusion outright: a point outside
+  // the invented region is never asked about, so the blocker is never seen.
+  const staticPane = element({ overflowY: "auto" }, { getBoundingClientRect: () => boxOf(100, 300, 100, 100) });
+  const floated = element({ position: "absolute" }, {
+    parentElement: staticPane,
+    getBoundingClientRect: () => boxOf(100, 100, 100, 20),
+    innerText: "a floated promise",
+    childNodes: words("a floated promise"),
+  });
+  const anchoredPane = element({ overflowY: "auto", position: "relative" }, {
+    getBoundingClientRect: () => boxOf(300, 300, 100, 100),
+  });
+  const anchored = element({ position: "absolute" }, {
+    parentElement: anchoredPane,
+    getBoundingClientRect: () => boxOf(300, 100, 100, 20),
+    innerText: "an anchored promise",
+    childNodes: words("an anchored promise"),
+  });
+  const pinPane = element({ overflowY: "auto", position: "relative" }, {
+    getBoundingClientRect: () => boxOf(500, 300, 100, 100),
+  });
+  const pinned = element({ position: "fixed" }, {
+    parentElement: pinPane,
+    getBoundingClientRect: () => boxOf(500, 100, 100, 20),
+    innerText: "a pinned promise",
+    childNodes: words("a pinned promise"),
+  });
+  // What cannot be measured is not convicted. `backdrop` reads only
+  // `backgroundColor`, so white words over a dark background *image* would be
+  // compared against the default white and reported unreadable — a false
+  // conviction of a screen that reads perfectly. An image's luminance is not
+  // available synchronously, so this one is left alone.
+  const imaged = element({ color: "rgb(255, 255, 255)", backgroundImage: 'url("data:image/svg+xml,x")' }, {
+    innerText: "a painted promise",
+    childNodes: words("a painted promise"),
+  });
+  // Which candidate the report is taken from, when none of them keeps the
+  // promise. Two holders: the first drawn in nothing, the second painted and
+  // then overprinted by its own `::after`. Reporting the *first* candidate —
+  // which is what the scan happens to find first, not what the reader is
+  // looking at — describes this screen as unreadable ink, a fact about a copy
+  // nobody can see. The candidate that came closest to keeping the promise is
+  // the painted one, and what is wrong with this screen is the sentence
+  // printed over it. Without this pair the choice is unobservable, because
+  // every other phrase here has one candidate or an honest one.
+  const quietTwin = element({ color: "rgba(0, 0, 0, 0)" }, {
+    innerText: "a doubled promise",
+    childNodes: words("a doubled promise"),
+  });
+  const loudTwin = element({}, { innerText: "a doubled promise", childNodes: words("a doubled promise") });
+  pseudos.set(loudTwin, { "::after": { content: '"a louder promise"' } });
+
+  // The carriers of a sentence that no single element owns, which is what the
+  // walk over `body`'s text nodes exists for. Each half is an element of its
+  // own, the shape any `<strong>` inside a promised sentence produces, so the
+  // "words in one element's own direct text" question answers `no` for both.
+  //
+  // Two pairs, because only one of them may fail. The split pair is drawn in
+  // ink no reader receives and must be convicted; the joined pair is an
+  // ordinary, correct render of a split sentence and must pass, since a clause
+  // that convicts a correct screen is wrong however sound its reasoning. Before
+  // this round both were `found: false` and both were waved through.
+  //
+  // The blank node between the pairs is the separator a template leaves between
+  // two block tags, and it is load-bearing: without it the two sentences
+  // concatenate and a run starting in the first pair can reach into the second.
+  const carrying = (value, style = {}) => {
+    const node = element(style, { innerText: value });
+    node.childNodes = [{ nodeType: 3, data: value, parentElement: node }];
+    return node;
+  };
+  const hollow = { color: "rgba(0, 0, 0, 0)" };
+  const splitBox = element({}, { childNodes: [carrying("a split ", hollow), carrying("promise", hollow)] });
+  const joinedBox = element({}, { childNodes: [carrying("a joined "), carrying("promise")] });
+  // And the clause that says *every* part of a split sentence must be readable,
+  // which neither pair above can tell from `some`. Both of theirs agree — two
+  // transparent halves, two painted halves — so `every` could be relaxed to
+  // `some` with the whole suite still green, and a sentence half drawn in
+  // nothing would have passed. Here the first half is painted and the second is
+  // not, which is the only shape that separates the two.
+  const partialBox = element({}, { childNodes: [carrying("a partial "), carrying("promise", hollow)] });
+
+  const control = element({}, { getBoundingClientRect: () => boxOf(70, 40, 120, 24) });  const label = element({}, {
     textContent: " Name ",
     getBoundingClientRect: () => boxOf(0, 40, 60, 16),
     getAttribute: (name) => (name === "for" ? "field-1" : null),
@@ -1718,19 +3335,106 @@ function pageStub() {
     textContent: " TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:40091/app.mjs ",
   });
 
+  // A React Flow surface, as the settle rule reads it: the count of edges the
+  // graph was handed, and the paths actually laid out. One of the two has an
+  // element in the document and no geometry yet, which is exactly the state
+  // React Flow leaves an edge in between putting it there and computing its
+  // path — so counting elements answers "drawn" about a graph that has drawn
+  // nothing.
+  //
+  // Length rather than a box, because the box cannot tell them apart here: an
+  // edge between two vertically aligned handles is a straight vertical line and
+  // has no width, which is the ordinary shape of a pipeline laid out in a
+  // column. `zeroLength` is the pending one — React Flow's path before layout
+  // runs both ends from the same point — and `sideways` is a drawn edge whose
+  // rect would have failed the old test.
+  //
+  // `hidden` and `unstroked` are the two that made length *insufficient*. Both
+  // have perfect geometry and neither puts a pixel on screen: one line of
+  // `.react-flow__edge-path { display: none }` took every edge off every graph
+  // in the matrix and each still reported drawn equal to declared. They are in
+  // the graph rather than in a test of their own so that the count below is the
+  // assertion — five paths in the document, two of them drawn.
+  const laidOut = element({}, { getTotalLength: () => 128 });
+  const sideways = element({}, { getTotalLength: () => 64, getClientRects: () => [{ width: 90, height: 0 }] });
+  const zeroLength = element({}, { getTotalLength: () => 0 });
+  const hidden = element({ display: "none" }, { getTotalLength: () => 128 });
+  const unstroked = element({ stroke: "none" }, { getTotalLength: () => 128 });
+  const graph = element({}, {
+    getAttribute: (name) => ({ "data-graph-edges": "2", class: "relation-flow" })[name] ?? null,
+    querySelectorAll: () => [laidOut, sideways, zeroLength, hidden, unstroked],
+  });
+
   const matches = {
     ".a": [shown, unpainted, transparent, behindTransparent, flattened, wrapped],
     ".b": [inside, past, collapsed, underLid],
     ".c": [wording, wordless],
+    ".d": [ghost],
+    ".alpha": [faint],
+    ".font": [flat],
+    ".clip": [cutAway],
+    ".indent": [farAway],
+    ".cover": [covered],
+    ".occluded": [occluded],
+    ".fill": [filled],
+    ".dim": [dimmed],
+    ".filtered": [filteredAway],
+    ".soft": [softened],
+    ".before": [beforeCover],
+    ".fixed": [fixedCover],
+    ".deep": [deepCover],
+    ".prefix": [prefixed],
+    ".descendant": [deepWords],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, shadowed, shielded, panelled, sheltered, scrolledAway, sidelined, nested, curtained, glazed, veiled, floated, anchored, pinned, imaged, quietTwin, loudTwin],
     "label[for]": [label],
+    "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
   };
   return {
-    defaultView: { getComputedStyle: (node) => styles.get(node) ?? BASE_STYLE },
+    defaultView: { getComputedStyle: (node, part) => (part ? pseudos.get(node)?.[part] ?? { content: "none" } : styles.get(node) ?? BASE_STYLE) },
     documentElement: { clientWidth: 1280, clientHeight: 900, scrollWidth: 1280 },
-    body: { innerText: "Bureau" },
+    body: { innerText: "Bureau", childNodes: [splitBox, { nodeType: 3, data: "\n" }, joinedBox, { nodeType: 3, data: "\n" }, partialBox] },
     querySelectorAll: (selector) => matches[selector] ?? [],
     getElementById: (id) => (id === "field-1" ? control : null),
+    elementFromPoint: (x, y) => {
+      if (x === 250 && y === 210) {
+        return overlay;
+      }
+      // The blocker over `smothered` is an ancestor painting a layer of its
+      // own; the one over `shadowed` paints nothing; the one over `shielded` is
+      // the same ancestor as `smothered`'s, reached only because the carrier is
+      // invisible to the hit test. `panelled` is covered by a sibling with
+      // nothing but a background, and `sheltered` is merely inside an ancestor
+      // that has one. Together they tell the precise rule from the loose one in
+      // both directions.
+      if (x === 450 && y === 410 || x === 850 && y === 410) {
+        return smotherer;
+      }
+      if (x === 1050 && y === 410) {
+        return panel;
+      }
+      if (x === 450 && y === 610) {
+        return plainShell;
+      }
+      if (x === 1050 && y === 510) {
+        return toolbar;
+      }
+      if (x === 450 && y === 710 || x === 650 && y === 810) {
+        return toolbar;
+      }
+      if (x === 250 && y === 810) {
+        return curtain;
+      }
+      if (x === 450 && y === 110) {
+        return glaze;
+      }
+      // `anchored` is bounded by its own containing block, so its probe never
+      // reaches this list; the other three are asked, and all find the panel.
+      if ([[750, 110], [150, 110], [350, 110], [550, 110]].some(([at, above]) => x === at && y === above)) {
+        return panel;
+      }
+      return x === 650 && y === 410 ? overlay : null;
+    },
   };
 }
 
@@ -1822,6 +3526,10 @@ const PROBE_ROUTES = {
   "probe--create-refusal-dismissed": "fail-intent",
   "probe--delete-refusal-dismissed": "fail-intent",
   "probe--delete-preflight-refused": "refuse-preflight",
+  "probe--delete-preflight-checking": "stall-preflight",
+  "probe--delete-preflight-blocked": "block-preflight",
+  "probe--repos-add-registering": "stall-intent",
+  "probe--repos-add-refused": "fail-intent",
   "probe--reconcile-now-reported": "pass-intent",
   "probe--reconcile-now-started-a-run": "pass-starts-run",
   "probe--replay-opened-from-a-pass": "pass-starts-run",
@@ -1868,6 +3576,87 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 95 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 107 },
+  );
+});
+
+/**
+ * Exactly one state in the matrix is allowed to be in motion, and the whole
+ * value of saying so is that it is one rather than a mood.
+ *
+ * `settled` was filed for every render for several rounds and asserted for
+ * none: the gallery folded the unsettled ones into a note, so a screenshot that
+ * had quietly become nondeterministic read exactly like the two that are
+ * supposed to move. The registry answers the question now, and this pins the
+ * answer — a second state acquiring the exemption is how "deterministic
+ * screenshots" would erode one value at a time.
+ */
+test("one state declares itself in motion, and it is the one whose transport is playing", () => {
+  const moving = STATES.filter((state) => state.expect.settles === false).map((state) => state.id);
+  assert.deepStrictEqual(moving, ["surface:pipeline+data:validated+mode:replay+run:finished+transport:playing"]);
+});
+
+/**
+ * The margin that makes `settles: false` an assertion rather than a flake.
+ *
+ * The claim is "this render never stops changing inside the settle window", and
+ * it holds only while playing the run to its end takes materially longer than
+ * that window — at the end `useReplayOverlay` clears `playing`, the signature
+ * comes to rest, and the state would report settled. Every number is read from
+ * whatever owns it: the span from the committed log, the tick from the literal
+ * in `replay.js` (browser-only, so it is read rather than imported), the budget
+ * from `checks.mjs`. Shorten the log, speed the transport up or lengthen the
+ * budget and this fails here, offline, instead of intermittently in CI.
+ */
+test("playing the finished run to its end takes far longer than the settle budget", async () => {
+  const log = await readFile(new URL(`./fixtures/runs/${RUN_IDS.finished}/events.jsonl`, import.meta.url), "utf8");
+  const stamps = log.trim().split("\n").map((line) => JSON.parse(line).at_ms);
+  const source = await readFile(new URL("../web/replay/replay.js", import.meta.url), "utf8");
+  const tick = Number(source.match(/const TICK_MS = (\d+);/u)?.[1]);
+  // At 1x the transport advances TICK_MS of run time per TICK_MS of wall time,
+  // so the wall clock it needs is the span itself. The tick is still read, and
+  // asserted finite, because a speed-up is exactly what would close the margin.
+  const wallMs = (stamps.at(-1) - stamps[0]) / (tick * 1) * tick;
+  assert.ok(
+    Number.isFinite(tick) && wallMs >= SETTLE_BUDGET_MS * 2,
+    `playing spans ${wallMs}ms at a ${tick}ms tick, against a ${SETTLE_BUDGET_MS}ms budget`,
+  );
+});
+
+/**
+ * The overlap licence is per selector and per state, not a flag.
+ *
+ * Bringing the editor's and the relation graph's cards under the overlap rule
+ * found a real collision on the one state that drags a card by hand, which is
+ * the feature working rather than a layout that computed a collision. The risk
+ * in answering that with an allowance is that it becomes a blanket amnesty, so
+ * this holds it to the two things that keep it narrow: it drops the region it
+ * names, and it keeps every other overlap on the same render.
+ */
+/**
+ * The allowance is matched by equality, so a second collision of the same kind
+ * on the same render is still a defect. Under the `startsWith` form this
+ * replaced, the `.editor-card` licence swallowed both rows here and this test
+ * could not tell the two apart — it only ever proved that a *different*
+ * selector survived, which no plausible regression would have broken.
+ */
+test("a declared overlap is dropped and an undeclared one on the same render is not", () => {
+  const found = [
+    { kind: "overlap", detail: ".editor-card #0 overlaps #1" },
+    { kind: "overlap", detail: ".editor-card #2 overlaps #3" },
+    { kind: "overlap", detail: ".assignment-card #0 overlaps #1" },
+  ];
+  const detailsOf = (list) => list.map((item) => item.detail);
+  assert.deepStrictEqual(
+    {
+      declared: detailsOf(permitted({ expect: { allowOverlap: [".editor-card #0 overlaps #1"] } }, found)),
+      undeclared: detailsOf(permitted({ expect: { allowOverlap: [] } }, found)),
+      stale: detailsOf(permitted({ expect: { allowOverlap: [".editor-card #7 overlaps #8"] } }, [])),
+    },
+    {
+      declared: [".editor-card #2 overlaps #3", ".assignment-card #0 overlaps #1"],
+      undeclared: detailsOf(found),
+      stale: [".editor-card #7 overlaps #8 is excused here but did not happen"],
+    },
   );
 });

@@ -304,6 +304,10 @@ async function runSuite(page) {
  * config from an empty directory, then take it away again.
  */
 async function runCrudSuite(page) {
+  // `mkdtemp` needs the parent to exist, and `target/` is gitignored — so in a
+  // fresh clone this whole suite failed on its first line, and only passed on a
+  // tree that had already built something.
+  await mkdir(CRUD_ROOT, { recursive: true });
   const dir = await mkdtemp(join(CRUD_ROOT, "e2e-"));
   await Promise.all(["roles", "assignments", "pipelines"].map((sub) => mkdir(join(dir, sub), { recursive: true })));
   try {
@@ -456,6 +460,19 @@ async function checkConfigView(page, url) {
   await record("the relation graph fits every card inside the surface", async () => {
     // The graph still pans and zooms; `fitView` must leave nothing clipped.
     assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
+  });
+  await record("the relation graph draws one edge per reference the config holds", async () => {
+    // Against `relationView`'s own edges, and independently of the in-page
+    // `data-graph-edges` attribute — which the surface now also derives from
+    // the config, so reading it here would be asking one source two ways. This
+    // counts drawn `.react-flow__edge-path` elements against the config, which
+    // is the end-to-end version of the claim `undrawn-graph` makes per render:
+    // the relation graph draws the assignment-first mental model this canvas is
+    // built around, and it was once only ever asked whether it had drawn *some*
+    // edge.
+    await waitForRender(page, ".relation-section .react-flow__edge-path", "relation graph edges");
+    const drawn = await evaluate(page, `document.querySelectorAll(".relation-section .react-flow__edge-path").length`);
+    assert.equal(drawn, state.config.relation.edges.length);
   });
 }
 
