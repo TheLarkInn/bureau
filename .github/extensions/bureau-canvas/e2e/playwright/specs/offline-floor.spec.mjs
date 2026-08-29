@@ -42,13 +42,28 @@ import { holdOffline, offlineFindings } from "../offline.mjs";
  */
 const OFFSITE = "ws://192.0.2.1:9/offline-floor-probe";
 
-/** Opens one socket and reports how it ended, without waiting on a timeout. */
-function openSocket(page, url) {
-  return page.evaluate((address) => new Promise((resolve) => {
+/**
+ * Opens one socket and reports how it ended, without waiting on a timeout.
+ *
+ * The bound is not a tolerance: nothing here is allowed to be slow. Both
+ * endings this distinguishes are immediate — a route answers in-process, and an
+ * unroutable address is refused by the local stack — so the only way to reach
+ * the bound is a network that *silently drops* egress instead of rejecting it,
+ * on which neither listener ever fires. Unbounded, that read as a 30s Playwright
+ * timeout naming no address and no claim; bounded, it resolves to a shape that
+ * matches neither expectation and fails saying which socket never settled.
+ */
+function openSocket(page, url, budgetMs = 10_000) {
+  return page.evaluate(([address, budget]) => new Promise((resolve) => {
     const socket = new WebSocket(address);
-    socket.addEventListener("error", () => resolve({ errored: true, clean: false }));
-    socket.addEventListener("close", (event) => resolve({ errored: false, clean: event.wasClean }));
-  }), url);
+    const settle = (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => settle({ errored: false, clean: false, settled: false }), budget);
+    socket.addEventListener("error", () => settle({ errored: true, clean: false }));
+    socket.addEventListener("close", (event) => settle({ errored: false, clean: event.wasClean }));
+  }), [url, budgetMs]);
 }
 
 test("a socket that would leave this machine is recorded and refused here", async ({ page, canvas }) => {

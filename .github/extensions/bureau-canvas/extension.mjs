@@ -830,9 +830,22 @@ async function runPlanIntent(entry, intent, response) {
  * both feed `buildState` too, and either one reaching the lab would show a
  * reviewer a screen the registry never modelled — a draft bar on a state that
  * declares none, or an editor arranged by whoever last dragged a node here.
+ *
+ * The host's *navigation* is the third such input, and it is the one that
+ * decides the surface rather than dressing it. `buildState` derives
+ * `selectedPipeline` from `input.pipeline`, and `App` renders `PipelineView`
+ * whenever that is set — so a lab opened from a canvas that happened to be on a
+ * pipeline served every `surface:config` state as the pipeline viewer. No
+ * fixture could correct it: the config transforms never clear a selection,
+ * because on the payload they were written against there is none. The browser
+ * suite cannot see it either — it opens the lab with no pipeline, so the leaked
+ * value is always absent there — which is exactly why it is pinned here rather
+ * than left to a check that cannot fail. The selection-layer fixtures
+ * (`selectPipeline`, `missingPipeline`, `noPipeline`) set the selection they
+ * want, so the base owes them no selection at all.
  */
 async function sendSample(entry, response, headOnly) {
-    const input = { dir: entry.state.dir, pipeline: entry.state.pipeline ?? undefined, instanceId: entry.state.instanceId };
+    const input = { dir: entry.state.dir, instanceId: entry.state.instanceId };
     const state = await buildState(input, { ...(entry.options ?? {}), sample: true });
     sendJson(response, state, headOnly);
 }

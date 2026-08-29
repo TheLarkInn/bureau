@@ -130,6 +130,53 @@ test("serves the bundled sample the state lab starts from", async () => {
  * carrying a role no fixture declares is a screen the registry never modelled,
  * with or without a bar above it. Both are asserted, because they fail apart.
  */
+/**
+ * The third host input the pin has to cover, and the only one that decides
+ * which *surface* the lab draws rather than what is drawn on it.
+ *
+ * `buildState` derives `selectedPipeline` from `input.pipeline`, and `App`
+ * renders `PipelineView` whenever that is set. So a State Lab opened from a
+ * canvas session that was sitting on a pipeline served every `surface:config`
+ * state as the pipeline viewer — the landing, the create flow, the assignment
+ * cards, the relation graph, all of them the wrong screen under the right
+ * state id. The fixtures cannot correct it, because the config transforms have
+ * no selection to clear on the payload they were written against.
+ *
+ * The browser suite is structurally blind to this: it opens the lab with no
+ * pipeline, so the leaked value is absent in every run and a check made there
+ * could never fail. That is what puts the claim here, on the route itself.
+ *
+ * Both directions against the same host, for the reason the draft and layout
+ * pin gives: "the sample has no selection" would be satisfied by a sample that
+ * could never carry one. `/state` must show the host's open pipeline and
+ * `/sample` must not, so this fails if the pin stops holding *and* if the leak
+ * stops being producible.
+ */
+test("the bundled sample is pinned against the pipeline the host is open on", async () => {
+    const instanceId = "bureau-sample-navigation-test";
+    const pipeline = "agent-eligible-pipeline";
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { pipeline } });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        // The name and the surface it selects, not merely whether one is set:
+        // a `missing: true` selection draws `MissingPipeline`, which is a third
+        // screen again, so the assertion names which one the host is showing.
+        const shown = (state) => ({
+            selected: state.selectedPipeline?.name ?? null,
+            missing: state.selectedPipeline?.missing ?? null,
+        });
+        assert.deepStrictEqual(
+            { live: shown(await read("/state")), sample: shown(await read("/sample")) },
+            {
+                live: { selected: pipeline, missing: false },
+                sample: { selected: null, missing: null },
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
 test("the bundled sample is pinned against the host's draft and saved layout", async () => {
     const instanceId = "bureau-sample-pinned-test";
     const dir = await mkdtemp(join(tmpdir(), "bureau-sample-pin-"));
