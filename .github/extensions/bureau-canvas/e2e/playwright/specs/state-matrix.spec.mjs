@@ -224,10 +224,41 @@ function settleMessage(state, viewport) {
     : `${at} came to rest, but it declares itself in motion — Play has stopped advancing the run`;
 }
 
-/** Errors the state did not declare. A declared one is the state, not a bug. */
+/**
+ * Errors the state did not declare. A declared one is the state, not a bug.
+ *
+ * A failed *request* is excused only by a pattern that matches its URL, never
+ * by one that matches its error text, and that asymmetry is the whole guard.
+ * The allowances have to carry broad phrases — a blocked module logs a row
+ * naming the module and a separate "Failed to load resource" that names
+ * nothing, so they are matched disjunctively — but `net::ERR_FAILED` is the
+ * error text of *every* failed request on the machine. Read against the whole
+ * row it was a blanket licence: a second, unrelated request failing inside an
+ * already-allowed state matched the same phrase and was dropped with the one
+ * the allowance was written for.
+ *
+ * Scoping it to the URL closes that without narrowing any real allowance,
+ * because every `requestfailed` row names the address it was for. `/intent`,
+ * `/events`, `app.mjs` and `index.mjs` are URL fragments and still excuse their
+ * own requests; `net::ERR_FAILED` and `503` are not, and now excuse none. A
+ * request to some other address fails by name, which is what it was doing
+ * before it was quietly covered.
+ */
 function unexpected(errors, state) {
   const allowed = state.expect.allowErrors ?? [];
-  return errors.filter((error) => !allowed.some((pattern) => error.includes(pattern)));
+  return errors.filter((error) => !allowed.some((pattern) => excuses(pattern, error)));
+}
+
+const FAILED = "requestfailed: ";
+
+/** The address a failed request names, or `null` for any other kind of row. */
+function failedUrl(error) {
+  return error.startsWith(FAILED) ? error.slice(FAILED.length).split(" ")[0] : null;
+}
+
+function excuses(pattern, error) {
+  const url = failedUrl(error);
+  return url === null ? error.includes(pattern) : url.includes(pattern);
 }
 
 /**
@@ -249,7 +280,7 @@ function unexpected(errors, state) {
  */
 function unexercised(errors, state) {
   const allowed = state.expect.allowErrors ?? [];
-  const used = errors.some((error) => allowed.some((pattern) => error.includes(pattern)));
+  const used = errors.some((error) => allowed.some((pattern) => excuses(pattern, error)));
   return allowed.length && !used ? [`allows ${allowed.join(" / ")} but nothing failed`] : [];
 }
 

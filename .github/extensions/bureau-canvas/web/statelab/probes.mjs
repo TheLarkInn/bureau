@@ -21,7 +21,7 @@
 //
 // Both are ordinary states: same shape, same driver, same assertions.
 
-import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replaySpanFor, viewerCardFor, withheld } from "./selectors.mjs";
+import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, viewerCardFor, withheld } from "./selectors.mjs";
 import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
 import { PASS_RUN } from "./intercept.mjs";
 
@@ -423,6 +423,80 @@ export const PROBES = [
       // pass the reader has already been moved off.
       hides: [S.runControls, S.openRunReplay, S.reconcileResult],
       copy: [],
+    },
+  }),
+  /*
+   * Pausing a run that is playing.
+   *
+   * `transport:playing` presses Play and declares `settles: false`, which is
+   * what holds Play to actually advancing the run. Nothing pressed the button
+   * again. So Pause was drawn by that state, named by its own selector, and
+   * asserted by nothing — replacing `onPlay` with `() => setPlaying(true)`
+   * left the whole matrix green.
+   *
+   * It cannot be a return edge, and the reason is the point: a return edge
+   * holds the child to the *parent's* expectations, and pausing does not put
+   * the page back. `transport:rest` is parked at the run's first event, and a
+   * paused run is wherever the clock reached — stopping is not rewinding, and a
+   * Pause that returned to the start would be a worse defect than one that did
+   * nothing.
+   *
+   * The Pause claim is the label round trip in the path, and it is bounded by
+   * the position: `waitGone` on the Pause spelling is *not* enough on its own,
+   * which was measured rather than assumed. Replacing `onPlay` with
+   * `() => setPlaying(true)` left the button offering Pause — but the interval
+   * clamps at `range.end` and clears `playing` by itself, so the wait was
+   * satisfied ten seconds later by the run finishing, and the probe passed on
+   * the mutation it exists to catch. So the next op requires the run to be
+   * *short of its end* at the moment Pause was honoured: a Pause that did
+   * nothing can only have got there by playing to the end, and fails here.
+   *
+   * Then it plays on at 16x to the end, and that is about the *render* rather
+   * than the control. Where a pause lands is the clock's: `TICK_MS` is 100 and
+   * the run spans 10,000ms, so pausing immediately leaves the scrubber either
+   * exactly at the start or one tick — a full percent — past it, depending on
+   * how many intervals fired between two clicks. Screenshotted there, this
+   * state was an undeclared twin of `probe--replay-opened-from-a-pass` on the
+   * runs where no tick fired and not on the runs where one did, which is a
+   * gallery claim that would have flickered rather than held. `positionRef`
+   * clamps to `range.end` and clears `playing` when the run runs out, so the
+   * end is the one position on this timeline that does not depend on timing at
+   * all — and it is a screen nothing else in the matrix draws.
+   */
+  sample({
+    id: "probe--replay-paused-after-playing",
+    covers: "Pause: the only replay control whose press was drawn by a state and asserted by none",
+    summary: "a replayed run paused by its own control while still short of its end, then played out to its last event",
+    fixture: "pipeline",
+    surface: "pipeline",
+    ops: [
+      { op: "wait", selector: S.pipelineView },
+      { op: "click", selector: S.modeReplay },
+      ...runOps("replay", "finished"),
+      { op: "click", selector: S.replayPlay },
+      { op: "wait", selector: S.replayPause },
+      { op: "click", selector: S.replayPause },
+      { op: "waitGone", selector: S.replayPause },
+      { op: "waitGone", selector: replayPositionAt(RUN_END.finished) },
+      { op: "click", selector: replaySpeed(16) },
+      { op: "click", selector: S.replayPlay },
+      { op: "wait", selector: replayPositionAt(RUN_END.finished) },
+    ],
+    expect: {
+      shows: [
+        S.replayControls,
+        S.replayTimeline,
+        // The button offers Play again, by its own label rather than by the
+        // testid both conditions share.
+        S.replayResumed,
+        S.replayStepForward,
+        S.replayStepBack,
+        replaySpeedActive(16),
+        replayPositionAt(RUN_END.finished),
+        replaySpanFor(RUN_END.finished),
+      ],
+      hides: [S.replayPause],
+      copy: ["Play"],
     },
   }),
   /*

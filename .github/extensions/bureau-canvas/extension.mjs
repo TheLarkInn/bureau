@@ -25,6 +25,36 @@ const REPO_ROOT = resolve(EXTENSION_DIR, "../../..");
 const FALLBACK_FIXTURE = resolve(EXTENSION_DIR, "test", "fixtures", "committed-payload.json");
 const TEST_MISSING_BUREAU = resolve(EXTENSION_DIR, "test", "fixtures", "missing-bureau");
 
+/**
+ * The run logs the pinned payload is paired with.
+ *
+ * `/sample` exists so the State Lab renders all 270 states over one payload
+ * rather than over the reader's own `.bureau/`, and the config half of that was
+ * already pinned: no pending plan, no layout sidecar, no host pipeline. The run
+ * half was not. Replay and Live do not read `/state` at all — they read `/runs`
+ * and `/runs/:id/events` — so every `mode:replay` and `mode:live` state in the
+ * lab was drawn over whatever runs the reader happened to have, and against an
+ * empty `~/.bureau/runs` they had no run to draw at all.
+ *
+ * These are the same committed logs the browser suite points the host at with
+ * `BUREAU_CANVAS_RUNS`, which is why CI could never see the gap: the harness
+ * pins by environment what the lab left unpinned by route.
+ */
+const SAMPLE_RUNS = resolve(EXTENSION_DIR, "test", "fixtures", "runs");
+
+/**
+ * The directory the pinned payload reports it came from.
+ *
+ * `fallbackResult` puts this straight into `state.dir`, which the header
+ * renders as `.config-path`. Passing the host's own directory made the one
+ * pinned payload carry one unpinned field, so the same state id drew a
+ * different header on every checkout — the defect `/sample` exists to remove,
+ * surviving in the single field a reader is most likely to read as ground
+ * truth. It is not a path on any machine, and says so, because the bundled
+ * sample was not loaded from one.
+ */
+const SAMPLE_DIR = "(bundled sample)";
+
 export const inputSchema = {
     type: "object",
     additionalProperties: false,
@@ -544,6 +574,11 @@ async function handleRequest(entry, request, response) {
         sendJson(response, entry.state, request.method === "HEAD");
     } else if (pathname === "/sample") {
         await sendSample(entry, response, request.method === "HEAD");
+    } else if (pathname === "/sample/runs") {
+        sendJson(response, { runs: await listRuns(SAMPLE_RUNS) }, request.method === "HEAD");
+    } else if (pathname.startsWith("/sample/runs/") && pathname.endsWith("/events")) {
+        const runId = pathname.slice("/sample/runs/".length, -"/events".length);
+        await sendSampleRunEvents(runId, response, request.method === "HEAD");
     } else if (pathname === "/events") {
         sendEvents(entry, request, response);
     } else if (pathname === "/runs") {
@@ -845,9 +880,27 @@ async function runPlanIntent(entry, intent, response) {
  * want, so the base owes them no selection at all.
  */
 async function sendSample(entry, response, headOnly) {
-    const input = { dir: entry.state.dir, instanceId: entry.state.instanceId };
+    const input = { dir: SAMPLE_DIR, instanceId: entry.state.instanceId };
     const state = await buildState(input, { ...(entry.options ?? {}), sample: true });
     sendJson(response, state, headOnly);
+}
+
+/**
+ * One committed run's log, read as a log and never through the binary.
+ *
+ * `sendRunEvents` asks `bureau show` first and falls back to the raw file, so
+ * on a machine that has a binary the same run id would answer from the CLI and
+ * on one that does not it would answer from disk. That is the right order for
+ * the host's own runs and the wrong one for a pinned payload: the whole promise
+ * of `/sample` is that what it serves does not depend on what is installed
+ * here. These logs are committed, so reading them is the answer.
+ */
+async function sendSampleRunEvents(runId, response, headOnly) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
+        sendStatus(response, 400);
+        return;
+    }
+    await sendRunEventsFromLog(runId, SAMPLE_RUNS, response, headOnly);
 }
 
 async function refreshState(entry) {

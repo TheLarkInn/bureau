@@ -152,6 +152,25 @@ dimensions, expected controls against what actually rendered, at either
 recorded viewport — and a picker answers "is this a state?" for any
 combination a reviewer assembles, naming every rule that rejects it.
 
+The payload every state is rendered over is `/sample`: the committed fixture,
+assembled by the host's own `buildState`. Only the payload is pinned — the page
+in the frame is still the production page reading a real host — and the pin has
+to cover *everything* the host would otherwise contribute, because a state id
+that draws a different screen on each contributor's machine is worse than one
+that refuses to draw. So the sample carries no pending plan, no layout sidecar,
+no host pipeline (which chooses the surface rather than dressing it), and a
+directory string that is not a path on any machine.
+
+Run data is the half that does not arrive through that payload. Replay and Live
+never read `/state`; they read `./runs` and `./runs/:id/events`. So the lab
+rewrites both to `/sample/runs`, beside the write floor below, and every run
+state draws the four committed logs rather than whatever this machine happens
+to have in `~/.bureau/runs`. Neither pin can be checked by the matrix — the
+browser suite points the host at those same logs with `BUREAU_CANVAS_RUNS` and
+opens the lab with no pipeline, so the leaked values are absent from every
+render — which is why both are asserted on the routes themselves, in
+`test/server.test.mjs`, in both directions against one host.
+
 The lab installs each state's request condition inside the frame before the
 page's own modules run — a stalled save, a refused one, a payload that never
 arrives — so a saving or a refused screen is something a reviewer looks at

@@ -154,13 +154,13 @@ test("every count the branch reports about itself is what the registry holds", (
       harnessRules: 4,
       excludedCombinations: 705438719779,
       matrixStates: 221,
-      probes: 49,
-      states: 270,
-      transitions: 147,
+      probes: 50,
+      states: 271,
+      transitions: 153,
       entryTransitions: 108,
-      returnTransitions: 39,
-      roots: 162,
-      renders: 540,
+      returnTransitions: 45,
+      roots: 163,
+      renders: 542,
     },
   );
 });
@@ -615,7 +615,7 @@ test("no state is a root merely for how it spelled its fixture", async () => {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 99, probe: 15, landing: 36, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 99, probe: 16, landing: 36, "fixture-differs": 8 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1041,12 +1041,17 @@ test("every reversible control names a region both of its states account for", (
     }
     const child = byId.get(edge.to)?.expect ?? { shows: [], hides: [] };
     const parent = byId.get(edge.from)?.expect ?? { shows: [], hides: [] };
+    // Resolved against the state being left, exactly as `returnEdge` resolves
+    // it. A region named by a function is still one region per edge; asking the
+    // toggle for its literal here would compare a closure to a selector and
+    // report every run-addressed transport edge as unpromised.
+    const region = (side) => (typeof side === "function" ? side(byId.get(edge.to)) : side);
     if (toggle.gone) {
-      return child.shows.includes(toggle.gone) ? [] : [`${edge.to} does not show ${toggle.gone}`];
+      return child.shows.includes(region(toggle.gone)) ? [] : [`${edge.to} does not show ${region(toggle.gone)}`];
     }
     return [
-      ...(child.hides.includes(toggle.hidden) ? [] : [`${edge.to} does not name ${toggle.hidden} absent`]),
-      ...(parent.shows.includes(toggle.hidden) ? [] : [`${edge.from} does not show ${toggle.hidden}`]),
+      ...(child.hides.includes(region(toggle.hidden)) ? [] : [`${edge.to} does not name ${region(toggle.hidden)} absent`]),
+      ...(parent.shows.includes(region(toggle.hidden)) ? [] : [`${edge.from} does not show ${region(toggle.hidden)}`]),
     ];
   });
   assert.deepStrictEqual(unpromised, []);

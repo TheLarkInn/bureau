@@ -10,9 +10,9 @@ import { CONSTRAINTS } from "./constraints.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "./dimensions.mjs";
 import { isAction, canonicalAction } from "./driver.mjs";
 import { enumerate } from "./enumerate.mjs";
-import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, selectStep } from "./paths.mjs";
+import { draftOps, EDIT_PATHS, FIELD_LIFECYCLE, fixtureFor, interceptFor, runHoldOps, runOps, runRefusalOps, RUN_STEP, selectStep } from "./paths.mjs";
 import { PROBES } from "./probes.mjs";
-import { SELECTORS as S } from "./selectors.mjs";
+import { SELECTORS as S, replayPositionAt, replaySpeed, replaySpeedActive } from "./selectors.mjs";
 
 const ORDER = ["surface", "data", "draft", "section", "orphans", "disclosure", "card", "field", "fieldState", "fieldPair", "mode", "run", "transport", "tab", "pick", "edit"];
 
@@ -345,6 +345,31 @@ export const REVERSIBLE = [
   // list precisely so that collapsing does not take the only button that could
   // undo it, and that claim is only under test if the matrix walks it back.
   { via: S.groupFold, undo: S.groupFold, hidden: S.groupMembers },
+  /*
+   * The two transport controls that were drawn by every replay state and
+   * pressed by none.
+   *
+   * `transport` exists because "replay's controls have to move the run; a
+   * timeline that only draws is the defect they hide" — and Step back was in
+   * the `shows` of two states and the `enter` of neither, so it was asserted to
+   * be *on the screen* and never asserted to do anything. Deleting its handler
+   * changed no verdict in the matrix, which is the exact shape of a control
+   * that is drawn and not checked. The same was true of returning to 1x: the
+   * 16x state took the speed and nothing ever gave it back.
+   *
+   * They belong here rather than as new dimension values because the claim is
+   * the one a return edge already makes: this press puts the page back. Step
+   * back lands on the resting position, and 1x lands on the resting speed, so
+   * both are held to `transport:rest`'s own expectations — the scrubber at the
+   * run's first event and the "+0.0s" readout, which is precisely what a
+   * no-op Step back would fail.
+   *
+   * Step back's region is a function of the run: `stepped` is at that run's
+   * `next` millisecond, and each of the three logs starts somewhere different,
+   * so a constant selector could only ever have been right for one of them.
+   */
+  { via: S.replayStepForward, undo: S.replayStepBack, gone: (child) => replayPositionAt(RUN_STEP[child.dimensions.run]?.next) },
+  { via: replaySpeed(16), undo: replaySpeed(1), gone: replaySpeedActive(16) },
 ];
 
 /**
@@ -367,6 +392,7 @@ export const ENTRY_TRANSITIONS = TRANSITIONS.filter((edge) => edge.kind === "ent
 
 function buildTransitions() {
   const byPath = new Map(STATES.map((state) => [signature(state.ops), state.id]));
+  const byId = new Map(STATES.map((state) => [state.id, state]));
   const edges = [];
   for (const state of STATES) {
     const acting = state.ops.filter(isAction).map(canonicalAction);
@@ -376,7 +402,7 @@ function buildTransitions() {
       edges.push({ kind: "enter", from: found.id, to: state.id, via: describe(delta), delta });
     }
   }
-  return [...edges, ...edges.map(returnEdge).filter(Boolean)];
+  return [...edges, ...edges.map((edge) => returnEdge(edge, byId.get(edge.to))).filter(Boolean)];
 }
 
 /**
@@ -421,7 +447,7 @@ function nearestParent(byPath, acting, id) {
  * that one press reverses one press, and that claim is only available when the
  * step across was a single press.
  */
-function returnEdge(edge) {
+function returnEdge(edge, child) {
   const acting = edge.delta.filter(isAction);
   const toggle = acting.length === 1 && acting[0].op === "click" && REVERSIBLE.find((item) => item.via === acting[0].selector);
   if (!toggle) {
@@ -430,9 +456,13 @@ function returnEdge(edge) {
   // A toggle that revealed a region is undone when the region has gone; one
   // that removed a region is undone when it is back. Waiting the wrong way
   // round would be an edge that passes on the instant it is called.
-  const settled = toggle.gone
-    ? { op: "waitGone", selector: toggle.gone }
-    : { op: "wait", selector: toggle.hidden };
+  //
+  // Either may be a function of the state being left, because the transport's
+  // regions are addressed by the run they are showing: the scrubber a step back
+  // must return to is at a different millisecond in each run's log, so a
+  // constant selector could only have been written for one of them.
+  const gone = resolveRegion(toggle.gone, child);
+  const settled = gone ? { op: "waitGone", selector: gone } : { op: "wait", selector: resolveRegion(toggle.hidden, child) };
   return {
     kind: "return",
     from: edge.to,
@@ -440,6 +470,10 @@ function returnEdge(edge) {
     via: `click ${toggle.undo}`,
     delta: [{ op: "click", selector: toggle.undo }, settled],
   };
+}
+
+function resolveRegion(region, child) {
+  return typeof region === "function" ? region(child) : region;
 }
 
 /**

@@ -310,12 +310,44 @@ function interceptRuns(win, kind) {
  * from an offline host would take.
  */
 export function installFloor(win) {
+  pinRuns(win);
   const native = win.fetch.bind(win);
   win.fetch = (input, init) => {
     if (!/\/intent$/u.test(urlOf(input)) || reachesHost(bodyOf(init))) {
       return native(input, init);
     }
     return Promise.reject(new TypeError(`the state lab refused an unmodelled write to ./intent (${kindOf(init) ?? "unreadable body"})`));
+  };
+}
+
+/**
+ * The read half of the same floor: run reads go to the pinned sample.
+ *
+ * The lab renders every state over `/sample`, but Replay and Live never read
+ * `/state` — they read `./runs` and `./runs/:id/events`, which answer from the
+ * reader's own `~/.bureau/runs`. So the config half of each run state was
+ * pinned and the run half was not: `mode:replay` drew whatever runs this
+ * machine had, and on a machine with none it drew no run at all, under the same
+ * state id CI screenshots against four committed logs.
+ *
+ * Rewriting here rather than in the page keeps the frame the production page —
+ * it still asks for `./runs` — and puts the pin beside the write floor, which
+ * is the other property the lab guarantees about the host regardless of which
+ * state is being rendered.
+ *
+ * Installed *before* the write floor so it ends up underneath it, which is what
+ * the run-condition shims need: `offer-ended-run` and `pass-starts-run` match
+ * the page's own `./runs` spelling and then delegate to `native` for the body
+ * they project, so the listing they decorate has to be the sample's by the time
+ * that call lands.
+ */
+function pinRuns(win) {
+  const native = win.fetch.bind(win);
+  win.fetch = (input, init) => {
+    const url = urlOf(input);
+    return /\/runs(\/[A-Za-z0-9][A-Za-z0-9._-]*\/events)?$/u.test(url) && !/\/sample\/runs/u.test(url)
+      ? native(url.replace(/\/runs(?=$|\/)/u, "/sample/runs"), init)
+      : native(input, init);
   };
 }
 

@@ -215,6 +215,11 @@ export const SELECTORS = {
   // The same button once it is running. The label is the whole difference, and
   // it is what a state asserting "playing" would have to read.
   replayPause: '[data-testid="replay-play"][aria-label="Pause replay"]',
+  // And the same button once it has been stopped again. Not the bare testid:
+  // `replayPlay` matches the button in *either* condition, so a probe asserting
+  // that Pause worked has to name the label it went back to, or it would be
+  // satisfied by a run that never stopped.
+  replayResumed: '[data-testid="replay-play"][aria-label="Play replay"]',
   // The timeline renders the moment a run is picked, with an empty range; the
   // log arrives afterwards. `max` is the only signal that the events landed,
   // so it is what a replay path waits on rather than the timeline itself.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -174,6 +174,104 @@ test("the bundled sample is pinned against the pipeline the host is open on", as
         );
     } finally {
         await canvas.closeBureauCanvas({ instanceId });
+    }
+});
+
+/**
+ * The other half of the same pin, on the routes Replay and Live actually read.
+ *
+ * The config pin above covers `/state`, and no run screen reads it. `modes.js`
+ * reads `./runs` and `replay.js` reads `./runs/:id/events`, both of which
+ * answered from the reader's own `~/.bureau/runs` — so every `mode:replay` and
+ * `mode:live` state in the State Lab drew whatever runs this machine had, and
+ * on a machine with none drew no run at all, under the same state id the
+ * gallery screenshots against four committed logs.
+ *
+ * CI could not have found it: `matrix-fixtures.mjs` points the host at those
+ * committed logs with `BUREAU_CANVAS_RUNS`, so the harness pins by environment
+ * exactly what the lab left unpinned by route, and the leaked value is absent
+ * from all 540 renders.
+ *
+ * Both directions against one host, for the reason every other pin here gives:
+ * "the sample serves the committed runs" would be satisfied by a host that had
+ * no others. So the host is given a run of its own that the sample must not
+ * carry, and `/runs` must carry it — this fails if the pin stops holding *and*
+ * if the leak stops being producible.
+ */
+test("the sample's runs are the committed logs, not the host's", async () => {
+    const instanceId = "bureau-sample-runs-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-runs-"));
+    const hostRun = "run-only-this-host-has";
+    await mkdir(join(dir, hostRun), { recursive: true });
+    await writeFile(
+        join(dir, hostRun, "events.jsonl"),
+        `${JSON.stringify({
+            kind: "run_started",
+            seq: 0,
+            at_ms: 1740000200000,
+            data: { run_id: hostRun, assignment: "agent-eligible" },
+        })}\n`,
+    );
+    const previous = process.env.BUREAU_CANVAS_RUNS;
+    process.env.BUREAU_CANVAS_RUNS = dir;
+    const opened = await canvas.openBureauCanvas({ instanceId });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        const ids = (payload) => payload.runs.map((run) => run.run_id).sort();
+        // The events route as well as the listing: a sample that offered four
+        // run ids and then answered each of them from the host's directory
+        // would satisfy a listing-only claim while still drawing host data.
+        // A run only the host has is not found there, and is found on `/runs`.
+        const status = (route) => fetch(new URL(route, opened.url)).then((response) => response.status);
+        assert.deepStrictEqual(
+            {
+                host: ids(await read("/runs")),
+                sample: ids(await read("/sample/runs")),
+                hostRunFromSample: await status(`/sample/runs/${hostRun}/events`),
+                hostRunFromHost: await status(`/runs/${hostRun}/events`),
+            },
+            {
+                host: [hostRun],
+                sample: ["run-finished", "run-group", "run-live", "run-paused"],
+                hostRunFromSample: 404,
+                hostRunFromHost: 200,
+            },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        if (previous === undefined) {
+            delete process.env.BUREAU_CANVAS_RUNS;
+        } else {
+            process.env.BUREAU_CANVAS_RUNS = previous;
+        }
+        await rm(dir, { recursive: true, force: true });
+    }
+});
+
+/**
+ * The one field of the pinned payload that still came from this machine.
+ *
+ * `fallbackResult` puts `dir` straight into `state.dir`, and the header renders
+ * it as `.config-path`. So the payload every lab render starts from carried one
+ * value that differs on every checkout, in the field a reader is most likely to
+ * read as ground truth about what they are looking at.
+ *
+ * Both directions again: `/state` must report the directory the host was opened
+ * on, and `/sample` must report the same pinned string on every machine.
+ */
+test("the bundled sample is pinned against the host's own directory", async () => {
+    const instanceId = "bureau-sample-dir-test";
+    const dir = await mkdtemp(join(tmpdir(), "bureau-sample-dir-"));
+    const opened = await canvas.openBureauCanvas({ instanceId, input: { dir } });
+    try {
+        const read = (route) => fetch(new URL(route, opened.url)).then((response) => response.json());
+        assert.deepStrictEqual(
+            { live: (await read("/state")).dir, sample: (await read("/sample")).dir },
+            { live: dir, sample: "(bundled sample)" },
+        );
+    } finally {
+        await canvas.closeBureauCanvas({ instanceId });
+        await rm(dir, { recursive: true, force: true });
     }
 });
 
