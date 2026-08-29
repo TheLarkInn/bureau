@@ -579,6 +579,96 @@ const SPLIT_CASES = [
   { id: "carried by nothing at all", html: "<p>an unrelated sentence</p>", found: false, kinds: ["missing-copy", "unreadable-copy"] },
 ];
 
+/**
+ * What counts as a sentence painted over, asked of a real browser.
+ *
+ * These clauses cannot be reached from the offline stub. Where the *words* of a
+ * carrier are drawn is a question only layout answers — the stub has no
+ * `createRange`, so every probe there falls back to the bounding box — and the
+ * hit test's treatment of a node it was told to skip is a browser behaviour
+ * rather than a modelled one.
+ *
+ * Both directions are asked of every clause, because a rule that convicts a
+ * readable screen is as wrong as one that clears an unreadable one, and this
+ * clause has now failed in both directions across two rounds. The cases marked
+ * clean are ordinary, correct renders: a toolbar above a padded paragraph, a
+ * card with a background, a scrim, an app shell's decoration.
+ */
+const COVER_CASES = [
+  {
+    id: "an opaque panel drawn over the words",
+    covered: true,
+    html: `<div style="position:relative;width:400px"><p style="margin:0">PHRASE</p>
+      <div style="position:absolute;inset:0;background:#fff">something else</div></div>`,
+  },
+  {
+    id: "a panel in front that paints nothing",
+    covered: false,
+    html: `<div style="position:relative;width:400px"><p style="margin:0">PHRASE</p>
+      <div style="position:absolute;inset:0"></div></div>`,
+  },
+  {
+    id: "a toolbar above the first line of a padded paragraph",
+    covered: false,
+    html: `<div style="position:relative;width:400px"><p style="margin:0;padding:60px 0 0 0">PHRASE</p>
+      <div style="position:absolute;left:0;top:0;width:400px;height:40px;background:#f6f8fa">Steps</div></div>`,
+  },
+  {
+    id: "an ancestor's own layer, painted over its descendant's words",
+    covered: true,
+    html: `<style>#shell::after{content:"other words";position:absolute;inset:0;background:#fff}</style>
+      <div id="shell" style="position:relative;width:400px"><p style="margin:0">PHRASE</p></div>`,
+  },
+  {
+    id: "an ancestor with nothing but an ordinary background",
+    covered: false,
+    html: `<div style="position:relative;width:400px;background:#eee"><p style="margin:0">PHRASE</p></div>`,
+  },
+  {
+    id: "a translucent scrim over the words",
+    covered: false,
+    html: `<div style="position:relative;width:400px"><p style="margin:0">PHRASE</p>
+      <div style="position:absolute;inset:0;background:rgba(0,0,0,0.02)"></div></div>`,
+  },
+  {
+    id: "a panel over the words, faded to nothing",
+    covered: false,
+    html: `<div style="position:relative;width:400px"><p style="margin:0">PHRASE</p>
+      <div style="position:absolute;inset:0;background:#fff;opacity:0"></div></div>`,
+  },
+  {
+    id: "a panel over words the hit test was told to skip",
+    covered: true,
+    html: `<div style="position:relative;width:400px"><p style="margin:0;pointer-events:none">PHRASE</p>
+      <div style="position:absolute;inset:0;background:#fff">something else</div></div>`,
+  },
+  {
+    id: "words the hit test skips, under an app shell's decoration",
+    covered: false,
+    html: `<style>#shell::before{content:"";position:absolute;top:0;left:0;width:8px;height:8px;background:#123}</style>
+      <div id="shell" style="position:relative;width:400px"><p style="margin:0;pointer-events:none">PHRASE</p></div>`,
+  },
+];
+
+test("@matrix a sentence is covered by what is painted over its words, and by nothing else", async ({ page }) => {
+  const phrase = "a promised sentence";
+  const state = { expect: { shows: [], hides: [], copy: [phrase] } };
+  const read = [];
+
+  for (const cover of COVER_CASES) {
+    await page.setContent(`<body style="margin:0;background:#fff">${cover.html.replaceAll("PHRASE", phrase)}</body>`);
+    const snapshot = await page.evaluate(
+      ({ source, request }) => new Function(`return (${source})`)()(document, request),
+      { source: collect.toString(), request: { selectors: [], measure: [], contrast: [], phrases: [phrase] } },
+    );
+    read.push([cover.id, verdict(state, snapshot).map((item) => item.kind)]);
+  }
+
+  expect(read, "only a sentence a reader cannot read is reported as painted over").toEqual(
+    COVER_CASES.map((cover) => [cover.id, cover.covered ? ["substituted-copy"] : []]),
+  );
+});
+
 test("@matrix a promised sentence broken across elements is judged on its ink, not excused", async ({ page }) => {
   const phrase = "clean — bureau validate would pass";
   const state = { expect: { shows: [], hides: [], copy: [phrase] } };

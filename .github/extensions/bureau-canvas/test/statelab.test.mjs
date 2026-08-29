@@ -2333,7 +2333,7 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
   const doc = pageStub();
   const rebuilt = new Function(`return (${collect.toString()})`)();
 
-  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a shadowed promise", "a painted promise", "a doubled promise", "nowhere at all"] }), {
+  assert.deepStrictEqual(rebuilt(doc, { selectors: [".a", ".d", ".alpha", ".font", ".clip", ".indent", ".cover", ".occluded", ".fill", ".dim", ".filtered", ".soft", ".before", ".fixed", ".deep", ".prefix", ".descendant"], measure: [".b"], contrast: [".c"], phrases: ["a plain promise", "a hidden promise", "a true promise", "a masked promise", "a shared promise", "a spaced promise", "a split promise", "a joined promise", "a partial promise", "a clipped promise", "a bleached promise", "a smothered promise", "a shadowed promise", "a shielded promise", "a panelled promise", "a sheltered promise", "a scrolled promise", "a sidelined promise", "a nested promise", "a curtained promise", "a glazed promise", "a veiled promise", "a floated promise", "an anchored promise", "a pinned promise", "a painted promise", "a doubled promise", "nowhere at all"] }), {
     counts: { ".a": 2, ".d": 1, ".alpha": 1, ".font": 1, ".clip": 1, ".indent": 1, ".cover": 1, ".occluded": 1, ".fill": 1, ".dim": 1, ".filtered": 0, ".soft": 1, ".before": 1, ".fixed": 1, ".deep": 1, ".prefix": 1, ".descendant": 1 },
     texts: {
       ".a": "saved wrapped",
@@ -2424,6 +2424,18 @@ test("collect survives being rebuilt from its own source, as both hosts run it",
       "a bleached promise": { found: true, ink: false, injected: "", covered: false },
       "a smothered promise": { found: true, ink: true, injected: "", covered: true },
       "a shadowed promise": { found: true, ink: true, injected: "", covered: false },
+      "a shielded promise": { found: true, ink: true, injected: "", covered: false },
+      "a panelled promise": { found: true, ink: true, injected: "", covered: true },
+      "a sheltered promise": { found: true, ink: true, injected: "", covered: false },
+      "a scrolled promise": { found: true, ink: true, injected: "", covered: false },
+      "a sidelined promise": { found: true, ink: true, injected: "", covered: false },
+      "a nested promise": { found: true, ink: true, injected: "", covered: false },
+      "a curtained promise": { found: true, ink: true, injected: "", covered: true },
+      "a glazed promise": { found: true, ink: true, injected: "", covered: false },
+      "a veiled promise": { found: true, ink: true, injected: "", covered: true },
+      "a floated promise": { found: true, ink: true, injected: "", covered: true },
+      "an anchored promise": { found: true, ink: true, injected: "", covered: false },
+      "a pinned promise": { found: true, ink: true, injected: "", covered: true },
       "a painted promise": { found: true, ink: true, injected: "", covered: false },
       "a doubled promise": { found: true, ink: true, injected: '"a louder promise"', covered: false },
       "nowhere at all": { found: false, ink: false, injected: "", covered: false },
@@ -2680,7 +2692,12 @@ function pageStub() {
     innerText: "behind a sibling",
     getBoundingClientRect: () => boxOf(200, 200, 100, 20),
   });
-  const overlay = element({});
+  // A blocker that paints nothing of its own. Left at the base style, every
+  // element in this stub carries an opaque white background — so once an
+  // ordinary background counts as covering, "the blocker paints nothing" has to
+  // be spelled rather than assumed, or the fixture for the loose rule quietly
+  // becomes a second fixture for the strict one.
+  const overlay = element({ backgroundColor: "rgba(0, 0, 0, 0)" });
 
   // One fixture per clause `honestInk` and `coveringLayer` advertise, because a
   // clause with no fixture of its own is a line of code rather than a check.
@@ -2831,6 +2848,160 @@ function pageStub() {
     getBoundingClientRect: () => boxOf(600, 400, 100, 20),
     innerText: "a shadowed promise",
     childNodes: words("a shadowed promise"),
+  });
+  // A carrier the hit test cannot see, and the ancestor it reports instead.
+  // `pointer-events: none` makes the browser skip the node and answer with
+  // whatever stands behind it — here the same decorative layer every app shell
+  // carries. Read as an occluder, that answer convicts words a reader can read
+  // perfectly, which is the exact defect the narrowing was meant to remove,
+  // arriving through a different door.
+  const shielded = element({ pointerEvents: "none" }, {
+    parentElement: smotherer,
+    getBoundingClientRect: () => boxOf(800, 400, 100, 20),
+    innerText: "a shielded promise",
+    childNodes: words("a shielded promise"),
+  });
+  // These three stand *inside* the blocker, and until now every fake element
+  // answered `contains` with a flat `false` — so an ancestor was being asked
+  // the question a browser only ever asks of a sibling.
+  smotherer.contains = (node) => [smothered, shadowed, shielded].includes(node);
+  // The plainest way there is to cover words, and the one the narrowed clause
+  // reported as perfectly readable: an ordinary panel beside them, painting its
+  // own opaque background over the top. Nothing generated is involved, so
+  // requiring a `::before` or `::after` of the blocker walked straight past it.
+  const panel = element({}, { innerText: "something else entirely" });
+  const panelled = element({}, {
+    getBoundingClientRect: () => boxOf(1000, 400, 100, 20),
+    innerText: "a panelled promise",
+    childNodes: words("a panelled promise"),
+  });
+  // And the reason that strictness is spent only on elements beside the words.
+  // An ancestor's own background is painted *behind* its descendants, so it
+  // hides nothing — and an ancestor wins the hit test whenever the words do not
+  // fill their own box, which is every sentence that wraps. Asking `fills` of
+  // one convicts an ordinary card.
+  const plainShell = element({}, {});
+  const sheltered = element({}, {
+    parentElement: plainShell,
+    getBoundingClientRect: () => boxOf(400, 600, 100, 20),
+    innerText: "a sheltered promise",
+    childNodes: words("a sheltered promise"),
+  });
+  plainShell.contains = (node) => node === sheltered;
+  // A phrase scrolled above the fold of a pane, with the page's own toolbar
+  // painted where its box now sits. This is the case the matrix found on a real
+  // screen: `pick:concurrent+edit:delete-confirm` scrolls the inspector down to
+  // put the confirmation in view, and "completion" goes above the fold, where
+  // the toolbar is drawn. The words are one gesture away — this module's
+  // settled standard, which is why `clipper` reads only `hidden` and `clip` —
+  // and nothing is covering them, because none of them are drawn there.
+  const pane = element({ overflowX: "auto", overflowY: "auto" }, { getBoundingClientRect: () => boxOf(1000, 600, 200, 200) });
+  const toolbar = element({}, {});
+  const scrolledAway = element({}, {
+    parentElement: pane,
+    getBoundingClientRect: () => boxOf(1000, 500, 100, 20),
+    innerText: "a scrolled promise",
+    childNodes: words("a scrolled promise"),
+  });
+  // The same rule on the other axis, and on a pane that says `scroll` rather
+  // than `auto`. Both halves of the guard and both keywords were unreachable
+  // from `scrolledAway` alone: its pane's x-range contains the probe, so the
+  // `x` comparison could be deleted outright, and `scroll`, `hidden` and `clip`
+  // could all be struck from the regex with every test still green.
+  const sidePane = element({ overflowX: "scroll", overflowY: "scroll" }, {
+    getBoundingClientRect: () => boxOf(200, 700, 100, 100),
+  });
+  const sidelined = element({}, {
+    parentElement: sidePane,
+    getBoundingClientRect: () => boxOf(400, 700, 100, 20),
+    innerText: "a sidelined promise",
+    childNodes: words("a sidelined promise"),
+  });
+  // Two panes, and the inner one is no protection. The intersection could be
+  // replaced by "whichever pane the walk saw last" and nothing noticed, because
+  // no fixture had more than one. Here the words are inside the inner pane and
+  // outside the outer one, so only the folded region answers correctly.
+  // Two panes, and the inner one is the shorter. The intersection could be
+  // replaced by "whichever pane the walk saw last" and nothing noticed, because
+  // no fixture had more than one. Here the words are below the inner pane's
+  // fold but well inside the outer one, so only the folded region declines to
+  // answer; the outer pane alone would ask, and convict.
+  const outerPane = element({ overflowY: "auto" }, { getBoundingClientRect: () => boxOf(600, 700, 300, 300) });
+  const innerPane = element({ overflowY: "auto" }, {
+    parentElement: outerPane,
+    getBoundingClientRect: () => boxOf(600, 700, 300, 60),
+  });
+  const nested = element({}, {
+    parentElement: innerPane,
+    getBoundingClientRect: () => boxOf(600, 800, 100, 20),
+    innerText: "a nested promise",
+    childNodes: words("a nested promise"),
+  });
+  // A blocker that paints nothing of its own and everything through a layer.
+  // `fills` folds two reaches together, and its `layered` half was unreachable:
+  // the only other sibling blocker is caught by its plain background, so the
+  // half could be deleted with every test still green.
+  const curtain = element({ backgroundColor: "rgba(0, 0, 0, 0)" }, {});
+  pseudos.set(curtain, {
+    "::after": { content: '""', position: "absolute", backgroundColor: "rgb(255, 255, 255)" },
+  });
+  const curtained = element({}, {
+    getBoundingClientRect: () => boxOf(200, 800, 100, 20),
+    innerText: "a curtained promise",
+    childNodes: words("a curtained promise"),
+  });
+  // The other half of `curtain`: a positioned generated layer that paints
+  // nothing. A pseudo-element with content and a position but no fill is an
+  // arrow, a caret, a hairline — decoration, not a lid. Reading an absent
+  // `backgroundColor` as fully opaque would call every such layer a covering
+  // one, and the stub is where that shows, because a browser always resolves a
+  // colour and these sparse pseudo styles do not.
+  const glaze = element({ backgroundColor: "rgba(0, 0, 0, 0)" }, {});
+  pseudos.set(glaze, { "::after": { content: '""', position: "absolute" } });
+  const glazed = element({}, {
+    getBoundingClientRect: () => boxOf(400, 100, 100, 20),
+    innerText: "a glazed promise",
+    childNodes: words("a glazed promise"),
+  });
+  // A carrier the hit test cannot see, with a real blocker beside it. Declining
+  // to answer for such a carrier at all is a blanket amnesty: this product
+  // marks its whole edge-caption layer `pointer-events: none`, and that layer
+  // would leave the check entirely. What the browser cannot tell us is whether
+  // the node's own *ancestors* are over it or behind it; a sibling is a sibling
+  // either way, so the stack is read past the ancestors instead of abandoned.
+  const veiled = element({ pointerEvents: "none" }, {
+    getBoundingClientRect: () => boxOf(700, 100, 100, 20),
+    innerText: "a veiled promise",
+    childNodes: words("a veiled promise"),
+  });
+  // Three carriers for which the scrollport must decide differently, because an
+  // overflow ancestor clips only what it is the containing block for. Bounding
+  // a node CSS does not bound excuses real occlusion outright: a point outside
+  // the invented region is never asked about, so the blocker is never seen.
+  const staticPane = element({ overflowY: "auto" }, { getBoundingClientRect: () => boxOf(100, 300, 100, 100) });
+  const floated = element({ position: "absolute" }, {
+    parentElement: staticPane,
+    getBoundingClientRect: () => boxOf(100, 100, 100, 20),
+    innerText: "a floated promise",
+    childNodes: words("a floated promise"),
+  });
+  const anchoredPane = element({ overflowY: "auto", position: "relative" }, {
+    getBoundingClientRect: () => boxOf(300, 300, 100, 100),
+  });
+  const anchored = element({ position: "absolute" }, {
+    parentElement: anchoredPane,
+    getBoundingClientRect: () => boxOf(300, 100, 100, 20),
+    innerText: "an anchored promise",
+    childNodes: words("an anchored promise"),
+  });
+  const pinPane = element({ overflowY: "auto", position: "relative" }, {
+    getBoundingClientRect: () => boxOf(500, 300, 100, 100),
+  });
+  const pinned = element({ position: "fixed" }, {
+    parentElement: pinPane,
+    getBoundingClientRect: () => boxOf(500, 100, 100, 20),
+    innerText: "a pinned promise",
+    childNodes: words("a pinned promise"),
   });
   // What cannot be measured is not convicted. `backdrop` reads only
   // `backgroundColor`, so white words over a dark background *image* would be
@@ -2985,7 +3156,7 @@ function pageStub() {
     ".deep": [deepCover],
     ".prefix": [prefixed],
     ".descendant": [deepWords],
-    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, shadowed, imaged, quietTwin, loudTwin],
+    "*": [plainly, invisibly, overpainted, masked, masking, quietCopy, spokenCopy, spaced, lidded, bleached, smothered, shadowed, shielded, panelled, sheltered, scrolledAway, sidelined, nested, curtained, glazed, veiled, floated, anchored, pinned, imaged, quietTwin, loudTwin],
     "label[for]": [label],
     "[data-graph-edges]": [graph],
     "body *": [leaf, parent, arealess, typed, ticked, disclosure, quoting],
@@ -3000,11 +3171,38 @@ function pageStub() {
       if (x === 250 && y === 210) {
         return overlay;
       }
-      // The blocker over `smothered` is the element painting the layer; the one
-      // over `shadowed` paints nothing, which is the pair that tells the
-      // precise rule from the loose one.
-      if (x === 450 && y === 410) {
+      // The blocker over `smothered` is an ancestor painting a layer of its
+      // own; the one over `shadowed` paints nothing; the one over `shielded` is
+      // the same ancestor as `smothered`'s, reached only because the carrier is
+      // invisible to the hit test. `panelled` is covered by a sibling with
+      // nothing but a background, and `sheltered` is merely inside an ancestor
+      // that has one. Together they tell the precise rule from the loose one in
+      // both directions.
+      if (x === 450 && y === 410 || x === 850 && y === 410) {
         return smotherer;
+      }
+      if (x === 1050 && y === 410) {
+        return panel;
+      }
+      if (x === 450 && y === 610) {
+        return plainShell;
+      }
+      if (x === 1050 && y === 510) {
+        return toolbar;
+      }
+      if (x === 450 && y === 710 || x === 650 && y === 810) {
+        return toolbar;
+      }
+      if (x === 250 && y === 810) {
+        return curtain;
+      }
+      if (x === 450 && y === 110) {
+        return glaze;
+      }
+      // `anchored` is bounded by its own containing block, so its probe never
+      // reaches this list; the other three are asked, and all find the panel.
+      if ([[750, 110], [150, 110], [350, 110], [550, 110]].some(([at, above]) => x === at && y === above)) {
+        return panel;
       }
       return x === 650 && y === 410 ? overlay : null;
     },

@@ -281,6 +281,69 @@ export function collect(doc, request) {
     }
     return [...new Set(related)];
   };
+  // Whether a style paints something a reader cannot see through.
+  //
+  // `solid` mirrors `opaque` but at the top of the range instead of the bottom,
+  // and the difference is the point. Any non-zero alpha is enough to *supply* a
+  // backdrop, and nowhere near enough to hide words: a 2% scrim, a
+  // click-catcher, the first frame of a fade-in are all `opaque` and none of
+  // them erases a sentence. `honestInk` holds the carrier's own ink to exactly
+  // 1 for the same reason. It keeps `opaque`'s presence test, because a colour
+  // that parses to nothing is no paint at all — reading an absent
+  // `backgroundColor` as fully opaque would call every style filled.
+  const solid = (value) => {
+    const parts = channels(value);
+    return parts.length >= 3 && (parts.length < 4 || parts[3] === 1);
+  };
+  const filled = (style) =>
+    solid(style.backgroundColor) || Boolean(style.backgroundImage && style.backgroundImage !== "none");
+  // Whether an element establishes a containing block for absolute descendants.
+  const anchors = (style) =>
+    style.position !== "static"
+    || Boolean(style.transform && style.transform !== "none")
+    || Boolean(style.filter && style.filter !== "none");
+  // The region a node is actually painted in, as far as its scrolling and
+  // clipping ancestors allow, or `null` when nothing bounds it.
+  //
+  // Wider than `clipper` on purpose. `clipper` reads only `hidden`/`clip`,
+  // because a phrase scrolled out of an `auto` pane is one gesture away rather
+  // than lost, and it would be a false conviction to call it missing. But it is
+  // equally false to ask what stands at a point the phrase is *not drawn at*:
+  // above the fold of an inspector, the answer is the toolbar above the pane,
+  // which covers nothing because there is nothing of this node there to cover.
+  //
+  // Only ancestors that actually clip this node count. An overflow ancestor
+  // clips a descendant whose containing block is inside it, so a `fixed` node is
+  // bounded by nothing here and an `absolute` one by nothing until the walk
+  // reaches the element it is positioned against. Bounding a node CSS does not
+  // bound would excuse real occlusion, since a point outside the invented
+  // region is never asked about at all.
+  const scrollport = (node) => {
+    const own = view.getComputedStyle(node).position;
+    if (own === "fixed") {
+      return null;
+    }
+    let escaping = own === "absolute";
+    let box = null;
+    for (let item = node.parentElement; item; item = item.parentElement) {
+      const style = view.getComputedStyle(item);
+      if (escaping && !anchors(style)) {
+        continue;
+      }
+      escaping = false;
+      if (!/auto|scroll|hidden|clip/u.test(`${style.overflowX} ${style.overflowY}`)) {
+        continue;
+      }
+      const rect = item.getBoundingClientRect();
+      box = {
+        left: Math.max(box?.left ?? rect.left, rect.left),
+        right: Math.min(box?.right ?? rect.right, rect.right),
+        top: Math.max(box?.top ?? rect.top, rect.top),
+        bottom: Math.min(box?.bottom ?? rect.bottom, rect.bottom),
+      };
+    }
+    return box;
+  };
   // Whether an element paints a positioned, filled layer of its own. Split out
   // of `coveringLayer` because two callers need it at different reaches: a
   // scoped promise asks it of a whole neighbourhood, and a carrier asks it of
@@ -289,12 +352,39 @@ export function collect(doc, request) {
     ["::before", "::after"].some((part) => {
       const style = view.getComputedStyle(item, part);
       const exists = !["none", "normal"].includes(style.content);
-      return exists
-        && /absolute|fixed/u.test(style.position)
-        && (opaque(style.backgroundColor) || (style.backgroundImage && style.backgroundImage !== "none"));
+      return exists && /absolute|fixed/u.test(style.position) && filled(style);
     });
+  // Whether an element paints an opaque fill in its own right, generated or
+  // not. An element beside the words needs no pseudo-element to hide them: an
+  // ordinary panel with a background is the plainest way there is. Its own
+  // opacity chain is folded in, because a panel faded to nothing paints nothing
+  // however solid the colour it was given.
+  const fills = (item) => {
+    let opacity = 1;
+    for (let step = item; step; step = step.parentElement) {
+      const chain = view.getComputedStyle(step);
+      opacity *= Number.parseFloat(chain.opacity) * filterAlpha(chain.filter);
+    }
+    return opacity === 1 && (layered(item) || filled(view.getComputedStyle(item)));
+  };
   const coveringLayer = (node) => relatedTo(node).some(layered);
-  // The element actually drawn in front of a node's centre, or nothing.
+  // Where a node's words are actually painted, which is not the middle of its
+  // box. A paragraph with a tall top padding, or an inline sentence that wraps,
+  // has a bounding box whose centre lands on empty ground — and asking the hit
+  // test there answers about whatever the page draws above the first line. A
+  // range over the node's own contents reports the line boxes themselves.
+  const inkRect = (node) => {
+    const range = doc.createRange?.();
+    if (range) {
+      range.selectNodeContents(node);
+      const lines = [...range.getClientRects()].filter((line) => line.width > 0 && line.height > 0);
+      if (lines.length) {
+        return lines[0];
+      }
+    }
+    return node.getBoundingClientRect();
+  };
+  // The element actually drawn in front of a node's words, or nothing.
   //
   // `exposed` answers the same question as a boolean and treats "cannot tell"
   // as exposed; this returns the blocker itself, so a caller can ask what it is
@@ -303,7 +393,7 @@ export function collect(doc, request) {
     if (!doc.elementFromPoint) {
       return null;
     }
-    const rect = node.getBoundingClientRect();
+    const rect = inkRect(node);
     if (rect.width <= 0 || rect.height <= 0) {
       return null;
     }
@@ -312,8 +402,30 @@ export function collect(doc, request) {
     if (x < 0 || x > doc.documentElement.clientWidth || y < 0 || y > doc.documentElement.clientHeight) {
       return null;
     }
-    const front = doc.elementFromPoint(x, y);
-    return !front || front === node || node.contains(front) ? null : front;
+    // Only ask about a point the node is painted at. A phrase scrolled above
+    // the fold of a pane still has a box, and it sits over whatever the page
+    // draws there — the toolbar above the pane, another panel beside it. None
+    // of those is covering the words, because none of the words are there.
+    const port = scrollport(node);
+    if (port && (x < port.left || x > port.right || y < port.top || y > port.bottom)) {
+      return null;
+    }
+    const stack = doc.elementsFromPoint ? [...doc.elementsFromPoint(x, y)] : [doc.elementFromPoint(x, y)];
+    const top = stack[0];
+    if (!top || top === node || node.contains(top)) {
+      return null;
+    }
+    // A carrier the hit test cannot see was skipped, not covered. With
+    // `pointer-events: none` — which inherits, so this one read answers for the
+    // whole chain — the browser reports what stands *behind* the node, and what
+    // stands behind it is its own ancestors. Convicting on those reports every
+    // decorative layer in an app shell as a substituted sentence. Something
+    // beside it in the tree is still a blocker, so the stack is read past its
+    // ancestors rather than abandoned.
+    if (view.getComputedStyle(node).pointerEvents !== "none") {
+      return top;
+    }
+    return stack.find((item) => item !== node && !node.contains(item) && !item.contains(node)) ?? null;
   };
   const generatedAround = (node) =>
     relatedTo(node)
@@ -515,11 +627,32 @@ export function collect(doc, request) {
     // anywhere above the carrier satisfies the sweep for *every* node beneath
     // it, so the pair reduced to the bare hit test the moment such a layer
     // existed. What is asked instead is that the element proved to be in front
-    // of the words is itself the one painting the layer, which is the only
-    // arrangement that substitutes anything for them.
+    // of the words is itself the one painting over them.
+    //
+    // What counts as painting over them depends on where that element stands.
+    // An ancestor is asked only for a positioned layer of its own, and that
+    // leniency is about the *instrument*, not about CSS. An ancestor almost
+    // always wins this hit test because the probe missed the words rather than
+    // because it is covering them: a sentence that wraps, a carrier the browser
+    // skipped, a box taller than its own text. Asking such an ancestor for its
+    // ordinary background would convict every card in the product. It is not
+    // that an ancestor cannot hide its descendants' words — a descendant in a
+    // negative-`z-index` stacking context is painted under an in-flow
+    // ancestor's background, and this clause does not catch that. That is a
+    // recorded limit, and the price of not convicting every card.
+    //
+    // Anything else in front of the words is beside them in the tree, and there
+    // an ordinary opaque background hides them exactly as completely as a
+    // generated layer does — a panel, a drawer, a solid overlay. Requiring a
+    // pseudo-element there reported a sentence with a filled `<div>` drawn over
+    // it as perfectly readable, which is the plainest way to cover words there
+    // is.
     const smothered = (node) => {
       const front = inFront(node);
-      return Boolean(front) && layered(front);
+      if (!front) {
+        return false;
+      }
+      return front.contains(node) ? layered(front) : fills(front);
     };
     // Memoised because `spans` can offer the same element in several candidate
     // sets, and each of these clauses walks the element's whole ancestor chain.
