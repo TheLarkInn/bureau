@@ -22,7 +22,7 @@
 // Both are ordinary states: same shape, same driver, same assertions.
 
 import { SELECTORS as S, cleanEditor, dirtyEditor, draftMarkIn, editorCardFor, offered, replayPositionAt, replaySpanFor, replaySpeed, replaySpeedActive, viewerCardFor, withheld } from "./selectors.mjs";
-import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
+import { INFERRED_FILTER_URL, REPO_ADD_URL, RUN_END, RUN_STEP, SAMPLE_STEPS, fixtureFor, runOps } from "./paths.mjs";
 import { PASS_RUN } from "./intercept.mjs";
 
 /** A resting, reachable config landing — the baseline every crossing perturbs. */
@@ -462,6 +462,18 @@ export const PROBES = [
    * clamps to `range.end` and clears `playing` when the run runs out, so the
    * end is the one position on this timeline that does not depend on timing at
    * all — and it is a screen nothing else in the matrix draws.
+   *
+   * That timing is also why the run is *stepped* before it is played. "Short of
+   * its end" catches a Pause that did nothing; it does not catch a Pause that
+   * rewound, which is the defect this probe exists rather than a return edge to
+   * avoid asserting. Played from the start the two are indistinguishable — the
+   * start is where an honest pause may legitimately be sitting — so a Pause
+   * that reset the position passed. One forward step moves the run onto its
+   * second event on the log's own clock, and play only ever advances from
+   * there, so the first event is a position an honoured Pause cannot be at and
+   * a rewinding one always is. The read is placed *before* the play-out, since
+   * a rewound run reaches the same end a moment later and the end would excuse
+   * it.
    */
   sample({
     id: "probe--replay-paused-after-playing",
@@ -473,10 +485,22 @@ export const PROBES = [
       { op: "wait", selector: S.pipelineView },
       { op: "click", selector: S.modeReplay },
       ...runOps("replay", "finished"),
+      // Play from a position that is not the start, so that a Pause which
+      // rewound is a thing this path can tell apart from one that never moved.
+      // Stepping is the deterministic half of the transport: it lands on the
+      // run's second event exactly, on a clock nothing here shares.
+      { op: "click", selector: S.replayStepForward },
+      { op: "wait", selector: replayPositionAt(RUN_STEP.finished.next) },
       { op: "click", selector: S.replayPlay },
       { op: "wait", selector: S.replayPause },
       { op: "click", selector: S.replayPause },
       { op: "waitGone", selector: S.replayPause },
+      // Stopping is not rewinding, and this is where that is read. Play only
+      // ever advances, so a Pause that honoured its own meaning cannot be at
+      // the run's first event — while a Pause that reset the position is
+      // parked there, and is held here rather than excused by the end it would
+      // still go on to reach.
+      { op: "waitGone", selector: replayPositionAt(RUN_STEP.finished.start) },
       { op: "waitGone", selector: replayPositionAt(RUN_END.finished) },
       { op: "click", selector: replaySpeed(16) },
       { op: "click", selector: S.replayPlay },
@@ -1391,7 +1415,10 @@ export const PROBES = [
         { selector: S.runActivityTitle, text: "Run list unavailable" },
         "a run already open keeps streaming",
       ],
-      allowErrors: ["Failed to load resource", "503"],
+      // The listing, by its own address, and anchored there. Unanchored it
+      // would also cover `./runs/<id>/events` — the endpoint this state exists
+      // to prove is still working, whose failure it must not be able to excuse.
+      allowErrors: ["/runs$"],
     },
   }),
   sample({
@@ -1416,8 +1443,10 @@ export const PROBES = [
       copy: [{ selector: S.runActivityTitle, text: "Run list unavailable" }, "a run already open keeps streaming"],
       // The refused request is the state. The browser logs the 503 itself, and
       // a state that stages a failing response has to own the console line it
-      // causes — the way the blocked-renderer states do.
-      allowErrors: ["Failed to load resource", "503"],
+      // causes — the way the blocked-renderer states do. By the address it was
+      // for: the sentence that row carries names no endpoint, so allowing it by
+      // text would have excused every other resource that failed here too.
+      allowErrors: ["/runs$"],
     },
   }),
 ];

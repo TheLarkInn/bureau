@@ -79,6 +79,33 @@ async function bootCanvas() {
   return { child, url };
 }
 
+/**
+ * The one console row that names its subject somewhere other than its text.
+ *
+ * When a request completes with a failing status the browser logs an error of
+ * its own, and that row's text is the same sentence for every address in the
+ * world: "Failed to load resource: the server responded with a status of 503".
+ * The address is in `location()`, which this fixture used to discard — so a
+ * state that owned one such failure had to allow it by that sentence, and the
+ * allowance then covered every *other* resource that failed under the same
+ * state. That is the same blanket licence `requestfailed` rows were narrowed
+ * out of, left standing on the console channel.
+ *
+ * So a resource failure is recorded with the address it was for, under a prefix
+ * `unexpected` reads as an addressed row and excuses only by URL. Every other
+ * console error keeps its text: an application's own `console.error` says what
+ * went wrong in the text and names only the *script* in `location()`, so
+ * matching those by URL would excuse anything that file ever logged.
+ */
+const RESOURCE = "Failed to load resource";
+
+function consoleRow(message) {
+  const url = message.location()?.url ?? "";
+  return message.text().startsWith(RESOURCE) && url !== ""
+    ? `resource: ${url} ${message.text()}`
+    : `console: ${message.text()}`;
+}
+
 export const test = base.extend({
   /** One read-only host per worker, plus the payload every fixture projects. */
   host: [
@@ -121,7 +148,7 @@ export const test = base.extend({
     page.on("pageerror", (error) => errors.push(`pageerror: ${error}`));
     page.on("console", (message) => {
       if (message.type() === "error") {
-        errors.push(`console: ${message.text()}`);
+        errors.push(consoleRow(message));
       }
     });
     page.on("requestfailed", (request) => {

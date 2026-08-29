@@ -249,16 +249,36 @@ function unexpected(errors, state) {
   return errors.filter((error) => !allowed.some((pattern) => excuses(pattern, error)));
 }
 
-const FAILED = "requestfailed: ";
+const ADDRESSED = ["requestfailed: ", "resource: "];
 
-/** The address a failed request names, or `null` for any other kind of row. */
+/**
+ * The address a row names, or `null` for a row that names none.
+ *
+ * Two kinds of row name one: a request that failed outright, and the console
+ * error the browser logs for a request that completed with a failing status.
+ * Both carry a sentence that is the same for every address there is, so both
+ * are excused by their URL rather than by their text.
+ */
 function failedUrl(error) {
-  return error.startsWith(FAILED) ? error.slice(FAILED.length).split(" ")[0] : null;
+  const prefix = ADDRESSED.find((named) => error.startsWith(named));
+  return prefix === undefined ? null : error.slice(prefix.length).split(" ")[0];
+}
+
+/**
+ * A trailing `$` anchors the pattern to the end of the address.
+ *
+ * `includes` cannot separate a listing from what hangs beneath it: `/runs` is a
+ * prefix of `/runs/<id>/events`, so an unanchored allowance for the listing
+ * would also excuse the event stream the same state promises is still working.
+ * Anchoring is the only form that distinguishes them.
+ */
+function addresses(pattern, url) {
+  return pattern.endsWith("$") ? url.endsWith(pattern.slice(0, -1)) : url.includes(pattern);
 }
 
 function excuses(pattern, error) {
   const url = failedUrl(error);
-  return url === null ? error.includes(pattern) : url.includes(pattern);
+  return url === null ? error.includes(pattern) : addresses(pattern, url);
 }
 
 /**
