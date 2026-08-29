@@ -1762,9 +1762,23 @@ function selectorsOf(ops) {
 /** The keys `expectations()` absorbs from an axis, so "contributes" is its word. */
 const CONTRIBUTIONS = ["shows", "hides", "copy", "allowErrors", "allowPlaceholder", "allowOverlap"];
 
-/** Whether one axis of one combination gives `expectations()` anything to merge. */
+/**
+ * Whether one axis of one combination gives `expectations()` anything to merge.
+ *
+ * `only` is read here for the same reason `expectations()` reads it, and the
+ * omission was the audit's own version of the fault it exists to catch. A value
+ * scoped to another surface is skipped by the merge outright, so on this screen
+ * a suppression of that axis removes nothing — and an audit that credited the
+ * scoped-away promise anyway would report a stale suppression as one doing work.
+ * Scoping `data:validated` to `only: ["pipeline"]` made `field:delete → data`
+ * suppress nothing on any of its config states and left the whole offline suite
+ * green at 470.
+ */
 function contributesTo(axis, combo) {
   const value = valueOf(axis, combo[axis]);
+  if (value?.only && !value.only.includes(combo.surface)) {
+    return false;
+  }
   return [value, value?.derive?.(combo)].some((part) => CONTRIBUTIONS.some((key) => (part?.[key] ?? []).length > 0));
 }
 
