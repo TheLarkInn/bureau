@@ -1331,6 +1331,34 @@ test("the verdict catches one landing region printing over another", () => {
 });
 
 /**
+ * The allowance excuses a sentence, not the render.
+ *
+ * `allowPlaceholder` exists because the body searched includes config the
+ * canvas is quoting rather than authoring — a `run:` command may legitimately
+ * say "reserved for". It was a `.length` test for a while, which switched all
+ * four patterns off for the whole render, so the stub the rule was written to
+ * catch could have been reintroduced beside the quoted command and passed.
+ * Row three is exactly that mutation, and it is the row the old shape fails.
+ *
+ * Row four is the claim in the other direction, the one `permitted()` already
+ * makes for overlap: an excuse for a sentence that is no longer on the screen
+ * is reported stale rather than granted quietly to whatever walks into it next.
+ */
+test("a placeholder allowance excuses its own sentence and nothing else", () => {
+  const quoted = "run: echo reserved for later";
+  const stub = "trust flow - reserved for trust analysis.";
+  const judge = (text, allowPlaceholder) => verdict(
+    { expect: { shows: [], hides: [], copy: [], allowPlaceholder } },
+    { counts: {}, text, viewport: { width: 1280, height: 900 }, overflowX: 0, contrast: [], boxes: [] },
+  ).map((item) => item.kind);
+
+  assert.deepStrictEqual(
+    [judge(stub, []), judge(quoted, [quoted]), judge(`${quoted} ${stub}`, [quoted]), judge("nothing promised here", [quoted])],
+    [["placeholder-copy"], [], ["placeholder-copy"], ["stale-placeholder-allowance"]],
+  );
+});
+
+/**
  * The defect that made this shape necessary, held so it cannot come back.
  *
  * A whole-body substring cannot tell a word from its own negation: "unsaved

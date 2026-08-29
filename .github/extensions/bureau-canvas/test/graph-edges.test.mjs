@@ -16,6 +16,16 @@
 // the expression each is approved to count from, not as a ban on the one wrong
 // spelling anyone happened to predict.
 //
+// What that allowlist does and does not settle: it pins each count to the
+// model-side expression, so no surface may count the array it hands React Flow.
+// It cannot see that at two of the three the model-side expression is itself
+// shared with the render — `planned` in `app.mjs`, `effectiveEdges(view)` in
+// `editor/editor.mjs` — because that is a fact about what those names are bound
+// to and not about the text recorded here. `web/graph-edges.mjs` records that
+// residue as a named limit and says what holds the other half instead: the edge
+// classes those surfaces promise in `web/statelab/dimensions.mjs`, which are
+// asserted on the drawn screen rather than counted.
+//
 // The second is the reason such an edge can exist at all. A step's references
 // to another step live in its fields, not only in `view.edges`: `inputs_from`,
 // a decision's `on:` map, `over`, and a concurrent step's `members`. Dropping

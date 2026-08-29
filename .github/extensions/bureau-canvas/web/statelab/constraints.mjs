@@ -343,7 +343,7 @@ export const CONSTRAINTS = [
     kind: "structural",
     reads: ["field"],
     title: "A blocked preflight has no mount point on the landing",
-    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. The blocking answer is real and unreachable here, and `test/preflight.test.mjs` owns it directly.",
+    why: "`DeleteControl` renders in exactly two places — an assignment card and the orphan strip — and neither can answer with referrers: nothing in a Bureau config points at an assignment, and an orphan is the config nothing uses, computed by `lib/view.mjs` from the same references `lib/preflight.mjs` counts. The blocking answer is real and unreachable here, so `test/preflight.test.mjs` owns both halves offline: the answer itself, and the screen this value declares — its sentence and its withheld confirm — held against the source that draws them, because no render in this matrix can.",
     holds: (combo) => combo.field !== "delete-blocked",
   },
   {

@@ -1361,17 +1361,36 @@ function span(start, size, otherStart, otherSize) {
  * which includes config the canvas is quoting rather than authoring — a `run:`
  * command may legitimately say any of these — so a state can declare the
  * phrase its own, the way `allowErrors` declares a failed request its own.
+ *
+ * The allowance excuses *that sentence* and not the render. It was a
+ * `.length` test for a while, which read as narrow and was not: declaring one
+ * quoted `run:` command switched all four patterns off for the whole body, so
+ * the stub this rule exists for — a panel promising "Reserved for trust
+ * analysis." — could have been reintroduced beside it and passed. The declared
+ * phrases are cut out of the text and the patterns are asked of what is left,
+ * so a promise anywhere else is still a finding.
+ *
+ * The claim runs both ways, as it does in `permitted()`: a phrase excused here
+ * that the render never drew is reported stale rather than passing quietly,
+ * because a licence for a sentence that is no longer on the screen is how the
+ * excuse outlives the reason and waits, already granted, for the next one.
  */
 const PLACEHOLDER_PROMISES = [/reserved for\b/iu, /coming soon\b/iu, /not implemented\b/iu, /to be (?:added|built|done)\b/iu];
 
 function promisedCopy(state, snapshot) {
-  if (state.expect?.allowPlaceholder?.length) {
-    return [];
-  }
+  const declared = (state.expect?.allowPlaceholder ?? []).map(normalise).filter(Boolean);
   const text = normalise(snapshot.text);
-  return PLACEHOLDER_PROMISES
-    .filter((pattern) => pattern.test(text))
-    .map((pattern) => ({ kind: "placeholder-copy", detail: `the render says "${text.match(pattern)[0]}" instead of drawing it` }));
+  // Replaced with a space rather than removed, so cutting a phrase out cannot
+  // fuse its neighbours into a promise neither of them made.
+  const rest = declared.reduce((carried, phrase) => carried.split(phrase).join(" "), text);
+  return [
+    ...PLACEHOLDER_PROMISES
+      .filter((pattern) => pattern.test(rest))
+      .map((pattern) => ({ kind: "placeholder-copy", detail: `the render says "${rest.match(pattern)[0]}" instead of drawing it` })),
+    ...declared
+      .filter((phrase) => !text.includes(phrase))
+      .map((phrase) => ({ kind: "stale-placeholder-allowance", detail: `"${phrase}" is excused here but was not drawn` })),
+  ];
 }
 
 function lowContrast(snapshot, options) {

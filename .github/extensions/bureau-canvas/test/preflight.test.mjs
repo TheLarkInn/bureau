@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import { blocksDelete, referrers } from "../lib/preflight.mjs";
+import { valueOf } from "../web/statelab/dimensions.mjs";
 
 const committed = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
 
@@ -65,5 +66,37 @@ test("preflight is advisory and orphaning alone does not block", () => {
   assert.deepEqual(
     { orphansOnly: blocksDelete(orphansOnly), referenced: blocksDelete(referenced), marked: referrers(committed, "role", "implementer")[0].source },
     { orphansOnly: false, referenced: true, marked: "preflight" },
+  );
+});
+
+/**
+ * The one declared dimension value no state renders, held to what it claims.
+ *
+ * `field:delete-blocked` is kept in the registry so the screen is excluded by a
+ * named rule rather than missing, and `delete-is-offered-only-where-nothing-
+ * refers` says why: `DeleteControl` mounts on an assignment card and on the
+ * orphan strip, and neither can answer with referrers. The consequence is that
+ * the controls and copy that value declares are rendered by no state, so
+ * nothing in the browser suite can fail for them.
+ *
+ * That rule's `why` pointed at this file, which owned the blocking *answer* —
+ * `blocksDelete` above — and not the *screen* the value describes. The two are
+ * different claims, and only the first was held. So the screen is held here
+ * too, against the source that draws it: the sentence is read out of the
+ * registry rather than restated, so the declared copy and the shipped copy
+ * cannot drift apart quietly, and the confirm is held to being withheld on
+ * `blocking`, which is what `withheld(S.deleteConfirm)` promises.
+ */
+test("the screen a blocked delete draws is the one the registry declares", async () => {
+  const source = (await readFile(new URL("../web/app.mjs", import.meta.url), "utf8")).replace(/\s+/gu, " ");
+  const declared = valueOf("field", "delete-blocked");
+
+  assert.deepEqual(
+    {
+      copy: declared.copy.every((line) => source.includes(JSON.stringify(line))),
+      withholdsConfirm: /disabled: preflight\.blocking/u.test(source),
+      blocks: blocksDelete([{ severity: "referrer" }]),
+    },
+    { copy: true, withholdsConfirm: true, blocks: true },
   );
 });

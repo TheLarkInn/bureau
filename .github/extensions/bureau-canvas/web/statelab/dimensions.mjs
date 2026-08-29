@@ -685,11 +685,23 @@ const EDITOR_EDGES = [".editor-edge--success", ".editor-edge--failure", ".editor
 /**
  * D9 — the pipeline viewer's three graph modes.
  *
- * Design asserts the drawing's own semantics, not just that a graph appeared:
- * a control edge per outcome, the two relation edges the sample pipeline wires,
- * and a terminal pill for the terminal it ends on. Naming only `.pipeline-flow`
- * let a graph that drew every edge in one class — or dropped its terminals —
- * pass as the static config graph.
+ * Each mode asserts the drawing's own semantics, not just that a graph
+ * appeared: a control edge per outcome, the two relation edges the sample
+ * pipeline wires, and — in design — a terminal pill for the terminal it ends
+ * on. Naming only `.pipeline-flow` let a graph that drew every edge in one
+ * class — or dropped its terminals — pass as the static config graph.
+ *
+ * Live and Replay name the same classes, and that is not repetition of design.
+ * They are the only states that reach `toFlow` with an overlay resolved, and
+ * the overlay is a projection whose job is to *drop* edges: members that are
+ * hidden inside a collapsed group have their edges remapped onto the group
+ * node, self-loops and the duplicates that remap creates are discarded. The
+ * count those surfaces publish cannot hold that half — `declared` is counted
+ * from the same planned list the renderer is handed, so an overlay that
+ * dropped a whole relation lowers both numbers together and `undrawn-graph`
+ * still passes (`web/graph-edges.mjs` says where the independence does and
+ * does not hold). Naming the classes here is what fails such a drop: they are
+ * asserted on the screen the overlay actually drew.
  */
 const mode = {
   id: "mode",
@@ -713,14 +725,14 @@ const mode = {
       id: "live",
       summary: "one live run, streamed",
       enter: [{ op: "click", selector: S.modeLive }],
-      shows: [S.runControls, S.runPickerLive, S.reconcileNow],
+      shows: [S.runControls, S.runPickerLive, S.reconcileNow, ...VIEWER_EDGES],
       derive: (combo) => activityCount(combo.run === "ended" ? 3 : 2),
     },
     {
       id: "replay",
       summary: "any run, scrubbed on a timeline",
       enter: [{ op: "click", selector: S.modeReplay }],
-      shows: [S.replayControls, S.runPickerReplay],
+      shows: [S.replayControls, S.runPickerReplay, ...VIEWER_EDGES],
       derive: () => activityCount(2),
     },
   ],
