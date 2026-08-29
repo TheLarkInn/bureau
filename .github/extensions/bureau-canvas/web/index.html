@@ -201,7 +201,9 @@
       /* The graph column must be allowed to shrink. A 50rem floor plus the
          19rem side panel needs 1104px, so in the app's side panel the shell
          overflowed and the panel covered the toolbar's right-hand controls. */
-      .view-shell--pipeline {        grid-template-columns: minmax(0, 1fr) 19rem;
+      .view-shell--pipeline {
+        grid-template-columns: minmax(0, 1fr) 19rem;
+        padding: 3rem;
         min-height: 0;
       }
 
@@ -985,17 +987,32 @@
         height: 0.65rem;
         border: 2px solid var(--background-color-default, #ffffff);
         background: var(--handle-color, var(--border-color-default, #d0d7de));
+        opacity: 0.18;
+        transition: opacity 120ms ease;
       }
 
-      .flow-handle--success { --handle-color: var(--outcome-success); }
+      .flow-handle--success { --handle-color: var(--outcome-success); opacity: 0.7; }
       .flow-handle--failure { --handle-color: var(--outcome-failure); }
       .flow-handle--blocked { --handle-color: var(--outcome-blocked); }
       .flow-handle--no-work { --handle-color: var(--outcome-no-work); }
       .flow-handle--data { --handle-color: var(--relation-data); }
       .flow-handle--observes { --handle-color: var(--relation-observes); }
       .flow-handle--loop { --handle-color: var(--outcome-failure); }
+      .react-flow__node:hover .flow-handle,
+      .react-flow__node:focus-within .flow-handle { opacity: 1; }
 
       .react-flow__edge-path { stroke-width: 2.4; }
+      .flow-edge--success { opacity: 0.8; }
+      .flow-edge--failure,
+      .flow-edge--blocked,
+      .flow-edge--no-work { opacity: 0.14; }
+      .react-flow__edge {
+        transition: opacity 120ms ease;
+      }
+      .react-flow__edge:hover,
+      .react-flow__edge:focus,
+      .react-flow__edge.selected,
+      .react-flow__edge.flow-edge--live { opacity: 1; }
       .flow-edge--success .react-flow__edge-path { stroke: var(--outcome-success); }
       .flow-edge--failure .react-flow__edge-path { stroke: var(--outcome-failure); }
       .flow-edge--blocked .react-flow__edge-path { stroke: var(--outcome-blocked); }
@@ -1009,6 +1026,7 @@
         color: var(--text-color-muted, #656d76);
         font: 700 0.72rem/1 var(--font-mono, SFMono-Regular, Consolas, monospace);
         letter-spacing: 0.01em;
+        opacity: 0;
         text-shadow:
           0 1px 0 var(--background-color-default, #ffffff),
           1px 0 0 var(--background-color-default, #ffffff),
@@ -1238,7 +1256,10 @@
 
       @media (max-width: 56rem) {
         .view-shell { padding: var(--space-3); }
-        .view-shell--pipeline { grid-template-columns: minmax(0, 1fr); }
+        .view-shell--pipeline {
+          grid-template-columns: minmax(0, 1fr);
+          padding: calc(var(--space-5) + var(--space-3));
+        }
         .pipeline-flow,
         .config-flow { min-height: 32rem; height: 32rem; }
         .surface { min-height: 30rem; }
