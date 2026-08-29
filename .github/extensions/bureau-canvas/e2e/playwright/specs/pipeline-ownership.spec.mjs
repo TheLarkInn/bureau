@@ -61,6 +61,24 @@ test.describe("pipeline owns execution details", () => {
     expect(await card.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 
+  test("compact pipeline view leaves an outer page gutter around the graph", async ({ card }) => {
+    await card.page.setViewportSize({ width: 800, height: 900 });
+    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    const gutter = await card.page.locator(".view-shell--pipeline").evaluate((shell) => {
+      const style = getComputedStyle(shell);
+      return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft];
+    });
+
+    expect(gutter).toEqual(["36px", "36px", "36px", "36px"]);
+  });
+
+  test("hovering an exception route reveals its caption", async ({ card }) => {
+    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await card.page.locator(".flow-edge--failure").first().hover({ force: true });
+
+    await expect(card.page.locator(".edge-caption--revealed")).toHaveText("failure");
+  });
+
   test("the pipeline viewer returns to assignments with consistent copy", async ({ card }) => {
     await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
     await card.page.getByRole("button", { name: "Assignments" }).click();
