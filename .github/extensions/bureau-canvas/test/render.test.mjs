@@ -218,11 +218,29 @@ test("pipeline intent selects a pipeline that carries its own step diagram", asy
 });
 
 
+/**
+ * The absent branch this names is `observes`, and it is read from the view.
+ *
+ * It used to be read from the page: `markup` fetched the instance URL and
+ * asserted that the text contained `flow-edge--data`, `flow-edge--observes` and
+ * `terminal-pill`. That is the raw `web/index.html` shell rather than a rendered
+ * DOM, and all three strings are CSS selectors in that file's own inline
+ * `<style>` — so the field was `[true, true, true]` for every page this server
+ * has ever served, in every state, including one whose view carries no edges at
+ * all. The one field claiming something about the drawing was the one that could
+ * not fail, and it read as coverage of an `observes` edge that no viewer state
+ * draws.
+ *
+ * The relation classes the view wires are the honest form of that claim: the
+ * committed sample has no decision step, so `observes` is absent, and this fails
+ * the day it stops being. `web/statelab/dimensions.mjs` leaves
+ * `.flow-edge--observes` out of the viewer's edge vocabulary on exactly that
+ * premise, and `test/statelab.test.mjs` holds the exemption to it.
+ */
 test("committed pipeline view keeps absent branches absent", async () => {
   const instance = await openInstance("bureau-render-committed-pipeline-test", { pipeline: "agent-eligible-pipeline" });
 
   try {
-    const page = await fetch(instance.opened.url).then((response) => response.text());
     const state = await fetch(new URL("/state", instance.opened.url)).then((response) => response.json());
     const pipeline = state.pipelines["agent-eligible-pipeline"];
     const verifyEdges = pipeline.layout.edges.filter((edge) => edge.source === "verify" && edge.relation === "control");
@@ -233,14 +251,14 @@ test("committed pipeline view keeps absent branches absent", async () => {
         steps: pipeline.layout.steps.length,
         reachedTerminals: pipeline.view.terminals.filter((terminal) => pipeline.layout.edges.some((edge) => edge.target === terminal.id)).length,
         verifyOutcomes: verifyEdges.map((edge) => edge.outcome).sort(),
-        markup: ["flow-edge--data", "flow-edge--observes", "terminal-pill"].map((text) => page.includes(text)),
+        relations: [...new Set(pipeline.view.edges.map((edge) => edge.relation))].sort(),
       },
       {
         selected: "agent-eligible-pipeline",
         steps: 3,
         reachedTerminals: 2,
         verifyOutcomes: ["failure", "success"],
-        markup: [true, true, true],
+        relations: ["control", "data"],
       },
     );
   } finally {

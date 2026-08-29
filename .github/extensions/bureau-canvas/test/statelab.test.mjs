@@ -16,7 +16,7 @@ import { test } from "node:test";
 import { CONSTRAINT_IDS, CONSTRAINTS, harnessNotes, violations } from "../web/statelab/constraints.mjs";
 import { CONCURRENT_STATE } from "../web/statelab/concurrent-state.mjs";
 import { buildConcurrentState, PROJECTED_FIELDS } from "./support/concurrent-state.mjs";
-import { relationView } from "../lib/view.mjs";
+import { pipelineView, relationView } from "../lib/view.mjs";
 import { DIMENSIONS, valueOf, valuesOf } from "../web/statelab/dimensions.mjs";
 import { collect, CONTRAST, copyFailure, copyLabel, deadlineVerdict, graphsDrawn, measureFor, permitted, selectorsFor, SETTLE_BUDGET_MS, settleStep, undrawnFor, undrawnGraphs, undrawnLooks, unrowed, unsettledReason, verdict } from "../web/statelab/checks.mjs";
 import { ADAPTER_VERBS, canonicalAction, isAction } from "../web/statelab/driver.mjs";
@@ -500,6 +500,38 @@ function assignmentEdges(item) {
 test("the sample pipeline still has the step count the registry addresses", async () => {
   const payload = JSON.parse(await readFile(PAYLOAD, "utf8"));
   assert.equal(payload.config.pipelines["agent-eligible-pipeline"].steps.length, SAMPLE_STEP_COUNT);
+});
+
+/**
+ * The viewer's edge vocabulary omits `.flow-edge--observes`, and `dimensions.mjs`
+ * gives the reason twice: an `observes` edge needs a decision step with an
+ * `over`, the sample every viewer state renders has none, and `pick: decision`
+ * grows one in the editor and asserts it there instead.
+ *
+ * Both halves were prose. Give the sample a decision with an `over` and the
+ * viewer starts drawing a relation class nothing asserts, with the exemption
+ * still reading as true; drop the editor's `.editor-edge--observes` and the
+ * compensation the exemption points at is gone, equally quietly. Either way the
+ * registry would be silently omitting an edge class rather than excluding it by
+ * a rule that holds — which is the one thing the matrix is not allowed to do.
+ *
+ * So the premise is read from the payload the viewer renders and the
+ * compensation from the registry itself, and the exemption fails the day either
+ * stops holding. The relation list is pinned whole rather than by
+ * `has("observes")` alone: a projection that dropped every relation edge would
+ * satisfy "no observes here" while drawing nothing at all.
+ */
+test("the viewer's missing observes edge is earned by the sample, and paid for by the editor", async () => {
+  const payload = JSON.parse(await readFile(PAYLOAD, "utf8"));
+  const relations = pipelineView(payload, "agent-eligible-pipeline").edges.map((edge) => edge.relation);
+  assert.deepStrictEqual(
+    {
+      viewerRelations: [...new Set(relations)].sort(),
+      viewerVocabulary: valuesOf("mode").every((value) => !(value.shows ?? []).includes(".flow-edge--observes")),
+      editorPays: valueOf("pick", "decision").shows.includes(".editor-edge--observes"),
+    },
+    { viewerRelations: ["control", "data"], viewerVocabulary: true, editorPays: true },
+  );
 });
 
 test("the transition DAG only names states the registry holds", () => {
