@@ -1759,6 +1759,76 @@ function selectorsOf(ops) {
   return (ops ?? []).map((op) => op.selector).filter(Boolean);
 }
 
+/** The keys `expectations()` absorbs from an axis, so "contributes" is its word. */
+const CONTRIBUTIONS = ["shows", "hides", "copy", "allowErrors", "allowPlaceholder", "allowOverlap"];
+
+/** Whether one axis of one combination gives `expectations()` anything to merge. */
+function contributesTo(axis, combo) {
+  const value = valueOf(axis, combo[axis]);
+  return [value, value?.derive?.(combo)].some((part) => CONTRIBUTIONS.some((key) => (part?.[key] ?? []).length > 0));
+}
+
+/**
+ * `suppress` is the one exemption in this registry that nothing held to account.
+ *
+ * Four exemptions live here and three already answer for themselves: `permitted`
+ * reports a `stale-overlap-allowance` for an `allowOverlap` that excused
+ * nothing, `promisedCopy` reports a `stale-placeholder-allowance` for an unused
+ * `allowPlaceholder`, and `unexercised` in the matrix spec fails a state whose
+ * `allowErrors` caught nothing. `suppress` had neither a staleness check nor a
+ * scope one — and it is the only one of the four that deletes *promises* rather
+ * than excusing *findings*, so it is the only one whose failure mode is a
+ * quietly lowered bar rather than a noisy one.
+ *
+ * Measured, not reasoned. Adding `"surface"` and `"nosuchaxis"` to
+ * `edit:deleted`'s suppression took each of its four states from eighteen
+ * promised controls to thirteen and left the whole offline suite green: five
+ * controls dropped out of what the registry claims that screen draws, and
+ * nothing said so. The browser suite cannot catch it by construction — removing
+ * a selector from `shows` removes its `missing-control` finding along with it,
+ * so the render agrees with a claim that no longer asks anything.
+ *
+ * Both halves are asked here. `unnamedAxis` refuses a suppression of an axis
+ * that does not exist, which is inert today and reads exactly like one that
+ * works. `stale` refuses one that removes nothing from any state it applies to,
+ * which is the same staleness the other three exemptions already report. The
+ * count is pinned because both lists are empty when nothing is declared at all:
+ * without it, a `suppress` that stopped being read would pass as compliance.
+ *
+ * The third bucket is the one this check found on its first run. A suppression
+ * declared by a value the matrix never carries is neither exercised nor stale —
+ * it is unreachable, and `field:delete-blocked` is unreachable on purpose:
+ * `delete-is-offered-only-where-nothing-refers` excludes its screen by name and
+ * `test/preflight.test.mjs` holds the screen instead. Folding it into `stale`
+ * would report a rule that is working as a defect; leaving it unnamed would let
+ * "no state carries this value" excuse any suppression at all. So it is listed,
+ * and a second value dropping out of the matrix has to be added here to pass.
+ */
+test("every suppression names a real axis and drops something a state was promising", () => {
+  const declared = DIMENSIONS.flatMap((dimension) => dimension.values.flatMap(
+    (value) => (value.suppress ?? []).map((axis) => ({ where: `${dimension.id}:${value.id} → ${axis}`, key: dimension.id, id: value.id, axis })),
+  ));
+  const audited = declared.map((entry) => {
+    const carried = STATES.filter((state) => state.kind === "matrix" && state.dimensions[entry.key] === entry.id);
+    return {
+      where: entry.where,
+      names: ORDER.includes(entry.axis),
+      rendered: carried.length > 0,
+      drops: carried.some((state) => contributesTo(entry.axis, state.dimensions)),
+    };
+  });
+
+  assert.deepStrictEqual(
+    {
+      declared: audited.length,
+      unnamedAxis: audited.filter((entry) => !entry.names).map((entry) => entry.where),
+      stale: audited.filter((entry) => entry.rendered && !entry.drops).map((entry) => entry.where),
+      unrendered: audited.filter((entry) => !entry.rendered).map((entry) => entry.where),
+    },
+    { declared: 3, unnamedAxis: [], stale: [], unrendered: ["field:delete-blocked → data"] },
+  );
+});
+
 /**
  * A verdict is a result, and a result requires a run.
  *
