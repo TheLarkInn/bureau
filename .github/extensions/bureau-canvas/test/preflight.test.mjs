@@ -86,6 +86,13 @@ test("preflight is advisory and orphaning alone does not block", () => {
  * registry rather than restated, so the declared copy and the shipped copy
  * cannot drift apart quietly, and the confirm is held to being withheld on
  * `blocking`, which is what `withheld(S.deleteConfirm)` promises.
+ *
+ * `declaresCopy` is the half that was missing, and it is the half no other test
+ * can supply. `copy` reads `declared.copy.every(...)`, which is vacuously true
+ * of an empty list: emptying the registry's `copy` left this test — the only
+ * holder this value has, since no state renders it — green on 7/7 and the whole
+ * offline suite green on 469. Asserting the list is non-empty first makes the
+ * `every` mean what it says in both directions.
  */
 test("the screen a blocked delete draws is the one the registry declares", async () => {
   const source = (await readFile(new URL("../web/app.mjs", import.meta.url), "utf8")).replace(/\s+/gu, " ");
@@ -93,10 +100,11 @@ test("the screen a blocked delete draws is the one the registry declares", async
 
   assert.deepEqual(
     {
+      declaresCopy: declared.copy.length > 0,
       copy: declared.copy.every((line) => source.includes(JSON.stringify(line))),
       withholdsConfirm: /disabled: preflight\.blocking/u.test(source),
       blocks: blocksDelete([{ severity: "referrer" }]),
     },
-    { copy: true, withholdsConfirm: true, blocks: true },
+    { declaresCopy: true, copy: true, withholdsConfirm: true, blocks: true },
   );
 });
