@@ -1034,7 +1034,8 @@
       }
       .route-identity {
         display: flex;
-        align-items: center;
+        flex-wrap: wrap;
+        align-items: baseline;
         gap: var(--space-2);
         min-width: 0;
       }
@@ -1042,6 +1043,11 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .route-parent {
+        flex-basis: 100%;
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
       }
       .route-transitions {
         display: grid;
@@ -1219,25 +1225,26 @@
         height: 0.65rem;
         border: 2px solid var(--background-color-default, #ffffff);
         background: var(--handle-color, var(--border-color-default, #d0d7de));
-        opacity: 0;
         transition: opacity 120ms ease;
       }
 
-      .flow-handle--success { --handle-color: var(--outcome-success); opacity: 0.55; }
+      .flow-handle--success { --handle-color: var(--outcome-success); }
       .flow-handle--failure { --handle-color: var(--outcome-failure); }
       .flow-handle--blocked { --handle-color: var(--outcome-blocked); }
       .flow-handle--no-work { --handle-color: var(--outcome-no-work); }
       .flow-handle--data { --handle-color: var(--relation-data); }
       .flow-handle--observes { --handle-color: var(--relation-observes); }
       .flow-handle--loop { --handle-color: var(--outcome-failure); }
-      .react-flow__node:hover .flow-handle,
-      .react-flow__node:focus-within .flow-handle { opacity: 1; }
+      .pipeline-flow[data-mode="design"] .flow-handle { opacity: 0; }
+      .pipeline-flow[data-mode="design"] .flow-handle--success { opacity: 0.55; }
+      .pipeline-flow[data-mode="design"] .react-flow__node:hover .flow-handle,
+      .pipeline-flow[data-mode="design"] .react-flow__node:focus-within .flow-handle { opacity: 1; }
 
       .react-flow__edge-path { stroke-width: 2.4; }
-      .flow-edge--success { opacity: 0.9; }
-      .flow-edge--failure,
-      .flow-edge--blocked,
-      .flow-edge--no-work { opacity: 0.1; }
+      .pipeline-flow[data-mode="design"] .flow-edge--success { opacity: 0.9; }
+      .pipeline-flow[data-mode="design"] .flow-edge--failure,
+      .pipeline-flow[data-mode="design"] .flow-edge--blocked,
+      .pipeline-flow[data-mode="design"] .flow-edge--no-work { opacity: 0.1; }
       .react-flow__edge {
         transition: opacity 120ms ease;
       }
@@ -1258,7 +1265,6 @@
         color: var(--text-color-muted, #656d76);
         font: 700 0.72rem/1 var(--font-mono, SFMono-Regular, Consolas, monospace);
         letter-spacing: 0.01em;
-        opacity: 0;
         text-shadow:
           0 1px 0 var(--background-color-default, #ffffff),
           1px 0 0 var(--background-color-default, #ffffff),
@@ -1266,6 +1272,7 @@
           -1px 0 0 var(--background-color-default, #ffffff);
         pointer-events: none;
       }
+      .pipeline-flow[data-mode="design"] .edge-caption { opacity: 0; }
 
       .react-flow__minimap { background: var(--background-color-default, #ffffff); border: 1px solid var(--border-color-default, #d0d7de); }
       .react-flow__controls { box-shadow: none; border: 1px solid var(--border-color-default, #d0d7de); }

@@ -1572,8 +1572,8 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   };
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
-    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
-    [pipeline, state, selectedStep, active?.decoration],
+    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null, mode === "design"),
+    [pipeline, state, selectedStep, active?.decoration, mode],
   );
   if (state.selectedPipeline.missing) {
     return h(MissingPipeline, { notice: state.selectedPipeline.notice, name });
@@ -1635,6 +1635,7 @@ function DesignSurfaceSwitcher({ value, onChange }) {
       type: "button",
       role: "tab",
       "aria-selected": value === option,
+      "data-testid": `design-surface-${option}`,
       className: value === option ? "design-surface-tab design-surface-tab--active" : "design-surface-tab",
       onClick: () => onChange(option),
     }, option)));
@@ -1675,7 +1676,8 @@ function RouteRow({ row, index, targeted, expanded, onTarget, onToggle }) {
     h("button", { className: "route-step", type: "button", "aria-expanded": expanded, onClick: onToggle },
       h("span", { className: "route-index" }, String(index + 1).padStart(2, "0")),
       h("div", { className: "route-identity" },
-        h("strong", {}, row.name))),
+        h("strong", {}, row.name),
+        row.parent ? h("span", { className: "route-parent" }, `member of ${row.parent}`) : null)),
     h("div", { className: "route-transitions" },
       row.success.map((route) => h(RouteLine, { key: `success:${route.target}`, route, primary: true, onTarget })),
       row.exceptions.map((route) => h(RouteLine, { key: `${route.outcomes.join(":")}:${route.target}`, route, onTarget }))),
@@ -1768,6 +1770,7 @@ function routeRows(pipeline, state) {
       kind: step.kind,
       name: step.name,
       step,
+      parent: step.parentId ? names.get(step.parentId) ?? step.parentId : null,
       success: groupRoutes(edges.filter((edge) => edge.outcome === "success"), names, links, order, index),
       exceptions: groupRoutes(edges.filter((edge) => edge.outcome !== "success"), names, links, order, index),
     };
@@ -1846,18 +1849,17 @@ function stepLogProps(state, pipeline, active, selectedStep) {
   };
 }
 
-function toFlow(pipeline, state, selectedStep, decoration = null) {
+function toFlow(pipeline, state, selectedStep, decoration = null, compact = true) {
   const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
   const handles = pipeline?.handles ?? { items: {}, edges: {} };
   // graph-overlays: live/replay restyle the static layout; hidden members
   // collapse into their group node and their edges remap onto it.
   const resolved = decoration ? resolveOverlay(pipeline, decoration.overlay, decoration) : null;
-  const compact = resolved == null;
   const visible = new Set((resolved?.nodes ?? layout.steps).map((node) => node.id));
   const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame, compact));
   const steps = layout.steps
     .filter((step) => visible.has(step.id))
-    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved));
+    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved, compact));
   const labels = labelsForPipeline(state, layout.name);
   const terminals = layout.terminals.map((terminal, index) =>
     flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name], index, compact));
@@ -1915,11 +1917,11 @@ function flowFrame(frame, compact) {
   };
 }
 
-function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
+function flowStep(step, state, pipelineName, handles, selectedStep, resolved, compact) {
   const ref = `pipeline:${pipelineName}/${step.name}`;
   const node = resolved?.nodes.find((item) => item.id === step.id) ?? null;
-  const xScale = resolved ? 1 : FLOW_X_SCALE;
-  const yScale = resolved ? 1 : FLOW_Y_SCALE;
+  const xScale = compact ? FLOW_X_SCALE : 1;
+  const yScale = compact ? FLOW_Y_SCALE : 1;
   return {
     id: step.id,
     type: "stepCard",
@@ -1936,7 +1938,7 @@ function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
       members: memberRows(resolved, step),
       onToggleGroup: resolved?.onToggleGroup ?? null,
     },
-    style: { width: resolved ? CARD_WIDTH : COMPACT_CARD_WIDTH },
+    style: { width: compact ? COMPACT_CARD_WIDTH : CARD_WIDTH },
     draggable: false,
   };
 }

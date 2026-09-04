@@ -75,7 +75,10 @@ const surface = {
       // first `/runs` read resolves. Every mode asserts that attribute, and
       // design is reached without a click of its own, so the settle is waited
       // for here — once, on the surface all three modes are entered from.
-      enter: [{ op: "wait", selector: S.liveCountSettled }],
+      enter: [
+        { op: "wait", selector: S.liveCountSettled },
+        { op: "click", selector: S.pipelineSurfaceGraph },
+      ],
       /*
        * The two ways off this surface are promised here, and they were promised
        * nowhere: `S.pipelineBack` and `S.pipelineEditLink` were defined in
@@ -91,6 +94,7 @@ const surface = {
       id: "editor",
       summary: "editor.html — the pipeline editor and the relation graph",
       page: "editor",
+      enter: [{ op: "click", selector: S.editorSurfaceGraph }],
       // `S.editorBack` for the same reason as the viewer's pair: this page is
       // entered from the landing and the header button is the only way back, so
       // a state that does not require it cannot notice the way out going away.

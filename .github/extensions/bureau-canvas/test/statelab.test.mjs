@@ -156,10 +156,10 @@ test("every count the branch reports about itself is what the registry holds", (
       matrixStates: 221,
       probes: 51,
       states: 272,
-      transitions: 153,
-      entryTransitions: 108,
-      returnTransitions: 45,
-      roots: 164,
+      transitions: 149,
+      entryTransitions: 106,
+      returnTransitions: 43,
+      roots: 166,
       renders: 544,
     },
   );
@@ -647,7 +647,7 @@ test("no state is a root merely for how it spelled its fixture", async () => {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 100, probe: 16, landing: 36, "fixture-differs": 8 };
+const ROOT_TALLY = { boot: 4, intercepted: 100, probe: 18, landing: 23, "fixture-differs": 21 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
