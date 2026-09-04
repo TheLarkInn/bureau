@@ -5,6 +5,11 @@
 
 import { test, expect } from "../fixtures.mjs";
 
+async function openGraph(card) {
+  await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+  await card.page.getByRole("tab", { name: "Graph" }).click();
+}
+
 test.describe("pipeline owns execution details", () => {
   test("the assignment overview omits scaffold-only role and verify rows", async ({ card }) => {
     const labels = await card.page.locator(".assignment-detail > .detail-row > .detail-label").allTextContents();
@@ -19,7 +24,7 @@ test.describe("pipeline owns execution details", () => {
   });
 
   test("agent roles are visible on the pipeline steps that actually use them", async ({ card }) => {
-    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await openGraph(card);
     const nodes = card.page.locator(".flow-card");
 
     await expect(nodes.filter({ hasText: "implement" })).toContainText("role: implementer");
@@ -33,7 +38,7 @@ test.describe("pipeline owns execution details", () => {
   });
 
   test("the pipeline viewer names terminal effects in human language", async ({ card }) => {
-    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await openGraph(card);
 
     await expect(card.page.locator(".terminal-pill--done")).toContainText("Publish");
     await expect(card.page.locator(".terminal-pill--escalate")).toContainText("Needs human");
@@ -42,7 +47,7 @@ test.describe("pipeline owns execution details", () => {
   });
 
   test("terminal cards are visible and occupy distinct positions", async ({ card }) => {
-    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await openGraph(card);
     const positions = await card.page.locator(".terminal-pill").evaluateAll((items) =>
       items.map((item) => {
         const box = item.getBoundingClientRect();
@@ -54,11 +59,22 @@ test.describe("pipeline owns execution details", () => {
 
   test("compact pipeline view keeps the graph and side panel on screen", async ({ card }) => {
     await card.page.setViewportSize({ width: 800, height: 900 });
-    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await openGraph(card);
 
     await expect(card.page.locator(".pipeline-flow")).toBeVisible();
     await expect(card.page.locator(".side-panel")).toBeVisible();
     expect(await card.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
+  test("compact pipeline view leaves an outer page gutter", async ({ card }) => {
+    await card.page.setViewportSize({ width: 800, height: 900 });
+    await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    const gutter = await card.page.locator(".view-shell--pipeline").evaluate((shell) => {
+      const style = getComputedStyle(shell);
+      return [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft];
+    });
+
+    expect(gutter).toEqual(["36px", "36px", "36px", "36px"]);
   });
 
   test("the pipeline viewer returns to assignments with consistent copy", async ({ card }) => {

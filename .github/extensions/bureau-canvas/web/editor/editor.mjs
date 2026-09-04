@@ -49,6 +49,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const [saveResult, setSaveResult] = useState(null);
   const [saving, setSaving] = useState(false);
   const [flowApi, setFlowApi] = useState(null);
+  const [surface, setSurface] = useState("transitions");
 
   const view = useMemo(() => draft ?? editableView(pipeline?.view), [draft, pipeline]);
   const hints = useMemo(() => problems(view), [view]);
@@ -138,51 +139,55 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       onSave: saveCurrent,
       onDiscard: discard,
       onAdd: (kind) => addStep(name, view, kind, edit, setSelected),
+      surface,
+      onSurface: setSurface,
     }),
     h(
       "div",
       { className: "editor-main" },
-      h(
-        "div",
-        { className: "editor-flow", "data-graph-edges": String(flow.declared) },
-        h(
-          ReactFlow,
-          {
-            nodes: flow.nodes,
-            edges: flow.edges,
-            nodeTypes: NODE_TYPES,
-            edgeTypes: EDGE_TYPES,
-            fitView: true,
-            fitViewOptions: { padding: 0.22 },
-            minZoom: 0.2,
-            maxZoom: 1.5,
-            onInit: setFlowApi,
-            deleteKeyCode: null,
-            proOptions: { hideAttribution: true },
-            onNodeClick: (_, node) => {
-              if (node.type === "stepNode") {
-                setSelected(node.id);
-              }
+      surface === "transitions"
+        ? h(TransitionEditor, { view, selected, onChange: edit, onSelect: setSelected })
+        : h(
+          "div",
+          { className: "editor-flow", "data-graph-edges": String(flow.declared) },
+          h(
+            ReactFlow,
+            {
+              nodes: flow.nodes,
+              edges: flow.edges,
+              nodeTypes: NODE_TYPES,
+              edgeTypes: EDGE_TYPES,
+              fitView: true,
+              fitViewOptions: { padding: 0.22 },
+              minZoom: 0.2,
+              maxZoom: 1.5,
+              onInit: setFlowApi,
+              deleteKeyCode: null,
+              proOptions: { hideAttribution: true },
+              onNodeClick: (_, node) => {
+                if (node.type === "stepNode") {
+                  setSelected(node.id);
+                }
+              },
+              onNodeKeyDown: (event, node) => {
+                if (node.type === "stepNode" && (event.key === "Enter" || event.key === " ")) {
+                  event.preventDefault();
+                  setSelected(node.id);
+                }
+              },
+              onNodeDragStop: (_, node) => {
+                setPositions((current) => ({ ...current, [node.id]: { x: Math.round(node.position.x), y: Math.round(node.position.y) } }));
+                setLayoutDirty(true);
+                setSaveResult(null);
+              },
+              onConnect: (connection) => connect(view, connection, edit),
             },
-            onNodeKeyDown: (event, node) => {
-              if (node.type === "stepNode" && (event.key === "Enter" || event.key === " ")) {
-                event.preventDefault();
-                setSelected(node.id);
-              }
-            },
-            onNodeDragStop: (_, node) => {
-              setPositions((current) => ({ ...current, [node.id]: { x: Math.round(node.position.x), y: Math.round(node.position.y) } }));
-              setLayoutDirty(true);
-              setSaveResult(null);
-            },
-            onConnect: (connection) => connect(view, connection, edit),
-          },
-          h(Background, { gap: 24, size: 1.5 }),
-          h(Controls),
-          h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
-          h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
+            h(Background, { gap: 24, size: 1.5 }),
+            h(Controls),
+            h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
+            h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
+          ),
         ),
-      ),
       h(SidePanel, {
         view,
         step: selectedStep,
@@ -215,6 +220,65 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       }),
     ),
   );
+}
+
+function TransitionEditor({ view, selected, onChange, onSelect }) {
+  return h("div", { className: "transition-editor" },
+    h("table", { className: "transition-table" },
+      h("thead", {}, h("tr", {},
+        h("th", { scope: "col" }, "Step"),
+        OUTCOMES.map((outcome) => h("th", { key: outcome, scope: "col" }, outcome)))),
+      h("tbody", {}, view.steps.map((step, index) =>
+        h(TransitionRow, { key: step.name, view, step, index, selected: selected === step.name, onChange, onSelect })))));
+}
+
+function TransitionRow({ view, step, index, selected, onChange, onSelect }) {
+  const selectRow = (event) => {
+    if (!event.target.closest("select")) {
+      onSelect(step.name);
+    }
+  };
+  return h("tr", {
+    className: `transition-row transition-row--${step.kind}${selected ? " is-selected" : ""}`,
+    onClick: selectRow,
+  },
+    h("th", { scope: "row" },
+      h("button", { type: "button", className: "transition-step", "data-ref": step.name, "aria-label": `${step.name}, ${step.kind} step` },
+        h("span", { className: "transition-index" }, String(index + 1).padStart(2, "0")),
+        h("strong", {}, step.name))),
+    OUTCOMES.map((outcome) => h("td", { key: outcome },
+      h(TransitionSelect, { view, step, outcome, onChange }))));
+}
+
+function TransitionSelect({ view, step, outcome, onChange }) {
+  const target = transitionTarget(view, step, outcome);
+  const valid = !target || validTarget(view, target);
+  return h("select", {
+    className: `form-control form-select transition-select${valid ? "" : " form-control--invalid"}`,
+    "aria-label": `${step.name} ${outcome} destination`,
+    "aria-invalid": valid ? undefined : "true",
+    value: target ?? "",
+    onChange: (event) => onChange(setTransition(view, step, outcome, event.target.value)),
+  },
+  h("option", { value: "" }, step.kind === "decision" ? "Choose destination" : "abort (default)"),
+  valid ? null : h("option", { value: target }, `Unknown target: ${target}`),
+  view.steps.filter((candidate) => candidate.name !== step.name).map((candidate) =>
+    h("option", { key: candidate.name, value: candidate.name }, candidate.name)),
+  TERMINALS.map((terminal) =>
+    h("option", { key: terminal, value: terminal }, terminalOption(terminal))));
+}
+
+function transitionTarget(view, step, outcome) {
+  return step.kind === "decision"
+    ? step.fields.on?.[outcome] ?? ""
+    : edgeTarget(view, step.name, outcome) ?? "";
+}
+
+function setTransition(view, step, outcome, target) {
+  if (step.kind === "decision") {
+    return setField(view, step.name, "on", { ...(step.fields.on ?? {}), [outcome]: target });
+  }
+  return setEdge(view, step.name, outcome, target || null);
 }
 
 /** The server's pipeline view, lifted into editable form (per-step outgoing). */
@@ -488,12 +552,23 @@ function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
 
 // --- toolbar + side panel ---
 
-function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSave, onDiscard, onAdd }) {
+function EditorToolbar({ dirty, hints, saveResult, invalidNumbers, saving, onSave, onDiscard, onAdd, surface, onSurface }) {
   const [kind, setKind] = useState("deterministic");
   return h(
     "div",
     { className: "editor-toolbar" },
-    h("h2", {}, "Steps"),
+    h("span", { className: "editor-toolbar-title" },
+      h("h2", {}, "Steps"),
+      h("span", { className: "editor-surface-switcher", role: "tablist", "aria-label": "Pipeline editor view" },
+        ["transitions", "graph"].map((option) => h("button", {
+          key: option,
+          type: "button",
+          role: "tab",
+          "aria-selected": surface === option,
+          "data-testid": `editor-surface-${option}`,
+          className: `editor-surface-tab${surface === option ? " is-active" : ""}`,
+          onClick: () => onSurface(option),
+        }, option)))),
     h(
       "span",
       { className: "editor-toolbar-add" },

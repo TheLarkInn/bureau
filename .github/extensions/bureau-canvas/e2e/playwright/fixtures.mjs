@@ -185,6 +185,7 @@ export const test = base.extend({
     await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
     await page.getByRole("link", { name: "Edit" }).click();
     await page.locator(".editor-shell").waitFor();
+    await page.getByRole("tab", { name: "Graph" }).click();
     await use({ page, errors });
   },
 });

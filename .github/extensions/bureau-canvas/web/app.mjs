@@ -31,6 +31,10 @@ import { sessionValue, storeSessionValue } from "./session-state.js";
 const h = React.createElement;
 const CARD_WIDTH = 240;
 const CARD_HEIGHT = 112;
+const COMPACT_CARD_WIDTH = 200;
+const COMPACT_CARD_HEIGHT = 72;
+const FLOW_X_SCALE = 0.7;
+const FLOW_Y_SCALE = 0.44;
 const CONFIG_PAD = 72;
 const FRAME_PAD = 34;
 const flowItemTypes = {
@@ -1546,6 +1550,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
     const stored = sessionValue("pipeline-mode", "design");
     return MODES.includes(stored) ? stored : "design";
   });
+  const [designSurface, setDesignSurface] = useState("transitions");
   useEffect(() => storeSessionValue("pipeline-mode", mode), [mode]);
   const activity = useRunActivity(name, state.config?.view?.assignments ?? []);
   const replay = useReplayOverlay(activity, name);
@@ -1567,8 +1572,8 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   };
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
-    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null),
-    [pipeline, state, selectedStep, active?.decoration],
+    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null, mode === "design"),
+    [pipeline, state, selectedStep, active?.decoration, mode],
   );
   if (state.selectedPipeline.missing) {
     return h(MissingPipeline, { notice: state.selectedPipeline.notice, name });
@@ -1588,35 +1593,226 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
           h("h2", {}, name),
           h(ModeSwitcher, { mode, onMode: leaveLive, activity }),
+          mode === "design" ? h(DesignSurfaceSwitcher, { value: designSurface, onChange: setDesignSurface }) : null,
           h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
           active?.controls ?? null,
         ),
         mode === "live" ? h(LiveActivity, { activity, runId: live.runId }) : null,
       ),
-      h(
-        "div",
-        { className: "pipeline-flow", "data-graph-edges": String(flow.declared) },
-        h(ReactFlow, {
-          nodes: flow.nodes,
-          edges: flow.edges,
-          nodeTypes: flowItemTypes,
-          edgeTypes: flowEdgeTypes,
-          fitView: true,
-          fitViewOptions: { padding: 0.22 },
-          minZoom: 0.2,
-          maxZoom: 1.5,
-          nodesDraggable: false,
-          nodesConnectable: false,
-          elementsSelectable: true,
-          proOptions: { hideAttribution: true },
-          onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
-        }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
-      ),
+      mode === "design" && designSurface === "transitions"
+        ? h(PipelineRouteView, { pipeline, state })
+        : h(
+          "div",
+          { className: "pipeline-flow", "data-graph-edges": String(flow.declared), "data-mode": mode },
+          h(ReactFlow, {
+            key: `${mode}:${active?.decoration ? "resolved" : "pending"}`,
+            nodes: flow.nodes,
+            edges: flow.edges,
+            nodeTypes: flowItemTypes,
+            edgeTypes: flowEdgeTypes,
+            fitView: true,
+            fitViewOptions: { padding: 0.22 },
+            minZoom: 0.2,
+            maxZoom: 1.5,
+            nodesDraggable: false,
+            nodesConnectable: false,
+            elementsSelectable: true,
+            proOptions: { hideAttribution: true },
+            onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
+          }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
+        ),
       // graph-overlays: a run's steps left output; design mode has no run.
       active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,
     ),
     h(SidePanel, { state, pipeline, name }),
   );
+}
+
+function DesignSurfaceSwitcher({ value, onChange }) {
+  return h("div", { className: "design-surface-switcher", role: "tablist", "aria-label": "Design view" },
+    ["transitions", "graph"].map((option) => h("button", {
+      key: option,
+      type: "button",
+      role: "tab",
+      "aria-selected": value === option,
+      "data-testid": `design-surface-${option}`,
+      className: value === option ? "design-surface-tab design-surface-tab--active" : "design-surface-tab",
+      onClick: () => onChange(option),
+    }, option)));
+}
+
+function PipelineRouteView({ pipeline, state }) {
+  const rows = routeRows(pipeline, state);
+  const [hoveredTarget, setHoveredTarget] = useState(null);
+  const [openSteps, setOpenSteps] = useState(() => new Set());
+  return h("section", { className: "pipeline-routes", "aria-label": "Pipeline routes" },
+    h("div", { className: "route-heading" },
+      h("span", {}, "Step"),
+      h("span", {}, "Transitions")),
+    h("ol", { className: "route-list" }, rows.map((row, index) => h(RouteRow, {
+      key: row.id,
+      row,
+      index,
+      targeted: hoveredTarget === row.id,
+      expanded: openSteps.has(row.id),
+      onTarget: setHoveredTarget,
+      onToggle: () => setOpenSteps((current) => toggledStep(current, row.id)),
+    }))));
+}
+
+function toggledStep(current, step) {
+  const next = new Set(current);
+  if (next.has(step)) {
+    next.delete(step);
+  } else {
+    next.add(step);
+  }
+  return next;
+}
+
+function RouteRow({ row, index, targeted, expanded, onTarget, onToggle }) {
+  const className = `route-row route-row--${row.kind}${targeted ? " is-targeted" : ""}${expanded ? " is-expanded" : ""}`;
+  return h("li", { className },
+    h("button", { className: "route-step", type: "button", "aria-expanded": expanded, onClick: onToggle },
+      h("span", { className: "route-index" }, String(index + 1).padStart(2, "0")),
+      h("div", { className: "route-identity" },
+        h("strong", {}, row.name),
+        row.parent ? h("span", { className: "route-parent" }, `member of ${row.parent}`) : null)),
+    h("div", { className: "route-transitions" },
+      row.success.map((route) => h(RouteLine, { key: `success:${route.target}`, route, primary: true, onTarget })),
+      row.exceptions.map((route) => h(RouteLine, { key: `${route.outcomes.join(":")}:${route.target}`, route, onTarget }))),
+    expanded ? h(StepInspector, { row }) : null);
+}
+
+function StepInspector({ row }) {
+  const step = row.step;
+  const details = [
+    ...inspectorKindDetails(step),
+    step.fields.inputsFrom?.length ? ["data inputs", step.fields.inputsFrom.join(", ")] : null,
+    ["attempts", String(step.fields.maxAttempts ?? 1)],
+  ].filter(Boolean);
+  return h("section", { className: "route-inspector", "aria-label": `${step.name} step details` },
+    h("div", { className: "route-inspector-head" },
+      h("div", {}, h("h3", {}, step.name), h("span", { className: `kind-label kind-label--${step.kind}` }, step.kind))),
+    h("dl", { className: "route-inspector-details" }, details.flatMap(([label, value]) => [
+      h("dt", { key: `${label}:label` }, label),
+      h("dd", { key: `${label}:value` }, value),
+    ])));
+}
+
+function inspectorKindDetails(step) {
+  const fields = step.fields ?? {};
+  if (step.kind === "deterministic") {
+    return [["run", fields.run ?? "not configured"]];
+  }
+  if (step.kind === "agent") {
+    return [["role", fields.role ?? "not configured"], ["minimum trust", fields.trust ?? "inherit from role"]];
+  }
+  if (step.kind === "decision") {
+    return [["observe step", fields.over ?? "not configured"]];
+  }
+  return [
+    ["members", (fields.members ?? []).join(", ") || "none"],
+    ["completion", fields.completion ?? "all"],
+    ["maximum concurrent members", String(fields.maxConcurrent ?? "unlimited")],
+  ];
+}
+
+function RouteLine({ route, primary = false, onTarget }) {
+  const highlight = () => onTarget(route.targetId);
+  const clear = () => onTarget(null);
+  return h("div", {
+    className: primary ? "route-line route-line--primary" : "route-line",
+    onPointerEnter: highlight,
+    onPointerLeave: clear,
+    onFocus: highlight,
+    onBlur: clear,
+  },
+    h("span", { className: "route-outcomes" }, route.outcomes.map((outcome) =>
+      h("span", { key: outcome, className: `route-outcome route-outcome--${outcome}` }, outcome))),
+    h(RouteArrow, { back: route.back }),
+    route.href
+      ? h("a", { className: "route-target route-target--link", href: route.href, target: "_blank", rel: "noreferrer" }, route.target)
+      : h("span", { className: "route-target" }, route.target));
+}
+
+function RouteArrow({ back }) {
+  const children = back
+    ? [
+        h("path", { key: "turn", d: "M6.5 4.25 3.25 7.5l3.25 3.25" }),
+        h("path", { key: "line", d: "M3.5 7.5h5a4 4 0 0 1 4 4" }),
+      ]
+    : [
+        h("path", { key: "line", d: "M2.5 8h10" }),
+        h("path", { key: "tip", d: "m9 4.5 3.5 3.5L9 11.5" }),
+      ];
+  return h("svg", {
+    className: "route-arrow-icon",
+    viewBox: "0 0 16 16",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.5",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": "true",
+  }, children);
+}
+
+function routeRows(pipeline, state) {
+  const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
+  const names = routeNames(layout);
+  const links = terminalLinks(state, layout.name);
+  const order = new Map(layout.steps.map((step, index) => [step.id, index]));
+  return layout.steps.map((step, index) => {
+    const edges = layout.edges.filter((edge) => edge.relation === "control" && edge.source === step.id);
+    return {
+      id: step.id,
+      kind: step.kind,
+      name: step.name,
+      step,
+      parent: step.parentId ? names.get(step.parentId) ?? step.parentId : null,
+      success: groupRoutes(edges.filter((edge) => edge.outcome === "success"), names, links, order, index),
+      exceptions: groupRoutes(edges.filter((edge) => edge.outcome !== "success"), names, links, order, index),
+    };
+  });
+}
+
+function routeNames(layout) {
+  const names = new Map(layout.steps.map((step) => [step.id, step.name]));
+  for (const terminal of layout.terminals) {
+    names.set(terminal.id, terminalCopy(terminal.name).label);
+  }
+  return names;
+}
+
+function terminalLinks(state, pipeline) {
+  const assignments = (state.config?.view?.assignments ?? [])
+    .filter((assignment) => assignment.pipeline === pipeline && assignment.work?.forge === "github");
+  const urls = assignments
+    .filter((assignment) => /^[^/]+\/[^/]+$/u.test(assignment.work?.source ?? "") && assignment.work?.escalateLabel)
+    .map((assignment) => {
+      const query = encodeURIComponent(`is:issue is:open label:"${assignment.work.escalateLabel}"`);
+      return `https://github.com/${assignment.work.source}/issues?q=${query}`;
+    });
+  return new Map(new Set(urls).size === 1 ? [["terminal:escalate", urls[0]]] : []);
+}
+
+function groupRoutes(edges, names, links, order, sourceIndex) {
+  const groups = new Map();
+  for (const edge of edges) {
+    const target = names.get(edge.target) ?? edge.target;
+    const current = groups.get(target) ?? {
+      target,
+      targetId: edge.target,
+      outcomes: [],
+      back: false,
+      href: links.get(edge.target),
+    };
+    current.outcomes.push(edge.outcome ?? edge.relation);
+    current.back ||= (order.get(edge.target) ?? Number.POSITIVE_INFINITY) <= sourceIndex;
+    groups.set(target, current);
+  }
+  return [...groups.values()];
 }
 
 /**
@@ -1653,20 +1849,20 @@ function stepLogProps(state, pipeline, active, selectedStep) {
   };
 }
 
-function toFlow(pipeline, state, selectedStep, decoration = null) {
+function toFlow(pipeline, state, selectedStep, decoration = null, compact = true) {
   const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
   const handles = pipeline?.handles ?? { items: {}, edges: {} };
   // graph-overlays: live/replay restyle the static layout; hidden members
   // collapse into their group node and their edges remap onto it.
   const resolved = decoration ? resolveOverlay(pipeline, decoration.overlay, decoration) : null;
   const visible = new Set((resolved?.nodes ?? layout.steps).map((node) => node.id));
-  const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame));
+  const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame, compact));
   const steps = layout.steps
     .filter((step) => visible.has(step.id))
-    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved));
+    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved, compact));
   const labels = labelsForPipeline(state, layout.name);
-  const terminals = layout.terminals.map((terminal) =>
-    flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name]));
+  const terminals = layout.terminals.map((terminal, index) =>
+    flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name], index, compact));
   const backIndexes = routeIndexes(layout.edges, "back");
   const planned = overlayPlan(layout.edges, resolved);
   const sources = [...(pipeline?.containers ?? []), ...layout.steps.filter((step) => visible.has(step.id)), ...layout.terminals];
@@ -1701,26 +1897,35 @@ function overlayPlan(edges, resolved) {
   return planned;
 }
 
-function flowFrame(frame) {
+function flowFrame(frame, compact) {
+  const xScale = compact ? FLOW_X_SCALE : 1;
+  const yScale = compact ? FLOW_Y_SCALE : 1;
+  const cardWidth = compact ? COMPACT_CARD_WIDTH : CARD_WIDTH;
+  const cardHeight = compact ? COMPACT_CARD_HEIGHT : CARD_HEIGHT;
   return {
     id: frame.id,
     type: "concurrentFrame",
-    position: { x: frame.x - FRAME_PAD, y: frame.y - FRAME_PAD },
+    position: { x: frame.x * xScale - FRAME_PAD, y: frame.y * yScale - FRAME_PAD },
     data: { frame },
-    style: { width: frame.width + CARD_WIDTH + FRAME_PAD * 2, height: frame.height + CARD_HEIGHT + FRAME_PAD * 2 },
+    style: {
+      width: frame.width * xScale + cardWidth + FRAME_PAD * 2,
+      height: frame.height * yScale + cardHeight + FRAME_PAD * 2,
+    },
     selectable: false,
     draggable: false,
     zIndex: -1,
   };
 }
 
-function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
+function flowStep(step, state, pipelineName, handles, selectedStep, resolved, compact) {
   const ref = `pipeline:${pipelineName}/${step.name}`;
   const node = resolved?.nodes.find((item) => item.id === step.id) ?? null;
+  const xScale = compact ? FLOW_X_SCALE : 1;
+  const yScale = compact ? FLOW_Y_SCALE : 1;
   return {
     id: step.id,
     type: "stepCard",
-    position: { x: step.x, y: step.y },
+    position: { x: step.x * xScale, y: step.y * yScale },
     data: {
       step,
       handles: handles ?? emptyHandles(),
@@ -1733,7 +1938,7 @@ function flowStep(step, state, pipelineName, handles, selectedStep, resolved) {
       members: memberRows(resolved, step),
       onToggleGroup: resolved?.onToggleGroup ?? null,
     },
-    style: { width: CARD_WIDTH },
+    style: { width: compact ? COMPACT_CARD_WIDTH : CARD_WIDTH },
     draggable: false,
   };
 }
@@ -1747,13 +1952,15 @@ function memberRows(resolved, step) {
   return Object.entries(members).map(([name, record]) => ({ name, ...record }));
 }
 
-function flowTerminal(terminal, handles, label) {
+function flowTerminal(terminal, handles, label, index, compact) {
+  const xScale = compact ? FLOW_X_SCALE : 1;
+  const y = compact ? terminal.y * FLOW_Y_SCALE + index * 48 + 18 : terminal.y + 26;
   return {
     id: terminal.id,
     type: "terminalPill",
-    position: { x: terminal.x, y: terminal.y + 26 },
+    position: { x: terminal.x * xScale, y },
     data: { terminal, handles: handles ?? emptyHandles(), label },
-    style: { width: 176 },
+    style: { width: compact ? 160 : 176 },
     draggable: false,
   };
 }
