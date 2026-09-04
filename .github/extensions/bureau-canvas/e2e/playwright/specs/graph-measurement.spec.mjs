@@ -42,6 +42,7 @@ test.describe("graph measurement", () => {
     await page.locator(".assignment-head").first().click();
     await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
     await page.getByRole("link", { name: "Edit" }).click();
+    await page.getByRole("tab", { name: "Graph" }).click();
 
     await expect(page.locator('[data-ref="verify"]')).toBeVisible();
   });
@@ -51,6 +52,7 @@ test.describe("graph measurement", () => {
     await page.goto(canvas.url);
     await page.locator(".assignment-head").first().click();
     await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+    await page.getByRole("tab", { name: "Graph" }).click();
 
     await expect(page.locator(".pipeline-flow .react-flow__node").first()).toBeVisible();
   });

@@ -105,6 +105,26 @@
       }
       .editor-toolbar-add { display: flex; align-items: center; gap: var(--space-2); }
       .editor-toolbar-actions { display: flex; align-items: center; gap: var(--space-3); justify-self: end; }
+      .editor-toolbar-title { display: flex; align-items: center; gap: var(--space-3); }
+      .editor-surface-switcher {
+        display: inline-flex;
+        overflow: hidden;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+      }
+      .editor-surface-tab {
+        border: 0;
+        padding: var(--space-1) var(--space-2);
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-muted, #656d76);
+        cursor: pointer;
+        text-transform: capitalize;
+      }
+      .editor-surface-tab.is-active {
+        background: var(--surface-active);
+        color: var(--text-color-default, #1f2328);
+        font-weight: 600;
+      }
       .editor-status { color: var(--text-color-muted, #656d76); white-space: nowrap; }
       .editor-status--hints { color: var(--outcome-blocked); }
       /*
@@ -123,6 +143,82 @@
         min-height: 0;
       }
       .editor-flow { min-width: 0; min-height: 0; background: var(--background-color-default, #ffffff); }
+      .transition-editor {
+        min-width: 0;
+        overflow: auto;
+        background: var(--background-color-default, #ffffff);
+      }
+      .transition-table {
+        width: 100%;
+        min-width: 54rem;
+        border-collapse: collapse;
+      }
+      .transition-table th,
+      .transition-table td {
+        padding: var(--space-2);
+        border-right: 1px solid var(--border-color-default, #d0d7de);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+        text-align: left;
+        vertical-align: middle;
+      }
+      .transition-table th:last-child,
+      .transition-table td:last-child { border-right: 0; }
+      .transition-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: var(--surface-subtle);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+        text-transform: capitalize;
+      }
+      .transition-table tbody th {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        min-width: 13rem;
+        background: var(--background-color-default, #ffffff);
+      }
+      .transition-row {
+        --row-accent: var(--text-color-muted, #656d76);
+        cursor: pointer;
+      }
+      .transition-row--deterministic { --row-accent: var(--kind-deterministic); }
+      .transition-row--agent { --row-accent: var(--kind-agent); }
+      .transition-row--decision { --row-accent: var(--kind-decision); }
+      .transition-row--concurrent { --row-accent: var(--kind-concurrent); }
+      .transition-row th:first-child {
+        border-left: 4px solid var(--row-accent);
+      }
+      .transition-row:hover th,
+      .transition-row:hover td,
+      .transition-row.is-selected th,
+      .transition-row.is-selected td {
+        background: var(--surface-subtle);
+      }
+      .transition-step {
+        display: grid;
+        grid-template-columns: 1.5rem minmax(0, 1fr);
+        align-items: center;
+        gap: var(--space-2);
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .transition-index {
+        color: var(--text-color-muted, #656d76);
+        font: 600 var(--text-code-inline, 12px)/1 var(--font-mono, "SFMono-Regular", Consolas, monospace);
+      }
+      .transition-step strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .transition-select { min-width: 9rem; }
       .editor-panel {
         min-width: 0;
         overflow-y: auto;
