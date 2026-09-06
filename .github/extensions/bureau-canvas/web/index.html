@@ -201,7 +201,9 @@
       /* The graph column must be allowed to shrink. A 50rem floor plus the
          19rem side panel needs 1104px, so in the app's side panel the shell
          overflowed and the panel covered the toolbar's right-hand controls. */
-      .view-shell--pipeline {        grid-template-columns: minmax(0, 1fr) 19rem;
+      .view-shell--pipeline {
+        grid-template-columns: minmax(0, 1fr) 19rem;
+        padding: 3rem;
         min-height: 0;
       }
 
@@ -391,6 +393,10 @@
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }
+      .kind-label--deterministic { --accent: var(--kind-deterministic); }
+      .kind-label--agent { --accent: var(--kind-agent); }
+      .kind-label--decision { --accent: var(--kind-decision); }
+      .kind-label--concurrent { --accent: var(--kind-concurrent); }
 
       .detail {
         overflow: hidden;
@@ -927,6 +933,231 @@
         margin-left: auto;
       }
 
+      .design-surface-switcher {
+        display: inline-flex;
+        overflow: hidden;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: 6px;
+      }
+      .design-surface-tab {
+        border: 0;
+        padding: var(--space-1) var(--space-2);
+        background: var(--background-color-default, #ffffff);
+        color: var(--text-color-muted, #656d76);
+        cursor: pointer;
+        text-transform: capitalize;
+      }
+      .design-surface-tab--active {
+        background: var(--surface-subtle, #f6f8fa);
+        color: var(--text-color-default, #1f2328);
+        font-weight: 600;
+      }
+
+      .pipeline-routes {
+        overflow: hidden;
+        border: 1px solid var(--border-color-default, #d0d7de);
+        border-radius: var(--radius);
+        background: var(--background-color-default, #ffffff);
+      }
+      .route-heading,
+      .route-row {
+        display: grid;
+        grid-template-columns: minmax(9rem, 0.8fr) minmax(16rem, 1.2fr);
+        column-gap: var(--space-3);
+        align-items: center;
+      }
+      .route-heading {
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+        background: var(--surface-subtle, #f6f8fa);
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+        font-weight: 600;
+      }
+      .route-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .route-row {
+        --row-accent: var(--text-color-muted, #656d76);
+        min-height: 4.25rem;
+        padding: var(--space-2) var(--space-3);
+        border-left: 4px solid var(--row-accent);
+        border-bottom: 1px solid var(--border-color-default, #d0d7de);
+      }
+      .route-row--deterministic { --row-accent: var(--kind-deterministic); }
+      .route-row--agent { --row-accent: var(--kind-agent); }
+      .route-row--decision { --row-accent: var(--kind-decision); }
+      .route-row--concurrent { --row-accent: var(--kind-concurrent); }
+      .route-row:last-child { border-bottom: 0; }
+      .route-step {
+        position: relative;
+        display: grid;
+        grid-template-columns: 2.25rem minmax(0, 1fr);
+        align-self: stretch;
+        align-items: center;
+        margin-block: calc(-1 * var(--space-2));
+        margin-inline-start: calc(-1 * var(--space-3));
+        padding-block: var(--space-2);
+        padding-inline-start: var(--space-3);
+        border-radius: 2px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition:
+          background 120ms ease,
+          box-shadow 120ms ease,
+          transform 120ms ease;
+      }
+      .route-step:hover,
+      .route-row.is-targeted .route-step {
+        z-index: 1;
+        background: var(--background-color-default, #ffffff);
+        box-shadow:
+          0 0 0 1px color-mix(in srgb, var(--row-accent) 55%, transparent),
+          0 3px 6px 2px color-mix(in srgb, var(--background-color-default, #ffffff) 72%, transparent),
+          0 4px 10px color-mix(in srgb, var(--row-accent) 25%, transparent),
+          0 9px 22px color-mix(in srgb, var(--row-accent) 14%, transparent);
+        transform: translateY(-2px);
+      }
+      .route-step:focus-visible {
+        outline: 2px solid var(--color-focus-outline, #0969da);
+        outline-offset: 2px;
+      }
+      .route-index {
+        color: var(--text-color-muted, #656d76);
+        font: 600 var(--text-code-inline, 12px)/1 var(--font-mono, SFMono-Regular, Consolas, monospace);
+      }
+      .route-identity {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--space-2);
+        min-width: 0;
+      }
+      .route-identity strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .route-parent {
+        flex-basis: 100%;
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+      }
+      .route-transitions {
+        display: grid;
+        gap: var(--space-1);
+        min-width: 0;
+      }
+      .route-line {
+        display: grid;
+        grid-template-columns: 11.5rem 1.25rem minmax(0, 1fr);
+        align-items: center;
+        gap: var(--space-1);
+        min-height: 1.75rem;
+        margin: -0.125rem -0.25rem;
+        padding: 0.125rem 0.25rem;
+        border-radius: 4px;
+        color: var(--text-color-muted, #656d76);
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        transition: background 120ms ease;
+      }
+      .route-line:hover,
+      .route-line:focus-within { background: var(--surface-subtle, #f6f8fa); }
+      .route-line--primary {
+        color: var(--text-color-default, #1f2328);
+      }
+      .route-outcomes {
+        display: flex;
+        flex-wrap: nowrap;
+        justify-content: flex-end;
+        gap: 0 var(--space-1);
+        text-align: right;
+        white-space: nowrap;
+      }
+      .route-outcome + .route-outcome::before {
+        margin-right: var(--space-1);
+        color: var(--text-color-muted, #656d76);
+        content: "·";
+      }
+      .route-outcome--success { color: var(--outcome-success); }
+      .route-outcome--failure { color: var(--outcome-failure); }
+      .route-outcome--blocked { color: var(--outcome-blocked); }
+      .route-outcome--no-work { color: var(--outcome-no-work); }
+      .route-line--primary .route-outcomes {
+        font-weight: 600;
+      }
+      .route-arrow-icon {
+        width: 1rem;
+        height: 1rem;
+        justify-self: center;
+        transition: color 120ms ease, transform 120ms ease;
+      }
+      .route-line:hover .route-arrow-icon,
+      .route-line:focus-within .route-arrow-icon {
+        color: var(--text-color-default, #1f2328);
+        transform: translateX(2px);
+      }
+      .route-target {
+        overflow: hidden;
+        color: var(--text-color-default, #1f2328);
+        font-size: 0.875rem;
+        font-weight: 600;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .route-target--link {
+        color: var(--color-accent-fg, #0969da);
+        text-decoration: none;
+      }
+      .route-target--link:hover { text-decoration: underline; }
+      .route-line:hover .route-target,
+      .route-line:focus-within .route-target { color: var(--text-color-default, #1f2328); }
+      .route-inspector {
+        grid-column: 1 / -1;
+        display: grid;
+        gap: var(--space-3);
+        margin: var(--space-2) calc(-1 * var(--space-3)) calc(-1 * var(--space-2));
+        padding: var(--space-3);
+        border-top: 1px solid color-mix(in srgb, var(--row-accent) 35%, transparent);
+        background: var(--surface-subtle, #f6f8fa);
+      }
+      .route-inspector-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: var(--space-3);
+      }
+      .route-inspector-head > div {
+        display: grid;
+        gap: var(--space-1);
+      }
+      .route-inspector-details {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: var(--space-1) var(--space-3);
+        margin: 0;
+      }
+      .route-inspector-details dt {
+        color: var(--text-color-muted, #656d76);
+        font-size: var(--text-code-inline, 12px);
+        text-transform: uppercase;
+      }
+      .route-inspector-details dd {
+        min-width: 0;
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-family: var(--font-mono, SFMono-Regular, Consolas, monospace);
+        font-size: var(--text-code-inline, 12px);
+        white-space: pre-wrap;
+      }
+
       .pipeline-flow {
         min-height: 44rem;
         border: 1px solid var(--border-color-default, #d0d7de);
@@ -938,6 +1169,15 @@
       .flow-card {
         width: 15rem;
       }
+      .pipeline-flow[data-mode="design"] .flow-card {
+        gap: var(--space-1);
+        width: 12.5rem;
+        min-height: 4.5rem;
+        padding: var(--space-2);
+      }
+      .pipeline-flow[data-mode="design"] .step-button { gap: var(--space-1); }
+      .pipeline-flow[data-mode="design"] .flow-card .detail,
+      .pipeline-flow[data-mode="design"] .flow-card .chips { display: none; }
 
       .flow-card--deterministic { --accent: var(--kind-deterministic); }
       .flow-card--agent { --accent: var(--kind-agent); }
@@ -947,7 +1187,7 @@
       .flow-card--unreachable { outline: 2px dashed var(--outcome-failure); outline-offset: 4px; }
 
       .terminal-pill {
-        width: 11rem;
+        width: 10rem;
         min-height: auto;
         justify-items: start;
         border-radius: var(--radius);
@@ -985,6 +1225,7 @@
         height: 0.65rem;
         border: 2px solid var(--background-color-default, #ffffff);
         background: var(--handle-color, var(--border-color-default, #d0d7de));
+        transition: opacity 120ms ease;
       }
 
       .flow-handle--success { --handle-color: var(--outcome-success); }
@@ -994,8 +1235,23 @@
       .flow-handle--data { --handle-color: var(--relation-data); }
       .flow-handle--observes { --handle-color: var(--relation-observes); }
       .flow-handle--loop { --handle-color: var(--outcome-failure); }
+      .pipeline-flow[data-mode="design"] .flow-handle { opacity: 0; }
+      .pipeline-flow[data-mode="design"] .flow-handle--success { opacity: 0.55; }
+      .pipeline-flow[data-mode="design"] .react-flow__node:hover .flow-handle,
+      .pipeline-flow[data-mode="design"] .react-flow__node:focus-within .flow-handle { opacity: 1; }
 
       .react-flow__edge-path { stroke-width: 2.4; }
+      .pipeline-flow[data-mode="design"] .flow-edge--success { opacity: 0.9; }
+      .pipeline-flow[data-mode="design"] .flow-edge--failure,
+      .pipeline-flow[data-mode="design"] .flow-edge--blocked,
+      .pipeline-flow[data-mode="design"] .flow-edge--no-work { opacity: 0.1; }
+      .react-flow__edge {
+        transition: opacity 120ms ease;
+      }
+      .react-flow__edge:hover,
+      .react-flow__edge:focus,
+      .react-flow__edge.selected,
+      .react-flow__edge.flow-edge--live { opacity: 1; }
       .flow-edge--success .react-flow__edge-path { stroke: var(--outcome-success); }
       .flow-edge--failure .react-flow__edge-path { stroke: var(--outcome-failure); }
       .flow-edge--blocked .react-flow__edge-path { stroke: var(--outcome-blocked); }
@@ -1016,6 +1272,7 @@
           -1px 0 0 var(--background-color-default, #ffffff);
         pointer-events: none;
       }
+      .pipeline-flow[data-mode="design"] .edge-caption { opacity: 0; }
 
       .react-flow__minimap { background: var(--background-color-default, #ffffff); border: 1px solid var(--border-color-default, #d0d7de); }
       .react-flow__controls { box-shadow: none; border: 1px solid var(--border-color-default, #d0d7de); }
@@ -1238,9 +1495,18 @@
 
       @media (max-width: 56rem) {
         .view-shell { padding: var(--space-3); }
-        .view-shell--pipeline { grid-template-columns: minmax(0, 1fr); }
+        .view-shell--pipeline {
+          grid-template-columns: minmax(0, 1fr);
+          padding: calc(var(--space-5) + var(--space-3));
+        }
         .pipeline-flow,
         .config-flow { min-height: 32rem; height: 32rem; }
+        .route-heading,
+        .route-row {
+          grid-template-columns: minmax(8rem, 0.75fr) minmax(12rem, 1.25fr);
+          column-gap: var(--space-2);
+        }
+        .route-step { grid-template-columns: 1.75rem minmax(0, 1fr); }
         .surface { min-height: 30rem; }
         .detail-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
         .react-flow__minimap { display: none; }

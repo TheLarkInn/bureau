@@ -47,6 +47,16 @@ test.describe("pipeline editor", () => {
     await expect(editor.page.getByRole("button", { name: "Relations" })).toHaveAttribute("aria-pressed", "false");
   });
 
+  test("transitions edits and graph rendering share one draft", async ({ editor }) => {
+    await editor.page.getByRole("tab", { name: "Transitions" }).click();
+    const success = editor.page.getByLabel("implement success destination");
+    await success.selectOption("review");
+    await editor.page.getByRole("tab", { name: "Graph" }).click();
+
+    await expect(editor.page.locator('[data-id="control:implement:success->review"]')).toBeVisible();
+    await expect(editor.page.locator('[data-id="control:implement:success->lint"]')).toHaveCount(0);
+  });
+
   test("switches to relations and back without leaving the editor", async ({ editor }) => {
     await editor.page.getByRole("button", { name: "Relations" }).click();
     await expect(editor.page.getByRole("button", { name: "Relations" })).toHaveAttribute("aria-pressed", "true");
