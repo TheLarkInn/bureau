@@ -28,6 +28,36 @@ Roles reference these resources directly. Agent files own their model,
 instructions, and tools; bureau owns only pipeline orchestration, permissions,
 trust, durable execution, and forge effects.
 
+### Agent transport
+
+Both production adapters use the official Rust ACP client and stable protocol
+v1 over supervised stdio: `copilot --acp --stdio` or `claude-agent-acp`.
+For Claude, install the public adapter explicitly:
+
+```sh
+npm install --global @agentclientprotocol/claude-agent-acp@0.75.1
+```
+
+Bureau never installs agents during a run. Each step opens a fresh session,
+selects its exact advertised custom agent, and supplies `bureau-io` through
+ACP's stdio MCP configuration. Missing agent selectors fail before prompting.
+Roles and the versioned step contract are unchanged; ACP does not transfer
+hidden state between steps.
+
+Native role grants still authorize normal work. Additional permission requests
+are rejected without interactive approval, including sandbox bypass. Copilot
+keeps its sandbox and native allow/deny rules; Claude receives native tool
+grants through its public session metadata options. Bureau still owns the
+cleared environment, process-tree cleanup, deadlines, and secret-scrubbed logs.
+Provider permission enforcement remains a provider responsibility; the public
+[Copilot ACP permission regression](https://github.com/github/copilot-cli/issues/4537)
+is a compatibility risk, not something a protocol-only test can disprove.
+
+`end_turn` alone is not a successful step: one-shot MCP publication or a valid
+`v2` result in agent-message text is required. Context-only usage updates preserve
+the latest cumulative USD measurement; explicit unusable cost reports clear it.
+Without usable measured USD cost, cost-limited assignments fail closed.
+
 ## Initialize and reconcile
 
 Local state defaults to `~/.bureau`; set `BUREAU_HOME` to override it.

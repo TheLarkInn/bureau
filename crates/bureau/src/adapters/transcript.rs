@@ -1,8 +1,7 @@
-//! Recovering a step result from an agent CLI's captured output.
+//! Recovering a step result from agent-message text or a recorded transcript.
 //!
-//! A real agent CLI renders its tool transcript to stdout ahead of the
-//! final message, so the contract document arrives surrounded by other
-//! text. Layer 2 stays strict (`contract::StepResult::from_json`);
+//! A contract document may arrive surrounded by other message text.
+//! Layer 2 stays strict (`contract::StepResult::from_json`);
 //! tolerating that surrounding text is this adapter family's policy,
 //! not a property of schema v2, and deterministic steps keep the strict
 //! parse so arbitrary command output cannot seize an outcome.

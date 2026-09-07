@@ -108,7 +108,7 @@ fn credential_observation(
 const fn adapter_binary(adapter: AdapterKind) -> Option<&'static str> {
     match adapter {
         AdapterKind::Copilot => Some("copilot"),
-        AdapterKind::Claude => Some("claude"),
+        AdapterKind::Claude => Some("claude-agent-acp"),
         AdapterKind::Fake => None,
     }
 }

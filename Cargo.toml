@@ -15,6 +15,7 @@ rust-version = "1.85"
 version = "0.1.0"
 
 [workspace.dependencies]
+agent-client-protocol = { version = "=2.1.0", default-features = false }
 anyhow = "1"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive"] }
@@ -38,6 +39,7 @@ tokio = { version = "1", features = [
     "sync",
     "time",
 ] }
+tokio-util = { version = "0.7", features = ["compat"] }
 
 [workspace.metadata.dylint]
 # Vendored copy of https://github.com/li-kai/rust-lints @ 3e4427e with one

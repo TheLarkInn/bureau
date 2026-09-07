@@ -24,20 +24,6 @@ use std::time::Duration;
 /// Default per-step timeout, in seconds, when the pipeline sets none.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
 
-/// The `bureau-io` MCP server definition both real adapters hand to
-/// their CLI: a stdio server running `bureau mcp serve`.
-const MCP_CONFIG: &str =
-    r#"{"mcpServers":{"bureau-io":{"type":"stdio","command":"bureau","args":["mcp","serve"]}}}"#;
-
-/// Writes the `bureau-io` MCP server config to `path`, so the agent CLI
-/// can start the server. Shared by both real adapters (issue #17).
-///
-/// # Errors
-/// Propagates filesystem failures.
-pub fn write_mcp_config(path: &Path) -> std::io::Result<()> {
-    std::fs::write(path, MCP_CONFIG)
-}
-
 /// Non-secret runtime variables agent CLIs and plugin subprocesses need.
 const RUNTIME_VARS: [&str; 5] = [
     "PATH",
@@ -84,7 +70,7 @@ fn copy_agent(
     Some(dest)
 }
 
-/// Resolves a role's agent reference to the `--agent` value
+/// Resolves a role's agent reference to its advertised ACP agent value
 /// (DESIGN.md section 6).
 ///
 /// Path references only. A plugin reference never arrives here — it is

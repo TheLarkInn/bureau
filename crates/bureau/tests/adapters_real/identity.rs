@@ -31,7 +31,7 @@ fn naming_an_md_path_agent_for_the_log_materializes_nothing() {
     );
 }
 
-/// The pure name and the spawn path's resolved name have to agree, or the
+/// The pure name and the ACP setup's resolved name have to agree, or the
 /// canvas would draw a mismatch badge on a run that did exactly what its config
 /// asked. They are only safe to swap because they are equal here.
 #[test]
@@ -44,12 +44,9 @@ fn the_logged_name_is_the_one_the_adapter_invokes() {
         AdapterKind::Copilot,
         &[],
     );
-    let request = copilot_request(&role, &step(None), dir.path());
+    let selected = bureau::adapters::resolved_agent(&role, dir.path());
 
-    assert_eq!(
-        bureau::adapters::expected_agent(&role),
-        value_after(&request.argv, "--agent")
-    );
+    assert_eq!(bureau::adapters::expected_agent(&role), selected);
 }
 
 /// Why the loader's rule about `agent` is load-bearing rather than tidiness.

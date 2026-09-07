@@ -15,7 +15,7 @@
 /// Bytes that no later chunk can repair are included rather than held: a
 /// genuinely invalid sequence decodes to a replacement character now, which
 /// is the honest answer. Only an unfinished trailing character is withheld.
-pub(super) const fn complete_prefix(bytes: &[u8]) -> usize {
+pub const fn complete_prefix(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
         Err(error) if error.error_len().is_none() => error.valid_up_to(),
         Ok(_) | Err(_) => bytes.len(),
