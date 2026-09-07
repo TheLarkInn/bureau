@@ -23,7 +23,7 @@ import { ADAPTER_VERBS, canonicalAction, isAction } from "../web/statelab/driver
 import { enumerate } from "../web/statelab/enumerate.mjs";
 import { applyFixture, FIXTURE_IDS, FIXTURES } from "../web/statelab/fixtures.mjs";
 import { SAMPLE_STEP_COUNT, RUN_END, RUN_IDS, RUN_STEP, interceptFor } from "../web/statelab/paths.mjs";
-import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
+import { EXCLUSIONS, ENTRY_TRANSITIONS, ORDER, renderPath, RENDER_TWINS, REVERSIBLE, rootReason, ROOT_REASONS, ROOTS, STATES, summary, TRANSITIONS } from "../web/statelab/registry.mjs";
 import { VIEWPORTS, SELECTORS } from "../web/statelab/selectors.mjs";
 import { emptyVerdict, PANEL_CLEAN, PANEL_ELSEWHERE, PANEL_UNCHECKED } from "../web/panel-verdict.mjs";
 
@@ -163,6 +163,72 @@ test("every count the branch reports about itself is what the registry holds", (
       renders: 544,
     },
   );
+});
+
+test("graph overview rendering explicitly fits after semantic actions without rewriting them", () => {
+  for (const state of STATES) {
+    const before = JSON.stringify(state);
+    const rendered = renderPath(state);
+    const fit = rendered.filter((op) => op.selector === SELECTORS.graphFit);
+    assert.equal(fit.length <= 1, true);
+    if (fit.length) {
+      assert.deepEqual(rendered.at(-1), { op: "click", selector: SELECTORS.graphFit });
+    }
+    assert.equal(JSON.stringify(state), before);
+  }
+});
+
+test("overview Fit belongs to graphs, not loading, missing, or ordinary assignment screens", () => {
+  for (const [id, fits] of [
+    ["surface:pipeline+data:validated+mode:design", true],
+    ["surface:editor+tab:relations", true],
+    ["probe--group-expanded", true],
+    ["probe--group-collapsed", true],
+    ["probe--step-log-idle", true],
+    ["probe--relation-open-under-expanded-card", true],
+    ["probe--live-count-loading", false],
+    ["probe--editor-missing-pipeline", false],
+    ["probe--editor-no-pipeline", false],
+    ["probe--pipeline-missing-in-viewer", false],
+    ["surface:config+data:validated+section:stack+card:collapsed", false],
+  ]) {
+    const state = STATES.find((item) => item.id === id);
+    assert.ok(state, id);
+    assert.equal(renderPath(state).at(-1)?.selector === SELECTORS.graphFit, fits, id);
+  }
+});
+
+test("overview preparation follows mode, run, group, and return-edge changes", () => {
+  const byId = new Map(STATES.map((state) => [state.id, state]));
+  for (const edge of TRANSITIONS) {
+    const target = byId.get(edge.to);
+    const rendered = renderPath(target, edge.delta);
+    assert.deepEqual(rendered.slice(0, edge.delta.length), edge.delta);
+    if (renderPath(target).at(-1)?.selector === SELECTORS.graphFit) {
+      assert.deepEqual(rendered.at(-1), { op: "click", selector: SELECTORS.graphFit });
+    }
+  }
+});
+
+test("every declared relation graph receives an overview Fit, including config disclosures and probes", () => {
+  for (const state of STATES.filter((item) => item.expect.shows.includes(SELECTORS.relationFlow))) {
+    assert.deepEqual(renderPath(state).at(-1), { op: "click", selector: SELECTORS.graphFit }, state.id);
+  }
+});
+
+test("editor graph probes select the graph after publishing and before operating on cards", () => {
+  for (const id of [
+    "probe--selection-behind-relations-tab",
+    "probe--dirty-editor-behind-relations-tab",
+    "probe--draft-survives-a-tab-round-trip",
+    "probe--editor-save-transport-lost",
+  ]) {
+    const state = STATES.find((item) => item.id === id);
+    const path = renderPath(state);
+    const fixture = path.findIndex((op) => op.op === "fixture");
+    assert.deepEqual(path[fixture + 1], { op: "click", selector: SELECTORS.editorSurfaceGraph });
+    assert.equal(path.at(-1).selector, SELECTORS.graphFit);
+  }
 });
 
 /**
@@ -340,7 +406,7 @@ test("every declared render twin names two real states, at real viewports, with 
 });
 
 test("every entry path uses only verbs the driver implements", () => {  const verbs = new Set(["page", "fixture", ...ADAPTER_VERBS.filter((verb) => !["goto", "publish"].includes(verb))]);
-  const unknown = STATES.flatMap((state) => state.ops.filter((op) => !verbs.has(op.op)).map((op) => `${state.id}: ${op.op}`));
+  const unknown = STATES.flatMap((state) => renderPath(state).filter((op) => !verbs.has(op.op)).map((op) => `${state.id}: ${op.op}`));
   assert.deepStrictEqual(unknown, []);
 });
 
@@ -1729,7 +1795,9 @@ test("a state's selector list covers the elements its copy names", () => {
  * was added that would notice the next one.
  *
  * A claim has to be a *positive* one: `shows`, a scoped `copy` selector, or an
- * operation in an entry path or a transition delta. `hides` deliberately does
+ * operation in a rendered entry path or a transition delta. The rendered path
+ * includes the explicit overview Fit used by the lab and browser suite.
+ * `hides` deliberately does
  * not count, and that is the sixth telling of the same defect. An absence is
  * satisfied by deleting the control everywhere — a selector only ever named in
  * `hides` is one the product could stop drawing entirely with every render
@@ -1744,7 +1812,7 @@ test("every selector the vocabulary defines is promised by a state, or exempt by
   const claimed = new Set(STATES.flatMap((state) => [
     ...(state.expect.shows ?? []),
     ...(state.expect.copy ?? []).filter((phrase) => typeof phrase === "object").map((phrase) => phrase.selector),
-    ...selectorsOf(state.ops),
+    ...selectorsOf(renderPath(state)),
   ]).concat(TRANSITIONS.flatMap((edge) => selectorsOf(edge.delta))));
 
   const unclaimed = Object.entries(SELECTORS)

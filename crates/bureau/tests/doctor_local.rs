@@ -81,6 +81,21 @@ fn configured_adapter_and_settings_failures_are_diagnostic_errors() {
 }
 
 #[test]
+fn claude_roles_require_the_public_acp_adapter_binary() {
+    let fixture = Fixture::new("doctor-claude-acp");
+    let credential = fixture.credential_file();
+    fixture.configure(Some("claude"), CredentialSource::File { path: credential });
+    for binary in ["git", "unshare", "claude"] {
+        fixture.executable(binary);
+    }
+    let effects = LocalEffects::new(fixture.layout()).search_path(fixture.bin.as_os_str());
+    let missing = diagnostic(&doctor::run(&effects), Area::Adapters).status;
+    fixture.executable("claude-agent-acp");
+    let installed = diagnostic(&doctor::run(&effects), Area::Adapters).status;
+    assert_eq!((missing, installed), (Status::Error, Status::Ok));
+}
+
+#[test]
 fn environment_credentials_resolve_from_names_without_values() {
     let fixture = Fixture::new("doctor-environment");
     fixture.configure(

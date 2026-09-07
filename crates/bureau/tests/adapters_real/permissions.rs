@@ -1,17 +1,12 @@
 use super::*;
 
 fn assert_sandboxed(req: &SpawnRequest) {
-    assert_eq!(&req.argv[5..7], ["--experimental", "--sandbox"]);
+    assert_eq!(&req.argv[3..5], ["--experimental", "--sandbox"]);
     assert!(!req.argv.iter().any(|arg| arg == "--allow-all-paths"));
 }
 
 fn permission_args(req: &SpawnRequest) -> String {
-    let at = req
-        .argv
-        .iter()
-        .position(|arg| arg == "--additional-mcp-config")
-        .expect("mcp config present");
-    req.argv[at + 2..].join(SEP)
+    req.argv[6..].join(SEP)
 }
 
 fn assert_scoped(permissions: &[Permission], push: bool, gh: bool) {

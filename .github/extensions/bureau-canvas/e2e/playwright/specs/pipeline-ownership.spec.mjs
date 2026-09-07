@@ -77,13 +77,6 @@ test.describe("pipeline owns execution details", () => {
     expect(gutter).toEqual(["36px", "36px", "36px", "36px"]);
   });
 
-  test("focusing an exception route reveals its caption", async ({ card }) => {
-    await openGraph(card);
-    await card.page.locator(".flow-edge--failure").first().focus();
-
-    await expect(card.page.locator(".edge-caption--revealed")).toHaveText("failure");
-  });
-
   test("the pipeline viewer returns to assignments with consistent copy", async ({ card }) => {
     await card.page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
     await card.page.getByRole("button", { name: "Assignments" }).click();

@@ -6,6 +6,7 @@
 //! offline, deterministically, in CI. Real adapters (`copilot`, `claude`)
 //! gain a `record` mode that writes those transcripts.
 
+mod acp;
 pub mod claude;
 pub mod copilot;
 pub mod fake;
@@ -27,7 +28,7 @@ pub use usage::{Execution, Usage};
 
 type ExecuteFuture<'a> = Pin<Box<dyn Future<Output = Execution> + Send + 'a>>;
 
-/// The `--agent` value a role's reference implies, without touching disk.
+/// The advertised agent value a role's reference implies, without touching disk.
 ///
 /// This is where the adapters disagree about a plugin reference: Copilot takes
 /// the whole `plugin:agent` pair, Claude takes the bare agent name. Deciding it
@@ -128,9 +129,9 @@ pub fn result_from_spawn(result: &SpawnResult) -> StepResult {
     }
 }
 
-/// A real/fake agent must return a valid contract result after exit zero.
+/// A recorded fake agent must return a valid contract result after exit zero.
 ///
-/// `response` is captured process output, which for a real CLI carries a
+/// `response` is captured process output, which may carry a recorded
 /// rendered tool transcript around the document, so it is parsed with
 /// the tolerant [`transcript::result_from_output`].
 #[must_use]

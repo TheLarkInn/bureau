@@ -16,8 +16,11 @@ config repository) and both forges (GitHub and Azure DevOps).
 - A Linux environment (a dev container is the intended sandbox boundary).
 - `git` on `PATH`.
 - Node.js on `PATH` when using the optional browser dashboard.
-- An agent CLI for agent steps: GitHub Copilot CLI (`copilot`) or Claude
-  Code (`claude`). You can also try everything offline with the `fake`
+- An ACP agent for agent steps: GitHub Copilot CLI (`copilot --acp --stdio`)
+  or the public Claude adapter (`claude-agent-acp`, installed with
+  `npm install --global @agentclientprotocol/claude-agent-acp@0.75.1`).
+  Both must advertise the role's custom agent through session config options.
+  You can also try everything offline with the `fake`
   adapter — see [Try it offline first](#try-it-offline-first).
 - A token for each forge you use:
   - **GitHub**: a token with repo and issues/PR access to the repositories

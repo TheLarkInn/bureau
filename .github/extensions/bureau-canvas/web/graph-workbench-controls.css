@@ -1,0 +1,293 @@
+/* Graph chrome is scoped by the surface that is actually being displayed. */
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) {
+  min-width: 0;
+  background: #1b1d21;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .app-header {
+  align-items: center;
+  padding: 12px 20px;
+  gap: 12px;
+  background: #202226;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) :is(.app-header > *, .editor-heading > *) {
+  min-width: 0;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) :is(h1, h2, .summary, .status, .editor-status) {
+  overflow-wrap: anywhere;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .app-header h1 { font-size: 17px; }
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .summary { font-size: 12px; }
+.app-shell:has(.pipeline-flow) .status { max-width: 45%; font-size: 11px; line-height: 16px; }
+
+.view-shell--pipeline:has(.pipeline-flow) {
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  gap: 16px;
+  padding: 16px;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .pipeline-main { min-height: 0; gap: 12px; }
+.view-shell--pipeline:has(.pipeline-flow) .pipeline-flow { min-height: 38rem; border-color: #383d45; }
+.view-shell--pipeline:has(.pipeline-flow) .pipeline-toolbar { gap: 8px; }
+.view-shell--pipeline:has(.pipeline-flow) .pipeline-toolbar h2 { font-size: 14px; }
+.view-shell--pipeline:has(.pipeline-flow) .mode-switcher { margin-left: 0; border-radius: 6px; }
+
+.view-shell--pipeline:has(.pipeline-flow) :is(.mode-tab--active, .live-count--active),
+.app-shell:has(.editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) :is(.editor-tab.is-active, .editor-surface-tab.is-active) {
+  background: #30445f;
+  color: #c4ddff;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .mode-tab--active .live-count {
+  border-color: #dae9ff;
+  background: #dae9ff;
+  color: #244464;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .btn--primary {
+  background: #78acEE;
+  border-color: #78acEE;
+  color: #111a25;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .btn--primary:hover:not(:disabled) { background: #a0c8ff; }
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .btn--primary:disabled { background: #303b49; border-color: #424b59; color: #9ca9b9; }
+
+.view-shell--pipeline:has(.pipeline-flow) .side-panel {
+  align-self: start;
+  min-width: 0;
+  padding: 16px;
+  background: #202328;
+  border-color: #383d45;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .side-panel > .panel-section + .panel-section {
+  padding-top: 16px;
+  border-top: 1px solid #383d45;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .side-panel :is(.chip, .step-badge, .legend-item, .kind-label) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) :is(.side-panel, .editor-panel) .kind-label {
+  color: #181b20;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .graph-step-inspector > .graph-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .graph-step-inspector .route-inspector {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .graph-step-inspector .route-inspector-head h3 {
+  color: var(--text-color-default);
+  font-size: 15px;
+  line-height: 21px;
+  letter-spacing: 0;
+  text-transform: none;
+  overflow-wrap: anywhere;
+}
+
+.view-shell--pipeline:has(.pipeline-flow) .graph-step-inspector .route-inspector-details { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.view-shell--pipeline:has(.pipeline-flow) .graph-step-inspector .route-inspector-details dt:not(:first-child) { margin-top: 4px; }
+.view-shell--pipeline:has(.pipeline-flow) .graph-handoffs { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.view-shell--pipeline:has(.pipeline-flow) .graph-handoffs li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #383d45; overflow-wrap: anywhere; font-size: 12px; }
+.view-shell--pipeline:has(.pipeline-flow) .graph-handoffs li > span:first-child { color: var(--text-color-muted); }
+.view-shell--pipeline:has(.pipeline-flow) .graph-handoffs a { color: var(--color-accent-fg); }
+.view-shell--pipeline:has(.pipeline-flow) .graph-handoffs .btn { justify-content: flex-start; padding-inline: 8px; white-space: normal; text-align: left; }
+
+.editor-shell:has(.editor-flow) .editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  background: #202328;
+}
+
+.editor-shell:has(.editor-flow) .editor-toolbar-title { flex-wrap: wrap; min-width: 0; }
+.editor-shell:has(.editor-flow) .editor-toolbar-actions { margin-left: auto; flex-wrap: wrap; gap: 8px; }
+.editor-shell:has(.editor-flow) .editor-status { white-space: normal; }
+.editor-shell:has(.editor-flow) .editor-panel { background: #202328; }
+.editor-shell:has(.editor-flow) .editor-step-head { align-items: start; gap: 8px; }
+.editor-shell:has(.editor-flow) .editor-step-head > div { min-width: 0; overflow-wrap: anywhere; }
+.editor-shell:has(.editor-flow) .editor-panel .kind-label { display: inline-block; margin-top: 6px; }
+.editor-shell:has(.editor-flow) .editor-legend { display: inline-flex; flex-wrap: wrap; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-navigator, .graph-camera) {
+  margin: 12px;
+  max-width: calc(100% - 24px);
+  color: var(--text-color-default);
+  font: 12px/18px var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-navigator {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  width: min(304px, calc(100% - 24px));
+  pointer-events: none;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-navigator > * { pointer-events: auto; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-navigator-toggle, .graph-search, .graph-search-result, .graph-camera button, .graph-attention-review) {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid #4b515c;
+  border-radius: 6px;
+  background: #292d34;
+  color: #edf0f5;
+  font: inherit;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-navigator-toggle, .graph-search-result, .graph-camera button, .graph-attention-review) {
+  cursor: pointer;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-navigator-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 14px #0003;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-tools-summary {
+  color: #afb8c6;
+  font: 11px/16px var(--font-mono, "SFMono-Regular", Consolas, monospace);
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-navigator-toggle .graph-tools-summary {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #3a404a;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-navigator-content {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #4b515c;
+  border-radius: 8px;
+  background: #24272d;
+  box-shadow: 0 8px 24px #0005;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search { width: 100%; min-width: 0; background: #1b1e23; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search::placeholder { color: #a6afbe; opacity: 1; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-results { display: grid; gap: 4px; max-height: 180px; overflow-y: auto; margin: 0; padding: 2px; list-style: none; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-result {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  width: 100%;
+  padding: 8px;
+  border-color: transparent;
+  background: transparent;
+  text-align: left;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-result strong { flex-basis: 100%; overflow-wrap: anywhere; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-result > span:not(.graph-state) { color: #b1bac8; font-family: var(--font-mono, monospace); }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-result[aria-current="true"] { border-color: #80b7ff; background: #293b53; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-search-empty { padding: 6px 0; color: #c0c8d4; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-attention {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #806139;
+  border-radius: 6px;
+  background: #393021;
+  color: #f1c985;
+  box-shadow: 0 4px 14px #0003;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-attention-review { min-height: 28px; padding: 3px 8px; border-color: #edbe70; background: #edbe70; color: #251b0d; font-weight: 700; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera { display: grid; justify-items: end; gap: 5px; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera > div { display: flex; padding: 3px; border: 1px solid #4b515c; border-radius: 8px; background: #24272d; box-shadow: 0 4px 14px #0003; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera button { min-width: 30px; padding: 4px 8px; border-color: transparent; background: transparent; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera .graph-zoom-value { min-width: 50px; font-family: var(--font-mono, monospace); }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera button:last-child { border-left-color: #4b515c; border-radius: 0 4px 4px 0; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-help { padding: 2px 5px; border-radius: 4px; background: #1b1d21; color: #b2bbc8; font-size: 10px; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-navigator-toggle, .graph-search-result, .graph-camera button):hover:not(:disabled) { background: #363d48; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera button:disabled { color: #788391; cursor: not-allowed; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-attention-review:hover { background: #ffda9c; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__minimap {
+  display: block;
+  left: 0;
+  right: auto;
+  bottom: 0;
+  top: auto;
+  width: 128px;
+  height: 88px;
+  margin: 12px;
+  overflow: hidden;
+  border: 1px solid #454d59;
+  border-radius: 8px;
+  background: #202328;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__minimap svg { display: block; width: 100%; height: 100%; }
+
+.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) :focus-visible {
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: 3px;
+}
+
+@media (max-width: 56rem) {
+  .view-shell--pipeline:has(.pipeline-flow) { grid-template-columns: minmax(0, 1fr); padding: 12px; }
+  .view-shell--pipeline:has(.pipeline-flow) .pipeline-flow { height: 36rem; min-height: 36rem; }
+  .editor-shell:has(.editor-flow) .editor-main { grid-template-rows: minmax(28rem, 55vh) auto; }
+  .app-shell:has(.editor-view:not([hidden]) .editor-flow) { height: auto; min-height: 100vh; }
+  .editor-shell:has(.editor-flow) .editor-panel { overflow: visible; }
+}
+
+@media (max-width: 30rem) {
+  .app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .app-header { flex-wrap: wrap; padding: 12px; }
+  .app-shell:has(.pipeline-flow) .status { width: 100%; max-width: none; text-align: left; }
+  .app-shell:has(.editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) .editor-heading { flex-wrap: wrap; }
+  .editor-shell:has(.editor-flow) .editor-toolbar { padding: 12px; }
+  .editor-shell:has(.editor-flow) .editor-toolbar-actions { margin-left: 0; }
+  .editor-shell:has(.editor-flow) .editor-toolbar-add { width: 100%; }
+  .view-shell--pipeline:has(.pipeline-flow) .run-picker { max-width: 100%; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__minimap { width: 88px; height: 64px; margin: 8px; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-navigator, .graph-camera) { margin: 8px; max-width: calc(100% - 16px); }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) .graph-camera button { min-height: 36px; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) .graph-help { font-size: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)) *,
+  :is(.pipeline-flow, .editor-flow, .relation-flow) * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :is(.pipeline-flow, .editor-flow, .relation-flow) { background: Canvas; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) :is(.flow-card, .editor-card, .relation-card, .editor-terminal, .graph-navigator-content, .graph-camera > div, .edge-caption) { border-color: CanvasText; background: Canvas; color: CanvasText; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__edge-path { stroke: CanvasText; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-state, .graph-state-dot) { color: CanvasText; border-color: CanvasText; }
+  :is(.pipeline-flow, .editor-flow, .relation-flow) :focus-visible { outline-color: Highlight; }
+}

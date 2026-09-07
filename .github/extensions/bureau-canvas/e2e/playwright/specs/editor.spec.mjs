@@ -32,6 +32,28 @@ function overlaps(items) {
   return found;
 }
 
+async function cameraWorks(graph) {
+  const controls = graph.getByRole("group", { name: "Graph view controls" });
+  const viewport = graph.locator(".react-flow__viewport");
+  const zoom = () => viewport.evaluate((element) => new DOMMatrixReadOnly(getComputedStyle(element).transform).a);
+  const actual = controls.getByRole("button", { name: "Actual size" });
+  await actual.click();
+  await expect(actual).toHaveText("100%");
+  await expect.poll(zoom).toBeCloseTo(1, 3);
+  const initial = await viewport.getAttribute("style");
+  await controls.getByRole("button", { name: "Zoom in" }).click();
+  await expect.poll(zoom).toBeGreaterThan(1);
+  await expect(actual).not.toHaveText("100%");
+  expect(await viewport.getAttribute("style")).not.toBe(initial);
+  const enlarged = await zoom();
+  await controls.getByRole("button", { name: "Zoom out" }).click();
+  await expect.poll(zoom).toBeLessThan(enlarged);
+  await actual.click();
+  await controls.getByRole("button", { name: "Fit graph" }).click();
+  await expect.poll(zoom).toBeLessThan(1);
+  await expect(actual).not.toHaveText("100%");
+}
+
 test.describe("pipeline editor", () => {
   test("provides a persistent path back to assignments", async ({ editor }) => {
     const back = editor.page.getByRole("button", { name: "Assignments" });
@@ -59,7 +81,7 @@ test.describe("pipeline editor", () => {
 
   test("switches to relations and back without leaving the editor", async ({ editor }) => {
     await editor.page.getByRole("button", { name: "Relations" }).click();
-    await expect(editor.page.getByRole("button", { name: "Relations" })).toHaveAttribute("aria-pressed", "true");
+    await expect(editor.page.getByRole("button", { name: "Relations", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(editor.page.locator(".relation-flow")).toBeVisible();
     await expect(editor.page.locator(".relation-flow .react-flow__edge")).not.toHaveCount(0);
 
@@ -301,20 +323,16 @@ test.describe("pipeline editor", () => {
   });
 
   test("the graph navigation controls are all operable", async ({ editor }) => {
-    const controls = editor.page.locator(".editor-flow .react-flow__controls-button");
-    await expect(controls).toHaveCount(4);
-    for (let index = 0; index < 4; index += 1) {
-      await controls.nth(index).click();
-    }
+    await cameraWorks(editor.page.locator(".editor-flow"));
+    await expect(editor.page.locator(".editor-status")).toHaveText("saved");
+    await expect(editor.page.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
 
   test("relation graph navigation controls are all operable", async ({ editor }) => {
     await editor.page.getByRole("button", { name: "Relations" }).click();
-    const controls = editor.page.locator(".relation-flow .react-flow__controls-button");
-    await expect(controls).toHaveCount(4);
-    for (let index = 0; index < 4; index += 1) {
-      await controls.nth(index).click();
-    }
+    await cameraWorks(editor.page.locator(".relation-flow"));
+    await editor.page.getByRole("button", { name: "Pipeline", exact: true }).click();
+    await expect(editor.page.locator(".editor-status")).toHaveText("saved");
   });
 
   test("the editor raises no console or page errors", async ({ editor }) => {
