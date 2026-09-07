@@ -199,7 +199,8 @@ async function expectFullCommand(page, target) {
     });
     return {
       unclipped: element.scrollHeight <= element.clientHeight + 1,
-      completeWrapping: lines.length > 3,
+      // Font metrics change line counts; every glyph must still fit vertically.
+      insideHeight: glyphs.length > 0 && glyphs.every((glyph) => glyph.top >= box.top - 1 && glyph.bottom <= box.bottom + 1),
       insideWidth: glyphs.every((glyph) => glyph.left >= box.left - 1 && glyph.right <= box.right + 1),
       insideField: lines.at(-1).bottom <= box.bottom + 1,
       onScreen: lines.at(-1).bottom <= innerHeight,
@@ -210,7 +211,7 @@ async function expectFullCommand(page, target) {
     };
   });
   expect(visibility, JSON.stringify(visibility)).toMatchObject({
-    unclipped: true, completeWrapping: true, insideWidth: true, insideField: true, onScreen: true,
+    unclipped: true, insideHeight: true, insideWidth: true, insideField: true, onScreen: true,
   });
 }
 
