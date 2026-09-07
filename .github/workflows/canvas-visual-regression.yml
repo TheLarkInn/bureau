@@ -1,11 +1,11 @@
 name: Canvas visual regression
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +22,9 @@ jobs:
         working-directory: .github/extensions/bureau-canvas/e2e/playwright
     steps:
       - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
       - uses: actions/setup-node@v4.0.4
         with:
           node-version: 24

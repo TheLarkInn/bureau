@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      recover_release:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
+      - name: Attach main to the tested commit for release-plz
+        env:
+          TESTED_SHA: ${{ inputs.ref }}
+        run: |
+          git switch --force-create main "$TESTED_SHA"
+          git branch --set-upstream-to=origin/main main
+      - name: Require the tested main revision
+        id: current
+        uses: actions/github-script@v7.0.1
+        env:
+          TESTED_SHA: ${{ inputs.ref }}
+        with:
+          script: |
+            const { data } = await github.rest.repos.getBranch({ ...context.repo, branch: "main" });
+            const current = data.commit.sha === process.env.TESTED_SHA;
+            core.setOutput("current", current);
+            if (!current) core.notice("Main advanced; its own CI run will handle the release.");
+      - uses: actions/download-artifact@v4.3.0
+        if: steps.current.outputs.current == 'true' || inputs.recover_release
+        with:
+          pattern: bureau-release-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-assets
+      - name: Read the tested workspace version
+        if: steps.current.outputs.current == 'true' || inputs.recover_release
+        id: version
+        run: |
+          python3 -c 'import tomllib; print("version=" + tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])' >> "$GITHUB_OUTPUT"
+      - name: Create the release draft from the merged release PR
+        if: steps.current.outputs.current == 'true' && !inputs.recover_release
+        uses: release-plz/action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5, CLI pinned below
+        with:
+          command: release
+          version: 0.3.162
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach every tested binary, then publish
+        if: steps.current.outputs.current == 'true' || inputs.recover_release
+        uses: actions/github-script@v7.0.1
+        env:
+          ASSET_DIRECTORY: ${{ runner.temp }}/release-assets
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          TESTED_SHA: ${{ inputs.ref }}
+        with:
+          script: |
+            const { publish } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-assets.mjs`);
+            await publish({
+              github, context, core, directory: process.env.ASSET_DIRECTORY,
+              version: process.env.RELEASE_VERSION, sha: process.env.TESTED_SHA,
+            });
+      - name: Refresh tags before calculating the next version
+        if: steps.current.outputs.current == 'true' && !inputs.recover_release
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reattach main after the SHA checkout
+        if: steps.current.outputs.current == 'true' && !inputs.recover_release
+        env:
+          TESTED_SHA: ${{ inputs.ref }}
+        run: |
+          git switch --force-create main "$TESTED_SHA"
+          git branch --set-upstream-to=origin/main main
+      - name: Prepare the next semantic version
+        if: steps.current.outputs.current == 'true' && !inputs.recover_release
+        id: release-pr
+        uses: release-plz/action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5, CLI pinned below
+        with:
+          command: release-pr
+          version: 0.3.162
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Explicitly start release PR checks
+        if: steps.current.outputs.current == 'true' && !inputs.recover_release
+        uses: actions/github-script@v7.0.1
+        env:
+          RELEASE_PRS: ${{ steps.release-pr.outputs.prs }}
+        with:
+          script: |
+            const { dispatchPrs } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-pr.mjs`);
+            await dispatchPrs({ github, context, prs: process.env.RELEASE_PRS });
+      - name: Resume main after draft recovery
+        if: inputs.recover_release
+        uses: actions/github-script@v7.0.1
+        with:
+          script: |
+            const { dispatch } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release-pr.mjs`);
+            await dispatch(github, context.repo);
