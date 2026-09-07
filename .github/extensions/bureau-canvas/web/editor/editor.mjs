@@ -9,9 +9,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
+  BackgroundVariant,
   BaseEdge,
-  Controls,
   EdgeLabelRenderer,
+  getBezierPath,
   getSmoothStepPath,
   Handle,
   MarkerType,
@@ -22,6 +23,8 @@ import {
 
 import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
+import { graphEdgeLabels, graphEdgeCaption, graphTerminalPath } from "../graph-presentation.mjs";
+import { GraphTools, GraphStateBadge } from "../graph-workbench.mjs";
 import { stepNameProblem, TERMINAL_NAMES } from "../step-refs.mjs";
 import { removeStep, renameStep, syncSteps } from "../step-edit.mjs";
 import { layoutPipeline } from "../layout.js";
@@ -80,14 +83,9 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       window.removeEventListener("keydown", escape);
     };
   }, [dirty, onDirtyChange]);
-  useEffect(() => {
-    const refit = () => flowApi?.fitView({ padding: 0.22, duration: 150 });
-    window.addEventListener("resize", refit);
-    return () => window.removeEventListener("resize", refit);
-  }, [flowApi]);
   // A step added at a new layer can land outside the visible canvas, which
   // reads as "nothing happened". Refit when the graph *gains* a node — not on
-  // mount, where React Flow's own `fitView` already ran and a second animated
+  // mount, where the shared camera already frames it and a second animated
   // one would only keep the nodes moving.
   const stepCount = view.steps.length;
   const lastCount = useRef(stepCount);
@@ -153,14 +151,12 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
           h(
             ReactFlow,
             {
-              nodes: flow.nodes,
+              nodes: flow.nodes.map((node) => ({ ...node, selected: node.id === selected })),
               edges: flow.edges,
               nodeTypes: NODE_TYPES,
               edgeTypes: EDGE_TYPES,
-              fitView: true,
-              fitViewOptions: { padding: 0.22 },
               minZoom: 0.2,
-              maxZoom: 1.5,
+              maxZoom: 3,
               onInit: setFlowApi,
               deleteKeyCode: null,
               proOptions: { hideAttribution: true },
@@ -169,10 +165,11 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
                   setSelected(node.id);
                 }
               },
-              onNodeKeyDown: (event, node) => {
-                if (node.type === "stepNode" && (event.key === "Enter" || event.key === " ")) {
-                  event.preventDefault();
-                  setSelected(node.id);
+              onNodesChange: (changes) => {
+                const change = changes.find((item) => item.type === "select" && item.selected
+                  && view.steps.some((step) => step.name === item.id));
+                if (change) {
+                  setSelected(change.id);
                 }
               },
               onNodeDragStop: (_, node) => {
@@ -182,9 +179,20 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
               },
               onConnect: (connection) => connect(view, connection, edit),
             },
-            h(Background, { gap: 24, size: 1.5 }),
-            h(Controls),
-            h(MiniMap, { pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
+            h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
+            h(GraphTools, {
+              items: flow.nodes.filter((node) => node.type === "stepNode").map((node) => ({
+                id: node.id,
+                name: node.data.step.name,
+                kind: node.data.step.kind,
+                detail: stepDetail(node.data.step),
+                state: "design",
+                attention: node.data.hints.length > 0,
+              })),
+              selectedId: selected,
+              onSelect: setSelected,
+            }),
+            h(MiniMap, { position: "bottom-left", pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
             h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
           ),
         ),
@@ -440,27 +448,7 @@ function flowEdges(view) {
     markerEnd: { type: MarkerType.ArrowClosed },
     data: edge.relation === "control" ? { editable: true, sourceStep: edge.source, outcome: edge.outcome } : { editable: false },
   }));
-  return spreadParallelLabels(edges);
-}
-
-function spreadParallelLabels(edges) {
-  const groups = new Map();
-  const terminalTargets = [...new Set(edges.filter((edge) => edge.target.startsWith("terminal:")).map((edge) => edge.target))].sort();
-  for (const edge of edges) {
-    const key = edge.target.startsWith("terminal:") ? edge.target : `${edge.source}->${edge.target}`;
-    groups.set(key, [...(groups.get(key) ?? []), edge]);
-  }
-  return edges.map((edge) => {
-    const terminalLabel = edge.target.startsWith("terminal:");
-    const key = terminalLabel ? edge.target : `${edge.source}->${edge.target}`;
-    const siblings = groups.get(key);
-    const index = siblings.indexOf(edge);
-    const labelOffset = (index - (siblings.length - 1) / 2) * 28;
-    return {
-      ...edge,
-      data: { ...edge.data, labelOffset, terminalLabel, terminalColumn: terminalTargets.indexOf(edge.target) },
-    };
-  });
+  return graphEdgeLabels(edges);
 }
 
 // --- nodes ---
@@ -500,12 +488,15 @@ function StepNode({ data, selected }) {
       style: { left: "62%" },
       title: "observes",
     }),
-    h("p", { className: "kind-label" }, step.kind),
-    h("h2", {}, step.name),
+    h("div", { className: "graph-card-heading" },
+      h("h3", { title: step.name }, step.name),
+      h(GraphStateBadge, { state: "design" })),
     h("p", { className: "detail", title: detail }, detail),
-    data.hints.length
-      ? h("span", { className: "editor-card__issue-count" }, `${data.hints.length} issue${data.hints.length === 1 ? "" : "s"}`)
-      : null,
+    h("div", { className: "graph-card-meta" },
+      h("p", { className: "kind-label" }, step.kind),
+      data.hints.length
+        ? h("span", { className: "editor-card__issue-count" }, `${data.hints.length} issue${data.hints.length === 1 ? "" : "s"}`)
+        : null),
   );
 }
 
@@ -534,16 +525,19 @@ function TerminalNode({ data }) {
 }
 
 function OutcomeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label, data }) {
-  const [path, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, offset: 16 });
-  const captionX = data?.terminalLabel ? targetX - 72 - data.terminalColumn * 56 : labelX;
-  const captionY = (data?.terminalLabel ? targetY : labelY) + (data?.labelOffset ?? 0);
+  const route = targetX > sourceX ? getBezierPath : getSmoothStepPath;
+  const [path, labelX, labelY] = route({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, offset: 16 });
+  const [captionX, captionY] = graphEdgeCaption({ data, labelX, labelY, targetX, targetY });
+  const routedPath = data?.terminalLabel
+    ? graphTerminalPath({ sourceX, sourceY, targetX, targetY }, captionX, captionY) : path;
   return h(
     React.Fragment,
     null,
-    h(BaseEdge, { id, path, markerEnd }),
+    h(BaseEdge, { id, path: routedPath, markerEnd }),
     label
       ? h(EdgeLabelRenderer, null, h("div", {
           className: "react-flow__edge-label edge-caption",
+          "data-edge-id": id,
           style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
         }, label))
       : null,

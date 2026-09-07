@@ -1,0 +1,290 @@
+/* The graph is an intentionally dark work surface, independent of host theme.
+   Assignment forms and the transition table retain their original palette. */
+:is(.app-shell:has(.pipeline-flow, .editor-view:not([hidden]) :is(.editor-flow, .relation-flow)),
+    .pipeline-flow, .editor-flow, .relation-flow) {
+  color-scheme: dark;
+  --background-color-default: #1b1d21;
+  --text-color-default: #f0f1f3;
+  --text-color-muted: #adb2bc;
+  --border-color-default: #3a3e46;
+  --color-focus-outline: #80b7ff;
+  --color-accent-fg: #80b7ff;
+  --surface-subtle: #23262b;
+  --surface-hover: #30343b;
+  --surface-active: #3a414b;
+  --kind-work-source: #adb2bc;
+  --kind-terminal: #adb2bc;
+  --kind-assignment: #80b7ff;
+  --kind-deterministic: #80b7ff;
+  --kind-role: #c0a1f4;
+  --kind-agent: #c0a1f4;
+  --kind-repo: #78c897;
+  --kind-concurrent: #78c897;
+  --kind-pipeline: #edbe70;
+  --kind-decision: #edbe70;
+  --outcome-success: #78c897;
+  --outcome-failure: #f2938c;
+  --outcome-blocked: #edbe70;
+  --outcome-no-work: #adb2bc;
+  --relation-data: #80b7ff;
+  --relation-observes: #c0a1f4;
+  --finding-validation: #392725;
+  --finding-advisory: #352d20;
+  --finding-advisory-bg: #352d20;
+  --graph-attention: #edbe70;
+  --graph-card: #282b30;
+  --xy-background-color: #1b1d21;
+  --xy-background-pattern-color: #2b2e34;
+  --xy-edge-stroke: #838b98;
+  --xy-edge-stroke-selected: #80b7ff;
+  --xy-edge-label-background-color: #202328;
+  --xy-edge-label-color: #bdc4ce;
+  --xy-node-color: #f0f1f3;
+  --xy-node-background-color: #282b30;
+  --xy-minimap-background-color: #202328;
+  --xy-minimap-mask-background-color: #111318ad;
+  --xy-minimap-node-background-color: #778397;
+  --xy-minimap-node-stroke-color: #a5afbe;
+  --xy-controls-button-background-color: #282b30;
+  --xy-controls-button-background-color-hover: #353b44;
+  --xy-controls-button-color: #f0f1f3;
+  --xy-controls-button-border-color: #3a3e46;
+  color: var(--text-color-default);
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) {
+  background-color: var(--background-color-default);
+  isolation: isolate;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow {
+  background: transparent;
+}
+
+.pipeline-flow .flow-card,
+.pipeline-flow[data-mode="design"] .flow-card,
+.editor-flow .editor-card,
+.relation-flow .relation-card {
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #444952;
+  border-left: 4px solid var(--accent, var(--kind-terminal));
+  border-radius: 10px;
+  background: linear-gradient(150deg, #2c2f35, #25282d);
+  color: var(--text-color-default);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.pipeline-flow .flow-card:not(.terminal-pill),
+.pipeline-flow[data-mode="design"] .flow-card:not(.terminal-pill),
+.editor-flow .editor-card {
+  width: 240px;
+  min-height: 112px;
+}
+
+.pipeline-flow .terminal-pill,
+.pipeline-flow[data-mode="design"] .terminal-pill { width: 100%; min-height: auto; }
+
+/* Run outcomes belong to their badges; the stripe continues to identify type. */
+.pipeline-flow .flow-card--deterministic { --accent: var(--kind-deterministic); }
+.pipeline-flow .flow-card--agent { --accent: var(--kind-agent); }
+.pipeline-flow .flow-card--decision { --accent: var(--kind-decision); }
+.pipeline-flow .flow-card--concurrent { --accent: var(--kind-concurrent); }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(h2, .graph-card-heading h3) {
+  min-width: 0;
+  color: var(--text-color-default);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0;
+  text-transform: none;
+  overflow-wrap: anywhere;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-card-heading :is(h2, h3) {
+  flex: 1 1 90px;
+}
+
+.pipeline-flow .step-button,
+.pipeline-flow[data-mode="design"] .step-button {
+  gap: 10px;
+  min-width: 0;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .detail,
+.pipeline-flow[data-mode="design"] .flow-card .detail {
+  display: block;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--text-color-muted);
+  font: 12px/18px var(--font-mono, "SFMono-Regular", Consolas, monospace);
+}
+
+/* Commands are previews here; the inspector retains the full command. */
+.pipeline-flow .flow-card:not(.terminal-pill) .detail,
+.editor-flow .editor-card .detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .kind-label {
+  padding: 0;
+  background: none;
+  color: var(--accent, var(--text-color-muted));
+  font: 12px/18px var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .kind-label::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 1px;
+  background: currentColor;
+  content: "";
+}
+
+.pipeline-flow .chips,
+.pipeline-flow[data-mode="design"] .flow-card .chips { display: flex; gap: 4px; }
+
+.pipeline-flow .chips > *,
+.pipeline-flow .terminal-forge-label,
+.pipeline-flow .member-name {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pipeline-flow :is(.chip, .finding, .terminal-forge-label) {
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.pipeline-flow .chip { background: #343840; color: #c9ced7; border-color: #444952; }
+.pipeline-flow .finding--validation { color: #ffc1b9; border-color: #80524b; }
+.pipeline-flow .finding--advisory { color: #f2ce92; border-color: #79603b; }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-state {
+  --state-color: #bec4ce;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--state-color) 25%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--state-color) 11%, #25282d);
+  color: var(--state-color);
+  font: 700 10px/15px var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-state-dot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-state--running { --state-color: #80b7ff; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-state--success { --state-color: #78c897; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-state--failure, .graph-state--blocked, .graph-state--paused) { --state-color: #edbe70; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-state--design, .graph-state--pending, .graph-state--unknown) .graph-state-dot { background: transparent; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-state--failure, .graph-state--blocked) .graph-state-dot { border-radius: 1px; transform: rotate(45deg); }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .graph-state--paused .graph-state-dot { border-radius: 0; border-width: 0 2px; background: transparent; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) :is(.graph-state--skipped, .graph-state--cancelled, .graph-state--no-work) .graph-state-dot { height: 2px; border-radius: 0; }
+.pipeline-flow .graph-state.paused-badge { margin-left: 0; text-transform: none; }
+
+:is(.pipeline-flow, .editor-flow) [data-attention="true"],
+.editor-flow .editor-card--hint {
+  border-color: #94703c;
+  border-left-color: var(--accent);
+  outline: none;
+  background: linear-gradient(150deg, #353027, #28282a);
+  box-shadow: 0 0 0 1px #edbe7014;
+}
+
+:is(.pipeline-flow, .editor-flow) :is(.flow-card, .editor-card):hover {
+  border-color: #77808e;
+  border-left-color: var(--accent);
+}
+
+.pipeline-flow .overlay-running { outline: none; }
+.pipeline-flow .flow-card.is-highlighted,
+.editor-flow .editor-card.is-highlighted,
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__node.selected > :is(.flow-card, .editor-card, .relation-card) {
+  border-color: var(--color-focus-outline);
+  border-left-color: var(--accent);
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px #80b7ff16;
+}
+
+.editor-flow .editor-terminal {
+  border: 1px solid #444952;
+  border-left: 4px solid var(--accent);
+  background: linear-gradient(150deg, #2c2f35, #25282d);
+}
+.editor-flow .editor-terminal--done { --accent: var(--outcome-success); }
+.editor-flow .editor-terminal--abort { --accent: var(--outcome-failure); }
+.editor-flow .editor-terminal--escalate { --accent: var(--outcome-blocked); }
+.relation-flow .relation-card { height: auto; min-height: 106px; }
+.relation-flow .react-flow__edge-path { stroke: var(--xy-edge-stroke); }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__edge-path { stroke-width: 1.6; }
+.pipeline-flow[data-mode="design"] :is(.flow-edge--success, .flow-edge--failure, .flow-edge--blocked, .flow-edge--no-work),
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__edge { opacity: 0.65; }
+.relation-flow .react-flow__edge { opacity: 0.9; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__edge:is(:hover, :focus, .selected, .flow-edge--live) { opacity: 1; }
+.pipeline-flow .flow-edge--live .react-flow__edge-path { stroke-width: 2.6; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__edge.animated .react-flow__edge-path { animation: none; stroke-dasharray: 8 6; }
+.pipeline-flow[data-mode="design"] .flow-handle { opacity: 0.8; }
+:is(.pipeline-flow, .editor-flow, .relation-flow) .react-flow__handle { border-color: #23262b; }
+.relation-flow .react-flow__handle { background: var(--xy-edge-stroke); }
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) .edge-caption,
+.pipeline-flow[data-mode="design"] .edge-caption {
+  padding: 2px 5px;
+  border: 1px solid #383d45;
+  border-radius: 4px;
+  background: #202328;
+  color: #bdc4ce;
+  font: 11px/15px var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  text-shadow: none;
+  opacity: 1;
+}
+
+:is(.pipeline-flow, .editor-flow, .relation-flow) :focus-visible {
+  outline: 2px solid var(--color-focus-outline);
+  outline-offset: 3px;
+}

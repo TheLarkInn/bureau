@@ -275,6 +275,7 @@ async function runSuite(page) {
   console.log("bureau-canvas e2e: committed pipeline by input");
   await withInstance("committed-open", { pipeline: "agent-eligible-pipeline" }, {}, async (instance) => {
     await navigate(page, instance.opened.url);
+    await openPipelineGraph(page);
     await renderAndScreenshot(page, ".react-flow__node .flow-card", "committed pipeline", "committed-pipeline-open.png");
     await checkPipelineView(page, instance.opened.url, "agent-eligible-pipeline", "opened input");
   });
@@ -282,6 +283,7 @@ async function runSuite(page) {
   await withInstance("committed-intent", {}, {}, async (instance) => {
     await navigate(page, instance.opened.url);
     await postIntent(instance.opened.url, "agent-eligible-pipeline");
+    await openPipelineGraph(page);
     await renderAndScreenshot(page, ".react-flow__node .flow-card", "intent pipeline", "committed-pipeline-intent.png");
     await checkPipelineView(page, instance.opened.url, "agent-eligible-pipeline", "open-pipeline intent");
   });
@@ -289,6 +291,7 @@ async function runSuite(page) {
   const payload = JSON.parse(await readFile(REFERENCE_FIXTURE, "utf8"));
   await withInstance("reference", { pipeline: "fix-failing-test" }, { payload }, async (instance) => {
     await navigate(page, instance.opened.url);
+    await openPipelineGraph(page);
     await renderAndScreenshot(page, ".react-flow__node .flow-card", "reference pipeline", "reference-pipeline.png");
     await checkReferenceState(instance.opened.url);
     await checkPipelineView(page, instance.opened.url, "fix-failing-test", "reference fixture");
@@ -433,6 +436,22 @@ async function renderAndScreenshot(page, selector, label, fileName) {
   }
 }
 
+async function openPipelineGraph(page) {
+  const selector = '[data-testid="design-surface-graph"]';
+  await waitForRender(page, selector, "pipeline Graph tab");
+  await evaluate(page, `document.querySelector(${JSON.stringify(selector)}).click()`);
+  await fitGraph(page, ".pipeline-flow");
+}
+
+async function fitGraph(page, surface) {
+  // Overview captures and complete-graph checks explicitly Fit; the browser
+  // workbench tests separately verify readable initial framing and navigation.
+  const selector = `${surface} .graph-camera [aria-label="Fit graph"]`;
+  await waitForRender(page, selector, "graph Fit control");
+  await evaluate(page, `document.querySelector(${JSON.stringify(selector)}).click()`);
+  await evaluate(page, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+}
+
 async function checkConfigView(page, url) {
   const state = await fetchState(url);
   await record("config renders without uncaught errors or console errors", () => assertNoDiagnostics(page));
@@ -458,7 +477,7 @@ async function checkConfigView(page, url) {
     });
   });
   await record("the relation graph fits every card inside the surface", async () => {
-    // The graph still pans and zooms; `fitView` must leave nothing clipped.
+    await fitGraph(page, ".relation-section");
     assert.deepEqual(await evaluate(page, clippedCardsExpression()), []);
   });
   await record("the relation graph draws one edge per reference the config holds", async () => {
@@ -572,7 +591,7 @@ async function checkPipelineView(page, url, name, label) {
     assert.deepEqual(await evaluate(page, legendExpression()), []);
   });
   await record(`pipeline ${label} zoom controls and minimap exist`, async () => {
-    assert.deepEqual(await evaluate(page, `({ controls: Boolean(document.querySelector(".react-flow__controls")), minimap: Boolean(document.querySelector(".react-flow__minimap")) })`), { controls: true, minimap: true });
+    assert.deepEqual(await evaluate(page, `({ controls: Boolean(document.querySelector(".graph-camera")), minimap: Boolean(document.querySelector(".react-flow__minimap")) })`), { controls: true, minimap: true });
   });
 }
 

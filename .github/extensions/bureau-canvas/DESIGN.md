@@ -1,6 +1,6 @@
 ---
 name: Bureau Canvas
-description: Agent-ops graph console — a GitHub Primer-native drafting table for pipeline drawings
+description: Bureau pipeline console — native config controls with a scoped charcoal graph workbench
 colors:
   fg-default: "#1f2328"
   fg-muted: "#656d76"
@@ -51,7 +51,7 @@ spacing:
   lg: "1rem"
   xl: "1.5rem"
 components:
-  node-card:
+  config-card:
     backgroundColor: "{colors.bg-default}"
     textColor: "{colors.fg-default}"
     rounded: "{rounded.md}"
@@ -67,33 +67,38 @@ components:
 
 ## Overview
 
-**Creative North Star: "The Drafting Table"**
+**Creative North Star: "The Drafting Table", with a graph workbench**
 
-Bureau Canvas treats pipelines as drawings under a lamp. The chrome is
-sheet-metal neutral — a GitHub Primer-derived light surface that any
-developer already knows how to read — so the graph itself carries all
-expression. Precision tools, not decoration: pill badges, mono identifiers,
-and color-coded kinds are the only personality, and they exist to make agent
-workflows legible, not to be noticed.
+Configuration and transition tables remain familiar, host-theme-native
+surfaces. The light Primer values in the frontmatter are their fallback
+palette, not a requirement to force a white page in a dark host.
 
-The system is deliberately indistinguishable from Primer. Familiarity is the
-feature: an operator who has used GitHub already knows every control,
-weight, and border on this bench. Ambient shadow is allowed only on
-persistent chrome (headers, panels, menus); resting content surfaces stay
-flat.
+Graph mode is the deliberate exception: a charcoal workbench makes step
+names, execution state, and handoffs the first things to read. Its restrained
+depth, name-first cards, and visible navigation tools draw on the GraphCode
+review recorded in [README.md](README.md#graphcode-integration-analysis).
+This is an independent Bureau implementation, not a copied SwiftUI theme.
+
+The exception is scoped to the graph and its graph-mode chrome. Relation
+graph interiors use the same dark surface; opening a relation disclosure
+does not darken the surrounding configuration form. Returning to Transitions
+returns to native controls. Transitions remains the default authoring view.
 
 **Key Characteristics:**
 
-- Primer-native light palette with `color-scheme: light dark` declared
+- Host-theme-native config and transition surfaces; scoped charcoal graphs
 - Color-coded graph semantics: every node kind and outcome owns a hue
-- Pill badges and mono IDs as the signature density markers
-- Flat content, ambient chrome
+- Name-first graph cards, left type stripes, mono context, explicit state badges
+- Flat native content; restrained depth on graph cards and chrome
 - 4px-rem spacing scale (`--space-1` … `--space-5`)
 
 ## Colors
 
-A light Primer palette where functional gray dominates and saturated hues
-are reserved for graph semantics and outcomes.
+A native Primer fallback palette where functional gray dominates and
+saturated hues are reserved for graph semantics and outcomes. Graph-scoped
+overrides use charcoal surfaces, light text, quiet borders, and readable
+semantic accents; do not reuse a light-surface ink color without checking
+contrast on its dark background.
 
 ### Primary
 - **Primer Link Blue** (#0969da): assignments, deterministic steps, data
@@ -126,7 +131,12 @@ purple, green, and amber each name a graph kind, outcome, or relation. If a
 hue carries no semantic, it does not ship.
 
 **The Bench Gray Rule.** Anything contextual — work sources, terminal
-states, explanatory text — renders in Bench Gray, never a tinted variant.
+identifiers, explanatory text — renders in neutral muted ink appropriate to
+its surface. Explicit outcome and state badges retain their semantic color.
+
+**The Scoped Workbench Rule.** Dark graph styling must not escape into config
+forms or transition tables. Color does not replace a state word, an outcome
+caption, a finding, or keyboard focus. Pending is not a request for attention.
 
 ## Typography
 
@@ -134,8 +144,8 @@ states, explanatory text — renders in Bench Gray, never a tinted variant.
 "Segoe UI", sans-serif)
 **Label/Mono Font:** SFMono-Regular, Consolas, Liberation Mono
 
-**Character:** invisible by design. The system stack reads as GitHub
-instantly; mono appears only for identifiers, hashes, and machine truth.
+**Character:** invisible by design. The system stack remains familiar; mono
+appears for identifiers, hashes, commands, roles, and machine context.
 
 ### Hierarchy
 - **Headline** (700, 1.25rem/1.5rem): page title in the app header; the
@@ -160,8 +170,27 @@ header is a hairline-separated bar with 1rem/1.5rem padding. Spacing moves
 on a 4px-rem scale: 0.25 / 0.5 / 0.75 / 1 / 1.5rem (`--space-1` …
 `--space-5`), and nothing lands off it. The graph canvas owns the remaining
 viewport; rails and panels hug its edges rather than floating over it.
-Graph node cards hold a fixed 15rem width (`--card-width`) so drawings stay
-uniform at any zoom.
+Graph step cards share a consistent width so names, context, and states are
+comparable. The viewer and editor use the same `layoutPipeline` left-to-right
+placement rather than presenting one pipeline as two different drawings.
+Saved `layout.json` coordinates remain authoritative; live and replay state
+decorations do not move the steps.
+
+Find steps/nodes, the attention queue, and camera controls sit in graph-local
+screen space. Ctrl/Cmd+K opens and focuses search on a visible mounted graph;
+hidden editor/relation surfaces do not capture the shortcut. The visible
+trigger exposes the shortcut through its title and `aria-keyshortcuts`.
+Search covers name, type, context, and state; Enter selects and
+centers the first match, results are tabbable, and Escape closes search and
+restores its trigger. Review next selects failure, blocked, paused, or findings
+without treating ordinary pending work as actionable. A visible zoom percentage
+also offers Actual size; Fit and the minimap provide overview and recovery.
+The shared `initialGraphViewport` opens at 80–100% rather than shrinking
+cards until everything fits. Oversized drawings align left to keep the entry
+readable; explicit Fit may zoom out to 20%. Initial framing runs once, after
+React Flow's internal nodes are measured and the surface is visible, including
+a relation graph revealed after mounting. Read-only controlled node props
+need not carry those measurements. Later observation preserves the user's camera.
 
 At **56rem and below**, dense toolbars and two-column control rows collapse
 to their compact layout. This is the one recorded responsive breakpoint for
@@ -169,12 +198,13 @@ both the config surface and pipeline editor.
 
 ## Elevation & Depth
 
-Flat by default: content surfaces have no shadow. Ambient elevation is
-permitted on persistent chrome only — the overflow menu lifts with a soft
+Native content is flat by default. Ambient elevation is
+permitted on persistent chrome — the overflow menu lifts with a soft
 structural shadow (0 10px 24px rgba(31,35,40,0.08)), and a deeper variant
-(0 8px 24px rgb(0 0 0 / 28%)) marks overlay-level surfaces. Graph nodes
-convey selection and hover through glow shadows owned by the flow library,
-not through resting elevation.
+(0 8px 24px rgb(0 0 0 / 28%)) marks overlay-level surfaces. Within the
+charcoal graph only, a restrained card lift and tonal surface separate nodes
+from connections. Selection and attention must remain distinct from this
+resting depth, with borders, state words, and visible focus.
 
 ### Shadow Vocabulary
 - **Chrome lift** (`box-shadow: 0 10px 24px rgba(31,35,40,0.08)`): menus
@@ -184,16 +214,17 @@ not through resting elevation.
 
 ### Named Rules
 
-**The Flat Bench Rule.** Drawings lie flat on the table. Shadows answer
-state (hover, selection, open menu) or chrome — never styling.
+**The Flat Bench Rule.** Native content remains flat. The scoped graph-card
+exception uses depth to separate readable cards from connections, not to
+decorate every container or create a stack of competing panels.
 
 ## Shapes
 
 Softly squared engineering forms: default corner is gently rounded
 (0.625rem via `--radius`), inner controls step down (6px), and badges go
 fully pill (999px). Hairline borders (1px, Hairline) define every boundary;
-fills rarely do. The recurring silhouette is the rounded-rectangle node
-card with a pill badge — drawn, not decorated.
+fills rarely do outside graph mode. The graph silhouette is a rounded
+rectangle with a left type stripe and a separate state badge.
 
 ## Components
 
@@ -211,9 +242,9 @@ card with a pill badge — drawn, not decorated.
 
 ### Cards / Containers
 - **Corner Style:** gently rounded (0.625rem)
-- **Background:** Sheet White
-- **Shadow Strategy:** Flat Bench — none at rest
-- **Border:** 1px Hairline
+- **Background:** host-native for config; charcoal tonal surface for graph cards
+- **Shadow Strategy:** flat native content; restrained graph-card lift
+- **Border:** 1px surface-appropriate hairline; visible selected/attention treatment
 - **Internal Padding:** 12px 16px on node cards; spacing scale elsewhere
 
 ### Inputs / Fields
@@ -223,14 +254,29 @@ card with a pill badge — drawn, not decorated.
 
 ### Navigation
 - App header: flex row, space-between, hairline bottom border; title in
-  Headline, metadata in Body Bench Gray. No tabs, no breadcrumbs — the
-  graph is the navigation.
+  Headline, metadata in Body muted ink. Existing Design/Live/Replay and
+  Transitions/Graph controls remain; graph search supplements navigation.
 
 ### Graph Node (signature)
-- Fixed-width card (15rem) on the drafting surface: kind-colored pill badge
-  top-left, mono handle/ID in Code, title in Title. Selected and hovered
-  states glow via the flow library's shadow tokens. Every visual property
-  of the node answers "what kind of step is this and what is it doing."
+- Name first, with a kind-colored stripe on the left, mono command/role
+  context beneath, and an explicit state badge. Type remains available as
+  text rather than depending on the stripe alone. Design and Pending are
+  different from Running; an unrun step must not imply success.
+- Graph step command/context previews show at most three lines, so long
+  commands cannot cover the next card in the same layer. The full command
+  remains in the viewer's selected-step inspector, the editor's editable
+  command field, and search context. Terminal copy and findings are not truncated.
+- Forward handoffs use quiet curves and semantic outcome captions. Retry
+  routes and data dependencies remain visible; calm styling must not erase
+  an exception path. Viewer and editor terminal-exit captions share a separate
+  label rail rather than following long exit curves across cards. Each curve
+  passes through its own caption so repeated outcomes remain traceable;
+  Publish and other terminal titles must remain readable. Existing editor ports and the
+  transition table retain
+  accessible rewiring rather than depending on tiny hover-only targets.
+- Selecting a viewer step exposes its configuration and handoffs in the
+  side panel. Live/replay logs remain below the graph. This inspector does
+  not replace the editor's full draft, save, validate, and revert flow.
 
 ## Do's and Don'ts
 
@@ -241,12 +287,14 @@ card with a pill badge — drawn, not decorated.
 - **Do** keep spacing on the 0.25–1.5rem scale and corners at 0.625rem
   (6px for inner controls, 999px for badges).
 - **Do** render identifiers, hashes, and handles in 12px mono.
-- **Do** let ambient shadow appear only on chrome: menus, persistent
-  panels, overlays.
+- **Do** limit resting card depth to the scoped graph workbench; keep native
+  forms flat and preserve readable text at Actual size.
 
 ### Don't:
 - **Don't** use color decoratively — a hue without a semantic is a defect.
-- **Don't** add resting shadows to content cards; the bench is flat.
+- **Don't** spread the graph's dark palette or card shadows to native forms.
+- **Don't** equate pending with needs-attention, hide outcomes behind color,
+  or reduce essential actions to hover-only affordances.
 - **Don't** introduce font weights outside 400/700, or display faces
   outside the system stack.
 - **Don't** wrap panels in nested cards; hairline borders divide, fills

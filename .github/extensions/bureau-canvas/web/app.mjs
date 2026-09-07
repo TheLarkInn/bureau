@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Background,
+  BackgroundVariant,
   BaseEdge,
-  Controls,
   EdgeLabelRenderer,
+  getBezierPath,
   getSmoothStepPath,
   Handle,
   MarkerType,
@@ -12,8 +13,7 @@ import {
   Position,
   ReactFlow,
 } from "@xyflow/react";
-// graph-overlays: mode switcher plus live/replay overlay controllers. The
-// pipeline graph rendering below stays as-is; overlay modes only restyle it.
+// Live/replay decorate the same pipeline geometry without moving its nodes.
 import { MODES, ModeSwitcher, useRunActivity } from "./modes.js";
 import { LiveActivity, useLiveOverlay } from "./live/live.js";
 import { StepLog, focusStep } from "./live/logs.js";
@@ -24,6 +24,8 @@ import { terminalCopy } from "./terminals.js";
 import { drawableEdges } from "./graph-edges.mjs";
 import { emptyVerdict } from "./panel-verdict.mjs";
 import { MeasurementGuard } from "./graph-measure.mjs";
+import { GraphTools, GraphStateBadge } from "./graph-workbench.mjs";
+import { graphEdgeCaption, graphEdgeLabels, graphGeometry, graphStepState, graphTerminalPath, needsAttention } from "./graph-presentation.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
 import { sessionValue, storeSessionValue } from "./session-state.js";
@@ -31,10 +33,6 @@ import { sessionValue, storeSessionValue } from "./session-state.js";
 const h = React.createElement;
 const CARD_WIDTH = 240;
 const CARD_HEIGHT = 112;
-const COMPACT_CARD_WIDTH = 200;
-const COMPACT_CARD_HEIGHT = 72;
-const FLOW_X_SCALE = 0.7;
-const FLOW_Y_SCALE = 0.44;
 const CONFIG_PAD = 72;
 const FRAME_PAD = 34;
 const flowItemTypes = {
@@ -1551,6 +1549,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
     return MODES.includes(stored) ? stored : "design";
   });
   const [designSurface, setDesignSurface] = useState("transitions");
+  const [flowApi, setFlowApi] = useState(null);
   useEffect(() => storeSessionValue("pipeline-mode", mode), [mode]);
   const activity = useRunActivity(name, state.config?.view?.assignments ?? []);
   const replay = useReplayOverlay(activity, name);
@@ -1572,9 +1571,22 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   };
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
-    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null, mode === "design"),
+    () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null, mode),
     [pipeline, state, selectedStep, active?.decoration, mode],
   );
+  const graphItems = flow.nodes.filter((node) => node.type === "stepCard").map((node) => ({
+    id: node.id, name: node.data.step.name, kind: node.data.step.kind,
+    detail: stepDetail(node.data.step), state: node.data.status, attention: node.data.attention,
+  }));
+  const selectNode = (id) => setSelectedStep(graphItems.find((item) => item.id === id)?.name ?? id);
+  const inspectNode = (id) => {
+    selectNode(id);
+    const node = flowApi?.getNode(id);
+    if (node) {
+      flowApi.setCenter(node.position.x + (node.measured?.width ?? CARD_WIDTH) / 2,
+        node.position.y + (node.measured?.height ?? CARD_HEIGHT) / 2, { zoom: 1 });
+    }
+  };
   if (state.selectedPipeline.missing) {
     return h(MissingPipeline, { notice: state.selectedPipeline.notice, name });
   }
@@ -1605,26 +1617,30 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           "div",
           { className: "pipeline-flow", "data-graph-edges": String(flow.declared), "data-mode": mode },
           h(ReactFlow, {
-            key: `${mode}:${active?.decoration ? "resolved" : "pending"}`,
+            key: mode,
             nodes: flow.nodes,
             edges: flow.edges,
             nodeTypes: flowItemTypes,
             edgeTypes: flowEdgeTypes,
-            fitView: true,
-            fitViewOptions: { padding: 0.22 },
             minZoom: 0.2,
-            maxZoom: 1.5,
+            maxZoom: 3,
+            onInit: setFlowApi,
             nodesDraggable: false,
             nodesConnectable: false,
             elementsSelectable: true,
             proOptions: { hideAttribution: true },
-            onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.id),
-          }, h(Background, { gap: 24, size: 1.5 }), h(Controls), h(MiniMap, { pannable: true, zoomable: true }), h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
+            onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.name),
+          }, h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
+          h(GraphTools, { items: graphItems, selectedId: graphItems.find((item) => item.name === selectedStep)?.id, onSelect: selectNode }),
+          h(MiniMap, { pannable: true, zoomable: true, position: "bottom-left", "aria-label": "Pipeline overview" }),
+          h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
         ),
       // graph-overlays: a run's steps left output; design mode has no run.
       active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,
     ),
-    h(SidePanel, { state, pipeline, name }),
+    h(SidePanel, { state, pipeline, name,
+      selectedStep: mode !== "design" || designSurface === "graph" ? selectedStep : null,
+      onSelect: inspectNode, onClose: () => setSelectedStep(null) }),
   );
 }
 
@@ -1849,26 +1865,26 @@ function stepLogProps(state, pipeline, active, selectedStep) {
   };
 }
 
-function toFlow(pipeline, state, selectedStep, decoration = null, compact = true) {
-  const layout = pipeline?.layout ?? { steps: [], terminals: [], edges: [] };
+function toFlow(pipeline, state, selectedStep, decoration = null, mode = "design") {
+  const layout = graphGeometry(pipeline);
   const handles = pipeline?.handles ?? { items: {}, edges: {} };
   // graph-overlays: live/replay restyle the static layout; hidden members
   // collapse into their group node and their edges remap onto it.
   const resolved = decoration ? resolveOverlay(pipeline, decoration.overlay, decoration) : null;
   const visible = new Set((resolved?.nodes ?? layout.steps).map((node) => node.id));
-  const frames = (pipeline?.containers ?? []).map((frame) => flowFrame(frame, compact));
+  const frames = layout.containers.map(flowFrame);
   const steps = layout.steps
     .filter((step) => visible.has(step.id))
-    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved, compact));
+    .map((step) => flowStep(step, state, layout.name, handles.items[step.id], selectedStep, resolved, mode));
   const labels = labelsForPipeline(state, layout.name);
-  const terminals = layout.terminals.map((terminal, index) =>
-    flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name], index, compact));
+  const terminals = layout.terminals.map((terminal) =>
+    flowTerminal(terminal, handles.items[terminal.id], labels[terminal.name]));
   const backIndexes = routeIndexes(layout.edges, "back");
   const planned = overlayPlan(layout.edges, resolved);
   const sources = [...(pipeline?.containers ?? []), ...layout.steps.filter((step) => visible.has(step.id)), ...layout.terminals];
   return {
     nodes: [...frames, ...steps, ...terminals],
-    edges: planned.map((item) => flowEdge(item.remapped, handles.edges[item.id], backIndexes.get(item.id) ?? 0, resolved, item.id)),
+    edges: graphEdgeLabels(planned.map((item) => flowEdge(item.remapped, handles.edges[item.id], backIndexes.get(item.id) ?? 0, resolved, item.id))),
     declared: drawableEdges(sources, planned.map((item) => item.remapped)),
   };
 }
@@ -1897,19 +1913,15 @@ function overlayPlan(edges, resolved) {
   return planned;
 }
 
-function flowFrame(frame, compact) {
-  const xScale = compact ? FLOW_X_SCALE : 1;
-  const yScale = compact ? FLOW_Y_SCALE : 1;
-  const cardWidth = compact ? COMPACT_CARD_WIDTH : CARD_WIDTH;
-  const cardHeight = compact ? COMPACT_CARD_HEIGHT : CARD_HEIGHT;
+function flowFrame(frame) {
   return {
     id: frame.id,
     type: "concurrentFrame",
-    position: { x: frame.x * xScale - FRAME_PAD, y: frame.y * yScale - FRAME_PAD },
+    position: { x: frame.x - FRAME_PAD, y: frame.y - FRAME_PAD },
     data: { frame },
     style: {
-      width: frame.width * xScale + cardWidth + FRAME_PAD * 2,
-      height: frame.height * yScale + cardHeight + FRAME_PAD * 2,
+      width: frame.width + CARD_WIDTH + FRAME_PAD * 2,
+      height: frame.height + CARD_HEIGHT + FRAME_PAD * 2,
     },
     selectable: false,
     draggable: false,
@@ -1917,19 +1929,21 @@ function flowFrame(frame, compact) {
   };
 }
 
-function flowStep(step, state, pipelineName, handles, selectedStep, resolved, compact) {
+function flowStep(step, state, pipelineName, handles, selectedStep, resolved, mode) {
   const ref = `pipeline:${pipelineName}/${step.name}`;
   const node = resolved?.nodes.find((item) => item.id === step.id) ?? null;
-  const xScale = compact ? FLOW_X_SCALE : 1;
-  const yScale = compact ? FLOW_Y_SCALE : 1;
+  const status = graphStepState(node, mode);
+  const findings = state.findingsByStep?.[ref] ?? [];
   return {
     id: step.id,
     type: "stepCard",
-    position: { x: step.x * xScale, y: step.y * yScale },
+    position: { x: step.x, y: step.y },
     data: {
       step,
       handles: handles ?? emptyHandles(),
-      findings: state.findingsByStep?.[ref] ?? [],
+      findings,
+      status,
+      attention: needsAttention(status, findings),
       selected: selectedStep === step.name,
       overlayClass: node?.className ?? "",
       paused: Boolean(node?.paused),
@@ -1938,7 +1952,7 @@ function flowStep(step, state, pipelineName, handles, selectedStep, resolved, co
       members: memberRows(resolved, step),
       onToggleGroup: resolved?.onToggleGroup ?? null,
     },
-    style: { width: compact ? COMPACT_CARD_WIDTH : CARD_WIDTH },
+    style: { width: CARD_WIDTH },
     draggable: false,
   };
 }
@@ -1952,15 +1966,13 @@ function memberRows(resolved, step) {
   return Object.entries(members).map(([name, record]) => ({ name, ...record }));
 }
 
-function flowTerminal(terminal, handles, label, index, compact) {
-  const xScale = compact ? FLOW_X_SCALE : 1;
-  const y = compact ? terminal.y * FLOW_Y_SCALE + index * 48 + 18 : terminal.y + 26;
+function flowTerminal(terminal, handles, label) {
   return {
     id: terminal.id,
     type: "terminalPill",
-    position: { x: terminal.x * xScale, y },
+    position: { x: terminal.x, y: terminal.y },
     data: { terminal, handles: handles ?? emptyHandles(), label },
-    style: { width: compact ? 160 : 176 },
+    style: { width: 200 },
     draggable: false,
   };
 }
@@ -1991,7 +2003,6 @@ function flowEdge(edge, endpoints, backIndex, resolved, originalId) {
     data: {
       label: edgeLabelText(edge),
       offset: edge.route === "back" ? 26 + backIndex * 12 : 12,
-      captionShiftY: edgeCaptionShiftY(edge),
       route: edge.route,
     },
   };
@@ -2002,13 +2013,6 @@ function edgeLabelText(edge) {
     return edge.outcome;
   }
   return edge.relation === "observes" ? "over" : undefined;
-}
-
-function edgeCaptionShiftY(edge) {
-  if (edge.relation !== "control") {
-    return 0;
-  }
-  return { success: -18, failure: 0, blocked: 18, "no-work": 36 }[edge.outcome] ?? 0;
 }
 
 function routeIndexes(edges, route) {
@@ -2024,7 +2028,8 @@ function routeIndexes(edges, route) {
 }
 
 function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data = {} }) {
-  const [path, labelX, labelY] = getSmoothStepPath({
+  const routePath = data.route === "back" ? getSmoothStepPath : getBezierPath;
+  const [path, labelX, labelY] = routePath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -2033,23 +2038,17 @@ function RoutedEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
     targetPosition,
     offset: data.offset ?? 12,
   });
-  const [captionX, captionY] = edgeCaptionPosition({ data, labelX, labelY, sourceX, sourceY, targetX });
+  const [captionX, captionY] = graphEdgeCaption({ data, labelX, labelY, targetX, targetY });
+  const drawnPath = data.terminalLabel
+    ? graphTerminalPath({ sourceX, sourceY, targetX, targetY }, captionX, captionY) : path;
   return h(React.Fragment, null,
-    h(BaseEdge, { id, path, markerEnd }),
+    h(BaseEdge, { id, path: drawnPath, markerEnd }),
     data.label ? h(EdgeLabelRenderer, null, h("div", {
       className: "react-flow__edge-label edge-caption",
+      "data-edge-id": id,
       style: { transform: `translate(-50%, -50%) translate(${captionX}px, ${captionY}px)` },
     }, data.label)) : null,
   );
-}
-
-function edgeCaptionPosition({ data, labelX, labelY, sourceX, sourceY, targetX }) {
-  if (data.route === "exit") {
-    const direction = Math.sign(targetX - sourceX) || 1;
-    const distance = Math.min(180, Math.max(96, Math.abs(targetX - sourceX) * 0.4));
-    return [sourceX + direction * distance, sourceY - 10];
-  }
-  return [labelX, labelY + (data.captionShiftY ?? 0)];
 }
 
 function StepCard({ data }) {
@@ -2065,13 +2064,16 @@ function StepCard({ data }) {
   ].filter(Boolean).join(" ");
   return h(
     "article",
-    { className },
+    { className, "data-attention": String(data.attention) },
     h(Handles, { handles: data.handles }),
     h("button", { className: "step-button", type: "button" },
-      h("p", { className: "kind-label" }, step.kind),
-      h("h2", {}, step.name, data.paused ? h("span", { className: "paused-badge" }, "paused") : null),
+      h("div", { className: "graph-card-heading" },
+        h("h2", { title: step.name }, step.name),
+        h(GraphStateBadge, { state: data.status })),
       h("p", { className: "detail", title: stepDetail(step) }, stepDetail(step)),
-      h(Chips, { chips: stepChips(step) }),
+      h("div", { className: "graph-card-meta" },
+        h("p", { className: "kind-label" }, step.kind),
+        h(Chips, { chips: stepChips(step) })),
       data.expanded ? h(MemberList, { members: data.members ?? [] }) : null,
       h(Findings, { findings: data.findings }),
     ),
@@ -2145,20 +2147,22 @@ function ConcurrentFrame() {
 
 function Handles({ handles }) {
   return [
-    ...(handles.target ?? []).map((handle, index, list) => handleElement(handle, "target", index, list)),
-    ...(handles.source ?? []).map((handle, index, list) => handleElement(handle, "source", index, list)),
+    ...(handles.target ?? []).map((handle, _, list) => handleElement(handle, "target", list)),
+    ...(handles.source ?? []).map((handle, _, list) => handleElement(handle, "source", list)),
   ];
 }
 
-function handleElement(handle, type, index, list) {
+function handleElement(handle, type, list) {
+  const side = handle.name === "loop" ? "top" : type === "target" ? "left" : "right";
+  const sameSide = list.filter((item) => (item.name === "loop") === (handle.name === "loop"));
   return h(Handle, {
     key: `${type}:${handle.id}`,
     id: handle.id,
     type,
-    position: handlePosition(handle.side),
+    position: handlePosition(side),
     isConnectable: false,
     className: `flow-handle flow-handle--${handle.name}`,
-    style: handleStyle(handle.side, index, list),
+    style: handleStyle(side, sameSide.indexOf(handle), sameSide),
   });
 }
 
@@ -2203,16 +2207,42 @@ function unreachableClass(findings) {
   return findings.some((finding) => /unreachable/i.test(finding.message ?? "")) ? "flow-card--unreachable" : "";
 }
 
-function SidePanel({ state, pipeline, name }) {
+function SidePanel({ state, pipeline, name, selectedStep, onSelect, onClose }) {
   const findings = pipelineFindings(state, name);
+  const row = routeRows(pipeline, state).find((item) => item.name === selectedStep);
   return h(
     "aside",
     { className: "side-panel" },
+    row ? h(GraphStepInspector, { row, state, name, onSelect, onClose }) : null,
     h("section", { className: "panel-section" }, h("h2", {}, name), h("p", { className: "muted" }, pipelineCounts(pipeline))),
     h(AgentIdentities, { state, pipeline }),
     h("section", { className: "panel-section", "data-testid": "panel-validation" }, h("h3", {}, `Validation (${findings.length})`), findings.length ? h(Findings, { findings }) : h("p", { className: "muted" }, emptyVerdict(state.validation))),
     h("section", { className: "panel-section" }, h("h3", {}, "Legend"), h(Legend)),
   );
+}
+
+function GraphStepInspector({ row, state, name, onSelect, onClose }) {
+  const findings = state.findingsByStep?.[`pipeline:${name}/${row.name}`] ?? [];
+  return h("section", { className: "panel-section graph-step-inspector", "aria-label": "Selected step" },
+    h("div", { className: "graph-card-heading" }, h("h3", {}, "Selected step"),
+      h("button", { type: "button", className: "btn btn--small", onClick: onClose, "aria-label": "Close step details" }, "Close")),
+    h(StepInspector, { row }),
+    h(Findings, { findings }),
+    h("h3", {}, "Handoffs"),
+    h("ul", { className: "graph-handoffs" }, [...row.success, ...row.exceptions].map((route) =>
+      h("li", { key: `${route.outcomes.join(":")}:${route.targetId}` },
+        h("span", {}, route.outcomes.join(", ")),
+        h(GraphHandoff, { route, steps: state.pipelines?.[name]?.layout?.steps ?? [], onSelect })))),
+    h("a", { className: "btn btn--small", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit this pipeline"));
+}
+
+function GraphHandoff({ route, steps, onSelect }) {
+  if (route.href) {
+    return h("a", { href: route.href, target: "_blank", rel: "noreferrer" }, route.target);
+  }
+  return steps.some((step) => step.id === route.targetId)
+    ? h("button", { type: "button", className: "btn btn--small", onClick: () => onSelect(route.targetId) }, route.target)
+    : h("span", {}, route.target);
 }
 
 function AgentIdentities({ state, pipeline }) {

@@ -8,8 +8,8 @@
 
 const X_GAP = 300;
 const Y_GAP = 170;
-const TERMINAL_GAP = 40;
-const TERMINAL_ROW_GAP = 90;
+const TERMINAL_GAP = 80;
+const TERMINAL_ROW_GAP = 180;
 const OUTCOME_ORDER = ["success", "failure", "blocked", "no-work"];
 
 /** Layout for one pipeline view (`lib/view.mjs` `pipelineView` shape). */

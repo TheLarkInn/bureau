@@ -164,6 +164,7 @@ export const SELECTORS = {
   pipelineView: ".view-shell--pipeline",
   pipelineToolbar: ".pipeline-toolbar",
   pipelineFlow: ".pipeline-flow",
+  graphFit: ':is(.pipeline-flow, .editor-view:not([hidden]), .relation-section[open]) .graph-camera [aria-label="Fit graph"]',
   pipelineSurfaceGraph: '[data-testid="design-surface-graph"]',
   pipelineBack: '[data-testid="pipeline-back"]',
   pipelineEditLink: ".editor-link",
@@ -254,7 +255,7 @@ export const SELECTORS = {
   groupFold: ".member-collapse",
   groupFoldOpen: '.member-collapse[aria-expanded="true"]',
   groupFoldShut: '.member-collapse[aria-expanded="false"]',
-  pausedBadge: ".paused-badge",
+  pausedBadge: ".graph-state--paused",
   // The step log below the graph: the region itself, the head it grows once a
   // step is selected, and the invitation it draws when none is. It is on every
   // overlay screen, so "nothing selected" is a state rather than an absence —
