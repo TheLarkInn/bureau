@@ -20,6 +20,7 @@ use crate::process::Secret;
 pub(super) enum Case {
     Complete,
     StructuredResult,
+    Usage(&'static str),
     MissingAgent,
     RefusedAgent,
     Drift,
@@ -159,6 +160,10 @@ fn prompt(
     );
     match case {
         Case::StructuredResult => structured_result(connection, responder),
+        Case::Usage(report) => {
+            super::usage_tests::send(connection, report)?;
+            structured_result(connection, responder)
+        }
         Case::Error => responder.respond_with_error(super::selection::error("peer failure")),
         Case::Stalled | Case::Eof => connection.spawn(async move {
             let _responder = responder;

@@ -503,6 +503,10 @@ stable-v1 Rust client owns stdin/stdout framing while Bureau retains the
 complete environment, unshare isolation, process group, descendant cleanup,
 deadline, cancellation, and stderr drain. Decoded agent content is scrubbed
 before logging; protocol bytes must not be altered before decoding.
+After EOF, agents have up to ten seconds to exit cleanly, still subject to the
+original deadline and cancellation. Stderr draining is bounded separately.
+Forced termination never becomes a successful exit merely because a result
+was published.
 
 ### Layer 1 — the fake adapter
 

@@ -204,12 +204,13 @@ pub(super) async fn wait_child(
     wait_child_until(child, monotonic_now() + timeout, cancel, &mut None).await
 }
 
-pub(super) fn shutdown(child: &mut Child, event: &mut Option<Wait>) {
+pub(super) fn shutdown(
+    child: &mut Child,
+    deadline: Instant,
+    cancel: Option<&std::path::Path>,
+    event: &mut Option<Wait>,
+) {
     if event.is_none() {
-        *event = Some(match child.try_wait() {
-            Ok(Some(status)) => Wait::Exited(Ok(status)),
-            Ok(None) => Wait::Shutdown,
-            Err(error) => Wait::Exited(Err(error)),
-        });
+        *event = Some(poll(child, cancel, deadline).unwrap_or(Wait::Shutdown));
     }
 }

@@ -54,8 +54,9 @@ Provider permission enforcement remains a provider responsibility; the public
 is a compatibility risk, not something a protocol-only test can disprove.
 
 `end_turn` alone is not a successful step: one-shot MCP publication or a valid
-`v2` result in agent-message text is required. Missing measured USD cost stays
-unknown and fails closed for cost-limited assignments.
+`v2` result in agent-message text is required. Context-only usage updates preserve
+the latest cumulative USD measurement; explicit unusable cost reports clear it.
+Without usable measured USD cost, cost-limited assignments fail closed.
 
 ## Initialize and reconcile
 

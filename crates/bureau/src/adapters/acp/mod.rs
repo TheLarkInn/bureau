@@ -3,6 +3,7 @@
 mod capture;
 mod events;
 mod exchange;
+mod notification;
 mod selection;
 mod setup;
 
@@ -12,6 +13,8 @@ mod result_tests;
 mod test_peer;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod usage_tests;
 #[cfg(test)]
 mod wire_tests;
 

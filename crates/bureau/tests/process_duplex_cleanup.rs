@@ -46,11 +46,13 @@ async fn normal_eof_exit_kills_detached_descendants() {
 #[tokio::test]
 async fn eof_ignoring_server_has_bounded_teardown_and_no_fake_exit() {
     let dir = TestDir::new("ignores-eof");
+    let mut request = dir.request("touch ready; sleep 30");
+    request.timeout = Duration::from_secs(30);
     let Duplex {
         stdin,
         stdout,
         owner,
-    } = start_duplex(dir.request("touch ready; sleep 30")).expect("spawn");
+    } = start_duplex(request).expect("spawn");
     ready(&dir).await;
     drop((stdin, stdout));
     let started = Instant::now();
@@ -60,7 +62,7 @@ async fn eof_ignoring_server_has_bounded_teardown_and_no_fake_exit() {
             result.outcome,
             result.exit_code,
             result.error.is_some(),
-            started.elapsed() < Duration::from_secs(3)
+            started.elapsed() < Duration::from_secs(12)
         ),
         (SpawnOutcome::Signaled, None, true, true)
     );

@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use agent_client_protocol::schema::v1::{
     ContentBlock, PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    SessionUpdate, UsageUpdate,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionUpdate, UsageUpdate,
 };
 use agent_client_protocol::{Error, Result};
 
 use super::capture::Capture;
+use super::notification::Notification;
 use super::selection;
 use crate::adapters::Usage;
 use crate::process::{ScrubWriter, Secret, SharedLog};
@@ -52,7 +52,7 @@ impl Events {
         }))
     }
 
-    pub(super) fn receive(&mut self, notification: SessionNotification) {
+    pub(super) fn receive(&mut self, notification: Notification) {
         // The SDK logs notification-handler errors rather than ending the exchange.
         if let Err(error) = self.update(notification) {
             self.failure.get_or_insert(error);
@@ -63,22 +63,20 @@ impl Events {
         self.failure.clone().map_or(Ok(()), Err)
     }
 
-    pub(super) fn update(&mut self, notification: SessionNotification) -> Result<()> {
-        if self.session.as_ref() != Some(&notification.session_id) {
+    pub(super) fn update(&mut self, notification: Notification) -> Result<()> {
+        if self.session.as_ref() != Some(&notification.session.session_id) {
             return Ok(());
         }
-        self.apply(notification.update)
+        self.apply(notification.session.update, notification.cost_reported)
     }
 
-    fn apply(&mut self, update: SessionUpdate) -> Result<()> {
+    fn apply(&mut self, update: SessionUpdate, cost_reported: bool) -> Result<()> {
         match update {
             SessionUpdate::AgentMessageChunk(chunk) => self.message(chunk.content),
             SessionUpdate::AgentThoughtChunk(chunk) => self.thought(chunk.content),
             SessionUpdate::ToolCall(tool) => self.progress(&format!("{}\n", tool.title)),
-            SessionUpdate::UsageUpdate(update) => {
-                self.measure(&update);
-                Ok(())
-            }
+            SessionUpdate::UsageUpdate(update) if cost_reported => self.measure(&update),
+            SessionUpdate::UsageUpdate(_) => Ok(()),
             SessionUpdate::ConfigOptionUpdate(update) => self.configuration(&update.config_options),
             _ => self.progress("ACP session progress\n"),
         }
@@ -110,7 +108,7 @@ impl Events {
         Ok(())
     }
 
-    fn measure(&mut self, update: &UsageUpdate) {
+    fn measure(&mut self, update: &UsageUpdate) -> Result<()> {
         self.usage.cost_usd = update
             .cost
             .as_ref()
@@ -121,6 +119,10 @@ impl Events {
             .usage
             .cost_usd
             .map(|_| "acp_cumulative_session_usd".to_owned());
+        if self.usage.cost_usd.is_none() {
+            self.progress("ACP unusable cost report; measured USD cost is unknown\n")?;
+        }
+        Ok(())
     }
 
     pub(super) fn progress(&mut self, text: &str) -> Result<()> {

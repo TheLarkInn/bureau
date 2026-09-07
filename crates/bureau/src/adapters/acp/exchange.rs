@@ -3,12 +3,12 @@
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest,
-    RequestPermissionRequest, SessionNotification, SetSessionConfigOptionRequest, StopReason,
-    TextContent,
+    RequestPermissionRequest, SetSessionConfigOptionRequest, StopReason, TextContent,
 };
 use agent_client_protocol::{Agent, Client, ConnectTo, ConnectionTo, Result};
 
 use super::events::{self, SharedEvents};
+use super::notification::Notification;
 use super::selection;
 
 async fn new_session(
@@ -120,7 +120,7 @@ pub(super) async fn exchange(
     Client
         .builder()
         .on_receive_notification(
-            async move |notification: SessionNotification, _cx| {
+            async move |notification: Notification, _cx| {
                 events::lock(&updates)?.receive(notification);
                 Ok(())
             },

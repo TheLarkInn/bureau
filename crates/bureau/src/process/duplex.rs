@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::task::Poll;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::task::JoinHandle;
@@ -11,6 +11,8 @@ use tokio::task::JoinHandle;
 use super::spawn::{DRAIN_TIMEOUT, drain_task, monotonic_now, spawn_child};
 use super::wait::{KillOnDrop, Wait, shutdown, wait_child_until};
 use super::{SpawnOutcome, SpawnRequest, SpawnResult};
+
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn append_error(result: &mut SpawnResult, error: &str) {
     match &mut result.error {
@@ -54,6 +56,11 @@ impl DuplexOwner {
     /// Cancellation-safe: a losing `select!` branch may be dropped, then resumed
     /// by [`Self::finish`]. Protocol stdout belongs to the caller, not the result.
     pub async fn wait(&mut self) -> SpawnResult {
+        let result = self.wait_exit().await;
+        self.finish_result(result).await
+    }
+
+    async fn wait_exit(&mut self) -> SpawnResult {
         let (outcome, exit_code, error) = wait_child_until(
             &mut self.child,
             self.deadline,
@@ -64,6 +71,10 @@ impl DuplexOwner {
         self.kill_on_drop.finish();
         let mut result = result(self.started, outcome, error);
         result.exit_code = exit_code;
+        result
+    }
+
+    async fn finish_result(&mut self, mut result: SpawnResult) -> SpawnResult {
         match self.drain_stderr().await {
             Ok(stderr) => result.stderr = stderr,
             Err(error) => append_error(&mut result, &error),
@@ -72,18 +83,28 @@ impl DuplexOwner {
         result
     }
 
-    /// After closing protocol pipes, allows one second for clean exit.
+    /// After closing protocol pipes, allows up to ten seconds for clean exit.
     ///
     /// A server ignoring EOF is killed as a tree and reaped, reporting `Signaled`
     /// rather than inventing an exit code. The original timeout and cancellation
-    /// remain active throughout shutdown.
+    /// remain active throughout shutdown. Stderr draining has its own allowance.
     pub async fn finish(mut self) -> SpawnResult {
-        if let Ok(result) = tokio::time::timeout(DRAIN_TIMEOUT, self.wait()).await {
+        let result = self.finish_exit().await;
+        self.finish_result(result).await
+    }
+
+    async fn finish_exit(&mut self) -> SpawnResult {
+        if let Ok(result) = tokio::time::timeout(SHUTDOWN_TIMEOUT, self.wait_exit()).await {
             return result;
         }
-        shutdown(&mut self.child, &mut self.event);
+        shutdown(
+            &mut self.child,
+            self.deadline,
+            self.cancel.as_deref(),
+            &mut self.event,
+        );
         self.kill_on_drop.kill();
-        self.wait().await
+        self.wait_exit().await
     }
 
     async fn drain_stderr(&mut self) -> Result<Vec<u8>, String> {

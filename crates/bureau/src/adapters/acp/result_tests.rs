@@ -76,8 +76,13 @@ fn state() -> events::SharedEvents {
 fn update(state: &events::SharedEvents, update: SessionUpdate) {
     events::lock(state)
         .expect("events")
-        .update(SessionNotification::new("session", update))
+        .update(notification(update))
         .expect("update");
+}
+
+fn notification(update: SessionUpdate) -> super::notification::Notification {
+    let params = serde_json::to_value(SessionNotification::new("session", update)).expect("params");
+    serde_json::from_value(params).expect("notification")
 }
 
 fn role() -> Role {
@@ -162,10 +167,7 @@ fn notification_failure_overrides_a_clean_turn_and_published_success() {
         let changed = agent_client_protocol::schema::v1::ConfigOptionUpdate::new(
             super::test_peer::options("default"),
         );
-        events.receive(SessionNotification::new(
-            "session",
-            SessionUpdate::ConfigOptionUpdate(changed),
-        ));
+        events.receive(notification(SessionUpdate::ConfigOptionUpdate(changed)));
     }
     let execution = super::finish(&fixture.session, &state, Ok(()), &[]);
     assert_eq!(execution.result.outcome, StepOutcome::Failure);
