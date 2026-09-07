@@ -1,0 +1,27 @@
+[workspace]
+git_only = true
+publish = false
+release = true
+# CI only calls release after testing/building this exact main commit.
+# Do not let release-plz check out an older release-PR commit behind our back.
+release_always = true
+semver_check = false
+features_always_increment_minor = true
+dependencies_update = false
+pr_name = "chore: release"
+pr_labels = ["release"]
+git_tag_name = "v{{ version }}"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+
+[[package]]
+name = "bureau"
+git_tag_enable = true
+git_release_enable = true
+git_release_name = "bureau v{{ version }}"
+git_release_draft = true
+git_release_latest = false
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = ["bureau-lifecycle", "bureau-plugin", "bureau-dashboard"]
