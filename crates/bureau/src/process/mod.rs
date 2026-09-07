@@ -1,10 +1,11 @@
 //! Layer 0: the process contract (DESIGN.md section 7) — the most
 //! important interface in the system. Every subprocess in every higher
-//! layer goes through [`spawn`].
+//! layer goes through [`spawn`] or its supervised [`duplex`] variant.
 
 use serde::{Deserialize, Serialize};
 
 mod credential;
+mod duplex;
 mod scrub;
 mod secret;
 mod spawn;
@@ -12,9 +13,11 @@ mod utf8;
 mod wait;
 
 pub use credential::{CredentialError, DIR_VAR, ENV_PREFIX, resolve, resolve_file};
+pub use duplex::{Duplex, DuplexOwner, duplex, start_duplex};
 pub use scrub::{REDACTED, ScrubWriter, scrub_json};
 pub use secret::Secret;
 pub use spawn::{SharedLog, SpawnRequest, SpawnResult, shared_log, spawn};
+pub(crate) use utf8::complete_prefix;
 
 /// How a spawned process ended.
 ///

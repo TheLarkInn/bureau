@@ -191,15 +191,6 @@ fn add_cost(value: &serde_json::Value, totals: &mut Totals) {
     }
 }
 
-/// The agent response nested in Claude's structured envelope.
-#[must_use]
-pub fn claude_result(bytes: &[u8]) -> Option<Vec<u8>> {
-    json(bytes)?
-        .get("result")?
-        .as_str()
-        .map(|result| result.as_bytes().to_vec())
-}
-
 /// A validated step result plus adapter-owned usage.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Execution {

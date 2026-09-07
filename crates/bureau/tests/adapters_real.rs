@@ -98,38 +98,29 @@ fn copilot_request(role: &Role, step: &StepDef, dir: &Path) -> SpawnRequest {
     copilot::spawn_request(role, step, &request(dir), Vec::new(), None)
 }
 
-fn claude_request(role: &Role, step: &StepDef, dir: &Path) -> SpawnRequest {
-    claude::spawn_request(role, step, &request(dir), Vec::new(), None)
-}
-
-/// The argv value following `flag`.
-fn value_after<'a>(argv: &'a [String], flag: &str) -> &'a str {
-    let at = argv.iter().position(|a| a == flag).expect("flag present");
-    &argv[at + 1]
-}
-
-/// Asserts the prompt, agent, sandbox, bureau-io, and deny-by-default argv.
-fn assert_copilot_argv(req: &SpawnRequest, json: &str) {
-    let parts = (
-        req.argv.first().map(String::as_str),
-        value_after(&req.argv, "-p"),
-        value_after(&req.argv, "--agent"),
-        req.argv.len(),
-    );
-    let expected = (Some(copilot::BINARY), json, "no-such-plugin:analyzer", 11);
-    assert_eq!(parts, expected);
-}
-
 #[test]
-fn copilot_passes_request_json_as_prompt_and_stdin() {
+fn copilot_reserves_stdin_for_acp_and_preserves_native_policy() {
     let dir = TestDir::new("argv");
     let role = role("/no-such-plugin:analyzer", AdapterKind::Copilot, &[]);
     let request = request(dir.path());
     let req = copilot::spawn_request(&role, &step(Some(60)), &request, Vec::new(), None);
-    let json = String::from_utf8(request.to_json().expect("serialize")).expect("utf8");
-    let stdin = StepRequest::from_json(&req.stdin).expect("stdin parses");
-    assert_copilot_argv(&req, &json);
-    let shape = (stdin == request, req.dir == request.worktree, req.timeout);
+    assert_eq!(
+        req.argv,
+        [
+            "copilot",
+            "--acp",
+            "--stdio",
+            "--experimental",
+            "--sandbox",
+            "--allow-tool=bureau-io",
+            "--deny-tool=shell(*)",
+        ]
+    );
+    let shape = (
+        req.stdin.is_empty(),
+        req.dir == request.worktree,
+        req.timeout,
+    );
     assert_eq!(shape, (true, true, Duration::from_secs(60)));
 }
 
@@ -140,13 +131,17 @@ fn unresolvable_plugin_reference_passes_the_name_through() {
     let req = copilot_request(&role, &step(None), dir.path());
     let copied = dir.path().join(".github/agents/helper.agent.md");
     let seen = (
-        value_after(&req.argv, "--agent"),
+        bureau::adapters::resolved_agent(&role, dir.path()),
         copied.exists(),
         req.timeout,
     );
     assert_eq!(
         seen,
-        ("plugin-zzz-absent:helper", false, copilot::DEFAULT_TIMEOUT)
+        (
+            "plugin-zzz-absent:helper".to_owned(),
+            false,
+            copilot::DEFAULT_TIMEOUT
+        )
     );
 }
 
@@ -157,9 +152,9 @@ fn plugin_reference_uses_the_pre_activated_discovery_file() {
     std::fs::create_dir_all(activated.parent().expect("parent")).expect("agent dir");
     std::fs::write(&activated, AGENT_BODY).expect("activated agent");
     let role = role("/demo:helper", AdapterKind::Copilot, &[]);
-    let req = copilot_request(&role, &step(None), dir.path());
+    let agent = bureau::adapters::resolved_agent(&role, dir.path());
     let readback = std::fs::read_to_string(activated).expect("activated agent");
-    let seen = (readback.as_str(), value_after(&req.argv, "--agent"));
+    let seen = (readback.as_str(), agent.as_str());
     assert_eq!(seen, (AGENT_BODY, "demo:helper"));
 }
 
@@ -188,17 +183,14 @@ fn md_agent_paths_materialize_verbatim_for_both_adapters() {
     let path = agent.to_str().expect("utf8 path");
     let copilot_role = role(path, AdapterKind::Copilot, &[]);
     let claude_role = role(path, AdapterKind::Claude, &[]);
-    let cop = copilot_request(&copilot_role, &step(None), dir.path());
-    let cla = claude_request(&claude_role, &step(None), dir.path());
+    let cop = bureau::adapters::resolved_agent(&copilot_role, dir.path());
+    let cla = bureau::adapters::resolved_agent(&claude_role, dir.path());
     let read = |p: &str| std::fs::read_to_string(dir.path().join(p)).expect("copy");
     let bodies = (
         read(".github/agents/notes.agent.md"),
         read(".claude/agents/notes.md"),
     );
-    let agents = (
-        value_after(&cop.argv, "--agent"),
-        value_after(&cla.argv, "--agent"),
-    );
+    let agents = (cop.as_str(), cla.as_str());
     let seen = (bodies.0 == AGENT_BODY, bodies.1 == AGENT_BODY, agents);
     assert_eq!(seen, (true, true, ("notes", "notes")));
 }
@@ -214,11 +206,11 @@ fn absolute_agent_path_with_colon_remains_a_path() {
         AdapterKind::Copilot,
         &[],
     );
-    let request = copilot_request(&role, &step(None), dir.path());
+    let agent = bureau::adapters::resolved_agent(&role, dir.path());
     let copied = dir.path().join(".github/agents/reviewer:v2.agent.md");
     assert_eq!(
         (
-            value_after(&request.argv, "--agent"),
+            agent.as_str(),
             std::fs::read_to_string(copied).expect("copy"),
         ),
         ("reviewer:v2", AGENT_BODY.to_owned())
@@ -226,55 +218,18 @@ fn absolute_agent_path_with_colon_remains_a_path() {
 }
 
 #[test]
-fn claude_carries_the_request_on_stdin_only() {
+fn claude_uses_the_public_acp_executable_without_cli_prompt_flags() {
     let dir = TestDir::new("claude-stdin");
     let role = role("/p:a", AdapterKind::Claude, &[]);
     let request = request(dir.path());
     let req = claude::spawn_request(&role, &step(Some(5)), &request, Vec::new(), None);
-    let stdin = StepRequest::from_json(&req.stdin).expect("stdin parses");
-    let argv = [
-        claude::BINARY,
-        "-p",
-        "--output-format",
-        "json",
-        "--agent",
-        "a",
-        "--allowedTools",
-        "mcp__bureau-io__get_step_context,mcp__bureau-io__publish_result",
-        "--disallowedTools",
-        "Bash(*)",
-    ]
-    .join(SEP);
     let shape = (
-        req.argv.join(SEP) == argv,
-        stdin == request,
+        req.argv == ["claude-agent-acp"],
+        req.stdin.is_empty(),
         req.dir == request.worktree,
     );
     assert_eq!(shape, (true, true, true));
     assert_eq!(req.timeout, Duration::from_secs(5));
-}
-
-#[test]
-fn claude_mirrors_the_push_boundary_and_denies_by_default() {
-    let edit = "--allowedTools\u{1f}Edit,Write,Bash";
-    let cases: [(&[Permission], String); 4] = [
-        (
-            &[Permission::RepoWrite],
-            format!("{edit}\u{1f}--disallowedTools\u{1f}Bash(git push:*)"),
-        ),
-        (&[Permission::RepoPush], edit.to_owned()),
-        (
-            &[Permission::RepoRead],
-            "--disallowedTools\u{1f}Bash(*)".to_owned(),
-        ),
-        (&[], "--disallowedTools\u{1f}Bash(*)".to_owned()),
-    ];
-    for (permissions, flags) in cases {
-        let dir = TestDir::new("claude-flags");
-        let role = role("/p:a", AdapterKind::Claude, permissions);
-        let req = claude_request(&role, &step(None), dir.path());
-        assert_eq!(req.argv[8..].join(SEP), flags);
-    }
 }
 
 #[path = "adapters_real/env.rs"]

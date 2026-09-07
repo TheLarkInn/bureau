@@ -238,10 +238,11 @@ fn drive(terminal: &mut DefaultTerminal, roots: &Roots) -> anyhow::Result<i32> {
         if !event::poll(TICK).context("polling terminal input")? {
             continue;
         }
-        if let Event::Key(key) = event::read().context("reading terminal input")? {
-            if key.kind != KeyEventKind::Release && handle_key(&mut selection, &frame, key) {
-                return Ok(0);
-            }
+        if let Event::Key(key) = event::read().context("reading terminal input")?
+            && key.kind != KeyEventKind::Release
+            && handle_key(&mut selection, &frame, key)
+        {
+            return Ok(0);
         }
     }
 }

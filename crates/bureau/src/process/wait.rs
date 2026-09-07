@@ -71,10 +71,11 @@ impl Drop for KillOnDrop {
     }
 }
 
-enum Wait {
+pub(super) enum Wait {
     Exited(std::io::Result<ExitStatus>),
     Cancelled,
     Timeout,
+    Shutdown,
 }
 
 fn classify(status: ExitStatus) -> (SpawnOutcome, Option<i32>, Option<String>) {
@@ -113,12 +114,17 @@ async fn stop(
     error: Option<String>,
 ) -> (SpawnOutcome, Option<i32>, Option<String>) {
     kill_group(child);
-    match child.wait().await {
-        Ok(_) => (outcome, None, error),
-        Err(wait_error) => (
+    match tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
+        Ok(Ok(_)) => (outcome, None, error),
+        Ok(Err(wait_error)) => (
             SpawnOutcome::Signaled,
             None,
             Some(format!("wait after termination failed: {wait_error}")),
+        ),
+        Err(error) => (
+            SpawnOutcome::Signaled,
+            None,
+            Some(format!("reaping terminated process timed out: {error}")),
         ),
     }
 }
@@ -143,10 +149,9 @@ fn poll(child: &mut Child, cancel: Option<&std::path::Path>, deadline: Instant) 
 
 async fn wait_event(
     child: &mut Child,
-    timeout: Duration,
+    deadline: Instant,
     cancel: Option<&std::path::Path>,
 ) -> Wait {
-    let deadline = monotonic_now() + timeout;
     loop {
         if let Some(event) = poll(child, cancel, deadline) {
             return event;
@@ -157,18 +162,38 @@ async fn wait_event(
 
 async fn complete_wait(
     child: &mut Child,
-    event: Wait,
+    event: &Wait,
 ) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    match event {
-        Wait::Exited(Ok(status)) => classify(status),
-        Wait::Exited(Err(error)) => (
+    let (outcome, error) = match event {
+        Wait::Exited(Ok(status)) => return classify(*status),
+        Wait::Exited(Err(error)) => {
+            return (
+                SpawnOutcome::Signaled,
+                None,
+                Some(format!("wait failed: {error}")),
+            );
+        }
+        Wait::Cancelled => (SpawnOutcome::Signaled, Some("cancelled".to_owned())),
+        Wait::Timeout => (SpawnOutcome::Timeout, None),
+        Wait::Shutdown => (
             SpawnOutcome::Signaled,
-            None,
-            Some(format!("wait failed: {error}")),
+            Some("process did not exit after closing stdin".to_owned()),
         ),
-        Wait::Cancelled => stop(child, SpawnOutcome::Signaled, Some("cancelled".to_owned())).await,
-        Wait::Timeout => stop(child, SpawnOutcome::Timeout, None).await,
-    }
+    };
+    stop(child, outcome, error).await
+}
+
+pub(super) async fn wait_child_until(
+    child: &mut Child,
+    deadline: Instant,
+    cancel: Option<&std::path::Path>,
+    event: &mut Option<Wait>,
+) -> (SpawnOutcome, Option<i32>, Option<String>) {
+    let event = match event {
+        Some(event) => event,
+        empty @ None => empty.insert(wait_event(child, deadline, cancel).await),
+    };
+    complete_wait(child, event).await
 }
 
 pub(super) async fn wait_child(
@@ -176,6 +201,15 @@ pub(super) async fn wait_child(
     timeout: Duration,
     cancel: Option<&std::path::Path>,
 ) -> (SpawnOutcome, Option<i32>, Option<String>) {
-    let event = wait_event(child, timeout, cancel).await;
-    complete_wait(child, event).await
+    wait_child_until(child, monotonic_now() + timeout, cancel, &mut None).await
+}
+
+pub(super) fn shutdown(child: &mut Child, event: &mut Option<Wait>) {
+    if event.is_none() {
+        *event = Some(match child.try_wait() {
+            Ok(Some(status)) => Wait::Exited(Ok(status)),
+            Ok(None) => Wait::Shutdown,
+            Err(error) => Wait::Exited(Err(error)),
+        });
+    }
 }

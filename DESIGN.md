@@ -498,6 +498,12 @@ Requirements, all testable with `/bin/sh` and no model:
 - Those four outcomes are genuinely distinct. Do not collapse timeout into an exit
   code, and do not represent "no exit code" as `-1`.
 
+ACP agents use a duplex form of this same process supervisor: the official
+stable-v1 Rust client owns stdin/stdout framing while Bureau retains the
+complete environment, unshare isolation, process group, descendant cleanup,
+deadline, cancellation, and stderr drain. Decoded agent content is scrubbed
+before logging; protocol bytes must not be altered before decoding.
+
 ### Layer 1 — the fake adapter
 
 A `fake` adapter that replays a recorded transcript from a fixture file, plus a
@@ -509,7 +515,9 @@ git, and reconcile logic testable in milliseconds, offline, deterministically, i
 
 ### Layer 2 — step I/O contract
 
-JSON on stdin, JSON on stdout. Steps communicate **only** through this and through
+The versioned JSON contract is carried on stdin/stdout for deterministic and
+fake steps, and in ACP prompt/agent-message content or `bureau-io` MCP for
+production agents. Steps communicate **only** through this and through
 artifact file paths. No shared memory, no ambient globals, no reading each other's
 scratch directories.
 
@@ -573,10 +581,12 @@ never has to go looking for its assignment. It is the wire projection of a
 and the item's own trust grade is not repeated because `trust` above already holds
 the request's provenance floor.
 
-A step answers on stdout. A real agent CLI renders its tool transcript to that same
-stream ahead of the final message, so **parse the result as a document embedded in
-the output, not as the whole buffer**, searching from the end. Requiring the whole
-buffer to be one document silently discards results that were published correctly.
+An agent answers through one-shot MCP publication or its message text.
+**Parse the result as a document embedded in the agent's message text, not as
+the whole buffer**, searching from the end. Fake transcripts retain this same
+embedded-document compatibility. ACP tool output, request echoes, and protocol
+envelopes are not result candidates. Requiring the whole message buffer to be
+one document silently discards results that were published correctly.
 Deterministic steps keep the strict whole-buffer parse: their command output is
 arbitrary, and a build that prints a `v2`-shaped object must not seize the outcome.
 
@@ -819,7 +829,8 @@ model:invoke
 ```
 
 Each maps to a concrete credential that layer 0 will or will not inject. Where the
-adapter can enforce it, mirror it in argv:
+adapter can enforce it, mirror it in native launch options (Copilot argv,
+Claude's public ACP session metadata):
 `--allow-tool='shell(git:*)' --deny-tool='shell(git push)'`.
 
 Toolchain needs (`node@20`, `os=linux`) belong to the container image, not to this
@@ -1024,9 +1035,13 @@ Publication is one-shot. Artifact paths must stay inside the step worktree;
 copy and hash them into the durable run directory. The MCP process writes no
 run-log, lease, budget, or forge state. The engine validates before append.
 
-Copilot and Claude both receive these tools. A real agent step succeeds only
-after MCP publication or valid versioned `StepResult` JSON on stdout. Exit zero
-plus prose is failure. Remove agent-controlled `cost_usd` from `StepResult` and
+Copilot and Claude both receive these tools through stable ACP v1 session setup.
+Each attempt starts a fresh session and selects the role's exact advertised
+custom agent before prompting. Native role grants authorize normal work;
+additional permission requests, including sandbox bypass, are rejected.
+A real agent step succeeds only after clean ACP completion and MCP publication
+or valid versioned `StepResult` JSON in agent-message content. Completion plus
+prose is failure. Remove agent-controlled `cost_usd` from `StepResult` and
 advance the wire schema to `v2`. Adapters own usage/cost measurement.
 
 ### 15.2 Plugin resolution

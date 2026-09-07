@@ -16,7 +16,7 @@ use super::SpawnOutcome;
 use super::scrub::ScrubWriter;
 use super::secret::Secret;
 
-const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+pub(super) const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const UNSHARE_ARGS: [&str; 7] = [
     "--user",
     "--map-root-user",
@@ -135,7 +135,7 @@ fn build_command(req: &SpawnRequest, token: &str) -> Result<Command, String> {
     Ok(Command::from(command))
 }
 
-fn spawn_child(req: &SpawnRequest) -> Result<(Child, String), String> {
+pub(super) fn spawn_child(req: &SpawnRequest) -> Result<(Child, String), String> {
     let token = crate::identity::random_hex().map_err(|error| error.to_string())?;
     let child = build_command(req, &token)
         .and_then(|mut command| command.spawn().map_err(|error| error.to_string()))?;
@@ -186,10 +186,10 @@ fn forward(log: Option<&SharedLog>, buf: &[u8], forwarded: &mut usize, last: boo
     if take == 0 {
         return;
     }
-    if let Some(sink) = log {
-        if let Ok(mut w) = sink.lock() {
-            let _ = w.write_all(&available[..take]);
-        }
+    if let Some(sink) = log
+        && let Ok(mut w) = sink.lock()
+    {
+        let _ = w.write_all(&available[..take]);
     }
     *forwarded += take;
 }
@@ -215,7 +215,7 @@ async fn drain(reader: BoxedStream, secrets: Vec<Secret>, log: Option<SharedLog>
     captured
 }
 
-fn drain_task(
+pub(super) fn drain_task(
     reader: Option<impl AsyncRead + Send + Unpin + 'static>,
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
@@ -268,7 +268,7 @@ async fn run_child(
 }
 
 /// The process clock boundary: the single place wall time is read.
-fn monotonic_now() -> Instant {
+pub(super) fn monotonic_now() -> Instant {
     let now = std::time::Instant::now;
     now()
 }
