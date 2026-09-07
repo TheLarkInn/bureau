@@ -7,7 +7,7 @@
 // could start to disagree with them.
 
 import { collect, CONTRAST, copyFailure, copyLabel, measureFor, phrasesFor, selectorsFor, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, unrowed, unsettledReason, verdict } from "./checks.mjs";
-import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
+import { CONSTRAINTS, ENTRY_TRANSITIONS, EXCLUSIONS, ORDER, renderPath, rootReason, STATES, summary, TRANSITIONS } from "./registry.mjs";
 import { DIMENSION_BY_ID } from "./dimensions.mjs";
 import { harnessNotes, violations } from "./constraints.mjs";
 import { domAdapter } from "./dom-adapter.mjs";
@@ -219,7 +219,7 @@ async function walk(state) {
   renderDetail(state, { pending: true });
   try {
     const adapter = domAdapter(frame);
-    await runPath(state.ops, adapter, base);
+    await runPath(renderPath(state), adapter, base);
     renderDetail(state, { ...(await settledInspect(state)), channel: adapter.channel });
   } catch (error) {
     renderDetail(state, { failed: String(error?.message ?? error) });
@@ -349,7 +349,7 @@ function pathList(state) {
   const box = el("section", "panel");
   box.append(el("h3", null, "Entry path"));
   const list = el("ol", "ops");
-  for (const op of state.ops) {
+  for (const op of renderPath(state)) {
     list.append(el("li", null, describeOp(op)));
   }
   box.append(list);

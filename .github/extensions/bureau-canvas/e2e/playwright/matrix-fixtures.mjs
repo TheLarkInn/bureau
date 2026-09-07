@@ -16,6 +16,7 @@ import { test as base } from "@playwright/test";
 
 import { collect, CONTRAST, deadlineVerdict, measureFor, phrasesFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
+import { renderPath } from "../../web/statelab/registry.mjs";
 import { BLOCKED_PREFLIGHT, isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 import { holdOffline, offlineFindings } from "./offline.mjs";
@@ -509,7 +510,7 @@ async function dragBy(page, selector, dx, dy) {
 
 /** Walks a state's entry path and returns the registry's verdict on the render. */
 export async function enterState(state, page, host) {
-  await runPath(state.ops, pageAdapter(page, host), host.base);
+  await runPath(renderPath(state), pageAdapter(page, host), host.base);
   return judge(state, page);
 }
 
@@ -519,7 +520,7 @@ export async function enterState(state, page, host) {
  * rather than as a second entry from scratch.
  */
 export async function applyOps(ops, state, page, host) {
-  await runPath(ops, pageAdapter(page, host), host.base);
+  await runPath(renderPath(state, ops), pageAdapter(page, host), host.base);
   return judge(state, page);
 }
 

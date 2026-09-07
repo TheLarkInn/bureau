@@ -252,6 +252,38 @@ function normalise(expect) {
 export const STATES = [...matrixStates, ...PROBES.map((probe) => ({ ...probe, expect: normalise(probe.expect) }))];
 
 /**
+ * The semantic entry or transition, followed by an explicit overview gesture.
+ *
+ * Graphs now open at a readable 80–100%, not at a scale that puts every node
+ * on screen. The matrix audits the complete overview after the reader presses
+ * Fit; graph-workbench.spec.mjs separately proves readable initial framing,
+ * navigation to offscreen nodes, and camera preservation. No geometry check is
+ * waived. Camera preparation stays outside the semantic prefix DAG, so a Fit
+ * neither invents a state transition nor removes an existing return edge.
+ */
+export function renderPath(state, ops = state.ops) {
+  if (!hasGraphOverview(state)) {
+    return [...ops];
+  }
+  const enterGraph = state.page === "editor" && state.kind === "probe"
+    && !ops.some((op) => op.selector === S.editorSurfaceGraph);
+  const prepared = ops.flatMap((op) => op.op === "fixture" && enterGraph
+    ? [op, { op: "click", selector: S.editorSurfaceGraph }] : [op]);
+  return [...prepared, { op: "click", selector: S.graphFit }];
+}
+
+function hasGraphOverview(state) {
+  if ([state.fixture].flat().some((id) => ["pipeline-missing", "no-pipeline"].includes(id))) {
+    return false;
+  }
+  if (state.surface === "editor" || state.expect.shows.includes(S.relationFlow)) {
+    return true;
+  }
+  return state.surface === "pipeline" && (state.kind === "matrix"
+    || state.ops.some((op) => [S.modeLive, S.modeReplay, S.openRunReplay].includes(op.selector)));
+}
+
+/**
  * Pairs of states that draw the same screen on purpose, and why.
  *
  * Two states rendering identically is normally a defect this registry exists to

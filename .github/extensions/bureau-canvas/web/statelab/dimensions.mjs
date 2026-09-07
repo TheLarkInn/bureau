@@ -905,7 +905,7 @@ const run = {
  *
  * The status word is scoped to that element rather than searched for in the
  * body, because both words are already on the page from something else: a
- * paused run draws `.paused-badge`, whose entire text is "paused" and which
+ * paused run draws `.graph-state--paused`, whose entire text is "Paused" and which
  * this very list asserts, and a running one draws an `outcome-pill--running`
  * in the step-log head. Unscoped, the status could be blanked or frozen — the
  * precise regression a refused control is most likely to cause — and every

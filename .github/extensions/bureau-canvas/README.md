@@ -92,6 +92,184 @@ stopped: a reconcile loop becomes a run only after it claims eligible work. A
 failed listing is shown separately and retried rather than silently presented
 as zero.
 
+## GraphCode integration analysis
+
+### Reference, evidence, and license
+
+This visualizer revision studies [scgopi/GraphCode][gc-repo] at
+`a5f4e1e2d43a2c577ede1035377faf439897bfa9`. All source links below are pinned
+to that revision, not a moving branch. The reference checkout was inspected
+alongside its [actual graph screenshot][gc-image] and Bureau's before captures.
+GraphCode's native macOS app was **not executed on Windows**; this is source
+and screenshot analysis, not a claim about an observed native session.
+
+The [root license][gc-license] assigns FSL-1.1-MIT to the app and daemon;
+[GraphcodeKit][gc-kit-license] and the [CLI][gc-cli-license] are MIT.
+The app is not simply MIT today because its license has a future conversion.
+Bureau copies no GraphCode code, assets, or native materials. The transferable
+ideas are implemented independently using the existing local web renderer.
+
+### What the reference helps a person do
+
+GraphCode treats a graph as a place to find and steer live agent sessions.
+The screenshot makes its hierarchy concrete: names lead, state badges answer
+"what is happening?", mono context explains the work, and a narrow left stripe
+marks type. Charcoal cards stand above a quieter grid and curved connections.
+An attention rail turns an orange highlight into an explicit Review action.
+That is more useful than copying dark paint while leaving navigation unchanged.
+
+The source adds important qualifications the screenshot cannot establish.
+Shared lane placement prevents overview and project canvases from disagreeing.
+Camera controls expose scale and distinguish actual size from fitting content.
+The attention rollup excludes normal upstream waiting and the card reads that
+same rollup rather than inventing another definition of "needs you".
+Search ranks names ahead of broad attributes. These are interaction contracts,
+not aesthetic details, and they can be tested independently of the renderer.
+
+The screenshot is evidence of a real visual direction, not a pixel-perfect
+contract for every file at the pinned revision: it includes a START/ENTRY
+structure, while the current card source explains root entry ports instead.
+Likewise, older comments in `EdgeKind.swift` call message/spawn inert, but its
+current executable property and runtime hooks describe implemented behavior.
+Neither stale comments nor marketing copy should override the inspected code.
+
+### Pinned source map and Bureau decisions
+
+| Reference area | Source-backed finding | Integration decision |
+|---|---|---|
+| Theme and depth | [Theme.swift][gc-theme] uses dark scrims, tonal cards, and attention-specific borders; native materials are part of its macOS window. | Adopt restrained charcoal graph depth, not Liquid Glass or forced global dark mode. |
+| Card hierarchy | [LoopCardView.swift][gc-card] shares title/state, left type stripe, context, and attention presentation across canvases. | Put step name and explicit Bureau state ahead of type decoration; keep readable context and full details on selection. |
+| Camera | [CanvasTransform.swift][gc-camera] separates gesture limits, explicit fit, default fit, and actual size; [CanvasZoomControls.swift][gc-zoom] shares visible controls. | Share graph-local zoom percentage, Actual size, and Fit; retain Bureau's minimap and existing pan/zoom machinery. |
+| Attention | [AttentionRollup.swift][gc-attention] distinguishes failed/stalled/input-needed from ordinary waiting; [CanvasAttentionRail.swift][gc-rail] exposes review navigation. | Use existing Bureau failure/blocked/paused state or findings, not a new runtime status or an assertion that pending work needs a person. |
+| Search | [JumpPalette.swift][gc-search] ranks title prefix, substring, then attributes/project context. | Provide local Find steps/nodes, name-first ranking, and keyboard-reachable results without adding cross-project session navigation. |
+| Lanes | [LaneLayout.swift][gc-lanes] shares edge-derived left-to-right placement, but caps depth at four columns. | Reuse Bureau's shared `layoutPipeline`, respect saved coordinates, and do not copy the four-column cap. |
+| Connections | [CanvasEdgeGeometry.swift][gc-edges] defines facing card-edge anchors and curved handoffs. | Quiet forward curves, with Bureau outcome captions, retry routes, data relations, and editor handles preserved. |
+| Model | [LoopType.swift][gc-types] represents attended/unattended loop primitives; [EdgeKind.swift][gc-kinds] distinguishes handoff, message, and spawn. | Keep Bureau steps, decisions, concurrent groups, and explicit outcome/data edges; no new loop vocabulary or engine. |
+| Runtime and IPC | [GraphStore.swift][gc-runtime] owns mutable session graphs and injected execution effects; [DaemonProtocol.swift][gc-ipc] carries graph commands. | Keep the existing Bureau CLI, loopback endpoints, and run-log/SSE projections; no GraphCode runtime dependency or new IPC. |
+| Export | [GraphExportBundle.swift][gc-export] carries graph snapshots, memory, and backend sessions; [ZIP encoding][gc-zip] packages them for import. | Do not promise direct interchange with Bureau's reviewed YAML and append-only run logs. |
+
+### Before and after: user outcomes
+
+The baseline is Bureau commit `8a3f5906328e44cd92fe11b24a32b1173c46335a`,
+captured on the committed sample at desktop and compact sizes. "After" below
+describes this revision's interaction contract, not a measured speed gain or
+a blanket verification result.
+
+| User question | Before, observed in Bureau | After, scoped to this revision |
+|---|---|---|
+| Where does work go? | The viewer stacked steps vertically; the editor laid the same sample left-to-right. Switching surfaces meant relearning its shape. | Viewer and editor share left-to-right placement; saved positions take precedence and live/replay decoration keeps geometry. |
+| Which step am I reading? | Large top type pills and a top stripe led the viewer card; configuration context was richer in the editor. | Left type stripe, name-first title, mono command/role context, and a separate state badge use a common hierarchy. |
+| Can a long command hide another step? | Unbounded card context could extend over the next card in the same layer. | Step command/context previews stop at three lines; full commands remain available in viewer details, the editor command field, and search. Terminal copy and findings remain untruncated. |
+| What is happening now? | Run decoration existed, but design cards foregrounded type rather than an explicit state word. | Design, Pending, Running, and outcomes are explicit; unknown/unrun state is not presented as success. |
+| What needs my review? | Findings and run state existed, but the graph had no common attention-navigation control. | Review next selects failure, blocked, paused, or findings in this graph; ordinary pending work does not enter the queue by itself. |
+| Where is the step I know? | The captured graph offered pan/zoom and selection, without a common graph-local search. | Find steps/nodes searches name, type, context, and state; Enter selects and centers the first match, Tab reaches results, Escape restores the trigger. |
+| How do I recover orientation? | Icon zoom/fit controls and a minimap already existed; no visible percentage explained the scale. | Initial framing opens at 80–100%, keeping oversized drawings' entry at the left. The percentage offers Actual size; explicit Fit may shrink to 20%, and the minimap remains. |
+| What happens after this result? | Dense colored orthogonal routes competed with cards; the viewer relied heavily on its outcome legend. | Quieter forward curves retain semantic captions, exception/retry paths, and data relationships. Viewer/editor terminal-exit captions share a separate label rail so labels do not cover terminal titles. |
+| What does this selected step run? | The viewer side panel emphasized pipeline identities/findings; full editing lived in the separate editor. | Viewer selection exposes configuration and handoffs; live/replay logs stay below, and editing still uses the full editor. |
+| Can I safely change it? | Ports, transition-table editing, and draft/save/validate/revert already existed. | Those paths remain; visual polish is not permission to remove accessible rewiring or bypass validation. |
+| Must the whole app become dark? | White Primer-style graphs matched native-looking forms and tables in the light-host capture. | Only graph mode and its chrome receive the broad charcoal treatment; relation interiors are dark, while forms and transition tables follow the host. |
+
+### Behavioral boundaries
+
+The viewer and editor derive graph positions through the same layout function,
+not two approximations of the reference. Existing `layout.json` coordinates
+remain authoritative. Status and replay changes decorate the drawing rather
+than reflow it; search or Review next deliberately changes the camera.
+Shared `initialGraphViewport` distinguishes readable opening from explicit Fit:
+the first view floors zoom at 80% and caps it at 100%, left-aligning oversized
+drawings to preserve the entry. Fit may deliberately shrink to the 20% minimum.
+The shared one-shot observer reads React Flow's internal node measurements,
+not read-only controlled props that may lack them, and waits for a visible surface.
+A hidden relation graph is framed on reveal; later camera changes are preserved.
+The attention list is graph-local and cycles available matches; it does not
+claim GraphCode's cross-project scope, oldest-first ordering, or waiting age.
+
+Graph search is navigation, not an editor command or a document-global search.
+Ctrl/Cmd+K opens and focuses search only when its mounted graph's trigger has
+visible client rectangles (`getClientRects()`); a hidden editor/relation
+surface does not capture the shortcut. The trigger's title and
+`aria-keyshortcuts` advertise it, and clicking Find remains an alternative.
+Result buttons are tabbable; Enter in the input selects and centers the first match,
+and Escape closes the search surface and restores trigger focus. Selection
+must continue to reach the existing viewer details or editor inspector.
+
+Transitions remains the default authoring surface. The dark exception does not
+force configuration forms, transition tables, or the entire host into a new
+theme. Rewiring remains available through existing ports and the transition
+table rather than tiny targets or hover-only controls. The selected-step
+inspector supplements, not replaces, the editor's draft and validation flow.
+
+Only graph step command/context previews are capped at three lines, preventing
+long commands from obscuring neighboring nodes. Full commands remain in the
+viewer selected-step inspector, editor command field, and search context.
+Terminal descriptions and findings stay untruncated.
+
+No new service, runtime dependency, IPC protocol, or data schema is introduced.
+GraphCode's terminal launching, PTY lifetime, loop primitives, message/spawn
+engine, native window materials, four-column layout cap, and 50-node runtime
+limit are not adopted. Bureau remains a view/editor over its existing config,
+CLI, and durable run evidence, not a second execution system.
+
+There is no direct session interchange: Bureau edits YAML with a layout
+sidecar and reads run logs; GraphCode exports a graph ZIP that can contain
+memory and backend conversation files. Similar-looking cards do not make
+those execution models or formats interchangeable.
+
+### Evidence and validation limits
+
+The baseline artifacts are the session's `canvas-baseline/baseline-report.json`,
+before PNGs, and per-node geometry records. They cover Design, Live, Replay,
+Relations, and the editor at matching desktop/compact viewports. The relation
+baseline appears unusually small and upper-left; it is recorded as observed,
+not evidence that its fit behavior was correct. Repeated relation PNGs differed
+despite identical node boxes, so byte-identical relation images are not a
+proven baseline invariant.
+
+The first integrated after capture exposed a hidden relation opening at 37%
+and an exit caption covering Publish. The shared visible/measured initial
+framing now uses internal measurements for the 80–100% opening and preserves
+later camera changes. The terminal-caption rail separates captions from titles,
+and each exit curve passes through its own caption so repeated outcomes remain
+traceable.
+
+The new pure rules live in `web/graph-presentation.mjs`; shared navigation and
+camera UI live in `web/graph-workbench.mjs`. Their pure tests are
+`test/graph-presentation.test.mjs` and `test/graph-terminal-path.test.mjs`;
+browser coverage lives in `e2e/playwright/specs/graph-workbench.spec.mjs`
+and `e2e/playwright/specs/graph-caption.spec.mjs`.
+The state lab and approved graph screenshots explicitly press Fit after their
+semantic actions before auditing the complete overview. This preparation does
+not change state/transition counts or relax clipping checks. Dedicated graph
+tests separately cover readable initial framing and navigation to offscreen steps.
+Verification should pair offline rule tests with browser checks of search/focus,
+attention selection, saved and live/replay geometry, outcome routing, readable controls, and unchanged draft
+safety. Existing controls/graph-measurement tests and state/visual suites remain
+relevant. The baseline report records baseline checks only: it does not prove
+the rewritten surface. After captures, targeted test results, and repository
+gates must be reviewed before claiming full verification. No task-time,
+throughput, or usability speed metric was measured.
+
+[gc-repo]: https://github.com/scgopi/GraphCode/tree/a5f4e1e2d43a2c577ede1035377faf439897bfa9
+[gc-image]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/screenshots/graph-hero.png
+[gc-license]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/LICENSE
+[gc-kit-license]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/LICENSE
+[gc-cli-license]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode-cli/LICENSE
+[gc-theme]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/App/Theme.swift
+[gc-card]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/LoopCardView.swift
+[gc-camera]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/CanvasTransform.swift
+[gc-zoom]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/CanvasZoomControls.swift
+[gc-attention]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/Domain/AttentionRollup.swift
+[gc-rail]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/CanvasAttentionRail.swift
+[gc-search]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/App/JumpPalette.swift
+[gc-lanes]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/LaneLayout.swift
+[gc-edges]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode/Sources/Features/Canvas/CanvasEdgeGeometry.swift
+[gc-types]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/Domain/LoopType.swift
+[gc-kinds]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/Domain/EdgeKind.swift
+[gc-runtime]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/GraphStore.swift
+[gc-ipc]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/IPC/DaemonProtocol.swift
+[gc-export]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/GraphExportBundle.swift
+[gc-zip]: https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/Sources/GraphExportBundle%2BZIP.swift
+
 ## Layout
 
 Everything that decides meaning runs in Node with no DOM, which is why it is
@@ -436,9 +614,10 @@ The second row is the vacuity guard: a clause moved onto the wrong sentence must
 fail as loudly as one deleted, or the partition is only a presence check wearing
 a partition's shape.
 
-**No production module changed.** `panel-verdict.mjs` and `app.mjs` are
-byte-for-byte what they were — the canvas renders exactly what it rendered
-before. What changed is whether two of its claims are able to fail.
+**In that verdict-test revision, no production module changed.**
+`panel-verdict.mjs` and `app.mjs` were byte-for-byte unchanged in that revision;
+the later graph-workbench revision described above changes the presentation.
+The verdict-test change made two existing claims able to fail.
 
 ### A render that was not proved settled says so
 
@@ -611,9 +790,10 @@ holders; with a single holder per phrase, a walk that judged the first one alone
 was indistinguishable from the rule, and would report a screen the reader can
 read perfectly well as unreadable.
 
-**No production module changed.** `checks.mjs` is byte-for-byte what it was, so
-the renders and their verdicts are identical. What changed is whether two of its
-clauses are able to fail.
+**In that text-holder-test revision, no production module changed.**
+`checks.mjs` was unchanged, so that revision left renders and verdicts
+identical. It made two existing clauses able to fail; this is not a claim
+that subsequent visualizer revisions leave the screen unchanged.
 
 ### A sentence broken across elements was exempt from all of it
 

@@ -3,43 +3,58 @@
 // the same reference `lib/preflight.mjs` counts. Editing happens in the
 // pipeline editor and the existing forms.
 
-import React from "react";
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow } from "@xyflow/react";
+import React, { useMemo, useState } from "react";
+import {
+  Background, BackgroundVariant, Handle, MiniMap, Position, ReactFlow,
+} from "@xyflow/react";
 
 import { drawableEdges } from "../graph-edges.mjs";
 import { MeasurementGuard } from "../graph-measure.mjs";
+import { GraphTools, GraphStateBadge } from "../graph-workbench.mjs";
 
 const h = React.createElement;
 const NODE_WIDTH = 240;
-const NODE_HEIGHT = 96;
+const NODE_HEIGHT = 106;
 const X_GAP = 300;
 const Y_GAP = 130;
 const COLUMNS = { assignment: 0, pipeline: 1, role: 2, repo: 3 };
+const NODE_TYPES = { relationCard: RelationCard };
 
 export function RelationGraph({ relation }) {
+  const [selected, setSelected] = useState(null);
   // Counted from the config, never from `flow`: see `web/graph-edges.mjs`.
   const source = relation ?? { nodes: [], edges: [] };
-  const flow = toFlow(source);
+  const flow = useMemo(() => toFlow(relation ?? { nodes: [], edges: [] }), [relation]);
   return h(
     "div",
     { className: "relation-flow", "aria-label": "Config relation graph", "data-graph-edges": String(drawableEdges(source.nodes, source.edges)) },
     h(
       ReactFlow,
       {
-        nodes: flow.nodes,
+        nodes: flow.nodes.map((node) => ({ ...node, selected: node.id === selected })),
         edges: flow.edges,
-        nodeTypes: { relationCard: RelationCard },
-        fitView: true,
-        fitViewOptions: { padding: 0.18 },
+        nodeTypes: NODE_TYPES,
         minZoom: 0.2,
-        maxZoom: 1.5,
+        maxZoom: 3,
         nodesDraggable: false,
         nodesConnectable: false,
+        onNodeClick: (_, node) => setSelected(node.id),
+        onNodesChange: (changes) => {
+          const change = changes.find((item) => item.type === "select" && item.selected);
+          if (change) {
+            setSelected(change.id);
+          }
+        },
         proOptions: { hideAttribution: true },
       },
-      h(Background, { gap: 24, size: 1.5 }),
-      h(Controls),
-      h(MiniMap, { pannable: true, zoomable: true }),
+      h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
+      h(GraphTools, {
+        items: source.nodes.map((node) => ({ ...node, detail: node.id, state: "design" })),
+        selectedId: selected,
+        onSelect: setSelected,
+        label: "nodes",
+      }),
+      h(MiniMap, { position: "bottom-left", pannable: true, zoomable: true, "aria-label": "Config relation overview" }),
       h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
     ),
   );
@@ -55,17 +70,16 @@ function toFlow(relation) {
       data: { node },
       draggable: false,
       connectable: false,
-      style: { width: NODE_WIDTH, height: NODE_HEIGHT },
+      style: { width: NODE_WIDTH, minHeight: NODE_HEIGHT },
     })),
     edges: relation.edges.map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      type: "smoothstep",
+      type: "default",
       focusable: false,
       selectable: false,
       label: edge.relation,
-      style: { stroke: "var(--border-color-default, #d0d7de)", strokeWidth: 1.4 },
     })),
   };
 }
@@ -89,7 +103,10 @@ function RelationCard({ data }) {
     { className: `relation-card relation-card--${node.kind}`, "data-ref": node.id },
     h(Handle, { id: "in", type: "target", position: Position.Left }),
     h(Handle, { id: "out", type: "source", position: Position.Right }),
-    h("p", { className: "kind-label" }, node.kind),
-    h("h2", {}, node.name),
+    h("div", { className: "graph-card-heading" },
+      h("h3", { title: node.name }, node.name),
+      h(GraphStateBadge, { state: "design" })),
+    h("div", { className: "graph-card-meta" },
+      h("p", { className: "kind-label" }, node.kind)),
   );
 }
