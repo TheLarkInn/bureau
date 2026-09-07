@@ -531,6 +531,7 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
 
   const resolved = resolveDirs().gallery;
   const workflow = await readFile(new URL("../../../workflows/canvas-state-matrix.yml", import.meta.url), "utf8");
+  const coordinator = await readFile(new URL("../../../workflows/ci.yml", import.meta.url), "utf8");
   const { step, job } = publication(workflow);
   const published = publishedBy(step);
 
@@ -542,7 +543,9 @@ test("the gallery a run resolves to is the directory CI publishes for a reviewer
       published.filter((pattern) => pattern.startsWith("!")),
       conditionOf(step),
       conditionOf(job),
-      triggersOf(workflow).includes("pull_request"),
+      triggersOf(coordinator).includes("pull_request")
+        && triggersOf(workflow).includes("workflow_call")
+        && parseYaml(coordinator).jobs.matrix.uses === "./.github/workflows/canvas-state-matrix.yml",
     ],
     [true, true, [], "always()", "", true],
   );

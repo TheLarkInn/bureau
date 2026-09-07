@@ -15,6 +15,24 @@ git worktrees. Work is claimed off a backlog by lease, never pushed.
 [docs/getting-started.md](docs/getting-started.md) walks through setup for
 single- and multi-repository layouts on both GitHub and Azure DevOps.
 
+## Install a release
+
+[GitHub Releases](https://github.com/TheLarkInn/bureau/releases/latest) provides
+checksummed, statically linked Linux binaries for x86-64 and ARM64. Download
+the archive and its `.sha256` file, run `sha256sum --check <archive>.sha256`,
+extract it, and put `bureau` on your `PATH`. Rust is not required.
+
+**Runtime support is Linux, including WSL2 on Windows and a Linux VM on
+macOS.** Bureau's process isolation requires `unshare`, PID namespaces, and
+`/proc`; a native Windows or macOS binary would not preserve that contract.
+Use a Linux filesystem for local state and worktrees, not a Windows-mounted
+directory. Git and `unshare` must be installed; the dashboard additionally
+requires Node.js, and real agent runs require the configured agent CLI.
+
+Versions, changelogs, release PR merges, and binary publication are automated
+by release-plz and CI. See [the release pipeline](docs/releases.md) for
+versioning rules, quality gates, repository setup, and recovery.
+
 ## Plugins and agent resources
 
 The installable `bureau` plugin is the primary agent surface:

@@ -18,9 +18,9 @@ workspace = true
 agent-client-protocol.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-bureau-lifecycle = { path = "../bureau-lifecycle" }
-bureau-plugin = { path = "../bureau-plugin" }
-bureau-dashboard = { path = "../../.github/extensions/bureau-canvas" }
+bureau-lifecycle = { path = "../bureau-lifecycle", version = "0.1.0" }
+bureau-plugin = { path = "../bureau-plugin", version = "0.1.0" }
+bureau-dashboard = { path = "../../.github/extensions/bureau-canvas", version = "0.1.0" }
 clap.workspace = true
 nix = { workspace = true, features = ["fs", "process", "signal"] }
 ratatui.workspace = true
