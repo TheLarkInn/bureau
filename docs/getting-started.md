@@ -14,7 +14,8 @@ config repository) and both forges (GitHub and Azure DevOps).
 ## Prerequisites
 
 - A Linux environment (a dev container is the intended sandbox boundary).
-- `git` on `PATH`.
+- `git` and `unshare` on `PATH`. Keep local state and worktrees on a Linux
+  filesystem, not a Windows-mounted drive.
 - Node.js on `PATH` when using the optional browser dashboard.
 - An ACP agent for agent steps: GitHub Copilot CLI (`copilot --acp --stdio`)
   or the public Claude adapter (`claude-agent-acp`, installed with
@@ -359,6 +360,8 @@ bureau watch                      # live dashboard: runs, budget, latest events
 bureau dashboard                  # browser drafting table and run visualization
 bureau list                       # every run
 bureau show <run-id>              # replayed state of one run
+bureau pause <run-id>             # pause at the next step boundary
+bureau resume <run-id>            # allow re-entry or reconcile to continue
 bureau cancel <run-id>            # cooperative stop between steps
 bureau retry <run-id>             # new run for the item an earlier run targeted
 bureau doctor --json              # read-only diagnostics (offline)
@@ -370,6 +373,10 @@ it doing right now": a self-refreshing terminal view of the adopted
 config commit, active leases, every run's current step and cost, and the
 per-assignment budget headroom. It reads `~/.bureau` without ever
 writing or locking it.
+
+It refreshes once a second. Arrow keys select a run; `q`, `Esc`, or `Ctrl-C`
+exits. Piped output is one plain-text snapshot. Budget headroom excludes the
+open-PR limit, which requires forge state.
 
 `bureau dashboard` is the browser counterpart. It serves the same config,
 pipeline editor, run overlays, transcripts, and controls as the GitHub Copilot
@@ -391,6 +398,18 @@ Every run writes `~/.bureau/runs/<run-id>/`:
 - `artifacts/` — files steps published.
 - `wt/` — the run's git worktree, on branch `<branch_prefix><pipeline>/<run-id>`.
 
+### Change local settings
+
+```sh
+bureau setup --from settings.yaml
+```
+
+An explicit state migration copies durable state and run history, not
+credentials, worktrees, activation records, or disposable caches. It rejects
+overlapping paths, active leases, symlinks/hard links, corrupt or newer database
+schemas, and non-empty targets. A durable marker blocks normal workers while
+migration is incomplete; retries resume or roll back after interruption.
+
 ## The agent plugin
 
 The installable `bureau` plugin provides the public agent resources:
@@ -411,6 +430,27 @@ A role may also reference a plain agent file (`agent: agents/reviewer.md`)
 instead of a plugin invocation; the bytes are pinned into the run log at
 config-adoption time.
 
+### Agent transport
+
+Both production adapters use the official Rust ACP client and stable protocol
+v1 over supervised stdio: `copilot --acp --stdio` or `claude-agent-acp`.
+Each attempt opens a fresh session, selects the exact advertised custom agent,
+and supplies `bureau-io` through MCP. A missing selector fails before prompting;
+hidden session state does not pass between steps.
+
+Role grants authorize normal work. Additional permission requests, including
+sandbox bypass, are denied. Copilot retains its sandbox and native allow/deny
+rules; Claude receives tool grants through its public session metadata.
+Bureau controls the cleared environment, process cleanup, deadlines, and
+secret-scrubbed logs. Provider permission enforcement remains a provider
+responsibility; [github/copilot-cli#4537](https://github.com/github/copilot-cli/issues/4537)
+is a known compatibility risk. Protocol tests do not establish sandbox safety.
+
+`end_turn` alone is not success: an agent must publish through MCP or return
+a valid `v2` result in agent-message text. Context-only usage updates preserve
+the latest cumulative USD measurement; explicit unusable cost reports clear it.
+Assignments with cost limits fail closed without usable measured USD cost.
+
 ## Try it offline first
 
 No forge, no model, no network:
@@ -430,6 +470,6 @@ cargo test --offline    # engine, reconcile, plugins, forges — all fake-backed
 
 ## Where to go next
 
-- `DESIGN.md` — the authoritative spec (control model, trust, limits).
-- `README.md` — command summary and the layer map.
+- [DESIGN.md](../DESIGN.md) — architecture, control model, trust, and limits.
+- [README.md](../README.md) — quick start and everyday commands.
 - `bureau doctor` — when anything in this guide misbehaves, start there.
