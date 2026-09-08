@@ -75,9 +75,13 @@ palette, not a requirement to force a white page in a dark host.
 
 Graph mode is the deliberate exception: a charcoal workbench makes step
 names, execution state, and handoffs the first things to read. Its restrained
-depth, name-first cards, and visible navigation tools draw on the GraphCode
-review recorded in [README.md](README.md#graphcode-integration-analysis).
-This is an independent Bureau implementation, not a copied SwiftUI theme.
+depth, name-first cards, and visible navigation tools draw on
+[GraphCode](https://github.com/scgopi/GraphCode/tree/a5f4e1e2d43a2c577ede1035377faf439897bfa9)
+as a source and screenshot reference. Bureau copies no GraphCode code or assets.
+At that revision, the [app and daemon](https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/LICENSE)
+are FSL-1.1-MIT, not yet MIT; [GraphcodeKit](https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/GraphcodeKit/LICENSE)
+and the [CLI](https://github.com/scgopi/GraphCode/blob/a5f4e1e2d43a2c577ede1035377faf439897bfa9/graphcode-cli/LICENSE)
+are MIT.
 
 The exception is scoped to the graph and its graph-mode chrome. Relation
 graph interiors use the same dark surface; opening a relation disclosure

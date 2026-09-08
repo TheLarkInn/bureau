@@ -1,229 +1,87 @@
 # bureau
 
-See it work in 5 seconds, offline:
+A local runner that uses AI agents and shell commands to turn GitHub issues
+or Azure DevOps work items into pull requests. It polls for work, avoids
+duplicate claims, and runs pipelines in isolated Git worktrees.
+
+## Install
+
+**Linux only**, including WSL2 or a Linux VM. Install Git and `unshare`.
+Keep state and worktrees on a Linux filesystem, not a Windows-mounted drive.
+The browser dashboard also needs Node.js.
+
+Download a Linux x86-64 or ARM64 archive and its `.sha256` file from
+[Releases](https://github.com/TheLarkInn/bureau/releases/latest).
+Verify with `sha256sum --check <archive>.sha256`, extract, and put `bureau`
+on your `PATH`. No Rust required.
+
+Or build from a source checkout:
 
 ```sh
-cargo test --offline    # no network, no model calls
+cargo install --path crates/bureau
 ```
 
-bureau is a CI runner whose step body can be an LLM agent instead of a
-shell script. It is level-triggered: each pass compares desired state
-(every matching work item should have an open PR) with observed state
-(what the forge shows) and closes the gap by running agent pipelines in
-git worktrees. Work is claimed off a backlog by lease, never pushed.
-`DESIGN.md` is the authoritative spec. New here?
-[docs/getting-started.md](docs/getting-started.md) walks through setup for
-single- and multi-repository layouts on both GitHub and Azure DevOps.
+## Start
 
-## Install a release
-
-[GitHub Releases](https://github.com/TheLarkInn/bureau/releases/latest) provides
-checksummed, statically linked Linux binaries for x86-64 and ARM64. Download
-the archive and its `.sha256` file, run `sha256sum --check <archive>.sha256`,
-extract it, and put `bureau` on your `PATH`. Rust is not required.
-
-**Runtime support is Linux, including WSL2 on Windows and a Linux VM on
-macOS.** Bureau's process isolation requires `unshare`, PID namespaces, and
-`/proc`; a native Windows or macOS binary would not preserve that contract.
-Use a Linux filesystem for local state and worktrees, not a Windows-mounted
-directory. Git and `unshare` must be installed; the dashboard additionally
-requires Node.js, and real agent runs require the configured agent CLI.
-
-Versions, changelogs, release PR merges, and binary publication are automated
-by release-plz and CI. See [the release pipeline](docs/releases.md) for
-versioning rules, quality gates, repository setup, and recovery.
-
-## Plugins and agent resources
-
-The installable `bureau` plugin is the primary agent surface:
-
-- `/bureau:implementer`
-- `/bureau:reviewer`
-- `/bureau:pipeline-author`
-- `/bureau:run-inspector`
-
-Roles reference these resources directly. Agent files own their model,
-instructions, and tools; bureau owns only pipeline orchestration, permissions,
-trust, durable execution, and forge effects.
-
-### Agent transport
-
-Both production adapters use the official Rust ACP client and stable protocol
-v1 over supervised stdio: `copilot --acp --stdio` or `claude-agent-acp`.
-For Claude, install the public adapter explicitly:
+Create `init.yaml` using the
+[setup guide](https://github.com/TheLarkInn/bureau/blob/main/docs/getting-started.md#first-time-setup-bureau-init), then:
 
 ```sh
-npm install --global @agentclientprotocol/claude-agent-acp@0.75.1
+bureau init --from init.yaml
+bureau reconcile
 ```
 
-Bureau never installs agents during a run. Each step opens a fresh session,
-selects its exact advertised custom agent, and supplies `bureau-io` through
-ACP's stdio MCP configuration. Missing agent selectors fail before prompting.
-Roles and the versioned step contract are unchanged; ACP does not transfer
-hidden state between steps.
+`init` opens a config PR and waits for its merge before running work.
+Local state lives in `~/.bureau`; `BUREAU_HOME` overrides it.
 
-Native role grants still authorize normal work. Additional permission requests
-are rejected without interactive approval, including sandbox bypass. Copilot
-keeps its sandbox and native allow/deny rules; Claude receives native tool
-grants through its public session metadata options. Bureau still owns the
-cleared environment, process-tree cleanup, deadlines, and secret-scrubbed logs.
-Provider permission enforcement remains a provider responsibility; the public
-[Copilot ACP permission regression](https://github.com/github/copilot-cli/issues/4537)
-is a compatibility risk, not something a protocol-only test can disprove.
-
-`end_turn` alone is not a successful step: one-shot MCP publication or a valid
-`v2` result in agent-message text is required. Context-only usage updates preserve
-the latest cumulative USD measurement; explicit unusable cost reports clear it.
-Without usable measured USD cost, cost-limited assignments fail closed.
-
-## Initialize and reconcile
-
-Local state defaults to `~/.bureau`; set `BUREAU_HOME` to override it.
+## Everyday commands
 
 ```sh
-bureau init --from init.yaml       # first-time reviewed config proposal
-bureau setup --from settings.yaml # replace non-secret local settings
-bureau doctor --json              # read-only offline diagnostics
-bureau repair                     # preview, then confirm reversible repairs
-bureau reconcile                  # continuous desired-vs-observed loop
-bureau reconcile --now            # one pass, waiting for started runs
+bureau validate .bureau          # check local config
+bureau reconcile --now          # one pass; wait for its runs
+bureau list                     # list runs
+bureau show <run-id>             # inspect a run
+bureau watch                    # live terminal view
+bureau dashboard                # browser editor and run viewer
+bureau pause <run-id>            # pause at a step boundary
+bureau resume <run-id>           # allow run re-entry or reconcile to continue
+bureau cancel <run-id>           # request cancellation
+bureau retry <run-id>            # start a new run for that item
+bureau doctor --json             # offline diagnostics
+bureau repair                   # preview and confirm repairs
 ```
 
-`init` previews and validates the generated config, opens a config PR, waits
-for its forge-owned merge state, validates the exact merged commit, runs one
-foreground reconcile pass, then writes `settings.yaml` as the completion
-marker. It never executes unmerged config.
+For one item: `bureau run <pipeline> --item owner/repo#42`
+(GitHub) or `--item Project/42` (Azure DevOps).
 
-`setup` may explicitly migrate a prior local-state root. Migration rejects
-overlapping paths, active leases, symlinks, hard links, corrupt or newer
-database schemas, and non-empty targets. It imports only durable state and run
-history; worktrees, activation records, credentials, and disposable caches are
-not copied. A durable migration marker blocks normal workers and makes setup
-retries resume or roll back safely after interruption.
+## Before real runs
 
-## Run one pipeline
-
-1. Review and commit the config (its PR review is the entire authorization
-   model):
-
-   ```
-   runner-config/
-     repos.yaml                        # every repo, with an access level
-     roles/implementer.yaml            # agent reference + adapter + permissions + min_trust
-     assignments/fix-flaky-tests.yaml  # work source + repos + pipeline + role + limits
-     label_rules/graduate-unblocked.yaml # bounded dependency-driven label updates
-     pipelines/fix-failing-test.yaml   # the step state machine
-   ```
-
-2. Check it — every error in one pass, exit 1 if any:
-
-   ```sh
-   bureau validate runner-config
-   ```
-
-3. Run once for one work item from the configured committed source:
-
-   ```sh
-   bureau run fix-failing-test --item 42
-   ```
-
-   Exit `0` on success or no-work, `1` on failure/blocked/claim-lost,
-   `2` on setup errors. A missing credential exits `2` before any
-   subprocess spawns and names the credential.
-
-## Credentials
-
-Config names a reference (`credential: ado-main`); the value is never in
-git. `settings.yaml` declares exactly where each reference resolves:
-
-- one environment variable;
-- one exact file; or
-- one credential directory containing a file named after the reference.
-
-Values are scrubbed from everything written to the run log.
-
-## Inspect and control runs
-
-```sh
-bureau list                  # every run
-bureau show <run-id>         # replayed state of one run
-bureau watch                 # live terminal dashboard of local state
-bureau dashboard             # browser drafting table and live/replay runs
-bureau cancel <run-id>       # write the run's CANCEL marker
-bureau pause <run-id>        # write the run's PAUSE marker
-bureau resume <run-id>       # clear it; run re-entry or reconcile continues
-bureau retry <run-id>        # new run for the item an earlier run targeted
-```
-
-`watch` is read-only: it never writes state.db or run directories and
-never takes the maintenance lock, so it is safe alongside a live daemon.
-It shows the adopted config commit, live lease and running-run counts,
-one row per run (status, latest step, cost so far, age), per-assignment
-budget counters (today's cost, runs this hour, headroom — the open-PR
-limit is forge state and is excluded), and the selected run's latest
-events. It refreshes once a second; `q`, `Esc`, or `Ctrl-C` quits, and
-`up`/`down` select a run. Piped instead of a terminal, it prints one
-plain-text snapshot and exits.
-
-`dashboard` serves the same drafting table used by the GitHub Copilot app on
-an ephemeral `127.0.0.1` port and opens it in a browser. The web bundle is
-embedded in the binary; Node.js is the only runtime dependency. `--no-open`
-only prints the URL. From a trusted Bureau source checkout, `--dev` serves the
-checkout instead and reloads every connected browser or development canvas
-page when files under `web/` change, restoring the selected pipeline mode,
-run, and step.
-
-The fixed home layout contains `settings.yaml`, `credentials/`, `state.db`,
-`runs/`, `checkout-cache/`, and `config-cache/`. Explicit path overrides are
-available for contained deployments; `list`, `show`, `cancel`, `pause`, and
-`resume` take only `--runs`.
-
-Each run writes `runs/<run-id>/`: `events.jsonl` (append-only, fsync'd,
-secret-scrubbed — the only source of truth), `state.json` (derived
-cache), `artifacts/`, and the worktree `wt/`.
-
-## Test without a forge or a model
-
-- `fake` adapter: record a real command with
-  `bureau fake record <fixture> -- <argv...>`, replay it with
-  `bureau fake replay <fixture>`.
-- `FakeForge`: an in-memory forge driven by construction-time state.
-- `tests/pipeline_e2e.rs`: the reference pipeline (claim, reproduce,
-  propose, apply, review, verify, push, PR) end to end under both fakes.
-
-## Layer map
-
-| Layer | What it is | Code |
-|---|---|---|
-| 0–3 | Process contract · fake adapter · step contract · run log | `crates/bureau/src/process/`, `adapters/`, `contract.rs`, `runlog/` |
-| 4 | Engine: the step state machine | `crates/bureau/src/engine/` |
-| 5 | Durable state: SQLite leases, budget, dedup | `crates/bureau/src/state/` |
-| 6 | Git: mirror cache, one worktree per run | `crates/bureau/src/git.rs` |
-| 7 | Forges: GitHub, ADO, in-memory fake | `crates/bureau/src/forge/` |
-| 8 | Reconcile loop: desired − observed − in-flight, claimed by CAS | `crates/bureau/src/reconcile/` |
-| Local lifecycle | Home, settings, init/setup, doctor, repair policy | `crates/bureau-lifecycle/` |
-| Plugin runtime | Package, resolution, snapshots, activation, restoration | `crates/bureau-plugin/` |
-
-## Rust quality gates
-
-All workspace crates inherit deny-level Rust and Clippy lints. Clippy limits
-cognitive complexity to 4 and functions to 25 lines. The CI workflow also
-rejects Rust source files over 300 lines and lint-suppression attributes,
-including `#[allow(...)]` and `#[expect(...)]`.
-
-Custom lints from [`li-kai/rust-lints`](https://github.com/li-kai/rust-lints)
-run through Dylint and are promoted to errors in CI.
+Config review is authorization. **Never commit credential values.**
+Install agents and plugins before running; Bureau does not install them
+during a run. Read the
+[agent permission and cost caveats](https://github.com/TheLarkInn/bureau/blob/main/docs/getting-started.md#agent-transport).
 
 ## Known deltas
 
-Behavioral departures from the spec as written, each with its reason:
+- The `join` terminal is unsupported.
+- `bureau run` uses the primary repo's credential for the work forge.
+- Duplicate YAML keys use the last value. Review config diffs carefully.
+- Step stdout/stderr share `stream: "combined"`; run messages use `"run"`.
 
-- `join` terminal: rejected at config validation in v0 (no fan-out).
-- Forge token for `bureau run` comes from the primary repo's credential
-  (v0 assumes the work forge shares it).
-- Duplicate YAML mapping keys are last-write-wins (`serde_yaml_ng` has
-  no rejection) — review config diffs carefully.
+## Development
 
-Run-log step `output` events carry `stream: "combined"` because layer 0
-multiplexes a step's stdout and stderr into one scrubbed sink; run-level
-messages use `stream: "run"`.
+Tests use fake agents and forges, with no model calls.
+
+```sh
+cargo fmt --all
+bash scripts/lint.sh
+cargo test --offline
+```
+
+See [contributor rules](https://github.com/TheLarkInn/bureau/blob/main/AGENTS.md)
+for tool setup and enforced limits.
+
+[Setup](https://github.com/TheLarkInn/bureau/blob/main/docs/getting-started.md) |
+[Canvas](https://github.com/TheLarkInn/bureau/blob/main/.github/extensions/bureau-canvas/README.md) |
+[Design](https://github.com/TheLarkInn/bureau/blob/main/DESIGN.md) |
+[Release process](https://github.com/TheLarkInn/bureau/blob/main/docs/releases.md)
