@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { blocksDelete, referrers } from "../lib/preflight.mjs";
 import { valueOf } from "../web/statelab/dimensions.mjs";
 import { BLOCKED_PREFLIGHT } from "../web/statelab/intercept.mjs";
+import { SELECTORS as S, withheld } from "../web/statelab/selectors.mjs";
 
 const committed = JSON.parse(await readFile(new URL("./fixtures/committed-payload.json", import.meta.url), "utf8"));
 
@@ -102,6 +103,18 @@ test("preflight is advisory and orphaning alone does not block", () => {
  * reports fails here rather than leaving a probe rendering a shape the product
  * stopped producing — and `blocking` is checked against `blocksDelete` rather
  * than asserted, because that is the rule the screen exists to obey.
+ *
+ * `declaresControls` is pinned to the list rather than to its length, and the
+ * distinction is the whole point. The probe *spreads* these selectors, so the
+ * registry decides what the render asks for — which is the same shape as the
+ * `suppress` fault two rounds ago, where a declaration that quietly asked for
+ * less could not be caught by a render that agreed with it. Dropping
+ * `withheld(S.deleteConfirm)` and leaving `[S.preflight]` left the offline suite
+ * green at 471 *and* both of the probe's renders green, with the most important
+ * claim on the screen — that the Confirm is withheld — no longer asked by
+ * anything. Length would not have moved. The list is deliberately brittle for
+ * the same reason the count pins above are: a selector added or removed here is
+ * meant to stop and be looked at.
  */
 test("the blocked delete declares a real sentence, and is staged from the host's own answer", () => {
   const declared = valueOf("field", "delete-blocked");
@@ -110,14 +123,14 @@ test("the blocked delete declares a real sentence, and is staged from the host's
   assert.deepEqual(
     {
       declaresCopy: declared.copy.length > 0 && declared.copy.every((line) => typeof line === "string" && line.trim() !== ""),
-      declaresControls: declared.shows.length > 0,
+      declaresControls: declared.shows,
       referrers: staged.referrers,
       blocking: staged.blocking === blocksDelete(staged.referrers),
       blocks: blocksDelete([{ severity: "referrer" }]),
     },
     {
       declaresCopy: true,
-      declaresControls: true,
+      declaresControls: [S.preflight, withheld(S.deleteConfirm)],
       referrers: referrers(committed, "role", "implementer"),
       blocking: true,
       blocks: true,
