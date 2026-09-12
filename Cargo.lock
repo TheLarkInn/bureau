@@ -328,7 +328,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "bureau"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -351,11 +351,11 @@ dependencies = [
 
 [[package]]
 name = "bureau-dashboard"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "bureau-lifecycle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "nix 0.31.3",
  "serde",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "bureau-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ring",
  "serde",
