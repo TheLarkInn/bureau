@@ -204,7 +204,7 @@ pub(super) fn paused(ctx: RunCtx) -> RunOutcome {
     let message = if reason.trim().is_empty() {
         "run paused at a step boundary; remove the PAUSE marker and resume".to_owned()
     } else {
-        reason.trim().to_owned()
+        format!("run paused at a step boundary; {}", reason.trim())
     };
     context::append(
         &ctx,

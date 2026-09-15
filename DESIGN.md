@@ -1430,6 +1430,27 @@ own claim path; it does not authorize a replacement run. Missing/corrupt
 logs fail closed. This is an event-derived exclusion, not another scheduler
 table, and ordinary nonfactory admission remains unchanged.
 
+Admission prepares JSON decoding and replay outside the shared write fence.
+This preparation is ephemeral, not a trusted `state.json` cache or new durable
+authority. Under the fence, revalidate directory membership, directory/file
+identities and streaming SHA-256 digests of the exact authoritative bytes.
+Do not retain aggregate historical output buffers. Outside-fence decoding
+must hash the captured byte range it actually reads before binding either
+decoded state or a parse failure to that source. An identical verified prefix may
+accept up to 1 MiB total of new, fully validated `output` records per check:
+those records cannot change replayed reservation state. Other or larger
+changes require out-of-fence preparation, reusing only exact verified
+prefixes. Ongoing ordinary output therefore need not restart full historical
+replay. The remaining fenced byte pass still grows with retained history;
+this is not a constant-time admission guarantee. Raw catch-up buffers share
+the 1 MiB bound across runs; source metadata, existing replay state and
+per-record decoding allocations are separate and are not globally constant.
+
+A recognized SDK admission rejection followed by acknowledged clean shutdown
+is an ordinary failed step and follows its configured failure edge. It does
+not create a synthetic pause or remove a genuine operator pause. Uncertain
+admission and unclean shutdown retain the existing preservation rules.
+
 Orderly native `paused`, `halted` and `error` runs need `canResume`, intact
 accounting and verified context before resume. Completed/cancelled and
 hard-crash `interrupted` runs cannot resume. An owner lease may still appear
@@ -1437,6 +1458,10 @@ running until native lease reconciliation; this is not permission to spawn
 a replacement. Pause is a resumable stop; cancel is not. Inspect the winning
 status in completion/control races, and do not interpret an unowned
 still-running cancel response as successful cancellation.
+
+Run-level pause output retains the stable `run paused at a step boundary`
+signal and its reason. CLI and canvas controls must distinguish this from
+running or terminal state, including a clean never-admitted bootstrap.
 
 Require native `completed`, the full raw factory return as v2 `StepResult`,
 Derived trust, confined/scrubbed artifacts, usable accounting, and verified

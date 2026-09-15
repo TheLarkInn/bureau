@@ -6,6 +6,8 @@ mod admission;
 mod artifacts;
 #[path = "factory_engine/controls.rs"]
 mod controls;
+#[path = "factory_engine/corrections.rs"]
+mod corrections;
 #[path = "factory_engine/credentials.rs"]
 mod credentials;
 #[path = "factory_engine/evidence.rs"]

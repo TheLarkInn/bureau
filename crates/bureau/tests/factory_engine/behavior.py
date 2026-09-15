@@ -6,6 +6,24 @@ import time
 from pathlib import Path
 
 
+def reject_admission(request, mode, send):
+    if not mode.startswith("rejection-"):
+        return False
+    if mode == "rejection-operator-pause":
+        Path.cwd().parent.joinpath("PAUSE").write_text("operator pause\n")
+    send({"jsonrpc": "2.0", "id": request["id"], "error": {
+        "code": -32602, "message": "synthetic definite admission rejection",
+        "data": {"code": "factory_not_found"}}})
+    return True
+
+
+def before_shutdown(mode):
+    if mode == "rejection-shutdown-pause":
+        Path.cwd().parent.joinpath("PAUSE").write_text("operator pause\n")
+    if mode == "rejection-unacknowledged-shutdown":
+        raise SystemExit(0)
+
+
 def permissions(request, session, notify, receive, response, malformed=False, kind="shell"):
     data = {"requestId": "permission-1", "permissionRequest": {"kind": kind,
             "extensionName": "unapproved", "environmentVariables": ["COPILOT_GITHUB_TOKEN"]},

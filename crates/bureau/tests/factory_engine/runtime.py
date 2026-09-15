@@ -245,6 +245,8 @@ def dispatch(request):
     method = request["method"]
     if method in ("session.create", "session.resume"):
         return initialize(request)
+    if method == "session.factory.run" and behavior.reject_admission(request, MODE, send):
+        return
     if method == "session.factory.run":
         return start(request)
     if method == "session.factory.resume":
@@ -264,10 +266,11 @@ def dispatch(request):
             "data": {"code": "agent_factories_unavailable"}}})
     if method == "runtime.shutdown":
         assert "params" not in request
+        behavior.before_shutdown(MODE)
         if SESSION and saved()["mode"] == "unacknowledged-shutdown":
             sys.exit(0)
         response(request, None)
-        sys.exit(0)
+        sys.exit(17 if MODE == "rejection-unclean-shutdown" else 0)
     static = {
         "connect": {"ok": True, "protocolVersion": 3, "version": "offline-fixture-c"},
         "registerExtensionLaunchProvider": None,

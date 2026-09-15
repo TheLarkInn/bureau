@@ -157,6 +157,40 @@ test("save pipeline preserves factory values through the validated draft path", 
     [true, { ...FACTORY, args: null }]);
 });
 
+const ARGUMENT_EDITS = [
+  ["repeated scalars", { values: ["check"] }, { values: ["check", "check"] }],
+  ["duplicate ordering", { values: ["a", "b", "a"] }, { values: ["a", "a", "b", "a"] }],
+  ["repeated objects", { values: [{ labels: ["a", "a"] }] },
+    { values: [{ labels: ["a", "a"] }, { labels: ["a", "a"] }] }],
+  ["repeated nested arrays", { values: [[1, [2, 2]]] }, { values: [[1, [2, 2]], [1, [2, 2]]] }],
+  ["arrays inside maps", { nested: { values: ["check"] } }, { nested: { values: ["check", "check"] } }],
+  ["empty arrays", { values: ["check", "check"] }, { values: [] }],
+];
+
+for (const [name, before, after] of ARGUMENT_EDITS) {
+  test(`factory argument ${name} survive parse, edit, render and save exactly`, async () => {
+    const original = structuredClone(PIPELINE);
+    original.steps[1].copilot_factory.args = before;
+    const source = `# Keep the reviewed authority\n${createDocument(original)}`;
+    const parsed = parse(source, { path: PATH });
+    const factory = { ...FACTORY, args: after };
+    const view = setStepField(parsed.view, "review", "copilotFactory", factory);
+    const rendered = render(view, parsed.doc, parsed.style);
+    assert.deepEqual(parseValue(rendered).steps[1].copilot_factory, factory);
+    const dir = resolve("factory-array-memory-fixture");
+    const path = join(dir, PATH);
+    const files = new Map([[path, source]]);
+    const result = await savePipeline({ dir, pipeline: "factory", view }, {
+      readText: async (path) => files.get(path) ?? null,
+      writeText: async (path, text) => files.set(path, text),
+      validate: async () => ({ state: "validated", ok: true, findings: [] }),
+    });
+    const saved = files.get(path);
+    assert.deepEqual([result.saved, parseValue(saved).steps[1], saved.startsWith("# Keep the reviewed authority\n")],
+      [true, { ...original.steps[1], copilot_factory: factory }, true]);
+  });
+}
+
 test("factory action takes a structured declaration, never a JSON-encoded payload", async () => {
   const action = actions.find((action) => action.name === "set_copilot_factory");
   assert.deepEqual([

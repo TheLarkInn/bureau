@@ -26,7 +26,7 @@ pub use event::{
     pr_created, run_finished, run_finished_full, run_started, run_started_for_item,
     run_started_snapshot, step_finished, step_finished_full, step_started, step_started_agent,
 };
-pub(crate) use factory_admission::preserved_factory_work_with_active;
+pub(crate) use factory_admission::{FactoryHistory, FactorySource};
 pub use factory_admission::{preserved_factory_work, preserves_factory_work};
 pub use gist::{gist, kind_name, outcome_name, status_text};
 pub use group::{

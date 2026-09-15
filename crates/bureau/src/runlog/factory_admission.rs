@@ -1,12 +1,20 @@
 //! Fresh-admission exclusions derived only from authoritative pipeline events.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, DirEntry};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::{Event, EventKind, RunState, RunStatus, log_lines, parse_events, replay};
+use super::{Event, EventKind, RunState, RunStatus, log_lines, parse_events};
 use crate::config::ForgeKind;
+
+mod decode;
+mod source;
+
+use decode::Prepared;
+pub use source::FactorySource;
+
+// Bounded catch-up accepts only fully validated output, which cannot change replayed state.
+const FENCED_OUTPUT_BYTES: usize = 1024 * 1024;
 
 fn selected(state: &RunState) -> bool {
     state.snapshot.as_ref().is_some_and(|snapshot| {
@@ -30,84 +38,16 @@ pub fn preserves_factory_work(state: &RunState) -> bool {
         || records.values().any(|record| !record.can_clean())
 }
 
-fn directory(entry: &DirEntry) -> io::Result<Option<PathBuf>> {
-    let kind = entry.file_type()?;
-    if kind.is_symlink() {
+fn events(bytes: &[u8]) -> io::Result<Vec<Event>> {
+    let text = std::str::from_utf8(bytes).map_err(io::Error::other)?;
+    let (lines, torn) = log_lines(text);
+    if text.ends_with('\n') && torn.is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "run directory is symlinked",
+            "framed log event is invalid",
         ));
     }
-    Ok(kind.is_dir().then(|| entry.path()))
-}
-
-fn directories(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let entries = match fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut paths = Vec::new();
-    for entry in entries {
-        if let Some(path) = directory(&entry?)? {
-            paths.push(path);
-        }
-    }
-    paths.sort();
-    Ok(paths)
-}
-
-fn pending_file(error: &io::Error, active: bool) -> bool {
-    active && error.kind() == io::ErrorKind::NotFound
-}
-
-fn contents(directory: &Path, active: bool) -> io::Result<Option<Vec<u8>>> {
-    match fs::read(directory.join(super::EVENTS_FILE)) {
-        Err(error) if pending_file(&error, active) => Ok(None),
-        result => result.map(Some).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!(
-                    "reading preserved factory work in {}: {error}",
-                    directory.display()
-                ),
-            )
-        }),
-    }
-}
-
-fn events(bytes: Vec<u8>, active: bool) -> io::Result<Option<Vec<Event>>> {
-    // The first framed event is unpublished until its newline, even across a UTF-8 split.
-    if active && !bytes.contains(&b'\n') {
-        return Ok(None);
-    }
-    let text = String::from_utf8(bytes).map_err(io::Error::other)?;
-    parse_events(&log_lines(&text).0).map(Some)
-}
-
-fn cloud_only(events: &[Event]) -> bool {
-    !events.is_empty()
-        && events
-            .iter()
-            .all(|event| event.kind == EventKind::GitHubCloud)
-}
-
-fn state(directory: &Path, active: bool) -> io::Result<Option<RunState>> {
-    let Some(bytes) = contents(directory, active)? else {
-        return Ok(None);
-    };
-    let Some(events) = events(bytes, active)? else {
-        return Ok(None);
-    };
-    if cloud_only(&events) {
-        return Ok(None);
-    }
-    replay(events).map(Some).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("run {} has no valid run_started event", directory.display()),
-        )
-    })
+    parse_events(&lines)
 }
 
 fn active(directory: &Path, runs: &BTreeSet<String>) -> bool {
@@ -155,10 +95,95 @@ fn preserved_item(
     )))
 }
 
+fn only_output(bytes: &[u8], remaining: &mut usize) -> bool {
+    if bytes.len() > *remaining || !bytes.ends_with(b"\n") {
+        return false;
+    }
+    *remaining -= bytes.len();
+    events(bytes).is_ok_and(|events| events.iter().all(|event| event.kind == EventKind::Output))
+}
+
+/// Replay is prepared outside the fence and used only after exact authority revalidation.
+pub struct FactoryHistory {
+    source: FactorySource,
+    states: Vec<Prepared>,
+}
+
+impl FactoryHistory {
+    pub(crate) fn prepare(mut source: FactorySource, previous: Option<Self>) -> Self {
+        let mut previous: BTreeMap<_, _> = previous
+            .into_iter()
+            .flat_map(|history| {
+                history
+                    .source
+                    .runs
+                    .into_iter()
+                    .zip(history.states)
+                    .map(|(source, state)| (source.path().to_owned(), (source, state)))
+            })
+            .collect();
+        let states = source
+            .runs
+            .iter()
+            .map(|source| {
+                let prior = previous.remove(source.path());
+                decode::prepare(source, prior)
+            })
+            .collect();
+        source.release_tails();
+        Self { source, states }
+    }
+
+    pub(crate) fn capture(&self, root: &Path) -> io::Result<FactorySource> {
+        FactorySource::capture(root, Some(&self.source))
+    }
+
+    pub(crate) fn matches(&self, current: &FactorySource) -> bool {
+        if !self.source.same_root(current) {
+            return false;
+        }
+        let mut remaining = FENCED_OUTPUT_BYTES;
+        self.source
+            .runs
+            .iter()
+            .zip(&current.runs)
+            .zip(&self.states)
+            .all(|((before, after), state)| {
+                state.bound()
+                    && (before.same(after)
+                        || (state.pipeline()
+                            && before
+                                .appended(after)
+                                .and_then(|appended| appended.bytes.as_deref())
+                                .is_some_and(|bytes| only_output(bytes, &mut remaining))))
+            })
+    }
+
+    pub(crate) fn work(
+        self,
+        assignment: &str,
+        forge: &str,
+        active_runs: &BTreeSet<String>,
+    ) -> io::Result<BTreeMap<String, String>> {
+        let mut work = BTreeMap::new();
+        for (source, state) in self.source.runs.into_iter().zip(self.states) {
+            if source.unpublished() && active(source.path(), active_runs) {
+                continue;
+            }
+            if let Some(state) = state.state()?
+                && let Some((item, run)) = preserved_item(&state, assignment, forge)?
+            {
+                work.entry(item).or_insert(run);
+            }
+        }
+        Ok(work)
+    }
+}
+
 /// Reads preserved local-factory work without consulting or rewriting derived caches.
 ///
-/// A fresh claim must repeat this read inside its `SQLite` admission transaction:
-/// factory events and terminal/output appends use the same database ownership fence.
+/// Scheduling instead prepares replay outside its `SQLite` transaction and revalidates
+/// these exact sources inside the same fence used by factory/terminal/output appends.
 ///
 /// # Errors
 /// Propagates unreadable, corrupt, or identity-inconsistent authoritative logs.
@@ -168,15 +193,11 @@ pub fn preserved_factory_work_with_active(
     forge: &str,
     active_runs: &BTreeSet<String>,
 ) -> io::Result<BTreeMap<String, String>> {
-    let mut work = BTreeMap::new();
-    for directory in directories(runs_dir)? {
-        if let Some(state) = state(&directory, active(&directory, active_runs))?
-            && let Some((item, run)) = preserved_item(&state, assignment, forge)?
-        {
-            work.entry(item).or_insert(run);
-        }
-    }
-    Ok(work)
+    FactoryHistory::prepare(FactorySource::read(runs_dir)?, None).work(
+        assignment,
+        forge,
+        active_runs,
+    )
 }
 
 /// Reads preserved factory work without a live-owner exemption for unpublished headers.

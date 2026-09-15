@@ -257,7 +257,10 @@ function applyValueChange(yamlDoc, path, before, after) {
   if (!changedValue(before, after)) {
     return;
   }
-  if (isPlainMap(before) && isPlainMap(after)) {
+  // Factory args are opaque JSON; their arrays are not editor-managed sets.
+  if (path.at(-2) === "copilot_factory" && path.at(-1) === "args") {
+    yamlDoc.setIn(path, after);
+  } else if (isPlainMap(before) && isPlainMap(after)) {
     applyMapChange(yamlDoc, path, before, after);
   } else if (Array.isArray(before) && Array.isArray(after)) {
     applySequenceChange(yamlDoc, path, before, after);

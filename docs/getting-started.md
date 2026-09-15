@@ -574,7 +574,8 @@ Additional tool or sensitive-environment permission requests are denied.
 Saving an editor draft neither authorizes uncommitted execution nor launches
 a factory.
 
-`args` stays an object or null; omission means null. No dynamic inputs are
+`args` stays an object or null; omission means null. Argument array order and
+repeated values survive editor saves exactly. No dynamic inputs are
 injected into it. `inputs_from` still supplies the v2 `StepRequest` through
 the restricted `bureau-io` context tool. The factory itself must return a
 complete v2 `StepResult`; child publications and result previews do not
@@ -597,6 +598,9 @@ Native pause is orderly/resumable; cancel is not. A lost start reply is
 indeterminate and cannot be retried or resolved by choosing the newest
 same-named run. Hard-killed/interrupted native runs cannot resume, and live
 ownership may remain visible until the runtime lease expires.
+A definite SDK admission rejection with verified clean shutdown follows the
+step's configured failure route. It does not manufacture a pause; an actual
+operator pause still takes precedence.
 
 `bureau show <run-id> --json` reports structured state and Bureau's
 local-factory continuation decision. Canvas Resume uses that same decision;

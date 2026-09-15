@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use super::Error;
+use super::digest::Sha256;
 
 #[derive(Debug)]
 pub struct TreeFile {
@@ -125,11 +126,11 @@ fn digest_entries(tree: &Tree) -> Result<Vec<DigestEntry<'_>>, Error> {
     Ok(entries)
 }
 
-struct Digest(ring::digest::Context);
+struct Digest(Sha256);
 
 impl Digest {
     fn new() -> Self {
-        Self(ring::digest::Context::new(&ring::digest::SHA256))
+        Self(Sha256::default())
     }
 
     fn add_entry(&mut self, entry: &DigestEntry<'_>) {
@@ -151,7 +152,7 @@ impl Digest {
 
     fn finish(self) -> String {
         let mut value = "tree-sha256:".to_owned();
-        for byte in self.0.finish().as_ref() {
+        for byte in self.0.finish() {
             let _ = write!(value, "{byte:02x}");
         }
         value

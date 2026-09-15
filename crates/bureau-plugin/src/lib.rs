@@ -9,6 +9,7 @@
 
 pub(crate) mod activation;
 pub(crate) mod catalog;
+pub(crate) mod digest;
 pub(crate) mod error;
 pub(crate) mod global;
 pub(crate) mod guard;
@@ -29,6 +30,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use digest::Sha256;
 pub use error::Error;
 pub use material::{TreeSnapshot, tree_digest};
 /// Metadata from a validated plugin package.
@@ -171,7 +173,6 @@ impl Activation {
     /// Restores all activation files and returns the selected plugin metadata.
     ///
     /// # Errors
-    ///
     /// Returns a conflict after restoring originals when injected bytes
     /// changed, or a restoration error when exact cleanup was not possible.
     pub fn restore(mut self) -> Result<PluginSource, Error> {
@@ -200,7 +201,6 @@ impl Resolver {
     /// Resolves, snapshots, and activates one `/plugin:agent` reference.
     ///
     /// # Errors
-    ///
     /// Returns an error for invalid references, unavailable or unsafe plugin
     /// sources, invalid activation JSON, or filesystem failures.
     pub fn activate(&self, agent_reference: &str, worktree: &Path) -> Result<Activation, Error> {

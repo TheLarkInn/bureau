@@ -79,7 +79,11 @@ async fn operate(client: &Client, pass: &Pass<'_>, launched: &AtomicBool) -> Res
 fn interrupted(pass: &Pass<'_>, outcome: &Result<(), String>) -> Result<(), String> {
     let Err(message) = outcome else { return Ok(()) };
     let record = pass.journal.record(&pass.prepared.intent.session_id)?;
-    if record.dispatched.is_some() && record.rejected.is_none() {
+    // Checked shutdown decides whether a rejection needs preservation or its failure route.
+    if record.rejected.is_some() {
+        return Ok(());
+    }
+    if record.dispatched.is_some() {
         pass.journal
             .append(Data::Indeterminate {
                 session_id: pass.prepared.intent.session_id.clone(),

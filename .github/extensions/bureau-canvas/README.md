@@ -47,6 +47,9 @@ Static arguments are a JSON object or null, never an encoded prompt or
 the same structured declaration (or null to remove it). Other edits,
 step rename/delete/clone and save preserve its nested data without rewriting
 argument strings. Unknown fields and invalid JSON block save.
+Argument array order and repeated scalar, object or nested-array values are
+preserved exactly. Changed arguments replace only their opaque subtree;
+unrelated editor-managed lists retain their existing semantics.
 
 This is trusted executable configuration, not a launch button. Native
 ceilings are optional and never filled merely by opening the editor.
@@ -67,6 +70,9 @@ Resume consumes the read-only `show --json` decision for the exact session
 and native event prefix. A clean, never-admitted bootstrap can continue only
 when Bureau explicitly confirms it. An unavailable or older CLI cannot
 approve continuation from the browser's raw-log fallback.
+Pause reasons remain visible without hiding Resume for an ordinary or
+eligible bootstrap pause; genuinely running and terminal runs keep their
+distinct controls.
 
 The selected policy uses explicit pinned resources with ambient discovery
 disabled. Repository `extraKnownMarketplaces` and `enabledPlugins` intent

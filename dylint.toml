@@ -25,6 +25,7 @@ exhaustive = true
 "bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
 "bureau:adapters" = ["config", "contract", "mcp", "process"]
 "bureau:runlog" = ["adapters", "config", "contract", "forge", "process"]
+# Admission prepares replay outside state transactions and streams exact-byte digest validation.
 "bureau:state" = ["config", "forge", "identity", "runlog"]
 "bureau:engine" = [
     "adapters",
@@ -69,10 +70,11 @@ exhaustive = true
 "bureau_plugin:Resolved" = []
 "bureau_plugin:Resolver" = []
 "bureau_plugin:error" = []
+"bureau_plugin:digest" = []
 "bureau_plugin:reference" = ["error"]
 "bureau_plugin:json" = ["error"]
 "bureau_plugin:paths" = ["error"]
-"bureau_plugin:tree" = ["error"]
+"bureau_plugin:tree" = ["error", "digest"]
 "bureau_plugin:storage" = ["error"]
 "bureau_plugin:material" = ["error", "paths", "storage", "tree"]
 "bureau_plugin:pinned" = ["PluginSource", "Resolved", "Resolver", "catalog", "error", "json", "paths", "reference", "settings", "snapshot"]
