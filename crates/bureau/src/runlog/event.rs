@@ -28,6 +28,8 @@ pub enum EventKind {
     GroupMemberCancelled,
     /// A concurrent group finished with its aggregate result.
     GroupFinished,
+    /// Local Copilot runtime identity, control, and accounting facts.
+    CopilotFactory,
     /// The run branch was checkpointed after a step.
     Checkpoint,
     /// The final branch commit was pushed.
@@ -36,6 +38,9 @@ pub enum EventKind {
     PrCreated,
     /// The run finished with an outcome.
     RunFinished,
+    /// A versioned GitHub cloud receipt or exact-task observation.
+    #[serde(rename = "github_cloud")]
+    GitHubCloud,
 }
 /// One append-only, sequence-numbered run-log record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +125,6 @@ pub struct RunFinishedData {
     #[serde(default)]
     pub disposition: Option<TerminalDisposition>,
 }
-
 /// Durable branch checkpoint after one step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointData {
@@ -131,7 +135,6 @@ pub struct CheckpointData {
     /// Exact Git commit.
     pub commit: String,
 }
-
 /// Final pushed branch state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchPushedData {
@@ -140,7 +143,6 @@ pub struct BranchPushedData {
     /// Exact pushed commit.
     pub commit: String,
 }
-
 /// Created or observed PR.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrCreatedData {
@@ -153,7 +155,6 @@ pub struct PrCreatedData {
 fn to_value<T: Serialize>(data: &T) -> serde_json::Value {
     serde_json::to_value(data).unwrap_or(serde_json::Value::Null)
 }
-
 /// Builds the `data` for a `run_started` event.
 #[must_use]
 pub fn run_started(run_id: &str, assignment: &str) -> serde_json::Value {
@@ -164,7 +165,6 @@ pub fn run_started(run_id: &str, assignment: &str) -> serde_json::Value {
         snapshot: None,
     })
 }
-
 /// Builds the `data` for a `run_started` event tied to a work item.
 #[must_use]
 pub fn run_started_for_item(run_id: &str, assignment: &str, item: &str) -> serde_json::Value {

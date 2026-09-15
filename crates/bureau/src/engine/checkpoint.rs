@@ -32,11 +32,24 @@ pub(super) async fn save(wt: &WtCtx, step: &str) -> Result<String, String> {
     gitcmd::git(&["rev-parse", "HEAD"], wt.worktree.path(), &[]).await
 }
 
-fn record(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef, commit: &str) {
+fn record(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef, commit: &str) -> Result<(), String> {
+    let data = runlog::checkpoint(&step.name, &wt.start_head, commit);
+    if step.copilot_factory.is_some() {
+        context::append_checked(ctx, EventKind::Checkpoint, data)?;
+    } else {
+        context::append(ctx, EventKind::Checkpoint, data);
+    }
     ctx.base_commit.get_or_insert_with(|| wt.start_head.clone());
     ctx.checkpoint = Some(commit.to_owned());
-    let data = runlog::checkpoint(&step.name, &wt.start_head, commit);
-    context::append(ctx, EventKind::Checkpoint, data);
+    Ok(())
+}
+
+fn failed(step: &StepDef, result: &mut Execution, error: &str) {
+    result.result.outcome = StepOutcome::Failure;
+    result.result.message = format!("checkpointing step `{}` failed: {error}", step.name);
+    if step.copilot_factory.is_some() {
+        *result = result.clone().halt();
+    }
 }
 
 pub(super) async fn save_result(
@@ -45,11 +58,10 @@ pub(super) async fn save_result(
     step: &StepDef,
     result: &mut Execution,
 ) {
-    match save(wt, &step.name).await {
-        Ok(commit) => record(ctx, wt, step, &commit),
-        Err(error) => {
-            result.result.outcome = StepOutcome::Failure;
-            result.result.message = format!("checkpointing step `{}` failed: {error}", step.name);
-        }
+    let saved = save(wt, &step.name)
+        .await
+        .and_then(|commit| record(ctx, wt, step, &commit));
+    if let Err(error) = saved {
+        failed(step, result, &error);
     }
 }

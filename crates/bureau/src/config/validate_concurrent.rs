@@ -197,6 +197,18 @@ fn check_permissions(
     }
 }
 
+fn check_member_factory(errors: &mut Vec<ConfigError>, name: &str, step: &StepDef, path: &Path) {
+    if step.copilot_factory.is_some() {
+        step_err(
+            errors,
+            path,
+            name,
+            &step.name,
+            "`copilot_factory` is not supported on concurrent evidence members: preserving member worktree/runtime ownership across factory resume is not yet supported",
+        );
+    }
+}
+
 fn check_member(
     errors: &mut Vec<ConfigError>,
     config: &Config,
@@ -213,6 +225,7 @@ fn check_member(
     check_member_edges(errors, name, step, path);
     check_sibling_inputs(errors, name, pipeline, step, group, path);
     check_permissions(errors, config, name, step, path);
+    check_member_factory(errors, name, step, path);
 }
 
 fn check_edge_targets(

@@ -64,6 +64,7 @@ fn step(timeout_secs: Option<u64>) -> StepDef {
         kind: StepKind::Agent,
         run: None,
         role: Some("reviewer".to_owned()),
+        copilot_factory: None,
         fixture: None,
         trust: None,
         over: None,

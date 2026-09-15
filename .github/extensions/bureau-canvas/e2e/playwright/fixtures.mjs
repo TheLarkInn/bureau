@@ -84,7 +84,7 @@ async function scratchRuns() {
 }
 
 async function bootCanvas(dir, runs) {
-  const child = spawn(process.execPath, [SERVE, "--dir", dir], {
+  const child = spawn(process.execPath, [SERVE, "--dir", dir, "--bureau", join(dir, ".missing-bureau-for-tests")], {
     env: { ...process.env, BUREAU_CANVAS_TEST: "1", BUREAU_CANVAS_RUNS: runs },
     stdio: ["ignore", "pipe", "pipe"],
   });

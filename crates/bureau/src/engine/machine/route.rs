@@ -5,7 +5,7 @@ use crate::config::{StepDef, StepKind};
 use crate::contract::StepOutcome;
 
 use super::super::context::{self, RunCtx, WtCtx};
-use super::super::{approval, concurrent, control, edge, request};
+use super::super::{approval, concurrent, control, copilot_factory, edge, request};
 use super::{Stop, run_step};
 
 pub(super) enum Turn {
@@ -31,11 +31,26 @@ fn attempts_check(ctx: &RunCtx, step: &StepDef) -> Option<String> {
     (entries >= step.max_attempts).then(|| format!("step `{}` exceeded max attempts", step.name))
 }
 
-fn route_execution(ctx: &mut RunCtx, step: &StepDef, execution: Execution) -> Turn {
-    let outcome = execution.result.outcome;
-    let detail = execution.result.message.clone();
-    let halted = execution.is_halted();
-    ctx.record(&step.name, execution);
+fn stopped(ctx: &RunCtx, stop: Stop) -> Stop {
+    if !copilot_factory::recovery::pending(ctx) {
+        return stop;
+    }
+    match stop {
+        Stop::Fail(reason) | Stop::Escalate(reason) => {
+            copilot_factory::preserve(ctx, &reason);
+            Stop::Pause
+        }
+        other => other,
+    }
+}
+
+fn after_result(
+    ctx: &RunCtx,
+    step: &StepDef,
+    outcome: StepOutcome,
+    detail: String,
+    halted: bool,
+) -> Turn {
     if halted {
         return if outcome == StepOutcome::Blocked {
             Turn::Stop(Stop::Escalate(detail))
@@ -57,6 +72,17 @@ fn route_execution(ctx: &mut RunCtx, step: &StepDef, execution: Execution) -> Tu
     ))
 }
 
+fn route_execution(ctx: &mut RunCtx, step: &StepDef, execution: Execution) -> Turn {
+    let outcome = execution.result.outcome;
+    let detail = execution.result.message.clone();
+    let halted = execution.is_halted();
+    if halted && step.copilot_factory.is_some() {
+        return Turn::Stop(Stop::Pause);
+    }
+    ctx.record(&step.name, execution);
+    after_result(ctx, step, outcome, detail, halted)
+}
+
 async fn concurrent_route(ctx: &mut RunCtx, wt: &WtCtx, group: &StepDef) -> Turn {
     let resuming = ctx
         .groups
@@ -70,12 +96,14 @@ async fn concurrent_route(ctx: &mut RunCtx, wt: &WtCtx, group: &StepDef) -> Turn
 }
 
 async fn code_route(ctx: &mut RunCtx, wt: &WtCtx, step: &StepDef) -> Turn {
-    if let Some(reason) = attempts_check(ctx, step) {
+    if !copilot_factory::recovery::unfinished(ctx, step)
+        && let Some(reason) = attempts_check(ctx, step)
+    {
         return Turn::Stop(Stop::Escalate(reason));
     }
     let request = request::build(ctx, step, wt.worktree.path());
     if let Some(reason) = request::trust_check(&ctx.plan, step, &request) {
-        return Turn::Stop(Stop::Escalate(reason));
+        return Turn::Stop(stopped(ctx, Stop::Escalate(reason)));
     }
     let execution = run_step(ctx, wt, step, &request).await;
     route_execution(ctx, step, execution)
@@ -110,18 +138,21 @@ async fn route_turn(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {
 
 async fn boundary_stop(ctx: &RunCtx) -> Option<Stop> {
     if let Some(reason) = context::ownership_reason(ctx) {
-        return Some(Stop::Fail(reason));
+        return Some(stopped(ctx, Stop::Fail(reason)));
     }
     if let Some(reason) = control::cancel_reason(ctx) {
-        return Some(Stop::Fail(reason));
+        return (!copilot_factory::recovery::pending(ctx)).then_some(Stop::Fail(reason));
     }
     if control::pause_requested(ctx) {
         return Some(Stop::Pause);
     }
     if ctx.remaining().is_zero() {
-        return Some(Stop::Escalate(control::deadline_message(ctx)));
+        return Some(stopped(ctx, Stop::Escalate(control::deadline_message(ctx))));
     }
-    approval::check(ctx).await.err().map(Stop::Escalate)
+    approval::check(ctx)
+        .await
+        .err()
+        .map(|reason| stopped(ctx, Stop::Escalate(reason)))
 }
 
 pub(super) async fn advance(ctx: &mut RunCtx, wt: &WtCtx, route: edge::Route) -> Turn {

@@ -8,6 +8,7 @@ import { actions } from "./lib/actions.mjs";
 import { parseValue } from "./lib/codec.mjs";
 import { applyPlan, create, crudActions, emptyPlan, remove as removeEntity, rename } from "./lib/crud.mjs";
 import { findings } from "./lib/findings.mjs";
+import { readFactoryControls } from "./lib/factory-controls.mjs";
 import { configLayout, pipelineContainers, pipelineHandles, pipelineLayout } from "./lib/layout.mjs";
 import { arrangementFor, readLayout, savePipeline } from "./lib/pipeline.mjs";
 import { createRunTail, listRuns, parseEvents, readRunEvents, resolveRunsDir, runBureau, runsDir } from "./lib/runs.mjs";
@@ -151,11 +152,15 @@ export function resolveInput(input = {}) {
 }
 
 function testValidationOptions(options) {
-    if (process.env.BUREAU_CANVAS_TEST !== "1" || options.savePipelineDeps) {
+    if (process.env.BUREAU_CANVAS_TEST !== "1") {
         return options;
     }
+    const isolated = { ...options, binary: options.binary ?? TEST_MISSING_BUREAU };
+    if (options.savePipelineDeps) {
+        return isolated;
+    }
     return {
-        ...options,
+        ...isolated,
         savePipelineDeps: {
             validate: () => Promise.resolve({
                 findings: [],
@@ -586,6 +591,9 @@ async function handleRequest(entry, request, response) {
     } else if (pathname.startsWith("/runs/") && pathname.endsWith("/events")) {
         const runId = pathname.slice("/runs/".length, -"/events".length);
         await sendRunEvents(runId, entry, response, request.method === "HEAD");
+    } else if (pathname.startsWith("/runs/") && pathname.endsWith("/controls")) {
+        const runId = pathname.slice("/runs/".length, -"/controls".length);
+        await sendRunControls(runId, entry, response, request.method === "HEAD");
     } else {
         await sendStatic(entry, pathname, response, request.method === "HEAD");
     }
@@ -639,6 +647,19 @@ async function sendRunEventsFromLog(runId, dir, response, headOnly) {
         return;
     }
     sendJson(response, { run_id: runId, events, source: "log" }, headOnly);
+}
+
+async function sendRunControls(runId, entry, response, headOnly) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
+        sendStatus(response, 400);
+        return;
+    }
+    try {
+        const controls = await readFactoryControls(runId, runsRoot(entry), entry.options ?? {});
+        sendJson(response, controls, headOnly);
+    } catch (error) {
+        sendJson(response, { error: String(error.message ?? error) }, headOnly, 503);
+    }
 }
 
 const RUN_CONTROL_VERBS = { "pause-run": "pause", "resume-run": "resume", "cancel-run": "cancel" };
@@ -923,8 +944,8 @@ function planSummary(plan) {
     };
 }
 
-function sendJson(response, value, headOnly) {
-    response.writeHead(200, {
+function sendJson(response, value, headOnly, status = 200) {
+    response.writeHead(status, {
         "Cache-Control": "no-store",
         "Content-Type": "application/json; charset=utf-8",
     });

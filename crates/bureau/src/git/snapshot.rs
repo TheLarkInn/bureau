@@ -55,7 +55,13 @@ impl Worktree {
     /// Propagates Git failures.
     pub async fn reset(&self, commit: &str) -> Result<(), Error> {
         let mut secrets = Vec::new();
-        git(&["reset", "--hard", commit], &self.dir, None, &mut secrets).await?;
+        git(
+            &["reset", "--hard", commit],
+            self.path(),
+            None,
+            &mut secrets,
+        )
+        .await?;
         Ok(())
     }
 }

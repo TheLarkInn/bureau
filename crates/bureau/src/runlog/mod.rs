@@ -8,7 +8,10 @@
 //!   wt/            # the worktree
 //! ```
 
+pub mod copilot_factory;
+mod create;
 mod event;
+mod factory_admission;
 mod gist;
 mod group;
 mod group_state;
@@ -23,6 +26,8 @@ pub use event::{
     pr_created, run_finished, run_finished_full, run_started, run_started_for_item,
     run_started_snapshot, step_finished, step_finished_full, step_started, step_started_agent,
 };
+pub(crate) use factory_admission::preserved_factory_work_with_active;
+pub use factory_admission::{preserved_factory_work, preserves_factory_work};
 pub use gist::{gist, kind_name, outcome_name, status_text};
 pub use group::{
     GroupFinishedData, GroupMemberCancelledData, GroupMemberFinishedData, GroupMemberStartedData,
@@ -177,45 +182,6 @@ pub struct RunLog {
 }
 
 impl RunLog {
-    /// Creates the run directory and its log. Fails if the log already
-    /// exists — a run id is used exactly once.
-    ///
-    /// # Errors
-    /// Propagates filesystem failures, including an existing log.
-    pub fn create(runs_dir: &Path, run_id: &str, secrets: &[Secret]) -> io::Result<Self> {
-        let dir = run_dir(runs_dir, run_id);
-        std::fs::create_dir_all(dir.join("artifacts"))?;
-        std::fs::create_dir_all(dir.join("wt"))?;
-        let file = OpenOptions::new()
-            .create_new(true)
-            .append(true)
-            .open(dir.join(EVENTS_FILE))?;
-        Ok(Self {
-            writer: BufWriter::new(file),
-            secrets: secrets.to_vec(),
-            next_seq: 0,
-            dir,
-        })
-    }
-
-    /// Opens an existing log after repairing any torn final line.
-    ///
-    /// # Errors
-    /// Propagates filesystem failures and rejects corrupt earlier events.
-    pub fn resume(dir: &Path, secrets: &[Secret]) -> io::Result<Self> {
-        let events = read_events(dir)?;
-        let next_seq = events.last().map_or(0, |event| event.seq + 1);
-        let file = OpenOptions::new()
-            .append(true)
-            .open(dir.join(EVENTS_FILE))?;
-        Ok(Self {
-            writer: BufWriter::new(file),
-            secrets: secrets.to_vec(),
-            next_seq,
-            dir: dir.to_path_buf(),
-        })
-    }
-
     /// The directory this run writes into.
     #[must_use]
     pub fn dir(&self) -> &Path {

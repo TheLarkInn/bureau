@@ -1,6 +1,8 @@
 //! The reconcile loop (DESIGN.md section 8) replaces the scheduler.
 
+mod credentials;
 mod observe;
+mod pass;
 mod start;
 
 use std::collections::BTreeMap;
@@ -9,17 +11,22 @@ use std::time::{Duration, SystemTime};
 
 use tokio::task::JoinHandle;
 
-use crate::config::{Assignment, Config, ForgeKind, Repo};
+use crate::config::{Assignment, Config, Repo};
 use crate::engine::{Engine, RunOutcome, RunPlan, new_run_id};
 use crate::forge::{Forge, Item, LabelForge};
 use crate::process::Secret;
-use crate::state::{LeaseOwner, Store};
+use crate::state::{FreshClaim, LeaseOwner, Store};
 
-use observe::Observed;
+use observe::{Observed, forge_key};
+
+pub use pass::Pass;
 
 /// Reconcile-pass failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// An explicit local model-auth reference is unavailable before fresh admission.
+    #[error("local factory model credential `{0}` was not resolved")]
+    ModelCredential(String),
     /// Durable-state failure.
     #[error(transparent)]
     State(#[from] crate::state::Error),
@@ -39,7 +46,7 @@ impl Error {
         match self {
             Self::Forge(error) => error.is_rate_limited(),
             Self::LabelRule(error) => error.is_rate_limited(),
-            Self::State(_) | Self::Io(_) => false,
+            Self::State(_) | Self::Io(_) | Self::ModelCredential(_) => false,
         }
     }
 }
@@ -54,21 +61,6 @@ pub struct Started {
     pub owner: Option<crate::state::LeaseOwner>,
 }
 
-/// The pass result: the started runs, or the first failure when nothing started.
-fn settle(
-    failed: Vec<Error>,
-    started: Vec<Started>,
-    labels_applied: usize,
-) -> Result<Vec<Started>, Error> {
-    match (
-        failed.into_iter().next(),
-        started.is_empty() && labels_applied == 0,
-    ) {
-        (Some(first), true) => Err(first),
-        _ => Ok(started),
-    }
-}
-
 fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
     let prs = &observed.open_prs;
     let open: Vec<&str> = prs.iter().filter_map(|pr| pr.item_id.as_deref()).collect();
@@ -76,17 +68,9 @@ fn pending<'a>(observed: &'a Observed<'a>) -> impl Iterator<Item = Item> + 'a {
     let leased: Vec<&str> = live.iter().map(|l| l.external_id.as_str()).collect();
     let excluded = move |item: &&Item| {
         let id = item.external_id.as_str();
-        !open.contains(&id) && !leased.contains(&id)
+        !open.contains(&id) && !leased.contains(&id) && !observed.preserved.contains_key(id)
     };
     observed.desired.iter().filter(excluded).cloned()
-}
-
-/// The lease's forge key: the work forge's lowercase name.
-const fn forge_key(forge: ForgeKind) -> &'static str {
-    match forge {
-        ForgeKind::Ado => "ado",
-        ForgeKind::Github => "github",
-    }
 }
 
 /// The interval ± 25%, derived from the process clock's nanoseconds.
@@ -147,9 +131,11 @@ pub struct Reconciler {
     pub label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     /// The pipeline engine.
     pub engine: Arc<Engine>,
-    /// Credentials keyed by registry credential name, resolved once at
-    /// startup from the daemon's environment.
+    /// Credentials keyed by registry name. Model references require declared sources;
+    /// repository references retain their existing resolution policy.
     pub credentials: BTreeMap<String, Secret>,
+    /// Declared model-source failures by reference; these override any repository secret.
+    pub model_credential_errors: BTreeMap<String, String>,
     /// Exact committed config revision for newly claimed runs.
     pub config_source: crate::runlog::ConfigSource,
     /// Pinned direct-agent bytes keyed by role name.
@@ -157,33 +143,6 @@ pub struct Reconciler {
 }
 
 impl Reconciler {
-    /// One reconcile pass over every assignment: observe, subtract, budget-check, claim, spawn.
-    /// A failing assignment is skipped; the level-triggered loop retries it later.
-    ///
-    /// # Errors
-    /// The first assignment's failure, but only when the pass started nothing.
-    pub async fn reconcile_once(&self) -> Result<Vec<Started>, Error> {
-        let labels =
-            crate::label_reconcile::reconcile(&self.config, self.state.clone(), &self.label_forges)
-                .await;
-        if labels.rate_limited {
-            let failed = labels.errors.into_iter().map(Error::LabelRule).collect();
-            return settle(failed, Vec::new(), labels.applied);
-        }
-        let (observed, assignment_errors) = self.observe_all().await;
-        let mut failed: Vec<Error> = labels.errors.into_iter().map(Error::LabelRule).collect();
-        let assignments_limited = assignment_errors.iter().any(Error::is_rate_limited);
-        failed.extend(assignment_errors);
-        if assignments_limited {
-            return settle(failed, Vec::new(), labels.applied);
-        }
-        let mut started = Vec::new();
-        for assignment in &observed {
-            self.claim_pending(assignment, &mut started, &mut failed);
-        }
-        settle(failed, started, labels.applied)
-    }
-
     /// Daemon loop: reconcile, then wait; failed passes are retried later.
     /// Direct callers still observe errors from [`Self::reconcile_once`].
     pub async fn run_loop(&self, interval: Duration, mut wake: tokio::sync::mpsc::Receiver<()>) {
@@ -224,8 +183,10 @@ impl Reconciler {
         let key = forge_key(observed.assignment.work.forge);
         let run_id = new_run_id(name)?;
         let owner = LeaseOwner::new(self.state.clone(), name, key, &external_id, &run_id)?;
-        if !owner.claim(crate::supervise::LEASE_TTL)? {
-            return Ok(()); // CAS lost; another daemon holds the item
+        if owner.claim_fresh(crate::supervise::LEASE_TTL, &self.engine.runs_dir)?
+            != FreshClaim::Claimed
+        {
+            return Ok(()); // Another live owner or preserved factory still holds this work.
         }
         self.start_claimed(observed, item, &run_id, owner, started)
     }
@@ -256,17 +217,12 @@ impl Reconciler {
     fn run_plan(&self, observed: &Observed<'_>, item: Item, run_id: &str) -> Result<RunPlan, ()> {
         let assignment = observed.assignment;
         let repos = self.registry_repos(assignment)?;
-        let credentials = repos
-            .values()
-            .filter_map(|repo| {
-                let secret = self.credentials.get(&repo.credential)?.clone();
-                Some((repo.credential.clone(), secret))
-            })
-            .collect();
+        let pipeline = &self.config.pipelines[assignment.pipeline.as_str()];
+        let credentials = self.plan_credentials(&repos, pipeline);
         Ok(RunPlan {
             run_id: run_id.to_owned(),
             assignment: assignment.clone(),
-            pipeline: self.config.pipelines[assignment.pipeline.as_str()].clone(),
+            pipeline: pipeline.clone(),
             roles: self.config.roles.clone(),
             repos,
             item,

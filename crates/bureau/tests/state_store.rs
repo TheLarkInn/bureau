@@ -11,6 +11,9 @@ use std::time::Duration;
 use bureau::config::Limits;
 use bureau::state::{Disposition, Store};
 
+#[path = "state/lease_fence.rs"]
+mod lease_fence;
+
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
 struct TestDir(PathBuf);

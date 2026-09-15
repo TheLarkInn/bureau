@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
+use super::github_cloud::{ControlArgs, ListArgs, RunArgs, ShowArgs};
 use super::{dashboard, reconcile};
 
 /// Fake adapter operations.
@@ -44,80 +45,31 @@ pub enum Verb {
         #[arg(long)]
         json: bool,
     },
-    /// Runs a pipeline once for one work item.
-    Run {
-        /// Pipeline name from the config repo.
-        pipeline: String,
-        /// Work item id on the assignment's forge.
-        #[arg(long)]
-        item: String,
-        /// Local settings file override.
-        #[arg(long)]
-        settings: Option<PathBuf>,
-        /// Committed config cache override.
-        #[arg(long)]
-        config_cache: Option<PathBuf>,
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-        /// Durable state database path.
-        #[arg(long)]
-        state: Option<PathBuf>,
-        /// Checkout cache directory.
-        #[arg(long)]
-        cache: Option<PathBuf>,
-    },
-    /// Lists runs.
-    List {
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-    },
-    /// Shows one run's replayed state.
-    Show {
-        /// The run id.
-        run_id: String,
-        /// Lists the run's events instead of the state summary.
-        #[arg(long)]
-        events: bool,
-        /// With --events, emits the parsed events as a JSON array.
-        #[arg(long, requires = "events")]
-        json: bool,
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-    },
+    /// Runs a pipeline, or explicitly submits/tracks a cloud task.
+    Run(RunArgs),
+    /// Lists local runs, or experimental cloud inventory.
+    List(ListArgs),
+    /// Shows local run state or explicit cloud observations.
+    Show(ShowArgs),
     /// Cancels a running run by writing its CANCEL marker.
-    Cancel {
-        /// The run id.
-        run_id: String,
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-    },
+    Cancel(ControlArgs),
     /// Pauses a running run at its next step boundary by writing its
     /// PAUSE marker.
-    Pause {
-        /// The run id.
-        run_id: String,
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-    },
+    Pause(ControlArgs),
     /// Clears a run's PAUSE marker so the next `bureau run` re-entry
     /// (or the reconcile loop) resumes it; this verb does not itself
     /// continue the run.
-    Resume {
-        /// The run id.
-        run_id: String,
-        /// Directory holding run directories.
-        #[arg(long)]
-        runs: Option<PathBuf>,
-    },
+    Resume(ControlArgs),
     /// Starts a new run for the item an earlier run targeted.
     Retry {
         /// The earlier run id.
         run_id: String,
+        /// Rejects unsupported remote retries without issuing a request.
+        #[arg(long)]
+        github_cloud: bool,
+        /// Emits the unsupported cloud control as JSON.
+        #[arg(long, requires = "github_cloud")]
+        json: bool,
         /// Local settings file override.
         #[arg(long)]
         settings: Option<PathBuf>,

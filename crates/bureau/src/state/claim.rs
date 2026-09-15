@@ -1,46 +1,16 @@
 //! Run-owned lease claims, renewal, release, and observation.
 
+mod admission;
+mod fenced;
+mod fresh;
+
+pub use fresh::FreshClaim;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::Connection;
-
 use super::{Error, Lease, Store, active_leases, duration_millis, now_millis, sql};
-
-struct Claim<'a> {
-    assignment: &'a str,
-    forge: &'a str,
-    external_id: &'a str,
-    run_id: &'a str,
-    owner_id: &'a str,
-}
-
-fn claim_tx(
-    conn: &mut Connection,
-    claim: &Claim<'_>,
-    now: i64,
-    expires: i64,
-) -> Result<bool, Error> {
-    let tx = conn.transaction()?;
-    let key = (claim.assignment, claim.forge, claim.external_id, now);
-    tx.execute(sql::REAP_EXPIRED, key)?;
-    let params = (
-        claim.assignment,
-        claim.forge,
-        claim.external_id,
-        claim.run_id,
-        claim.owner_id,
-        expires,
-    );
-    match tx.execute(sql::INSERT_LEASE, params) {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(true)
-        }
-        Err(error) if sql::is_unique_violation(&error) => Ok(false),
-        Err(error) => Err(error.into()),
-    }
-}
+use admission::{Claim, claim_tx};
 
 /// The durable identity of a claim: the work item and the run holding it.
 #[derive(Clone)]
@@ -125,7 +95,6 @@ impl LeaseOwner {
 
 impl Store {
     /// Attempts to claim an item using its id as the legacy owner id.
-    ///
     /// # Errors
     /// Propagates `SQLite` failures.
     pub fn try_claim(
@@ -139,7 +108,6 @@ impl Store {
     }
 
     /// Attempts to claim an item for one durable run id.
-    ///
     /// # Errors
     /// Propagates `SQLite` failures.
     pub fn try_claim_run(
@@ -159,7 +127,7 @@ impl Store {
             run_id,
             owner_id: run_id,
         };
-        claim_tx(&mut self.lock(), &claim, now, expires)
+        claim_tx(&mut self.lock(), &claim, now, expires, |_, _| Ok(true))
     }
 
     /// Reclaims a crashed run's own lease or claims it after expiry.
@@ -237,6 +205,15 @@ impl Store {
     }
 
     fn claim_owner(&self, owner: &LeaseOwner, ttl: Duration) -> Result<bool, Error> {
+        self.claim_owner_if(owner, ttl, |_, _| Ok(true))
+    }
+
+    fn claim_owner_if(
+        &self,
+        owner: &LeaseOwner,
+        ttl: Duration,
+        available: impl FnOnce(&rusqlite::Connection, i64) -> Result<bool, Error>,
+    ) -> Result<bool, Error> {
         let now = now_millis();
         let expires = now.saturating_add(duration_millis(ttl));
         let claim = Claim {
@@ -246,7 +223,7 @@ impl Store {
             run_id: &owner.key.run_id,
             owner_id: &owner.owner_id,
         };
-        claim_tx(&mut self.lock(), &claim, now, expires)
+        claim_tx(&mut self.lock(), &claim, now, expires, available)
     }
 
     fn renew_owner(&self, owner: &LeaseOwner, ttl: Duration) -> Result<bool, Error> {

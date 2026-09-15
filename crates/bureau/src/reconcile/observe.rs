@@ -1,11 +1,19 @@
 //! Forge and budget observation before any claims are created.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{Error, Reconciler, forge_key};
-use crate::config::Assignment;
+use super::{Error, Reconciler};
+use crate::config::{Assignment, ForgeKind};
 use crate::forge::{Forge, Item, Pr};
 use crate::state::Lease;
+
+pub(super) const fn forge_key(forge: ForgeKind) -> &'static str {
+    match forge {
+        ForgeKind::Ado => "ado",
+        ForgeKind::Github => "github",
+    }
+}
 
 pub(super) struct Observed<'a> {
     pub(super) assignment: &'a Assignment,
@@ -13,6 +21,7 @@ pub(super) struct Observed<'a> {
     pub(super) desired: Vec<Item>,
     pub(super) open_prs: Vec<Pr>,
     pub(super) inflight: Vec<Lease>,
+    pub(super) preserved: BTreeMap<String, String>,
     pub(super) headroom: usize,
 }
 
@@ -69,6 +78,11 @@ impl Reconciler {
     ) -> Result<Observed<'a>, Error> {
         let forge = self.work_forge(name, assignment)?;
         let url = self.primary_url(name, assignment)?;
+        let preserved = self.state.preserved_factory_work(
+            &self.engine.runs_dir,
+            name,
+            forge_key(assignment.work.forge),
+        )?;
         let desired = Self::desired(forge, assignment).await?;
         let open_prs = forge.open_prs(url, &assignment.branch_prefix).await?;
         let inflight = self.state.active(name)?;
@@ -81,11 +95,13 @@ impl Reconciler {
             desired,
             open_prs,
             inflight,
+            preserved,
             headroom,
         })
     }
 
     fn work_forge(&self, name: &str, assignment: &Assignment) -> Result<&Arc<dyn Forge>, Error> {
+        self.check_model_credentials(assignment)?;
         self.forges.get(name).ok_or_else(|| {
             bad_assignment(
                 name,

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::context::{RunCtx, WtCtx};
 use super::stream::{self, LogSink};
-use super::{artifact, deadline, plugins};
+use super::{artifact, copilot_factory, deadline, plugins};
 use crate::adapters::{self, Execution, Usage};
 use crate::config::{StepDef, StepKind};
 use crate::contract::{SCHEMA_VERSION, StepOutcome, StepRequest, StepResult, Trust};
@@ -96,6 +96,14 @@ fn enforce_measured_cost(ctx: &RunCtx, execution: &mut Execution) {
     }
 }
 
+fn artifact_secrets(ctx: &RunCtx, step: &StepDef) -> Vec<crate::process::Secret> {
+    if step.copilot_factory.is_some() {
+        copilot_factory::secrets(&ctx.plan)
+    } else {
+        ctx.secrets()
+    }
+}
+
 async fn publish_artifacts(
     ctx: &RunCtx,
     step: &StepDef,
@@ -113,7 +121,7 @@ async fn publish_artifacts(
         &mut execution.result.artifacts,
         &request.worktree,
         &destination,
-        &ctx.secrets(),
+        &artifact_secrets(ctx, step),
     )
     .await
     {
@@ -227,12 +235,7 @@ async fn agent(
 }
 
 /// Runs one code step and returns its result.
-pub(super) async fn execute(
-    ctx: &RunCtx,
-    wt: &WtCtx,
-    step: &StepDef,
-    request: &StepRequest,
-) -> Execution {
+async fn regular(ctx: &RunCtx, wt: &WtCtx, step: &StepDef, request: &StepRequest) -> Execution {
     let timeout = deadline::bounded(
         step.timeout_secs,
         Duration::from_secs(DEFAULT_TIMEOUT_SECS),
@@ -244,5 +247,28 @@ pub(super) async fn execute(
         StepKind::Decision | StepKind::Concurrent => {
             failed_step("routing and concurrent steps do not run through this path")
         }
+    }
+}
+
+async fn factory(ctx: &RunCtx, wt: &WtCtx, step: &StepDef, request: &StepRequest) -> Execution {
+    let timeout = deadline::bounded(
+        step.timeout_secs,
+        Duration::from_secs(adapters::real::DEFAULT_TIMEOUT_SECS),
+        ctx.remaining(),
+    );
+    let execution = copilot_factory::execute(ctx, wt, step, request, timeout).await;
+    finish_artifacts(ctx, step, request, execution).await
+}
+
+pub(super) async fn execute(
+    ctx: &RunCtx,
+    wt: &WtCtx,
+    step: &StepDef,
+    request: &StepRequest,
+) -> Execution {
+    if step.copilot_factory.is_some() {
+        factory(ctx, wt, step, request).await
+    } else {
+        regular(ctx, wt, step, request).await
     }
 }

@@ -93,6 +93,7 @@ fn det_step(run: &str) -> StepDef {
         kind: StepKind::Deterministic,
         run: Some(run.to_owned()),
         role: None,
+        copilot_factory: None,
         fixture: None,
         trust: None,
         over: None,
@@ -109,7 +110,6 @@ fn det_step(run: &str) -> StepDef {
         timeout_secs: None,
     }
 }
-
 /// Budget limits that never constrain a test unless overridden.
 pub const fn generous() -> Limits {
     Limits {
@@ -200,6 +200,7 @@ impl World {
             label_forges: BTreeMap::new(),
             engine: Arc::new(Engine::new(dir.0.join("runs"), dir.0.join("cache"))),
             credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+            model_credential_errors: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });
@@ -211,7 +212,6 @@ impl World {
         }
     }
 
-    /// One reconcile pass, unwrapping the pass-level error.
     pub async fn pass(&self) -> Vec<Started> {
         self.reconciler
             .reconcile_once()

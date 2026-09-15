@@ -7,10 +7,13 @@
 //! branch and open a PR), `abort` (stop; failure), `escalate` (stop;
 //! comment for a human).
 
+mod outcomes;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::copilot_factory::CopilotFactory;
 use super::files::Named;
 use crate::contract::Trust;
 
@@ -58,33 +61,14 @@ const fn default_max_attempts() -> u32 {
     1
 }
 
-/// The four outcomes a `decision` step's `on` must cover (kebab-case).
-const OUTCOMES: [&str; 4] = ["success", "failure", "blocked", "no-work"];
-
 fn allowed_on(kind: StepKind, field: &str) -> bool {
     let allowed: &[&str] = match kind {
         StepKind::Deterministic => &["run"],
-        StepKind::Agent => &["role", "fixture", "trust"],
+        StepKind::Agent => &["role", "fixture", "trust", "copilot_factory"],
         StepKind::Decision => &["over", "on"],
         StepKind::Concurrent => &["steps", "completion", "max_concurrent"],
     };
     allowed.contains(&field)
-}
-
-fn check_missing_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
-    for outcome in OUTCOMES {
-        if !on.contains_key(outcome) {
-            errors.push(format!("`on` is missing a `{outcome}` branch"));
-        }
-    }
-}
-
-fn check_unknown_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String>) {
-    for key in on.keys() {
-        if !OUTCOMES.contains(&key.as_str()) {
-            errors.push(format!("`on` has unknown outcome `{key}`"));
-        }
-    }
 }
 
 /// One step. Which fields apply depends on `kind`:
@@ -93,7 +77,7 @@ fn check_unknown_outcomes(on: &BTreeMap<String, String>, errors: &mut Vec<String
 /// - `agent`: `role` required; `fixture` only with the `fake` adapter;
 ///   `trust` overrides the role's `min_trust`.
 /// - `decision`: `over` and a complete `on` (all four outcomes) required.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepDef {
     /// Step name, unique within the pipeline.
@@ -107,6 +91,9 @@ pub struct StepDef {
     /// Role name (`agent`).
     #[serde(default)]
     pub role: Option<String>,
+    /// Explicit repository-local factory selection (`agent` with Copilot only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copilot_factory: Option<CopilotFactory>,
     /// Transcript fixture path (`agent` with the `fake` adapter). Must be
     /// absolute: it is a testing seam, not config-portable state.
     #[serde(default)]
@@ -176,6 +163,9 @@ impl StepDef {
         self.check_misplaced(&mut errors);
         self.check_limits(&mut errors);
         self.check_coverage(&mut errors);
+        if let Some(factory) = &self.copilot_factory {
+            factory.check(&mut errors);
+        }
         errors
     }
 
@@ -216,6 +206,7 @@ impl StepDef {
         let fields = [
             ("run", self.run.is_some()),
             ("role", self.role.is_some()),
+            ("copilot_factory", self.copilot_factory.is_some()),
             ("fixture", self.fixture.is_some()),
             ("trust", self.trust.is_some()),
             ("over", self.over.is_some()),
@@ -263,20 +254,30 @@ impl StepDef {
 
     fn check_coverage(&self, errors: &mut Vec<String>) {
         if self.kind == StepKind::Decision {
-            check_missing_outcomes(&self.on, errors);
-            check_unknown_outcomes(&self.on, errors);
+            outcomes::check_missing(&self.on, errors);
+            outcomes::check_unknown(&self.on, errors);
         }
     }
 }
 
 /// A pipeline definition: the file you edit is the file that runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pipeline {
     /// Must match the file stem.
     pub name: String,
     /// The steps, in declaration order. The first step is the entry.
     pub steps: Vec<StepDef>,
+}
+
+impl Pipeline {
+    /// Explicit model-credential references from factory steps, in declaration order.
+    pub fn factory_credential_refs(&self) -> impl Iterator<Item = &str> {
+        self.steps
+            .iter()
+            .filter_map(|step| step.copilot_factory.as_ref())
+            .map(|factory| factory.model_credential.as_str())
+    }
 }
 
 impl Named for Pipeline {

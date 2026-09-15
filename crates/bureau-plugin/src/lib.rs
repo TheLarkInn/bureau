@@ -5,8 +5,7 @@
 //! development sources and copies the selected plugin to
 //! `<run-dir>/plugins/<plugin>`. Resumes validate and reuse that copy.
 //!
-//! The content digest is SHA-256 over sorted relative paths, exact file
-//! bytes, and normalized file permissions.
+//! Digests cover sorted relative paths, exact bytes, and normalized permissions (SHA-256).
 
 pub(crate) mod activation;
 pub(crate) mod catalog;
@@ -14,13 +13,16 @@ pub(crate) mod error;
 pub(crate) mod global;
 pub(crate) mod guard;
 pub(crate) mod json;
+pub(crate) mod material;
 pub(crate) mod package;
 pub(crate) mod paths;
+pub mod pinned;
 pub(crate) mod reference;
 pub(crate) mod resolve;
 pub(crate) mod restoration;
 pub(crate) mod settings;
 pub(crate) mod snapshot;
+pub(crate) mod storage;
 pub(crate) mod tree;
 
 use std::path::{Path, PathBuf};
@@ -28,6 +30,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use error::Error;
+pub use material::{TreeSnapshot, tree_digest};
 /// Metadata from a validated plugin package.
 pub use package::{InstallCommand, PackageInfo};
 pub use reference::{copilot_agent_name, plugin_agent_name};

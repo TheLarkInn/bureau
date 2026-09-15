@@ -36,7 +36,10 @@ function requiredStepFields(kind, fields) {
     return { run: fields.run ?? "true" };
   }
   if (kind === "agent") {
-    return { role: fields.role ?? "" };
+    return {
+      role: fields.role ?? "",
+      ...(fields.copilotFactory == null ? {} : { copilotFactory: structuredClone(fields.copilotFactory) }),
+    };
   }
   if (kind === "decision") {
     return { over: fields.over ?? "" };

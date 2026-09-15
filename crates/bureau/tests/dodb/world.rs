@@ -52,6 +52,7 @@ impl World {
                 dir.path().join("cache"),
             )),
             credentials: credentials(),
+            model_credential_errors: BTreeMap::new(),
             config_source: config_source(),
             direct_agents: BTreeMap::new(),
         });

@@ -2,12 +2,14 @@
 //! edge resolution, fixture rules, data-flow order, and reachability.
 //! Per-step field checks live on `StepDef::field_errors`.
 
+mod agent;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use super::files::{Assignment, Role};
+use super::files::Assignment;
 use super::pipeline::{Pipeline, StepDef, StepKind, TERMINALS};
-use super::{AdapterKind, Config, path_of, push, step_err};
+use super::{Config, path_of, push, step_err};
 use crate::ConfigError;
 
 fn step_order(pipeline: &Pipeline) -> BTreeMap<&str, usize> {
@@ -71,48 +73,6 @@ fn check_assignment_pipeline(
             format!("assignment `{name}` references unknown pipeline `{pipeline}`"),
         );
     }
-}
-
-fn check_fixture(
-    errors: &mut Vec<ConfigError>,
-    name: &str,
-    step: &StepDef,
-    role: &Role,
-    path: &Path,
-) {
-    let Some(fixture) = step.fixture.as_deref() else {
-        return;
-    };
-    let mut err = |detail: &str| step_err(errors, path, name, &step.name, detail);
-    if role.adapter != AdapterKind::Fake {
-        err("`fixture` requires a role with the `fake` adapter");
-    }
-    if !Path::new(fixture).is_absolute() {
-        err("`fixture` must be an absolute path");
-    }
-}
-
-fn check_agent(
-    errors: &mut Vec<ConfigError>,
-    config: &Config,
-    name: &str,
-    step: &StepDef,
-    path: &Path,
-) {
-    let Some(role_name) = step.role.as_deref() else {
-        return; // a missing `role` is already reported by field_errors
-    };
-    let Some(role) = config.roles.get(role_name) else {
-        step_err(
-            errors,
-            path,
-            name,
-            &step.name,
-            &format!("references unknown role `{role_name}`"),
-        );
-        return;
-    };
-    check_fixture(errors, name, step, role, path);
 }
 
 fn check_over(
@@ -217,7 +177,7 @@ fn check_references(
     path: &Path,
 ) {
     match step.kind {
-        StepKind::Agent => check_agent(errors, config, name, step, path),
+        StepKind::Agent => agent::check(errors, config, name, step, path),
         StepKind::Decision => check_over(errors, name, index, step, order, path),
         StepKind::Deterministic | StepKind::Concurrent => {}
     }

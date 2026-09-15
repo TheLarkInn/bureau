@@ -13,6 +13,9 @@ use bureau::runlog::{
     self, Event, EventKind, RunState, gist, kind_name, outcome_name, status_text,
 };
 
+mod copilot_factory;
+mod projection;
+
 /// The marker file the engine checks between steps.
 const CANCEL_FILE: &str = "CANCEL";
 
@@ -20,14 +23,20 @@ const CANCEL_FILE: &str = "CANCEL";
 /// name as the engine's `PAUSE_FILE`.
 const PAUSE_FILE: &str = "PAUSE";
 
+fn read_state(directory: &Path) -> anyhow::Result<RunState> {
+    let events = runlog::read_events_tolerant(directory)?;
+    runlog::replay(events).context("run log has no run_started event")
+}
+
 /// `<run_id>  <status>  <assignment>`; an unreadable or absent log
 /// shows `unknown`.
 fn list_line(name: &str, dir: &Path) -> String {
-    match runlog::replay_state(dir) {
+    match read_state(dir) {
         Ok(state) => format!(
-            "{name}  {}  {}",
+            "{name}  {}  {}{}",
             status_text(&state.status),
-            state.assignment
+            state.assignment,
+            copilot_factory::list_suffix(&state)
         ),
         Err(_) => format!("{name}  unknown  unknown"),
     }
@@ -69,6 +78,7 @@ fn print_state(state: &RunState) {
         let outcome = step.outcome.map_or("running", outcome_name);
         out::line(format_args!("  {}: {outcome}", step.step));
     }
+    copilot_factory::print_state(state);
 }
 
 /// The last five events, oldest first: `#<seq> <kind> <gist>`.
@@ -84,11 +94,34 @@ fn print_tail(events: &[Event]) {
     }
 }
 
-/// The run's directory, or exit code 2 when no such run exists.
+fn local_log(dir: &Path) -> bool {
+    match runlog::read_events_tolerant(dir) {
+        Ok(events)
+            if events
+                .iter()
+                .any(|event| event.kind == EventKind::GitHubCloud) =>
+        {
+            out::error(format_args!(
+                "this is a GitHub cloud receipt, not a pipeline run; use --github-cloud; remote controls are unsupported"
+            ));
+            false
+        }
+        Ok(_) => true,
+        Err(error) => {
+            out::error(format_args!("cannot identify the run log: {error}"));
+            false
+        }
+    }
+}
+
+/// The local pipeline directory, or an explicitly reported invalid target.
 fn existing_dir(runs: &Path, run_id: &str) -> Option<std::path::PathBuf> {
     let dir = runlog::run_dir(runs, run_id);
     if !dir.is_dir() {
         out::error(format_args!("no such run: `{run_id}`"));
+        return None;
+    }
+    if !local_log(&dir) {
         return None;
     }
     Some(dir)
@@ -115,7 +148,7 @@ pub fn show_events(runs: &Path, run_id: &str, json: bool) -> anyhow::Result<i32>
     let Some(dir) = existing_dir(runs, run_id) else {
         return Ok(2);
     };
-    let events = runlog::read_events(&dir).context("reading run events")?;
+    let events = runlog::read_events_tolerant(&dir).context("reading run events")?;
     if json {
         let text = serde_json::to_string(&events).context("serializing events")?;
         out::line(format_args!("{text}"));
@@ -136,8 +169,12 @@ pub fn show(runs: &Path, run_id: &str, events: bool, json: bool) -> anyhow::Resu
     let Some(dir) = existing_dir(runs, run_id) else {
         return Ok(2);
     };
-    let events = runlog::read_events(&dir).context("reading run events")?;
+    let events = runlog::read_events_tolerant(&dir).context("reading run events")?;
     let state = runlog::replay(events.clone()).context("run log has no run_started event")?;
+    if json {
+        projection::print(&dir, &state, &events)?;
+        return Ok(0);
+    }
     print_state(&state);
     print_tail(&events);
     Ok(0)
@@ -145,7 +182,7 @@ pub fn show(runs: &Path, run_id: &str, events: bool, json: bool) -> anyhow::Resu
 
 /// Whether the run's log already holds `run_finished`.
 fn finished(dir: &Path) -> bool {
-    runlog::read_events(dir)
+    runlog::read_events_tolerant(dir)
         .map(|events| events.iter().any(|e| e.kind == EventKind::RunFinished))
         .unwrap_or(false)
 }
@@ -187,8 +224,7 @@ pub fn pause(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
 }
 
 /// `resume <run-id>`: removes the PAUSE marker. Run continuation is the
-/// existing `bureau run` re-entry (or the reconcile loop), not this
-/// verb.
+/// reconcile loop's same-run recovery, not this verb or a fresh `run`.
 ///
 /// # Errors
 /// Propagates a failure to remove the marker.
@@ -201,9 +237,10 @@ pub fn resume(runs: &Path, run_id: &str) -> anyhow::Result<i32> {
         out::line(format_args!("run `{run_id}` is not paused"));
         return Ok(1);
     }
+    copilot_factory::check_resume(&dir)?;
     std::fs::remove_file(marker).context("removing PAUSE marker")?;
     out::line(format_args!(
-        "run `{run_id}` pause cleared; resume it with `bureau run` or the reconcile loop"
+        "run `{run_id}` pause cleared; the reconcile loop can continue the same run"
     ));
     Ok(0)
 }

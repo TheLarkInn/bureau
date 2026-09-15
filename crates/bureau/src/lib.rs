@@ -16,6 +16,7 @@ pub mod doctor;
 pub mod engine;
 pub mod forge;
 pub mod git;
+pub mod github_cloud;
 mod identity;
 pub mod label_reconcile;
 pub mod mcp;

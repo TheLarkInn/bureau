@@ -1,6 +1,7 @@
 //! `run` and `retry`: claim one work item and drive one pipeline run to
 //! a terminal (DESIGN.md sections 11 and 13).
-mod committed;
+mod claim;
+pub(super) mod committed;
 mod signal;
 
 use crate::cli::out;
@@ -63,7 +64,7 @@ fn retry_target(runs: &Path, run_id: &str) -> anyhow::Result<Option<(String, Str
         out::error(format_args!("no such run: `{run_id}`"));
         return Ok(None);
     }
-    let events = runlog::read_events(&dir).context("reading run events")?;
+    let events = runlog::read_events_tolerant(&dir).context("reading run events")?;
     let started = events
         .iter()
         .find(|e| e.kind == EventKind::RunStarted)
@@ -119,34 +120,6 @@ async fn prepare_execution(
     }))
 }
 
-/// Claims the item under the shared renewable lease policy.
-fn claim(
-    store: Arc<Store>,
-    assignment: &Assignment,
-    item: &Item,
-    run_id: &str,
-) -> anyhow::Result<Option<LeaseOwner>> {
-    let owner = LeaseOwner::new(
-        store,
-        &assignment.name,
-        prepare::forge_name(assignment.work.forge),
-        &item.external_id,
-        run_id,
-    )
-    .context("creating lease owner")?;
-    let won = owner
-        .claim(bureau::supervise::LEASE_TTL)
-        .context("claiming work item")?;
-    if !won {
-        out::line(format_args!(
-            "item `{}` is already claimed",
-            item.external_id
-        ));
-        return Ok(None);
-    }
-    Ok(Some(owner))
-}
-
 fn plan(
     config: &Config,
     assignment: &Assignment,
@@ -173,6 +146,27 @@ fn plan(
         direct_agents: BTreeMap::new(),
         lease: None,
     }
+}
+
+fn claimed_plan(
+    loaded: &committed::Loaded,
+    assignment: &Assignment,
+    prepared: Prepared,
+    run_id: String,
+    owner: LeaseOwner,
+) -> RunPlan {
+    let mut plan = plan(
+        &loaded.config,
+        assignment,
+        prepared.item,
+        prepared.forge,
+        prepared.credentials,
+        run_id,
+    );
+    plan.config_source = Some(loaded.source.clone());
+    plan.direct_agents.clone_from(&loaded.direct_agents);
+    plan.lease = Some(owner);
+    plan
 }
 
 /// The one-line outcome: `<run_id> <outcome> cost=$X.XX message [pr]`.
@@ -228,20 +222,17 @@ async fn execute(
     };
     let store = Arc::new(Store::open(&paths.state).context("opening state database")?);
     let run_id = new_run_id(&assignment.name).context("creating run id")?;
-    let Some(owner) = claim(store.clone(), assignment, &prepared.item, &run_id)? else {
+    let Some(owner) = claim::fresh(
+        store.clone(),
+        assignment,
+        &prepared.item,
+        &run_id,
+        &paths.runs,
+    )?
+    else {
         return Ok(1);
     };
-    let mut plan = plan(
-        &loaded.config,
-        assignment,
-        prepared.item,
-        prepared.forge,
-        prepared.credentials,
-        run_id,
-    );
-    plan.config_source = Some(loaded.source.clone());
-    plan.direct_agents.clone_from(&loaded.direct_agents);
-    plan.lease = Some(owner);
+    let plan = claimed_plan(loaded, assignment, prepared, run_id, owner);
     finish(plan, paths, store).await
 }
 

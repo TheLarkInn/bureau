@@ -154,3 +154,41 @@ fn show_events_without_json_lists_each_event() {
     );
     assert_eq!(got, (true, 4, true), "{}", stderr(&output));
 }
+
+#[test]
+fn show_json_projects_state_without_changing_raw_event_json() {
+    let dir = TestDir::new("cli-show-state-json");
+    let runs = dir.path().join("runs");
+    fixture(&runs);
+    let output = bureau(&verb_args("show", "done", &runs, &["--json"]));
+    let projection: serde_json::Value = serde_json::from_slice(&output.stdout).expect("state JSON");
+    assert_eq!(
+        (
+            output.status.success(),
+            projection["state"]["run_id"].as_str(),
+            projection["local_factory_resume"].is_null()
+        ),
+        (true, Some("done"), true),
+    );
+}
+
+#[test]
+fn inspection_never_repairs_an_in_progress_or_torn_append() {
+    let dir = TestDir::new("cli-read-only-events");
+    let runs = dir.path().join("runs");
+    fixture(&runs);
+    let path = runs.join("done").join("events.jsonl");
+    let mut expected = std::fs::read(&path).expect("events");
+    expected.extend_from_slice(br#"{"seq":"#);
+    std::fs::write(&path, &expected).expect("torn append");
+    for flags in [&["--events", "--json"][..], &["--json"][..], &[][..]] {
+        let output = bureau(&verb_args("show", "done", &runs, flags));
+        assert_eq!(
+            (
+                output.status.success(),
+                std::fs::read(&path).expect("bytes")
+            ),
+            (true, expected.clone())
+        );
+    }
+}

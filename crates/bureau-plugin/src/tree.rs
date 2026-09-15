@@ -178,8 +178,7 @@ impl Tree {
         Ok(tree)
     }
 
-    pub fn write(&self, destination: &Path) -> Result<(), Error> {
-        create_dir(destination)?;
+    pub(crate) fn write_contents(&self, destination: &Path) -> Result<(), Error> {
         for relative in &self.directories {
             create_dir(&destination.join(relative))?;
         }
@@ -187,6 +186,11 @@ impl Tree {
             write_file(destination, file)?;
         }
         Ok(())
+    }
+
+    pub fn write(&self, destination: &Path) -> Result<(), Error> {
+        create_dir(destination)?;
+        self.write_contents(destination)
     }
 
     pub fn file(&self, relative: &Path) -> Option<&TreeFile> {

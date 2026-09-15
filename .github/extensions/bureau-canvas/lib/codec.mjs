@@ -161,6 +161,7 @@ function presentFields(step) {
   for (const [target, source] of [
     ["run", "run"],
     ["role", "role"],
+    ["copilotFactory", "copilot_factory"],
     ["fixture", "fixture"],
     ["trust", "trust"],
     ["over", "over"],
@@ -394,6 +395,7 @@ function rawStepEdges(step, edges) {
 const RAW_STEP_FIELDS = [
   ["run", "run"],
   ["role", "role"],
+  ["copilotFactory", "copilot_factory"],
   ["fixture", "fixture"],
   ["trust", "trust"],
   ["over", "over"],
@@ -436,6 +438,7 @@ function mutableFields() {
   return [
     ["run", "run"],
     ["role", "role"],
+    ["copilotFactory", "copilot_factory"],
     ["trust", "trust"],
     ["over", "over"],
     ["inputsFrom", "inputs_from"],

@@ -17,7 +17,7 @@ fn directories(root: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
 }
 
 fn replay_started(directory: &Path) -> std::io::Result<Option<RunState>> {
-    let events = runlog::read_events(directory)?;
+    let events = runlog::read_events_tolerant(directory)?;
     if events.is_empty() {
         return Ok(None);
     }
@@ -98,19 +98,27 @@ const fn recovery_outcome(terminal: runlog::RunTerminal) -> crate::contract::Ste
     }
 }
 
-pub(super) fn finish(
-    runs_dir: &Path,
-    snapshot: &RunSnapshot,
+fn generic(snapshot: &RunSnapshot) -> std::io::Result<()> {
+    if snapshot
+        .pipeline
+        .steps
+        .iter()
+        .any(|step| step.copilot_factory.is_some())
+    {
+        return Err(std::io::Error::other(
+            "local factory recovery requires an owned lease; generic recovery cannot finish it",
+        ));
+    }
+    Ok(())
+}
+
+fn append_terminal(
+    directory: &Path,
+    state: &RunState,
     terminal: runlog::RunTerminal,
     message: &str,
 ) -> std::io::Result<()> {
-    let _terminal = runlog::lock_terminal_append();
-    let directory = runlog::run_dir(runs_dir, &snapshot.run_id);
-    let state = runlog::replay_state(&directory)?;
-    if state.finished.is_some() {
-        return Ok(());
-    }
-    let mut log = runlog::RunLog::resume(&directory, &[])?;
+    let mut log = runlog::RunLog::resume(directory, &[])?;
     let message = recovery_message(terminal, message);
     log.append(
         runlog::EventKind::Output,
@@ -122,10 +130,26 @@ pub(super) fn finish(
         Some(terminal),
         outcome,
         &message,
-        measured_cost(&state),
+        measured_cost(state),
         state.pr.as_ref(),
         disposition,
     );
     log.append(runlog::EventKind::RunFinished, finished)?;
     log.close()
+}
+
+pub(super) fn finish(
+    runs_dir: &Path,
+    snapshot: &RunSnapshot,
+    terminal: runlog::RunTerminal,
+    message: &str,
+) -> std::io::Result<()> {
+    generic(snapshot)?;
+    let _terminal = runlog::lock_terminal_append();
+    let directory = runlog::run_dir(runs_dir, &snapshot.run_id);
+    let state = runlog::replay_state(&directory)?;
+    if state.finished.is_some() {
+        return Ok(());
+    }
+    append_terminal(&directory, &state, terminal, message)
 }

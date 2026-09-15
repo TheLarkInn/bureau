@@ -30,6 +30,7 @@ mod checkpoint;
 mod concurrent;
 mod context;
 mod control;
+mod copilot_factory;
 mod deadline;
 mod drive;
 mod edge;

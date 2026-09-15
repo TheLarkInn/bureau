@@ -59,7 +59,7 @@ fn references(plan: &RunPlan) -> BTreeSet<String> {
     plan.pipeline
         .steps
         .iter()
-        .filter(|step| step.kind == StepKind::Agent)
+        .filter(|step| step.kind == StepKind::Agent && step.copilot_factory.is_none())
         .filter_map(|step| step.role.as_deref())
         .filter_map(|name| plan.roles.get(name))
         .filter(|role| bureau_plugin::is_plugin_reference(&role.agent))
@@ -83,7 +83,7 @@ pub(super) fn prepare(
         })?;
         insert_source(&mut sources, source).map_err(PrepareError::Failure)?;
     }
-    plan.plugin_sources = sources;
+    plan.plugin_sources.extend(sources);
     Ok(())
 }
 

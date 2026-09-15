@@ -24,6 +24,26 @@ npx playwright install --with-deps chromium
 prints a skip notice. CI installs dependencies and also gates matrix/visual
 checks. Visual failures publish `canvas-visual-differences`.
 
+## Native engine-to-canvas checks
+
+Presentation fixtures intentionally use a missing binary. They are not
+evidence that the native factory engine or CLI works. The separate integration
+check uses exact run IDs retained by offline fake-runtime engine tests and a
+freshly built Bureau executable:
+
+```sh
+node .github/extensions/bureau-canvas/e2e/factory-native.mjs \
+  /absolute/path/to/new/bureau /absolute/engine-evidence/runs \
+  completed-run-id paused-run-id
+```
+
+It checks actual engine events through `show --events --json`, the
+CLI-backed canvas endpoint, run summaries and snapshot/codec projections.
+It rejects raw-log/sample fallback and does not start factories, invoke
+models, or perform forge mutations. These checks validate Bureau's
+engine-to-canvas contract, not SDK release compatibility, live runtime
+eligibility or cloud access. Run it on the executable's OS.
+
 ## Edge (optional)
 
 From the repository root:

@@ -31,6 +31,9 @@ fn resolve_one(
     settings: &bureau::setup::Settings,
     reference: &str,
 ) -> Option<()> {
+    if credentials.contains_key(reference) {
+        return Some(());
+    }
     match bureau::credential::resolve(settings, reference) {
         Ok(secret) => {
             credentials.insert(reference.to_owned(), secret);
@@ -43,14 +46,21 @@ fn resolve_one(
     }
 }
 
-/// Every credential the assignment's repos need, resolved before any
+/// Every credential the assignment's repos and explicit local factories need, before any
 /// spawn. A missing reference is named on stderr and fails the verb.
 pub fn resolve_credentials(
     config: &Config,
     assignment: &Assignment,
     settings: &bureau::setup::Settings,
 ) -> Option<BTreeMap<String, Secret>> {
-    let mut credentials = BTreeMap::new();
+    let mut credentials =
+        match super::factory_credentials::for_assignment(config, assignment, Some(settings)) {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                out::error(format_args!("{error}"));
+                return None;
+            }
+        };
     for reference in credential_refs(config, assignment) {
         resolve_one(&mut credentials, settings, &reference)?;
     }

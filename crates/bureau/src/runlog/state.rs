@@ -9,14 +9,12 @@ use super::event::{
     BranchPushedData, CheckpointData, Event, EventKind, PrCreatedData, RunFinishedData,
     RunStartedData, StepFinishedData, StepStartedData,
 };
-use super::group::{
-    GroupFinishedData, GroupMemberCancelledData, GroupMemberFinishedData, GroupMemberStartedData,
-    GroupStartedData,
-};
-use super::{GroupMemberRecord, GroupRecord, RunSnapshot};
+use super::{GroupRecord, RunSnapshot};
 use crate::adapters::Usage;
 use crate::contract::{StepOutcome, StepResult};
 use crate::forge::Pr;
+
+mod groups;
 
 /// Where a run stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +39,17 @@ pub struct StepRecord {
     pub usage: Option<Usage>,
 }
 
+fn factory_records_empty(records: &super::copilot_factory::Records) -> bool {
+    records.0.is_empty()
+}
+
+fn started(event: &Event) -> Option<RunStartedData> {
+    if event.kind != EventKind::RunStarted {
+        return None;
+    }
+    serde_json::from_value(event.data.clone()).ok()
+}
+
 /// Everything the run log implies about a run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
@@ -57,6 +66,12 @@ pub struct RunState {
     /// Concurrent groups keyed deterministically by step name.
     #[serde(default)]
     pub groups: BTreeMap<String, GroupRecord>,
+    /// Local runtime identities; never cloud automation/task records.
+    #[serde(default, skip_serializing_if = "factory_records_empty")]
+    pub copilot_factories: super::copilot_factory::Records,
+    /// A corrupt local-factory event remains visible and blocks trustworthy projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copilot_factory_error: Option<String>,
     /// Where the run stands.
     pub status: RunStatus,
     /// Latest durable branch checkpoint.
@@ -73,10 +88,7 @@ pub struct RunState {
 
 impl RunState {
     pub(super) fn from_event(event: &Event) -> Option<Self> {
-        if event.kind != EventKind::RunStarted {
-            return None;
-        }
-        let data = serde_json::from_value::<RunStartedData>(event.data.clone()).ok()?;
+        let data = started(event)?;
         Some(Self {
             run_id: data.run_id,
             assignment: data.assignment,
@@ -84,6 +96,8 @@ impl RunState {
             snapshot: data.snapshot,
             steps: Vec::new(),
             groups: BTreeMap::new(),
+            copilot_factories: super::copilot_factory::Records::default(),
+            copilot_factory_error: None,
             status: RunStatus::Running,
             checkpoint: None,
             base_commit: None,
@@ -96,7 +110,8 @@ impl RunState {
     /// Folds one event into the state.
     pub fn apply(&mut self, event: &Event) {
         match event.kind {
-            EventKind::RunStarted | EventKind::Output => {}
+            EventKind::RunStarted | EventKind::Output | EventKind::GitHubCloud => {}
+            EventKind::CopilotFactory => self.factory(event),
             EventKind::StepStarted => self.start_step(event),
             EventKind::StepFinished => self.finish_step(event),
             EventKind::GroupStarted => self.start_group(event),
@@ -168,127 +183,19 @@ impl RunState {
         }
     }
 
-    fn start_group(&mut self, event: &Event) {
-        let Ok(data) = serde_json::from_value::<GroupStartedData>(event.data.clone()) else {
-            return;
-        };
-        let Some(group) = GroupRecord::started(&data) else {
-            return;
-        };
-        if self.steps.last().is_some_and(|step| step.outcome.is_none()) {
+    fn factory(&mut self, event: &Event) {
+        if self.copilot_factory_error.is_some() {
             return;
         }
-        self.groups.insert(data.group.clone(), group);
-        self.steps.push(StepRecord {
-            step: data.group,
-            outcome: None,
-            result: None,
-            usage: None,
-        });
-    }
-
-    fn start_group_member(&mut self, event: &Event) {
-        let Ok(data) = serde_json::from_value::<GroupMemberStartedData>(event.data.clone()) else {
-            return;
-        };
-        let Some(member) = self.active_group_member_mut(&data.group, &data.member) else {
-            return;
-        };
-        let Some(attempt) = member.attempts.checked_add(1) else {
-            return;
-        };
-        if member.is_terminal() || data.attempt != attempt {
-            return;
+        let mut next = self.copilot_factories.clone();
+        let applied = serde_json::from_value(event.data.clone())
+            .map_err(|error| error.to_string())
+            .and_then(|data| next.apply(data));
+        match applied {
+            Ok(()) => self.copilot_factories = next,
+            Err(error) => {
+                self.copilot_factory_error = Some(format!("event {}: {error}", event.seq));
+            }
         }
-        member.attempts = attempt;
-    }
-
-    fn finish_group_member(&mut self, event: &Event) {
-        let Ok(data) = serde_json::from_value::<GroupMemberFinishedData>(event.data.clone()) else {
-            return;
-        };
-        let Some(member) = self.active_group_member_mut(&data.group, &data.member) else {
-            return;
-        };
-        if member.attempts == 0 || member.is_terminal() {
-            return;
-        }
-        member.result = Some(data.result);
-        member.usage = Some(data.usage);
-        member.halted = data.halted;
-    }
-
-    fn cancel_group_member(&mut self, event: &Event) {
-        let Ok(data) = serde_json::from_value::<GroupMemberCancelledData>(event.data.clone())
-        else {
-            return;
-        };
-        let Some(member) = self.active_group_member_mut(&data.group, &data.member) else {
-            return;
-        };
-        if member.is_terminal() || data.reason.trim().is_empty() {
-            return;
-        }
-        member.cancellation_reason = Some(data.reason);
-    }
-
-    fn finish_group(&mut self, event: &Event) {
-        let Ok(data) = serde_json::from_value::<GroupFinishedData>(event.data.clone()) else {
-            return;
-        };
-        if !self.group_can_finish(&data.group) {
-            return;
-        }
-        let (groups, steps) = (&mut self.groups, &mut self.steps);
-        let Some(group) = groups.get_mut(&data.group) else {
-            return;
-        };
-        let Some(step) = steps.last_mut() else {
-            return;
-        };
-        step.outcome = Some(data.result.outcome);
-        step.result = Some(data.result.clone());
-        step.usage = Some(data.usage.clone());
-        group.result = Some(data.result);
-        group.usage = Some(data.usage);
-        group.halted = data.halted;
-    }
-
-    fn has_active_group(&self) -> bool {
-        self.steps
-            .last()
-            .is_some_and(|step| self.group_active(&step.step))
-    }
-
-    fn group_active(&self, group: &str) -> bool {
-        self.groups.contains_key(group)
-            && self
-                .steps
-                .last()
-                .is_some_and(|step| step.step == group && step.outcome.is_none())
-    }
-
-    fn active_group_member_mut(
-        &mut self,
-        group: &str,
-        member: &str,
-    ) -> Option<&mut GroupMemberRecord> {
-        if !self.group_active(group) {
-            return None;
-        }
-        let group = self.groups.get_mut(group)?;
-        if group.result.is_some() {
-            return None;
-        }
-        group.members.get_mut(member)
-    }
-
-    fn group_can_finish(&self, group: &str) -> bool {
-        if !self.group_active(group) {
-            return false;
-        }
-        self.groups.get(group).is_some_and(|record| {
-            record.result.is_none() && record.members.values().all(GroupMemberRecord::is_terminal)
-        })
     }
 }
