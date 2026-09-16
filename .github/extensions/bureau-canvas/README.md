@@ -98,6 +98,12 @@ Run offline tests from the repository root:
 node --test .github/extensions/bureau-canvas/test/*.test.mjs
 ```
 
+On Linux, the pause-control tests generate fresh Engine and CLI evidence.
+They require Cargo, Git, Python 3 and working unprivileged user/PID namespaces
+(`unshare`). The CI lint job configures this prerequisite only on its
+disposable runner; the tests retain real process isolation and fail normally
+when it is unavailable.
+
 [Reference](https://github.com/TheLarkInn/bureau/blob/main/.github/extensions/bureau-canvas/reference.md) |
 [Design](https://github.com/TheLarkInn/bureau/blob/main/.github/extensions/bureau-canvas/DESIGN.md) |
 [Browser tests](https://github.com/TheLarkInn/bureau/blob/main/.github/extensions/bureau-canvas/e2e/README.md) |

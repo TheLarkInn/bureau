@@ -46,6 +46,20 @@ test("platform matrix and publisher agree, and each platform runs offline tests"
   assert.ok(build.steps.some(({ with: inputs }) => inputs?.["if-no-files-found"] === "error"));
 });
 
+test("jobs running real Engine tests enable namespaces before the test gate", async () => {
+  const prepare = "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0";
+  for (const [name, job, command] of [
+    ["release-build", "build", 'cargo test --locked --offline --target "$TARGET"'],
+    ["rust-lints", "lint", "./scripts/lint.sh"],
+  ]) {
+    const { steps } = (await workflow(name)).jobs[job];
+    const isolation = steps.findIndex(({ run }) => run === prepare);
+    const tests = steps.findIndex(({ run }) => run?.includes(command));
+    assert.ok(isolation >= 0 && isolation < tests, `${name} needs process isolation before tests`);
+    assert.equal(steps[isolation].if, undefined, `${name} must not skip process isolation setup`);
+  }
+});
+
 test("untrusted test jobs have no repository write token", async () => {
   for (const name of ["rust-lints", "canvas-state-matrix", "canvas-visual-regression", "release-build"]) {
     const file = await workflow(name);

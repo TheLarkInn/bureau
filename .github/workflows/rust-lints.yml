@@ -38,6 +38,10 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      # The canvas pause tests run the real Engine, including its isolated
+      # Git subprocesses, just like the native binary test jobs.
+      - name: Enable process isolation on the disposable runner
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run all lint gates
         run: ./scripts/lint.sh
       - name: Upload browser test report

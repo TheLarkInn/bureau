@@ -5,6 +5,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use bureau::adapters::copilot_factory::types::FactoryRunStatus;
+use bureau::contract::StepOutcome;
 use bureau::runlog::EventKind;
 use serde_json::json;
 
@@ -34,6 +35,16 @@ fn ordinary_pipeline(fixture: &mut Fixture) {
         }]
     }))
     .expect("pipeline invoking the actual CLI pause");
+}
+
+async fn run(fixture: &Fixture, expected: StepOutcome) {
+    let outcome = fixture.engine.run(&fixture.plan).await;
+    assert_eq!(
+        outcome.outcome,
+        expected,
+        "{outcome:?}\n{}",
+        serde_json::to_string(&fixture.events()).expect("actual engine events")
+    );
 }
 
 fn export(fixture: &mut Fixture, scenario: &str) {
@@ -68,7 +79,7 @@ fn export(fixture: &mut Fixture, scenario: &str) {
 async fn ordinary_cli_pause() {
     let mut fixture = fixture("ordinary", "success");
     ordinary_pipeline(&mut fixture);
-    let _outcome = fixture.engine.run(&fixture.plan).await;
+    run(&fixture, StepOutcome::NoWork).await;
     export(&mut fixture, "ordinary");
     assert_eq!(
         (
@@ -84,7 +95,7 @@ async fn ordinary_cli_pause() {
 #[tokio::test]
 async fn clean_bootstrap_pause() {
     let mut fixture = fixture("bootstrap", "bootstrap-pause");
-    let _outcome = fixture.engine.run(&fixture.plan).await;
+    run(&fixture, StepOutcome::NoWork).await;
     export(&mut fixture, "bootstrap");
     let record = fixture.record();
     assert_eq!(
@@ -104,7 +115,7 @@ async fn clean_bootstrap_pause() {
 #[tokio::test]
 async fn sdk_paused_run() {
     let mut fixture = fixture("sdk-paused", "pause");
-    let _outcome = fixture.engine.run(&fixture.plan).await;
+    run(&fixture, StepOutcome::NoWork).await;
     export(&mut fixture, "sdk-paused");
     let record = fixture.record();
     assert_eq!(
@@ -123,7 +134,8 @@ async fn sdk_paused_run() {
 #[tokio::test]
 async fn completed_run() {
     let mut fixture = fixture("finished", "success");
-    let _outcome = fixture.engine.run(&fixture.plan).await;
+    // The completed fixture leaves its repository unchanged.
+    run(&fixture, StepOutcome::NoWork).await;
     export(&mut fixture, "finished");
     assert_eq!(
         (
