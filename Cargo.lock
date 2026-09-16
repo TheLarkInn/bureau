@@ -414,8 +414,8 @@ dependencies = [
 name = "bureau-plugin"
 version = "0.1.0"
 dependencies = [
- "nix 0.31.3",
  "ring",
+ "rustix",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

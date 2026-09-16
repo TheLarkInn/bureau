@@ -7,6 +7,9 @@ use ring::rand::SecureRandom as _;
 
 use super::Error;
 
+#[cfg(test)]
+mod tests;
+
 pub fn sync_dir(path: &Path) -> Result<(), Error> {
     fs::File::open(path)
         .and_then(|directory| directory.sync_all())
@@ -48,12 +51,12 @@ pub fn publish_new(parent: &Path, stage: &Path, destination: &Path) -> Result<()
     let target = destination
         .file_name()
         .ok_or_else(|| Error::invalid(destination, "snapshot has no name"))?;
-    nix::fcntl::renameat2(
+    rustix::fs::renameat_with(
         &directory,
         source,
         &directory,
         target,
-        nix::fcntl::RenameFlags::RENAME_NOREPLACE,
+        rustix::fs::RenameFlags::NOREPLACE,
     )
     .map_err(|error| Error::io("publish new code snapshot", destination, error.into()))
 }

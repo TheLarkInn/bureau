@@ -1400,6 +1400,11 @@ and observations; they cannot reconstruct that state. Preserve it with the
 original worktree and private pins. SDK step replay is at-least-once around
 external effects, not a filesystem checkpoint.
 
+Publish private code snapshots with Linux atomic no-replace directory rename
+on both GNU and musl builds. Preserve existing destinations and fail explicitly
+when the kernel or filesystem cannot provide that operation; never fall back
+to an overwriting rename. Sync staged contents and the published parent.
+
 Before executable initialization, append and fsync the session intent under
 the current lease fence. Before native start/resume/control, append the
 corresponding dispatch. Persist the correlated accepted run ID and native
