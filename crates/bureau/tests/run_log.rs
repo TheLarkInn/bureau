@@ -100,6 +100,8 @@ fn expected_state(run_id: &str, started_at_ms: u64) -> RunState {
             usage: None,
         }],
         groups: std::collections::BTreeMap::new(),
+        copilot_factories: runlog::copilot_factory::Records::default(),
+        copilot_factory_error: None,
         status: RunStatus::Finished(StepOutcome::Success),
         checkpoint: None,
         base_commit: None,
@@ -235,4 +237,39 @@ fn replay_rejects_a_log_without_run_started() {
     let run = log.dir().to_path_buf();
     log.close().expect("close");
     assert!(runlog::replay_state(&run).is_err());
+}
+
+#[test]
+fn invalid_local_factory_events_survive_cache_rebuild() {
+    let dir = TestDir::new("factory-invalid");
+    let mut log = RunLog::create(dir.path(), "run-1", &[]).expect("create");
+    log.append(EventKind::RunStarted, run_started("run-1", "review"))
+        .expect("start");
+    log.append(
+        EventKind::CopilotFactory,
+        serde_json::json!({"event":"observed","session_id":"no-intent"}),
+    )
+    .expect("append");
+    let run = log.dir().to_path_buf();
+    log.close().expect("close");
+    let cached = runlog::replay_state(&run).expect("initial replay");
+    runlog::write_state_cache(&run, &cached).expect("write cache");
+    std::fs::remove_file(run.join("state.json")).expect("remove cache");
+    let state = runlog::replay_state(&run).expect("replay");
+    assert!(state.copilot_factory_error.is_some());
+}
+
+#[test]
+fn ordinary_state_json_omits_empty_factory_fields() {
+    let state = expected_state("ordinary", 0);
+    let value = serde_json::to_value(&state).expect("serialize");
+    let decoded: RunState = serde_json::from_value(value.clone()).expect("legacy state");
+    assert_eq!(
+        (
+            value.get("copilot_factories"),
+            value.get("copilot_factory_error"),
+            decoded
+        ),
+        (None, None, state),
+    );
 }

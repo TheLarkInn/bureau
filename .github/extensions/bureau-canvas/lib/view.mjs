@@ -325,6 +325,7 @@ function fieldsItem(step) {
   };
   copyIfPresent(fields, "run", step.run);
   copyIfPresent(fields, "role", step.role);
+  copyIfPresent(fields, "copilotFactory", step.copilot_factory);
   copyIfPresent(fields, "fixture", step.fixture);
   copyIfPresent(fields, "trust", step.trust);
   copyIfPresent(fields, "over", step.over);

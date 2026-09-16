@@ -1,35 +1,48 @@
 //! Config-refresh, recovery, projection, and reconcile orchestration.
 
-use crate::cli::out;
+use crate::cli::{factory_credentials, out};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use bureau::config::{ActivatedConfig, Config, ConfigManager, GitSource};
-use bureau::engine::{Engine, rehydrate};
+use bureau::engine::Engine;
 use bureau::forge::{Forge, LabelForge};
-use bureau::process::Secret;
 use bureau::reconcile::Reconciler;
-use bureau::runlog::{ConfigSource, RunSnapshot};
-use bureau::state::{LeaseOwner, Store};
+use bureau::runlog::ConfigSource;
+use bureau::state::Store;
 
 use super::active::Active;
 use super::{ResolvedArgs, build};
 
+mod deferred;
+mod progress;
+mod recovery;
+
+#[cfg(test)]
+mod tests;
+
 struct Revision {
     config: Config,
-    credentials: BTreeMap<String, Secret>,
+    credentials: factory_credentials::Resolution,
     forges: BTreeMap<String, Arc<dyn Forge>>,
     label_forges: BTreeMap<String, Arc<dyn LabelForge>>,
     source: ConfigSource,
     direct_agents: BTreeMap<String, Vec<u8>>,
 }
 
-fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>) -> Revision {
-    let credentials = build::credentials(&active.config, settings);
-    let forges = build::forges(&active.config, &credentials);
-    let label_forges = build::label_forges(&active.config, &credentials);
-    Revision {
+type RevisionBuilder = dyn Fn(ActivatedConfig, Option<&bureau::setup::Settings>) -> anyhow::Result<Revision>
+    + Send
+    + Sync;
+
+fn revision(
+    active: ActivatedConfig,
+    settings: Option<&bureau::setup::Settings>,
+) -> anyhow::Result<Revision> {
+    let credentials = build::credentials(&active.config, settings)?;
+    let forges = build::forges(&active.config, &credentials.values);
+    let label_forges = build::label_forges(&active.config, &credentials.values);
+    Ok(Revision {
         config: active.config,
         credentials,
         forges,
@@ -40,7 +53,7 @@ fn revision(active: ActivatedConfig, settings: Option<&bureau::setup::Settings>)
             commit: active.commit,
         },
         direct_agents: active.direct_agents,
-    }
+    })
 }
 
 pub(super) struct Daemon {
@@ -50,18 +63,19 @@ pub(super) struct Daemon {
     active: Active,
     _maintenance: Option<bureau::maintenance::Guard>,
     settings: Option<bureau::setup::Settings>,
+    revision: Box<RevisionBuilder>,
+    recovery_forge: Box<recovery::ForgeBuilder>,
 }
 
 impl Daemon {
     pub(super) async fn pass(&mut self) -> anyhow::Result<()> {
         let active = self.refresh().await?;
         self.project_finished()?;
-        self.resume_unfinished()?;
-        let revision = revision(active, self.settings.as_ref());
+        let deferred = self.resume_unfinished()?;
+        let revision = (self.revision)(active, self.settings.as_ref())?;
         let reconciler = self.reconciler(&revision);
-        let started = reconciler.reconcile_once().await?;
-        self.active.extend(started);
-        Ok(())
+        let current = reconciler.reconcile_pass().await;
+        self.complete_pass(current, deferred)
     }
 
     async fn refresh(&mut self) -> anyhow::Result<ActivatedConfig> {
@@ -93,86 +107,11 @@ impl Daemon {
             forges: revision.forges.clone(),
             label_forges: revision.label_forges.clone(),
             engine: self.engine.clone(),
-            credentials: revision.credentials.clone(),
+            credentials: revision.credentials.values.clone(),
+            model_credential_errors: revision.credentials.errors.clone(),
             config_source: revision.source.clone(),
             direct_agents: revision.direct_agents.clone(),
         }
-    }
-
-    fn resume_unfinished(&mut self) -> anyhow::Result<()> {
-        for snapshot in self.engine.unfinished()? {
-            if self.active.contains(&snapshot.run_id) {
-                continue;
-            }
-            if let Some(started) = self.resume_one(snapshot)? {
-                self.active.extend(vec![started]);
-            }
-        }
-        Ok(())
-    }
-
-    fn resume_one(
-        &self,
-        snapshot: RunSnapshot,
-    ) -> anyhow::Result<Option<bureau::reconcile::Started>> {
-        let owner = self.owner(&snapshot)?;
-        if !owner.claim(bureau::supervise::LEASE_TTL)? {
-            return Ok(None);
-        }
-        self.resume_owned(snapshot, owner)
-    }
-
-    fn resume_owned(
-        &self,
-        snapshot: RunSnapshot,
-        owner: LeaseOwner,
-    ) -> anyhow::Result<Option<bureau::reconcile::Started>> {
-        let credentials =
-            match build::credentials_for_repos(&snapshot.repos, self.settings.as_ref()) {
-                Ok(credentials) => credentials,
-                Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
-            };
-        let forge = match build::forge(&snapshot.assignment, &snapshot.repos, &credentials) {
-            Ok(forge) => forge,
-            Err(error) => return self.block(&snapshot, &owner, &error.to_string()),
-        };
-        let mut plan = rehydrate(snapshot, forge, credentials);
-        plan.lease = Some(owner);
-        Ok(Some(bureau::reconcile::resume(
-            self.engine.clone(),
-            self.state.clone(),
-            plan,
-        )))
-    }
-
-    fn owner(&self, snapshot: &RunSnapshot) -> anyhow::Result<LeaseOwner> {
-        let forge = match snapshot.assignment.work.forge {
-            bureau::config::ForgeKind::Ado => "ado",
-            bureau::config::ForgeKind::Github => "github",
-        };
-        Ok(LeaseOwner::new(
-            self.state.clone(),
-            &snapshot.assignment.name,
-            forge,
-            &snapshot.item.external_id,
-            &snapshot.run_id,
-        )?)
-    }
-
-    fn block(
-        &self,
-        snapshot: &RunSnapshot,
-        owner: &LeaseOwner,
-        message: &str,
-    ) -> anyhow::Result<Option<bureau::reconcile::Started>> {
-        let blocked = self.engine.block(snapshot, message);
-        let projected =
-            bureau::state::project_run(&self.state, &self.engine.runs_dir, &snapshot.run_id);
-        let released = owner.release();
-        blocked?;
-        projected?;
-        released?;
-        Ok(None)
     }
 
     pub(super) async fn drain(self, signals: &mut super::active::Signals) {
@@ -204,14 +143,14 @@ pub(super) fn new(args: &ResolvedArgs) -> anyhow::Result<Daemon> {
         &args.config_cache,
         credential,
     );
-    let state = Arc::new(Store::open(&args.state).context("opening state database")?);
-    let engine = Arc::new(Engine::new(args.runs.clone(), args.cache.clone()));
     Ok(Daemon {
         manager: ConfigManager::new(source),
-        state,
-        engine,
+        state: Arc::new(Store::open(&args.state).context("opening state database")?),
+        engine: Arc::new(Engine::new(args.runs.clone(), args.cache.clone())),
         active: Active::new(args.runs.clone()),
         _maintenance: maintenance,
         settings: args.settings.clone(),
+        revision: Box::new(revision),
+        recovery_forge: Box::new(build::forge),
     })
 }

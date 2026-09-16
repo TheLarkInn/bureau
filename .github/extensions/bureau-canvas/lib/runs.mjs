@@ -12,6 +12,7 @@ import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { bureauCandidates, wslShare, wslSharePath } from "./findings.mjs";
+import { factoryEvents } from "../web/live/copilot-factory.mjs";
 
 const EVENTS_FILE = "events.jsonl";
 const RUN_STARTED = "run_started";
@@ -45,7 +46,7 @@ const PROBE_TIMEOUT_MS = 5000;
  * runs on that host. In the usual Windows setup it does not: the workspace and
  * the binary live inside a WSL distro, so the bureau home — and every run
  * directory under it — sits on the distro's filesystem while this process asks
- * about `C:\Users\...\.bureau\runs` and finds nothing. An empty answer here is
+ * about the Windows user's `.bureau` runs directory and finds nothing. An empty answer is
  * what makes the live and replay run pickers permanently empty.
  *
  * So when the canvas is looking at a distro, ask that distro where its home is
@@ -188,6 +189,7 @@ function pipelineOf(started) {
 
 /** Liveness, identity, and the step a run is currently inside. */
 export function summarize(runId, events) {
+  const factories = factoryEvents(events);
   const started = events.find((event) => event.kind === RUN_STARTED);
   const openSteps = [];
   let finished = false;
@@ -210,6 +212,7 @@ export function summarize(runId, events) {
     started_at: typeof started?.at_ms === "number" ? new Date(started.at_ms).toISOString() : null,
     live: !finished,
     current_step: openSteps.at(-1) ?? null,
+    ...(Object.keys(factories.records).length || factories.error ? { copilot_factories: factories } : {}),
   };
 }
 

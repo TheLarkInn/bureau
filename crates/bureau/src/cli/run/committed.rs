@@ -4,11 +4,11 @@ use std::path::Path;
 
 use anyhow::Context as _;
 
-pub(super) struct Loaded {
-    pub(super) config: bureau::config::Config,
-    pub(super) settings: bureau::setup::Settings,
-    pub(super) source: bureau::runlog::ConfigSource,
-    pub(super) direct_agents: std::collections::BTreeMap<String, Vec<u8>>,
+pub(in crate::cli) struct Loaded {
+    pub(in crate::cli) config: bureau::config::Config,
+    pub(in crate::cli) settings: bureau::setup::Settings,
+    pub(in crate::cli) source: bureau::runlog::ConfigSource,
+    pub(in crate::cli) direct_agents: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 fn infer_forge(remote: &str) -> bureau::config::ForgeKind {
@@ -30,7 +30,7 @@ fn config_credential(
     Ok(Some(bureau::git::credential_for(forge, secret)))
 }
 
-pub(super) async fn load(settings_path: &Path, cache: &Path) -> anyhow::Result<Loaded> {
+pub(in crate::cli) async fn load(settings_path: &Path, cache: &Path) -> anyhow::Result<Loaded> {
     let settings = bureau::setup::load_settings(settings_path).context("loading settings")?;
     let credential = config_credential(&settings)?;
     let source = &settings.config;

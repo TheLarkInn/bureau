@@ -6,6 +6,7 @@
 
 import React from "react";
 import { blocks } from "./transcript.js";
+import { factoryDetails } from "./copilot-factory.mjs";
 
 const h = React.createElement;
 const MINUTE = 60;
@@ -14,7 +15,7 @@ const MINUTE = 60;
  * `step` is the step name, `record` its overlay entry (state, outcome,
  * timings) and `text` its captured output up to the current position.
  */
-export function StepLog({ step, kind, record, text, expectedAgent }) {
+export function StepLog({ step, kind, record, text, expectedAgent, factory }) {
   if (!step) {
     return h("section", { className: "step-log step-log--idle" },
       h("p", { className: "step-log-empty" }, "Select a step to see what it did."));
@@ -23,6 +24,11 @@ export function StepLog({ step, kind, record, text, expectedAgent }) {
     "section",
     { className: "step-log" },
     h(LogHead, { step, kind, record, expectedAgent }),
+    factory ? h("dl", { className: "log-outputs mono", "data-testid": "local-factory-details" },
+      factoryDetails(factory).flatMap(([label, value]) => [
+        h("dt", { key: `${label}-label` }, label),
+        h("dd", { key: label }, String(value ?? "unknown")),
+      ])) : null,
     h(LogBody, { text }),
   );
 }

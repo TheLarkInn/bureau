@@ -5,6 +5,8 @@
 
 mod command;
 mod dashboard;
+mod factory_credentials;
+mod github_cloud;
 mod inspect;
 mod lifecycle;
 mod mcp;
@@ -112,30 +114,33 @@ fn runs_path(path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     Ok(home.layout().runs().to_path_buf())
 }
 
-async fn run_command(verb: Verb) -> anyhow::Result<i32> {
-    let Verb::Run {
-        pipeline,
-        item,
-        settings,
-        config_cache,
-        runs,
-        state,
-        cache,
-    } = verb
-    else {
-        unreachable!("run command called with another verb")
-    };
-    run::run(
-        &pipeline,
-        &item,
-        &paths(settings, config_cache, runs, state, cache)?,
-    )
-    .await
+async fn run_command(args: github_cloud::RunArgs) -> anyhow::Result<i32> {
+    if args.github_cloud {
+        return github_cloud::run(&args).await;
+    }
+    let pipeline = args
+        .pipeline
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("pipeline is required"))?;
+    let item = args
+        .item
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--item is required"))?;
+    let paths = paths(
+        args.network.settings,
+        args.network.config_cache,
+        args.runs,
+        args.state,
+        args.cache,
+    )?;
+    run::run(pipeline, item, &paths).await
 }
 
 async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
     let Verb::Retry {
         run_id,
+        github_cloud,
+        json,
         settings,
         config_cache,
         runs,
@@ -145,17 +150,51 @@ async fn retry_command(verb: Verb) -> anyhow::Result<i32> {
     else {
         unreachable!("retry command called with another verb")
     };
+    if github_cloud {
+        return github_cloud::unsupported(json);
+    }
     run::retry(&run_id, &paths(settings, config_cache, runs, state, cache)?).await
 }
 
-/// Shows a run's summary, its events, or both as JSON.
-fn show_command(
-    run_id: &str,
-    events: bool,
-    json: bool,
-    runs: Option<std::path::PathBuf>,
+async fn show_command(args: github_cloud::ShowArgs) -> anyhow::Result<i32> {
+    if args.github_cloud {
+        return github_cloud::show(&args).await;
+    }
+    anyhow::ensure!(
+        !args.network.has_options(),
+        "network options require --github-cloud"
+    );
+    let run_id = args
+        .run_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("run ID is required"))?;
+    inspect::show(
+        &runs_path(args.runs)?,
+        run_id,
+        args.output.events,
+        args.output.json,
+    )
+}
+
+async fn list_command(args: github_cloud::ListArgs) -> anyhow::Result<i32> {
+    if args.github_cloud {
+        return github_cloud::list(&args).await;
+    }
+    anyhow::ensure!(
+        !args.network.has_options(),
+        "network options require --github-cloud"
+    );
+    Ok(inspect::list(&runs_path(args.runs)?))
+}
+
+fn control_command(
+    args: github_cloud::ControlArgs,
+    action: fn(&std::path::Path, &str) -> anyhow::Result<i32>,
 ) -> anyhow::Result<i32> {
-    inspect::show(&runs_path(runs)?, run_id, events, json)
+    if args.github_cloud {
+        return github_cloud::unsupported(args.json);
+    }
+    action(&runs_path(args.runs)?, &args.run_id)
 }
 
 /// Every non-run-directory verb: the caller dispatched it already.
@@ -163,26 +202,21 @@ fn unreachable_non_run() -> i32 {
     unreachable!("handled by the caller")
 }
 
+type CliFuture = Pin<Box<dyn Future<Output = anyhow::Result<i32>> + Send>>;
+
 /// Dispatches verbs that work against run directories.
-async fn run_side(verb: Verb) -> anyhow::Result<i32> {
+fn run_side(verb: Verb) -> CliFuture {
     match verb {
-        Verb::Run { .. } => run_command(verb).await,
-        Verb::Retry { .. } => retry_command(verb).await,
-        Verb::List { runs } => Ok(inspect::list(&runs_path(runs)?)),
-        Verb::Show {
-            run_id,
-            events,
-            json,
-            runs,
-        } => show_command(&run_id, events, json, runs),
-        Verb::Cancel { run_id, runs } => inspect::cancel(&runs_path(runs)?, &run_id),
-        Verb::Pause { run_id, runs } => inspect::pause(&runs_path(runs)?, &run_id),
-        Verb::Resume { run_id, runs } => inspect::resume(&runs_path(runs)?, &run_id),
-        _ => Ok(unreachable_non_run()),
+        Verb::Run(args) => Box::pin(run_command(args)),
+        Verb::Retry { .. } => Box::pin(retry_command(verb)),
+        Verb::List(args) => Box::pin(list_command(args)),
+        Verb::Show(args) => Box::pin(show_command(args)),
+        Verb::Cancel(args) => Box::pin(async move { control_command(args, inspect::cancel) }),
+        Verb::Pause(args) => Box::pin(async move { control_command(args, inspect::pause) }),
+        Verb::Resume(args) => Box::pin(async move { control_command(args, inspect::resume) }),
+        _ => Box::pin(async { Ok(unreachable_non_run()) }),
     }
 }
-
-type CliFuture = Pin<Box<dyn Future<Output = anyhow::Result<i32>> + Send>>;
 
 fn dispatch(verb: Verb) -> CliFuture {
     match verb {
@@ -203,7 +237,7 @@ fn dispatch(verb: Verb) -> CliFuture {
         } => Box::pin(async move { lifecycle::repair(clear_checkout_cache, clear_config_cache) }),
         Verb::Mcp { action } => Box::pin(async move { mcp::run(&action) }),
         Verb::Fake { action } => Box::pin(transcript::run(action)),
-        verb => Box::pin(run_side(verb)),
+        verb => run_side(verb),
     }
 }
 

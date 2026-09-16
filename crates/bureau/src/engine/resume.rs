@@ -1,8 +1,7 @@
 //! Resume: replaying the event log into where the machine continues.
-//! The log records outcomes, not outputs or trust grades, so a resumed
-//! run re-derives routing from outcomes, earlier steps' outputs are
-//! empty, and their grades conservatively count as `Derived` when a
-//! later step's request trust is folded (see `execute::request_trust`).
+//! Finished step results retain their recorded outputs and trust. An unfinished
+//! local factory keeps its Bureau step attempt and separately validated native
+//! identity; re-entry must not substitute a fresh invocation.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +15,10 @@ use crate::runlog::{self, Event, RunFinishedData, RunState, RunStatus};
 
 /// Replayed step history.
 pub(super) struct History {
+    /// Last started step not yet durably finished.
+    pub(super) pending_step: Option<String>,
+    /// Local factory identities, validated separately from generic replay.
+    pub(super) factories: crate::runlog::copilot_factory::Records,
     /// Entries per step name, from `step_started` records.
     pub(super) attempts: BTreeMap<String, u32>,
     /// Latest finished outcome per step.
@@ -43,8 +46,10 @@ pub(super) struct History {
 }
 
 /// Empty history starting at `start`.
-pub(super) const fn fresh(start: Route, started: bool) -> History {
+pub(super) fn fresh(start: Route, started: bool) -> History {
     History {
+        pending_step: None,
+        factories: crate::runlog::copilot_factory::Records::default(),
         attempts: BTreeMap::new(),
         outcomes: BTreeMap::new(),
         results: BTreeMap::new(),
@@ -145,6 +150,12 @@ fn legacy_finished(state: &RunState) -> RunFinishedData {
 fn history_from(state: &RunState, pipeline: &Pipeline) -> History {
     let steps = step_history(state);
     History {
+        pending_step: state
+            .steps
+            .last()
+            .filter(|step| step.outcome.is_none())
+            .map(|step| step.step.clone()),
+        factories: crate::runlog::copilot_factory::Records::default(),
         attempts: steps.attempts,
         outcomes: steps.outcomes,
         results: steps.results,
@@ -165,13 +176,13 @@ pub(super) enum Replay {
     /// The log holds `run_finished`; return the outcome untouched.
     Finished(RunFinishedData),
     /// Continue from the replayed history.
-    Resume(History),
+    Resume(Box<History>),
 }
 
 /// Replays events into a resume decision.
 pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
     let Some(state) = runlog::replay(events) else {
-        return Replay::Resume(fresh(entry(pipeline), false));
+        return Replay::Resume(Box::new(fresh(entry(pipeline), false)));
     };
     if let RunStatus::Finished(_) = state.status {
         return Replay::Finished(
@@ -181,5 +192,5 @@ pub(super) fn replay(events: Vec<Event>, pipeline: &Pipeline) -> Replay {
                 .unwrap_or_else(|| legacy_finished(&state)),
         );
     }
-    Replay::Resume(history_from(&state, pipeline))
+    Replay::Resume(Box::new(history_from(&state, pipeline)))
 }

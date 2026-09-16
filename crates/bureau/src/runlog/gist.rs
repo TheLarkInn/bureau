@@ -36,10 +36,12 @@ pub const fn kind_name(kind: EventKind) -> &'static str {
         EventKind::GroupMemberFinished => "group_member_finished",
         EventKind::GroupMemberCancelled => "group_member_cancelled",
         EventKind::GroupFinished => "group_finished",
+        EventKind::CopilotFactory => "copilot_factory",
         EventKind::Checkpoint => "checkpoint",
         EventKind::BranchPushed => "branch_pushed",
         EventKind::PrCreated => "pr_created",
         EventKind::RunFinished => "run_finished",
+        EventKind::GitHubCloud => "github_cloud",
     }
 }
 
@@ -113,13 +115,32 @@ fn durable_gist(event: &Event) -> String {
     }
 }
 
-/// A one-line, message-ish summary of an event's payload.
-#[must_use]
-pub fn gist(event: &Event) -> String {
+fn cloud_gist(event: &Event) -> String {
+    let record = &event.data["record"];
+    let kind = record["kind"].as_str().unwrap_or("invalid");
+    let task = record["task_id"].as_str();
+    task.map_or_else(
+        || format!("github_cloud {kind}"),
+        |task| format!("github_cloud {kind} task={task} correlation=operator_selected_unproven"),
+    )
+}
+
+fn run_gist(event: &Event) -> String {
     match event.kind {
         EventKind::RunStarted => {
             payload::<RunStartedData>(event).map_or_else(String::new, started_gist)
         }
+        EventKind::RunFinished => payload::<RunFinishedData>(event)
+            .map_or_else(String::new, |data| outcome_name(data.outcome).to_owned()),
+        _ => String::new(),
+    }
+}
+
+/// A one-line, message-ish summary of an event's payload.
+#[must_use]
+pub fn gist(event: &Event) -> String {
+    match event.kind {
+        EventKind::RunStarted | EventKind::RunFinished => run_gist(event),
         EventKind::StepStarted => {
             payload::<StepStartedData>(event).map_or_else(String::new, |d| d.step)
         }
@@ -129,6 +150,7 @@ pub fn gist(event: &Event) -> String {
         EventKind::Output => {
             payload::<OutputData>(event).map_or_else(String::new, |d| output_gist(&d))
         }
+        EventKind::CopilotFactory => super::copilot_factory::gist(&event.data),
         EventKind::GroupStarted
         | EventKind::GroupMemberStarted
         | EventKind::GroupMemberFinished
@@ -137,7 +159,6 @@ pub fn gist(event: &Event) -> String {
         EventKind::Checkpoint | EventKind::BranchPushed | EventKind::PrCreated => {
             durable_gist(event)
         }
-        EventKind::RunFinished => payload::<RunFinishedData>(event)
-            .map_or_else(String::new, |d| outcome_name(d.outcome).to_owned()),
+        EventKind::GitHubCloud => cloud_gist(event),
     }
 }

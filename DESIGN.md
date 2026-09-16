@@ -977,6 +977,7 @@ CLI beyond `validate` and `version`.
    |---|---|---|
    | `tokio` | process supervision, timeouts, concurrency | features: `rt-multi-thread`, `process`, `time`, `io-util`, `sync`, `macros`. Justified because layer 0 needs concurrent stdout/stderr drain plus a timeout, and §8 needs concurrent runs. |
    | `serde`, `serde_json` | step contract, run log | |
+   | `boon =0.6.1` | local factory argument schemas | Full JSON Schema validation of pinned provider metadata; explicit draft, no external file or URL retrieval. |
    | a maintained YAML crate | config loading | **`serde_yaml` was archived in 2024 — do not use it.** Pick a maintained fork, tell me which, and pin it. |
    | `rusqlite` | layer 5 only | `bundled` feature; not needed this session |
    | `nix` *or* `libc` | process groups / signals | pick one, not both |
@@ -1270,3 +1271,298 @@ Upstream's distributed problems are real for upstream. Its design principle,
 coordination problem disappears instead of moving," is good engineering.
 Bureau refuses that machinery because sections 1 and 3 refuse the distributed
 topology that requires it, not because the machinery is bad.
+
+---
+
+## 17. Local Copilot runtime factories
+
+An agent step may explicitly select `copilot_factory` while retaining a
+`copilot` role. Omission preserves ordinary ACP execution. This is an
+adapter to the runtime's existing factory engine, not a second Bureau
+orchestration language, a `/factory` prompt, or a cloud automation. It adds
+no top-level CLI command. Concurrent-group members cannot use this mode.
+
+Reviewed configuration authorizes the factory name, repository provider
+(`project:<directory>`), canonical provider tree digest, standard SDK
+metadata file, qualified runtime bundle, static JSON arguments, and
+independently optional native ceilings. Unknown fields and scalar/sequence
+substitutes for objects are rejected. `args` is an object or null; omission
+is equivalent to null. It is not `inputs_from`, interpolation, or encoded
+JSON. The original v2 `StepRequest` is available separately through
+`bureau-io/get_step_context`. Validate the pinned metadata's complete
+`argsSchema` offline, without external schema retrieval.
+
+`model_credential` is required and names an existing declared credential in
+local `settings.yaml`, explicitly authorized for Copilot model access.
+Only the reference is serialized. The role must grant `model:invoke`;
+this adds no forge grant and never infers model authorization from a repo
+credential. Fresh execution and cold recovery resolve the same approved
+reference through its declared source, without ambient login or store copying.
+During daemon recovery, an identity-verified preserved factory with an unavailable
+declared model source is deferred without changing its saved identity or reservation.
+Independent recovery, fresh work and label rules continue; an otherwise idle
+pass reports the deferral. Corrupt evidence, identity and ownership failures
+remain fatal rather than being classified as missing credentials. Deferral does
+not authorize resuming an indeterminate or otherwise nonresumable native run.
+Each SDK factory launch supplies the model credential only through the canonical
+`COPILOT_GITHUB_TOKEN` carrier, registers it with `--secret-env-vars` before
+initialization, and uses `--auth-token-env` plus `--no-auto-login`. Secret registration is
+required in addition to selecting the authentication variable.
+An independently authorized `GH_TOKEN` from Bureau's existing `FORGE_GRANTS`
+policy is preserved, even when its value equals the model credential.
+Model-only roles receive no forge credential, and the forge channel is never
+an implicit model-authentication fallback. Prefer independently scoped tokens:
+selecting a model credential neither attenuates its rights nor adds forge grants.
+
+Both independent native Git/gh credential-injection paths are disabled:
+create/resume receives `shell.credentials` with `git: false, gh: false`,
+and the generated private SDK settings fix `sandbox.auth` to the same values.
+Verify that exact private document before every startup; reject malformed
+legacy configuration and policy-shadowing keys, especially replacements for
+the sandbox policy. Managed deny-wins may disable auth but cannot restore it; do
+not override managed policy or change sandbox enablement/filesystem/network
+policy. Unapproved executable configurations and LSP operations remain
+unreachable under the qualified SDK's inherited tool restrictions.
+The controlled broker configuration cannot contain native `$` expansion.
+These controls are not general OS isolation, a sandbox for trusted factory
+JavaScript, or attenuation of the children's authorized model-session identity.
+
+### 17.1 Supported contract and executable authority
+
+`runtime.profile: copilot-sdk-factory-v1` names **Bureau's SDK capability
+contract**, not a Copilot SDK release, version, or generally available feature
+mapping. This is the only accepted profile name; there is no compatibility
+alias. The self-contained runtime/SDK bundle and provider must be
+operator-qualified and match their independent canonical tree digests.
+`runtime.version` is the exact expected `connect.version`, not the profile
+name. Protocol version 3 alone, an arbitrary installed CLI, or
+`--experimental` does not establish this contract.
+No generally available release mapping or live entitlement has been verified.
+Actual account eligibility, including staff rollout and eligible GitHub
+token-based billing, is an access prerequisite. Bureau cannot manufacture
+eligibility or bypass authentication or rollout checks.
+
+Bureau directly speaks Content-Length-framed JSON-RPC 2.0 to its supervised
+runtime's `--server --stdio --no-auto-update` interface. It does not use ACP
+framing, app WebSockets, or model-tool entry points.
+Use raw `session.factory.run`/`resume` replies so accepted
+run IDs are persisted immediately, rather than a friendly helper that waits
+for terminal completion.
+
+A regular SDK client cannot register a closure in `session.create`.
+The runtime must launch the pinned extension, which registers through
+`defineFactory` and `joinSession`. A preinitialization launch gate denies
+other providers. Preserve the stock SDK bootstrap and parent-process
+relationship; no spawning wrapper or ambient extension fallback.
+
+Direct SDK factory calls do **not** request the model tool's factory approval.
+The committed configuration and role's model-invocation grant are Bureau's
+admission authority. Provider initialization and factory JavaScript are
+trusted executable host code. Child tool grants do not sandbox this host
+code. Do not approve extra tools, sensitive environment, credentials,
+budgets, or persistent trust merely to make a provider work.
+
+### 17.2 Controlled root and child context
+
+Create an owned session in the exact worktree with `requestExtensions`,
+`requestPermission`, `enableConfigDiscovery: false`, explicit pinned
+`pluginDirectories`, and session-only working-directory trust. Use private
+HOME/runtime storage and literal pinned custom-agent definitions where
+needed. This differs from ordinary app sessions' ambient discovery.
+Cold resume retains the saved cwd/plugin snapshot; do not send replacement
+cwd/discovery/plugin fields or create a new session as a recovery shortcut.
+Before SDK initialization, validate the SDK's saved session/workspace
+metadata, including the exact session ID and absolute canonical cwd against
+the retained worktree's device/inode identity. Invalid or missing metadata is
+an explicit recovery failure, never permission to use a cwd fallback or
+rewrite the saved context.
+
+The qualified runtime propagates root context and tool restrictions to
+factory children. Catalogue presence is not proof of matching bytes, so
+pin resources independently and verify the already-narrowed session
+catalogues. Reject unsupported hooks or agent-inline MCP context rather than
+loading it with broader authority. Builtin tool selectors must match the
+qualified SDK's supported grammar; the broker exposes only its two exact
+tools. Additional hosted permission requests are denied, not auto-approved.
+
+The repository setting is `extraKnownMarketplaces` (plural), together with
+`enabledPlugins`. Declaration, installation, trust, materialization,
+activation and tool callability are different states. This integration does
+not automatically install or enable all repository, remote or global
+plugins. Explicitly admitted pinned resources are the supported context.
+
+### 17.3 Durability, control and result adaptation
+
+Factory mode has a deliberate exception to ordinary step recovery: opaque
+SDK-owned session state, step-replay records, results and accounting are a
+required external authority. Bureau events record approved inputs, decisions
+and observations; they cannot reconstruct that state. Preserve it with the
+original worktree and private pins. SDK step replay is at-least-once around
+external effects, not a filesystem checkpoint.
+
+Publish private code snapshots with Linux atomic no-replace directory rename
+on both GNU and musl builds. Preserve existing destinations and fail explicitly
+when the kernel or filesystem cannot provide that operation; never fall back
+to an overwriting rename. Sync staged contents and the published parent.
+
+Before executable initialization, append and fsync the session intent under
+the current lease fence. Before native start/resume/control, append the
+corresponding dispatch. Persist the correlated accepted run ID and native
+attempt before waking the caller. Notifications do not establish identity,
+terminal success or accounting.
+
+The ownership fence covers the complete log append and fsync, including
+streamed process output; checking ownership and then releasing that fence
+before writing is insufficient.
+
+A live claim may briefly precede its first framed `run_started` event.
+Observe live ownership and run logs under the same database fence; only
+that unpublished first prefix is treated as in flight. Missing ownership,
+expired ownership, or corrupt complete records still fail closed.
+
+The SDK creates the native run ID and exposes no caller idempotency key or
+argument/definition digest for matching an orphan. Lost acceptance
+means indeterminate: preserve workspace, runtime storage and pinned bytes;
+never retry start or select a run by name/latest timestamp. Recovery must
+inspect the exact saved identity before ordinary worktree cleanup.
+
+An unfinished factory pipeline or unsafe native record continues excluding
+its exact `(assignment, forge, external_id)` from fresh work after the
+supervisor lease is released or expires. Reconcile, `run` and `retry`
+recheck authoritative events inside the fresh-claim `SQLite` transaction,
+including after asynchronous forge observations. Same-run recovery has its
+own claim path; it does not authorize a replacement run. Missing/corrupt
+logs fail closed. This is an event-derived exclusion, not another scheduler
+table, and ordinary nonfactory admission remains unchanged.
+
+Admission prepares JSON decoding and replay outside the shared write fence.
+This preparation is ephemeral, not a trusted `state.json` cache or new durable
+authority. Under the fence, revalidate directory membership, directory/file
+identities and streaming SHA-256 digests of the exact authoritative bytes.
+Do not retain aggregate historical output buffers. Outside-fence decoding
+must hash the captured byte range it actually reads before binding either
+decoded state or a parse failure to that source. An identical verified prefix may
+accept up to 1 MiB total of new, fully validated `output` records per check:
+those records cannot change replayed reservation state. Other or larger
+changes require out-of-fence preparation, reusing only exact verified
+prefixes. Ongoing ordinary output therefore need not restart full historical
+replay. The remaining fenced byte pass still grows with retained history;
+this is not a constant-time admission guarantee. Raw catch-up buffers share
+the 1 MiB bound across runs; source metadata, existing replay state and
+per-record decoding allocations are separate and are not globally constant.
+
+A recognized SDK admission rejection followed by acknowledged clean shutdown
+is an ordinary failed step and follows its configured failure edge. It does
+not create a synthetic pause or remove a genuine operator pause. Uncertain
+admission and unclean shutdown retain the existing preservation rules.
+
+Orderly native `paused`, `halted` and `error` runs need `canResume`, intact
+accounting and verified context before resume. Completed/cancelled and
+hard-crash `interrupted` runs cannot resume. An owner lease may still appear
+running until native lease reconciliation; this is not permission to spawn
+a replacement. Pause is a resumable stop; cancel is not. Inspect the winning
+status in completion/control races, and do not interpret an unowned
+still-running cancel response as successful cancellation.
+
+Run-level pause output retains the stable `run paused at a step boundary`
+signal and its reason. CLI and canvas controls must distinguish this from
+running or terminal state, including a clean never-admitted bootstrap.
+
+Require native `completed`, the full raw factory return as v2 `StepResult`,
+Derived trust, confined/scrubbed artifacts, usable accounting, and verified
+original execution-process/descendant shutdown. A result preview, child MCP
+publication, transcript, inspection-process exit or valid-looking return
+under another native status cannot complete the step.
+
+Native limits are optional overrides, not automatically filled budgets.
+An explicit `max_concurrent_subagents` must be between 1 and 500 under this
+capability contract; it is not a total-subagent limit.
+Resume retains original cumulative ceilings and Bureau's remaining deadline.
+Account once per root using high-water `activeMs`, subagents and `nanoAiu`;
+do not sum repeated cumulative snapshots or mirrored child charges. One
+credit is 1,000,000,000 nano-AIU. The existing $0.01-per-credit normalization
+is an explicit accounting basis, not a provider invoice. Incomplete usage
+is a floor, never an exact zero, and cannot satisfy a required measured-cost
+gate.
+
+CLI and canvas keep native session/run/attempt/status separate from Bureau
+run outcome and cloud task identity. Their projections report invalid logs,
+indeterminate starts, preserved workspaces, missing accounting and native
+resume restrictions. Configuration save/clone/snapshot operations preserve
+the nested declaration and treat static arguments as opaque data.
+`show --json` adds a read-only state and local-factory continuation projection;
+`show --events --json` remains the raw event array. Canvas continuation
+controls consume Bureau's eligibility decision bound to the exact session
+and native event prefix, never a browser-inferred bootstrap exception.
+
+## 18. GitHub cloud factory controls
+
+Optional `--github-cloud` modes on existing CLI commands control existing
+GitHub cloud automations. They are separate from local Copilot factories,
+agent adapters, and pipeline execution. The 17-command cap remains unchanged.
+Bureau implements no second engine and creates no task worktree for them.
+
+These experimental, limited-availability controls call internal CMC endpoints
+on `api.github.com`, not a supported public GitHub REST factory API.
+Bureau uses its own user agent and the selected repository's declared
+credential with the `Bearer` HTTP authentication scheme. Compatibility,
+token entitlement and enterprise support are not established by offline
+tests; no live entitlement proof is claimed. Fail closed on authentication
+or service eligibility failures. Never read application tokens, impersonate
+a first-party integration, or fall back to another credential or
+authentication scheme.
+
+Select a repository from committed configuration and resolve only its declared
+credential. Verify the explicitly expected GitHub login before initial
+selection and retain the numeric user ID for subsequent checks. Dispatch
+requires registered `access: push`; this admission check does not constrain
+the remote workload's own permissions, environment, lifetime, or billing.
+
+List and inspect existing automations, explicitly submit them, and monitor
+operator-selected exact task IDs. Establish automation membership through the
+repository-scoped inventory, not an invented fallback repository. Verify
+returned automation, task, and task-session identities. Missing task
+attribution fails closed.
+
+An empty trigger map permits `manual`; exactly one `interval` or `schedule`
+key permits `interval`. Reject disabled automations and all other trigger
+arrangements without changing their configuration. There is no automatic
+reconcile dispatch, scheduler, adoption database, or automation CRUD.
+
+Dispatch is **acceptance-only**. Bureau's HTTP client treats any 2xx status
+as submission acceptance and discards the body; it establishes no task
+identity or correlation token and assumes no server idempotency contract.
+A caller must provide a stable local request key. Persist a checked,
+lease-fenced send intent before the
+POST, then record acceptance, definite rejection, or uncertainty. Reusing
+the key never sends another POST. A crash, lost response, or failed outcome
+append must not lead to a fresh submission.
+
+Cloud records live separately under `BUREAU_HOME/github-cloud-runs`, using
+versioned `GitHubCloud` events and strict event-log replay. The events-only
+constructor creates neither `wt/` nor `artifacts/`; ordinary pipeline log
+construction is unchanged. All cooperating operations use the same state
+database and record root. Preserve verified ownership through synchronous
+durable appends; never hold a SQLite ownership transaction across HTTP.
+
+A task may be associated only by explicit operator selection after checking
+its exact identity and automation attribution. That association is not proof
+that a receipt created the task. Refresh means reading and recording
+observations, never resuming execution. State, status, sessions, raw events,
+and artifact references remain remote data; unknown values remain unknown.
+Do not synthesize completion events or treat prose, artifacts, embedded JSON,
+or task completion as a Bureau `v2` `StepResult`. Unreported cost is unknown,
+not zero, and is not folded into pipeline accounting.
+
+Remote cancellation, pause, resumption, retries, approvals, and feedback are
+unavailable in this integration. Bureau has no supported, authorized HTTP
+contract for these controls. Reject them explicitly with a nonzero exit and
+no request. A remote-steerable flag does not authorize Bureau to steer.
+Stopping the local CLI does not stop the remote workload.
+
+All HTTP operations are injectable for offline testing. Bound requests and
+pagination, reject redirects and scope-changing continuations, retain raw
+unknown event fields, and scrub credentials before durable or user-visible
+output. Validate ordinary forge, pipeline, and CLI behavior alongside cloud
+identity, paging, uncertain-send, ownership, replay, and unsupported-control
+cases. See [cloud usage](docs/github-cloud-factories.md).

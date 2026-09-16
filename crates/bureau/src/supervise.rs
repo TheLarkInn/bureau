@@ -1,4 +1,4 @@
-//! Shared lease renewal and terminal projection for every run entry point.
+//! Shared lease renewal, terminal projection, and preserved-factory handoff.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +22,17 @@ fn failed(
     (outcome, result)
 }
 
+fn preserved(engine: &Engine, run_id: &str) -> Result<(), Error> {
+    let directory = crate::runlog::run_dir(&engine.runs_dir, run_id);
+    let events = crate::runlog::read_events_tolerant(&directory)?;
+    let state =
+        crate::runlog::replay(events).ok_or_else(|| Error::MissingTerminal(run_id.to_owned()))?;
+    if crate::runlog::preserves_factory_work(&state) {
+        return Ok(());
+    }
+    Err(Error::MissingTerminal(run_id.to_owned()))
+}
+
 fn project(
     state: &Store,
     engine: &Engine,
@@ -30,7 +41,7 @@ fn project(
 ) -> Result<(), Error> {
     let projected = match crate::state::project_run(state, &engine.runs_dir, run_id) {
         Ok(true) => Ok(()),
-        Ok(false) => Err(Error::MissingTerminal(run_id.to_owned())),
+        Ok(false) => preserved(engine, run_id),
         Err(error) => Err(error),
     };
     let released = owner.release();

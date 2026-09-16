@@ -10,6 +10,7 @@
 // hints for the editor chrome; the save path owns the final verdict.
 
 import { stepNameProblem, TERMINAL_NAMES, withReferencesRetargeted, withoutReferencesTo } from "../web/step-refs.mjs";
+import { stepFactoryProblems } from "../web/copilot-factory.mjs";
 
 export const TERMINALS = TERMINAL_NAMES;
 export const OUTCOMES = ["success", "failure", "blocked", "no-work"];
@@ -245,6 +246,7 @@ export function problems(view) {
     ...orphanProblems(view),
     ...danglingProblems(view),
     ...view.steps.flatMap((step) => decisionGaps(step).map((message) => ({ step: step.name, message }))),
+    ...view.steps.flatMap((step) => stepFactoryProblems(step, view.steps)),
   ];
 }
 

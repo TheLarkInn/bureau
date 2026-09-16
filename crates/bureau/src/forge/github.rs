@@ -1,5 +1,6 @@
 //! GitHub REST forge; registry arguments accept URLs or bare `owner/name`.
 
+pub mod cloud;
 mod dependencies;
 mod labels;
 mod rate;

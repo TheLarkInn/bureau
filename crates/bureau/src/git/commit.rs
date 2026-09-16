@@ -7,7 +7,7 @@ impl Worktree {
     /// Propagates add, commit, and revision lookup failures.
     pub async fn commit_all(&self, message: &str) -> Result<String, Error> {
         let mut secrets = Vec::new();
-        git(&["add", "-A"], &self.dir, None, &mut secrets).await?;
+        git(&["add", "-A"], self.path(), None, &mut secrets).await?;
         let identity = [
             "-c",
             "user.name=Bureau",
@@ -17,8 +17,8 @@ impl Worktree {
             "-m",
             message,
         ];
-        git(&identity, &self.dir, None, &mut secrets).await?;
-        let bytes = git(&["rev-parse", "HEAD"], &self.dir, None, &mut secrets).await?;
+        git(&identity, self.path(), None, &mut secrets).await?;
+        let bytes = git(&["rev-parse", "HEAD"], self.path(), None, &mut secrets).await?;
         Ok(String::from_utf8_lossy(&bytes).trim().to_owned())
     }
 }

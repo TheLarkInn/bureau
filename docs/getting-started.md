@@ -29,6 +29,12 @@ config repository) and both forges (GitHub and Azure DevOps).
   - **Azure DevOps**: a PAT with Code (read/write) and Work Items
     (read/write) scopes for the organization.
 
+For optional, experimental, limited-availability controls over existing
+GitHub cloud automations, see [GitHub cloud factories](github-cloud-factories.md).
+They do not run as Bureau pipeline steps or use a supported public REST
+factory API. Ordinary GitHub token support above does not establish
+entitlement to the internal cloud API.
+
 ## Install
 
 From a source checkout:
@@ -432,7 +438,7 @@ config-adoption time.
 
 ### Agent transport
 
-Both production adapters use the official Rust ACP client and stable protocol
+By default, both production adapters use the official Rust ACP client and stable protocol
 v1 over supervised stdio: `copilot --acp --stdio` or `claude-agent-acp`.
 Each attempt opens a fresh session, selects the exact advertised custom agent,
 and supplies `bureau-io` through MCP. A missing selector fails before prompting;
@@ -450,6 +456,175 @@ is a known compatibility risk. Protocol tests do not establish sandbox safety.
 a valid `v2` result in agent-message text. Context-only usage updates preserve
 the latest cumulative USD measurement; explicit unusable cost reports clear it.
 Assignments with cost limits fail closed without usable measured USD cost.
+
+### Opt-in local Copilot factories
+
+For a reviewed runtime factory, add `copilot_factory` to an existing
+Copilot-role agent step. This invokes the real local SDK factory API, not a
+`/factory` prompt and not the [cloud automation controls](github-cloud-factories.md).
+Ordinary steps keep their existing ACP behavior.
+
+```yaml
+- name: review
+  type: agent
+  role: reviewer
+  inputs_from: [verify]
+  copilot_factory:
+    name: review
+    extension: project:review
+    extension_digest: "tree-sha256:<64 lowercase hex digits>"
+    model_credential: copilot-model
+    metadata: factory.json
+    runtime:
+      profile: copilot-sdk-factory-v1
+      directory: /opt/qualified-copilot
+      digest: "tree-sha256:<64 lowercase hex digits>"
+      version: "<exact expected connect.version>"
+      executable: bin/node
+      cli: dist/index.js
+      dist: dist
+    args: { format: detailed }
+    limits:
+      max_concurrent_subagents: 2
+      max_total_subagents: 4
+      timeout_seconds: 120
+      max_ai_credits: 1.5
+  next: done
+```
+
+The placeholders must be replaced; this is not a ready-to-run configuration.
+The literal `runtime.profile: copilot-sdk-factory-v1` names **Bureau's SDK
+capability contract**, not an SDK release, version, or generally available
+feature mapping. No compatibility alias is accepted. `runtime.version`
+remains the exact expected `connect.version`.
+
+Provision and review an operator-qualified, self-contained bundle with the
+actual executable, CLI distribution, stock extension bootstrap/resolver and
+bundled SDK. Both the bundle and provider require exact canonical tree
+digests. `tree-sha256:` identities use Bureau's `bureau_plugin::tree_digest`
+byte/path/mode algorithm, not an archive hash.
+There is no verified mapping to a generally available SDK or CLI release,
+and offline checks do not prove live entitlement. Protocol 3, a version
+string alone, or `--experimental` is insufficient. Actual eligibility,
+including staff rollout and eligible GitHub token-based billing, is an access
+prerequisite. Bureau never fabricates eligibility or bypasses authentication
+or rollout checks.
+
+The original provider is `.github/extensions/review/extension.mjs` in the
+work repository. It must use the runtime's real SDK
+`defineFactory`/`joinSession` registration and provide the standard
+`FactoryMeta` JSON at `factory.json` (or `metadata`). Keep that metadata and
+its full `argsSchema` inside the reviewed provider tree. Bureau pins the
+provider and bundle privately before executing either. Schema validation
+does not retrieve external URLs or files.
+
+The role must grant `model:invoke`. `model_credential` is a required
+reference, not a token or a fallback to a repo credential. Declare its source
+in existing local `settings.yaml`, for example:
+
+```yaml
+credentials:
+  copilot-model:
+    source: environment
+    variable: BUREAU_COPILOT_MODEL_TOKEN
+```
+
+Provision that source separately with an eligible token authorized for
+Copilot model access. Bureau never copies an ambient Copilot login or
+credential store. The reference is retained in the run snapshot and resolved
+again on cold recovery; credential values are not persisted there or granted
+to forge tools by this declaration.
+During daemon reconciliation, an unavailable model source blocks only the
+assignments that need it; ordinary work and independent label rules continue.
+Each affected assignment is diagnosed, and an otherwise idle pass reports the
+failure. Cold daemon recovery applies the same rule to a known preserved
+factory run: keep its reservation and original workspace, report the run and
+credential reference, and continue independent recovery and work. Corrupt
+evidence, changed identities and lost ownership still fail explicitly.
+Deferral does not make an indeterminate or nonresumable factory resumable.
+Explicit run/resume commands remain strict about their declared sources.
+
+Bureau selects and registers the canonical `COPILOT_GITHUB_TOKEN` carrier
+on every runtime launch; it does not export additional model-token aliases.
+Mixed roles retain a separately authorized `GH_TOKEN` from Bureau's existing
+`FORGE_GRANTS` policy, even when both credentials intentionally use the same
+value. This channel is never an implicit model-authentication fallback;
+model-only roles still receive no forge token. Prefer independently scoped
+tokens: the model reference neither reduces token rights nor adds forge grants.
+Both session shell credentials and private sandbox Git/gh credential
+injection are disabled. The generated private SDK settings are checked
+byte-for-byte before startup. Missing or changed policy, malformed legacy
+configuration, or a legacy sandbox-policy override blocks execution instead
+of falling back to native defaults. Do not hand-edit the run's private policy.
+Managed deny-wins is respected without disabling managed policy or changing
+sandbox enablement/filesystem/network rules.
+
+The supported context excludes unapproved executable configuration and LSP
+operations, including for nested children under the qualified tool policy.
+The broker's command/argument/environment configuration must not contain
+`$` expansion; this restriction does not reinterpret opaque factory `args`.
+Environment filtering is not OS isolation or a sandbox for approved provider
+JavaScript, and it does not attenuate children's authorized model access.
+
+**Committed configuration
+authorizes executable provider code**, arguments and ceilings: direct SDK
+calls do not show the model tool's separate factory approval dialog.
+Factory-host JavaScript is trusted code, not sandboxed by child tool grants.
+Additional tool or sensitive-environment permission requests are denied.
+Saving an editor draft neither authorizes uncommitted execution nor launches
+a factory.
+
+`args` stays an object or null; omission means null. Argument array order and
+repeated values survive editor saves exactly. No dynamic inputs are
+injected into it. `inputs_from` still supplies the v2 `StepRequest` through
+the restricted `bureau-io` context tool. The factory itself must return a
+complete v2 `StepResult`; child publications and result previews do not
+finish the step. Native ceilings are independently optional and soft where
+the runtime says so. Leaving one out retains native policy; resume does not
+reset or raise it. An explicit `max_concurrent_subagents` must be between
+1 and 500 under this SDK capability contract; that is not a total-subagent limit.
+
+This mode deliberately disables ambient configuration discovery and passes
+only approved pinned resources. The real settings key is
+`extraKnownMarketplaces`, not `extraKnownMarketplace`. `enabledPlugins` alone
+does not prove installation, trust, activation or child-tool availability.
+Do not expect all app/global/repository plugins to appear automatically.
+Cold resume uses the same stored cwd/context, not a new discovery pass.
+
+Use `bureau show <run-id>` and `--events --json` to inspect the distinct SDK
+session, native run/attempt, usage and preserved workspace. Existing
+`pause`, `cancel` and `resume` commands remain Bureau control intents.
+Native pause is orderly/resumable; cancel is not. A lost start reply is
+indeterminate and cannot be retried or resolved by choosing the newest
+same-named run. Hard-killed/interrupted native runs cannot resume, and live
+ownership may remain visible until the runtime lease expires.
+A definite SDK admission rejection with verified clean shutdown follows the
+step's configured failure route. It does not manufacture a pause; an actual
+operator pause still takes precedence.
+
+`bureau show <run-id> --json` reports structured state and Bureau's
+local-factory continuation decision. Canvas Resume uses that same decision;
+an unavailable or older CLI cannot authorize continuation from raw browser
+replay. `resume` clears an eligible pause for the reconcile loop's same-run
+recovery; it does not itself execute a factory or create a new Bureau run.
+
+Lease release or expiry does not make unfinished factory work available
+again. Reconcile, `run` and `retry` refuse a fresh run for the same assignment,
+forge and item while its original factory work remains preserved. Inspect
+and, only when eligible, resume that original run; do not use `retry` as a
+replacement for an indeterminate start.
+
+Keep the original worktree, private pins and complete opaque SDK-owned
+external state together. Before restarting the SDK, Bureau validates the
+saved session/workspace metadata: exact session ID, canonical absolute cwd
+and retained worktree filesystem identity. Missing, malformed or changed
+metadata blocks recovery; it is not repaired or replaced with a new cwd.
+Deleting Bureau's derived `state.json` is recoverable; losing SDK state or
+recreating the worktree is not. SDK step replay is at-least-once around
+external effects, not filesystem checkpoints. Measured credits use an
+explicit $0.01-per-credit normalization, not an invoice; incomplete
+accounting is reported as a floor rather than zero. These constraints apply
+only to this opt-in mode; see [DESIGN section 17](../DESIGN.md#17-local-copilot-runtime-factories).
 
 ## Try it offline first
 

@@ -101,6 +101,7 @@ pub fn det_step(name: &str, run: &str, next: Option<&str>) -> StepDef {
         kind: StepKind::Deterministic,
         run: Some(run.to_owned()),
         role: None,
+        copilot_factory: None,
         fixture: None,
         trust: None,
         over: None,
@@ -117,7 +118,6 @@ pub fn det_step(name: &str, run: &str, next: Option<&str>) -> StepDef {
         timeout_secs: None,
     }
 }
-
 /// Budget limits that never gate a test.
 const fn generous() -> Limits {
     Limits {
@@ -222,7 +222,6 @@ impl Rig {
     }
 }
 
-/// One daemon process: its own store connection to the shared DB file.
 fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Reconciler {
     Reconciler {
         config: config.clone(),
@@ -231,6 +230,7 @@ fn daemon(config: &Config, db: &Path, root: &Path, forge: &Arc<FakeForge>) -> Re
         label_forges: BTreeMap::new(),
         engine: Arc::new(Engine::new(root.join("runs"), root.join("cache"))),
         credentials: BTreeMap::from([("git-main".to_owned(), Secret::new("test-credential"))]),
+        model_credential_errors: BTreeMap::new(),
         config_source: ConfigSource {
             remote: "fixture".to_owned(),
             reference: "main".to_owned(),

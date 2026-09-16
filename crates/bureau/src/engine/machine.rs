@@ -1,7 +1,7 @@
 //! The state machine: step entry, the gates, and the CANCEL/PAUSE checks.
 
 use super::context::{self, RunCtx, WtCtx};
-use super::{RunPlan, checkpoint, execute};
+use super::{RunPlan, checkpoint, copilot_factory, execute};
 use crate::adapters::Execution;
 use crate::config::{Repo, StepDef};
 use crate::contract::StepRequest;
@@ -59,6 +59,40 @@ pub(super) async fn run_loop(ctx: &mut RunCtx, wt: &WtCtx) -> Stop {
     }
 }
 
+fn start_step(ctx: &mut RunCtx, step: &StepDef) -> Result<(), String> {
+    if copilot_factory::recovery::unfinished(ctx, step) {
+        return Ok(());
+    }
+    if step.copilot_factory.is_some() {
+        context::append_checked(ctx, EventKind::StepStarted, started_data(ctx, step))?;
+    } else {
+        context::append(ctx, EventKind::StepStarted, started_data(ctx, step));
+    }
+    ctx.begin_attempt(&step.name);
+    Ok(())
+}
+
+fn interrupted(ctx: &RunCtx, error: &str) -> Execution {
+    copilot_factory::preserve(ctx, error);
+    crate::adapters::failed(error).halt()
+}
+
+fn finish_step(ctx: &RunCtx, step: &StepDef, result: Execution) -> Execution {
+    if result.is_halted() {
+        copilot_factory::preserve(ctx, &result.result.message);
+        return result;
+    }
+    let finished = runlog::step_finished_full(&step.name, &result);
+    if step.copilot_factory.is_some() {
+        if let Err(error) = context::append_checked(ctx, EventKind::StepFinished, finished) {
+            return interrupted(ctx, &error);
+        }
+    } else {
+        context::append(ctx, EventKind::StepFinished, finished);
+    }
+    result
+}
+
 /// Executes a step between its started and finished events.
 pub(super) async fn run_step(
     ctx: &mut RunCtx,
@@ -66,16 +100,16 @@ pub(super) async fn run_step(
     step: &StepDef,
     request: &StepRequest,
 ) -> Execution {
-    context::append(ctx, EventKind::StepStarted, started_data(ctx, step));
-    ctx.begin_attempt(&step.name);
+    if let Err(error) = start_step(ctx, step) {
+        return interrupted(ctx, &error);
+    }
     let mut result = execute::execute(ctx, wt, step, request).await;
+    copilot_factory::synchronize_cost(ctx);
     if result.is_halted() || context::ownership_reason(ctx).is_some() {
         return result.halt();
     }
     checkpoint::save_result(ctx, wt, step, &mut result).await;
-    let finished = runlog::step_finished_full(&step.name, &result);
-    context::append(ctx, EventKind::StepFinished, finished);
-    result
+    finish_step(ctx, step, result)
 }
 
 /// The assignment's primary repo, by registry name.

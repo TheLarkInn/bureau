@@ -42,7 +42,9 @@ fn teardown(log: stream::Shared) {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = appender.dir().to_path_buf();
     let _ = appender.close();
-    if let Ok(state) = runlog::replay_state(&dir) {
+    if let Ok(events) = runlog::read_events_tolerant(&dir)
+        && let Some(state) = runlog::replay(events)
+    {
         let _ = runlog::write_state_cache(&dir, &state);
     }
 }
@@ -152,7 +154,8 @@ fn close(ctx: RunCtx) -> RunOutcome {
 
 fn recorded_terminal(ctx: &RunCtx) -> std::io::Result<Option<runlog::RunFinishedData>> {
     let directory = stream::lock(&ctx.log).dir().to_path_buf();
-    Ok(runlog::replay_state(&directory)?.finished)
+    let events = runlog::read_events_tolerant(&directory)?;
+    Ok(runlog::replay(events).and_then(|state| state.finished))
 }
 
 fn close_recorded(ctx: RunCtx, data: runlog::RunFinishedData) -> RunOutcome {
@@ -171,7 +174,7 @@ fn close_replay_error(ctx: RunCtx, error: &std::io::Error) -> RunOutcome {
     )
 }
 
-fn append_finished(ctx: &RunCtx, result: &TerminalResult) {
+fn append_finished(ctx: &RunCtx, result: &TerminalResult) -> Result<(), String> {
     context::append(
         ctx,
         EventKind::Output,
@@ -186,30 +189,23 @@ fn append_finished(ctx: &RunCtx, result: &TerminalResult) {
         result.pr.as_ref(),
         disposition,
     );
-    context::append(ctx, EventKind::RunFinished, finished);
-}
-
-/// Appends the run's message and `run_finished`, then tears the log
-/// down. The worktree guard must already have dropped.
-pub(super) fn finish(ctx: RunCtx, result: TerminalResult) -> RunOutcome {
-    let _terminal = runlog::lock_terminal_append();
-    match recorded_terminal(&ctx) {
-        Ok(Some(data)) => return close_recorded(ctx, data),
-        Err(error) => return close_replay_error(ctx, &error),
-        Ok(None) => {}
+    if context::has_factories(ctx) {
+        context::append_checked(ctx, EventKind::RunFinished, finished)?;
+    } else {
+        context::append(ctx, EventKind::RunFinished, finished);
     }
-    append_finished(&ctx, &result);
-    let mut settled = close(ctx);
-    settled.outcome = result.outcome;
-    settled.message = result.message;
-    settled.pr = result.pr;
-    settled
+    Ok(())
 }
 
 /// A paused run exits unfinished, without a terminal event: the log
 /// closes and re-entry resumes the run from its events.
 pub(super) fn paused(ctx: RunCtx) -> RunOutcome {
-    let message = "run paused at a step boundary; remove the PAUSE marker and resume".to_owned();
+    let reason = std::fs::read_to_string(ctx.pause_path()).unwrap_or_default();
+    let message = if reason.trim().is_empty() {
+        "run paused at a step boundary; remove the PAUSE marker and resume".to_owned()
+    } else {
+        format!("run paused at a step boundary; {}", reason.trim())
+    };
     context::append(
         &ctx,
         EventKind::Output,
@@ -217,5 +213,25 @@ pub(super) fn paused(ctx: RunCtx) -> RunOutcome {
     );
     let mut settled = close(ctx);
     settled.message = message;
+    settled
+}
+
+/// Appends the run's message and `run_finished`, then tears the log down.
+/// Factory worktrees remain retained until the terminal event is durable.
+pub(super) fn finish(ctx: RunCtx, result: TerminalResult) -> RunOutcome {
+    let _terminal = runlog::lock_terminal_append();
+    match recorded_terminal(&ctx) {
+        Ok(Some(data)) => return close_recorded(ctx, data),
+        Err(error) => return close_replay_error(ctx, &error),
+        Ok(None) => {}
+    }
+    if let Err(error) = append_finished(&ctx, &result) {
+        super::copilot_factory::preserve(&ctx, &error);
+        return paused(ctx);
+    }
+    let mut settled = close(ctx);
+    settled.outcome = result.outcome;
+    settled.message = result.message;
+    settled.pr = result.pr;
     settled
 }

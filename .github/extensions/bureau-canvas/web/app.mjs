@@ -18,6 +18,7 @@ import { MODES, ModeSwitcher, useRunActivity } from "./modes.js";
 import { LiveActivity, useLiveOverlay } from "./live/live.js";
 import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
+import { factoryForStep } from "./live/copilot-factory.mjs";
 import { useReplayOverlay } from "./replay/replay.js";
 import { resolveOverlay } from "./live/overlay.js";
 import { terminalCopy } from "./terminals.js";
@@ -1862,6 +1863,7 @@ function stepLogProps(state, pipeline, active, selectedStep) {
     record: overlay?.steps?.[step] ?? null,
     expectedAgent: role?.resolvedAgent ?? null,
     text: step ? stepOutput(active.events, step, active.until) : "",
+    factory: factoryForStep(overlay?.factories, step),
   };
 }
 

@@ -22,6 +22,16 @@ pub(super) fn measured_cost(usage: &Usage) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn factory_cost(records: &crate::runlog::copilot_factory::Records) -> f64 {
+    records
+        .0
+        .values()
+        .filter_map(|record| record.consumed)
+        .map(crate::adapters::copilot_factory::usage::measured)
+        .map(|usage| measured_cost(&usage))
+        .sum()
+}
+
 /// Mutable run state threaded through the machine.
 #[derive(Clone)]
 pub(super) struct RunCtx {
@@ -31,6 +41,10 @@ pub(super) struct RunCtx {
     pub(super) log: stream::Shared,
     /// Summed step cost.
     pub(super) cost_usd: f64,
+    /// Cumulative factory cost already included in the run total.
+    pub(super) factory_cost_usd: f64,
+    /// The last started, unfinished step; native resume does not start it again.
+    pub(super) pending_step: Option<String>,
     /// Entries per step name, from history plus this run.
     pub(super) attempts: BTreeMap<String, u32>,
     /// Latest outcome per step (decision `over` reads this).
@@ -61,7 +75,10 @@ impl RunCtx {
     /// Records a finished step's result for routing and data flow.
     pub(super) fn record(&mut self, step: &str, execution: Execution) {
         let Execution { result, usage, .. } = execution;
-        self.cost_usd += measured_cost(&usage);
+        if !self.factory_step(step) {
+            self.cost_usd += measured_cost(&usage);
+        }
+        self.pending_step = None;
         self.outcomes.insert(step.to_owned(), result.outcome);
         self.results.insert(step.to_owned(), result);
         self.usages.insert(step.to_owned(), usage);
@@ -99,7 +116,38 @@ impl RunCtx {
 
     pub(super) fn begin_attempt(&mut self, step: &str) {
         *self.attempts.entry(step.to_owned()).or_insert(0) += 1;
+        self.pending_step = Some(step.to_owned());
     }
+
+    pub(super) fn factory_step(&self, name: &str) -> bool {
+        self.plan
+            .pipeline
+            .steps
+            .iter()
+            .any(|step| step.name == name && step.copilot_factory.is_some())
+    }
+
+    pub(super) fn factory_cost(&mut self, records: &crate::runlog::copilot_factory::Records) {
+        let current = factory_cost(records);
+        self.cost_usd += (current - self.factory_cost_usd).max(0.0);
+        self.factory_cost_usd = current.max(self.factory_cost_usd);
+    }
+}
+
+fn initial_cost(plan: &RunPlan, history: &resume::History) -> f64 {
+    history
+        .usages
+        .iter()
+        .filter(|(name, _)| {
+            !plan
+                .pipeline
+                .steps
+                .iter()
+                .any(|step| &step.name == *name && step.copilot_factory.is_some())
+        })
+        .map(|(_, usage)| measured_cost(usage))
+        .sum::<f64>()
+        + factory_cost(&history.factories)
 }
 
 /// Assembles the machine's state from the plan and the replay.
@@ -112,7 +160,9 @@ pub(super) fn run_ctx(
     RunCtx {
         plan: plan.clone(),
         log: Arc::new(Mutex::new(log)),
-        cost_usd: history.usages.values().map(measured_cost).sum(),
+        cost_usd: initial_cost(plan, &history),
+        factory_cost_usd: factory_cost(&history.factories),
+        pending_step: history.pending_step,
         attempts: history.attempts,
         outcomes: history.outcomes,
         results: history.results,
@@ -153,13 +203,34 @@ pub(super) fn ownership_reason(ctx: &RunCtx) -> Option<String> {
     }
 }
 
-/// Appends an event, ignoring failures: a run never crashes over its
-/// own bookkeeping.
+/// Appends a factory-critical event under the same ownership fence as live output.
+pub(super) fn append_checked(
+    ctx: &RunCtx,
+    kind: EventKind,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    let owner = ctx
+        .plan
+        .lease
+        .as_ref()
+        .ok_or("local Copilot factories require a scheduler lease")?;
+    stream::append(&ctx.log, Some(owner), kind, data).map_err(|error| error.to_string())
+}
+
+pub(super) fn has_factories(ctx: &RunCtx) -> bool {
+    ctx.plan
+        .pipeline
+        .steps
+        .iter()
+        .any(|step| step.copilot_factory.is_some())
+}
+
 pub(super) fn append(ctx: &RunCtx, kind: EventKind, data: serde_json::Value) {
-    if ownership_reason(ctx).is_some() {
-        return;
+    if has_factories(ctx) {
+        let _ = append_checked(ctx, kind, data);
+    } else if ownership_reason(ctx).is_none() {
+        let _ = stream::lock(&ctx.log).append(kind, data);
     }
-    let _ = stream::lock(&ctx.log).append(kind, data);
 }
 
 /// The run's durable directory.

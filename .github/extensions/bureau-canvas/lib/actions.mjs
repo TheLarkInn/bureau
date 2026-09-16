@@ -6,6 +6,7 @@ import { advisories as loadAdvisories } from "./advisories.mjs";
 import { parse, render } from "./codec.mjs";
 import { configView, pipelineView } from "./view.mjs";
 import { deriveWorkSource } from "./worksource.mjs";
+import { factoryProblems, factorySchema } from "../web/copilot-factory.mjs";
 
 const SUBJECT_SCHEMA = {
   type: "object",
@@ -59,6 +60,18 @@ const REWIRE_SCHEMA = {
     target: { type: ["string", "null"] },
   },
   required: ["step", "outcome", "target"],
+};
+
+const SET_FACTORY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["pipeline", "step", "factory"],
+  properties: {
+    dir: { type: "string" },
+    pipeline: { type: "string" },
+    step: { type: "string" },
+    factory: { anyOf: [factorySchema, { type: "null" }] },
+  },
 };
 
 const SAVE_SCHEMA = {
@@ -133,6 +146,12 @@ export const actions = [
     handler: setField,
   },
   {
+    name: "set_copilot_factory",
+    description: "Set or remove a step's reviewed local Copilot factory configuration. Does not launch a factory.",
+    inputSchema: SET_FACTORY_SCHEMA,
+    handler: setCopilotFactory,
+  },
+  {
     name: "set_work_source",
     description: "Set an assignment's work source from a pasted board/issues URL, or from explicit fields, and validate the draft.",
     inputSchema: SET_WORK_SOURCE_SCHEMA,
@@ -189,6 +208,26 @@ export async function setField(ctx, deps = {}) {
     }
     const step = stepFor(draft.view, input.step);
     step.fields[FIELD_NAMES.get(input.field)] = input.value;
+  });
+}
+
+export async function setCopilotFactory(ctx, deps = {}) {
+  const value = ctx.input?.factory;
+  if (value !== null) {
+    const errors = factoryProblems(value);
+    if (errors.length) {
+      throw new Error(errors.join("; "));
+    }
+  }
+  return mutate(ctx, deps, (draft, input) => {
+    const step = stepFor(draft.view, input.step);
+    if (!step) {
+      throw new Error(`Unknown step: ${input.step}`);
+    }
+    if (value !== null && step.kind !== "agent") {
+      throw new Error("copilot_factory requires an agent step");
+    }
+    step.fields.copilotFactory = value === null ? null : structuredClone(value);
   });
 }
 

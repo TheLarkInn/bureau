@@ -26,7 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub use claim::LeaseOwner;
+pub use claim::{FreshClaim, LeaseOwner};
 pub use disposition::Disposition;
 pub use label_rule::{LabelRuleAudit, LabelRuleEvent, LabelRuleEventKind};
 pub use lease::maintain_lease;
@@ -45,7 +45,7 @@ pub enum Error {
     /// `SQLite` failure.
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
-    /// Filesystem failure opening the database file.
+    /// Filesystem failure in durable state or fresh-admission evidence.
     #[error(transparent)]
     Io(#[from] std::io::Error),
     /// A stored dedup token this build does not recognize.
@@ -60,6 +60,9 @@ pub enum Error {
     /// A supervised run returned without a durable terminal event.
     #[error("run `{0}` has no durable terminal event")]
     MissingTerminal(String),
+    /// A critical append no longer owns its supervisor generation.
+    #[error("lease for run `{0}` is not owned by this supervisor")]
+    LeaseLost(String),
 }
 
 /// A claim on one work item, with expiry. A crashed run releases

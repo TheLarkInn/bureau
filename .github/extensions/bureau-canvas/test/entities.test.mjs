@@ -24,6 +24,7 @@ const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 const scratchRoot = new URL("../../../../target/canvas-crud-tests/", import.meta.url);
 
 async function withDir(fn) {
+  await mkdir(scratchRoot, { recursive: true });
   const dir = await mkdtemp(join(fileURLToPath(scratchRoot), "cfg-"));
   try {
     await Promise.all(["roles", "assignments", "pipelines"].map((sub) => mkdir(join(dir, sub), { recursive: true })));

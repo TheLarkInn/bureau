@@ -29,6 +29,8 @@ import { stepNameProblem, TERMINAL_NAMES } from "../step-refs.mjs";
 import { removeStep, renameStep, syncSteps } from "../step-edit.mjs";
 import { layoutPipeline } from "../layout.js";
 import { terminalCopy, terminalOption } from "../terminals.js";
+import { stepFactoryProblems } from "../copilot-factory.mjs";
+import { FactorySettings } from "./copilot-factory.mjs";
 
 const h = React.createElement;
 const OUTCOMES = ["success", "failure", "blocked", "no-work"];
@@ -55,7 +57,9 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const [surface, setSurface] = useState("transitions");
 
   const view = useMemo(() => draft ?? editableView(pipeline?.view), [draft, pipeline]);
-  const hints = useMemo(() => problems(view), [view]);
+  const roles = state.config?.view?.roles ?? [];
+  const hints = useMemo(() => [...problems(view),
+    ...view.steps.flatMap((step) => stepFactoryProblems(step, view.steps, roles))], [view, roles]);
   const flow = useMemo(() => toFlow(view, positions, hints, saveResult), [view, positions, hints, saveResult]);
 
   const edit = (next) => {
@@ -66,7 +70,8 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
   const dirty = draft != null || layoutDirty;
   const invalidNumbers = view.steps.some((step) =>
     !positiveInteger(step.fields.maxAttempts)
-    || (step.kind === "concurrent" && !positiveInteger(step.fields.maxConcurrent ?? 1)));
+    || (step.kind === "concurrent" && !positiveInteger(step.fields.maxConcurrent ?? 1))
+    || stepFactoryProblems(step, view.steps, roles).length > 0);
   useEffect(() => {
     onDirtyChange?.(dirty);
     const beforeUnload = (event) => {
@@ -199,7 +204,7 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       h(SidePanel, {
         view,
         step: selectedStep,
-        roles: state.config?.view?.roles ?? [],
+        roles,
         hints,
         saveResult,
         onChange: (next) => edit(next),
@@ -505,7 +510,8 @@ function stepDetail(step) {
     return step.fields.run ?? "run command not set";
   }
   if (step.kind === "agent") {
-    return `role: ${step.fields.role ?? "not set"}`;
+    const factory = step.fields.copilotFactory?.name;
+    return `${factory ? `factory: ${factory}; ` : ""}role: ${step.fields.role ?? "not set"}`;
   }
   if (step.kind === "decision") {
     return `over: ${step.fields.over ?? "not set"}`;
@@ -693,6 +699,11 @@ function StepEditor({ view, step, roles, onChange, onClose, onDelete, onRename }
     })),
     nameProblem ? h("p", { className: "editor-hints" }, nameProblem) : null,
     h(KindFields, { view, step, roles, set }),
+    h(FactorySettings, {
+      key: step.name, value: step.fields.copilotFactory,
+      eligible: step.kind === "agent" && roles.find((role) => role.name === step.fields.role)?.adapter === "copilot",
+      onChange: (value) => set("copilotFactory", value),
+    }),
     h(DependencyFields, { view, step, set }),
     h(EdgeEditor, { view, step, onChange }),
     h("label", {}, "max attempts", h("input", {

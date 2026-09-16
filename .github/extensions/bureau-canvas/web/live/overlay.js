@@ -9,6 +9,8 @@
 // per-node classes, per-edge animation flags, and expansion hints a React
 // Flow view applies to the static pipeline graph.
 
+import { emptyFactories, factoryRunState, projectFactory } from "./copilot-factory.mjs";
+
 export const STEP_PENDING = "pending";
 export const STEP_RUNNING = "running";
 export const STEP_COMPLETED = "completed";
@@ -28,6 +30,7 @@ export const EVENTS = {
   groupMemberCancelled: "group_member_cancelled",
   groupFinished: "group_finished",
   runFinished: "run_finished",
+  copilotFactory: "copilot_factory",
 };
 
 /**
@@ -150,6 +153,7 @@ export function emptyOverlay() {
     current: null,
     transitions: [],
     lastSeq: -1,
+    factories: emptyFactories(),
   };
 }
 
@@ -268,7 +272,16 @@ const HANDLERS = {
   [EVENTS.groupMemberCancelled]: groupMemberCancelled,
   [EVENTS.groupFinished]: groupFinished,
   [EVENTS.runFinished]: runFinished,
+  [EVENTS.copilotFactory]: copilotFactory,
 };
+
+function copilotFactory(overlay, event) {
+  const factories = projectFactory(overlay.factories ?? emptyFactories(), event);
+  return withEvent(overlay, event, {
+    factories,
+    status: factoryRunState(factories, overlay.current, overlay.status),
+  });
+}
 
 function runStarted(overlay, event) {
   return withEvent(overlay, event, {
@@ -308,7 +321,7 @@ function output(overlay, event) {
   // dedicated kind; the message text is the only signal in the log.
   const text = event.data?.data ?? "";
   if (event.data?.stream === "run" && PAUSED_MESSAGE.test(text)) {
-    return withEvent(overlay, event, { status: "paused" });
+    return withEvent(overlay, event, { status: factoryRunState(overlay.factories, overlay.current, "paused") });
   }
   return withEvent(overlay, event, {});
 }

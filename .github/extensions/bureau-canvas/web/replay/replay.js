@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
 import { sessionValue, storeSessionValue } from "../session-state.js";
 import { emptyOverlay, stateUpTo } from "../live/overlay.js";
+import { readHistory } from "../live/history.mjs";
 
 const h = React.createElement;
 const SPEEDS = [1, 4, 16];
@@ -26,6 +27,7 @@ export function useReplayOverlay(activity, pipeline) {
   const storageKey = `replay-run:${pipeline}`;
   const [runId, setRunId] = useState(() => sessionValue(storageKey));
   const [events, setEvents] = useState([]);
+  const [historyError, setHistoryError] = useState(null);
   const [range, setRange] = useState({ start: 0, end: 0 });
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -36,6 +38,10 @@ export function useReplayOverlay(activity, pipeline) {
   useEffect(() => storeSessionValue(storageKey, runId), [runId, storageKey]);
 
   useEffect(() => {
+    setEvents([]);
+    setPlaying(false);
+    setHistoryError(null);
+    setRange({ start: 0, end: 0 });
     if (!runId) {
       setEvents([]);
       setPlaying(false);
@@ -44,7 +50,7 @@ export function useReplayOverlay(activity, pipeline) {
     let alive = true;
     setCollapsed(new Set());
     fetch(`./runs/${encodeURIComponent(runId)}/events`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : { events: [] }))
+      .then(readHistory)
       .then((payload) => {
         if (!alive) {
           return;
@@ -57,7 +63,9 @@ export function useReplayOverlay(activity, pipeline) {
         positionRef.current = start;
         setPosition(start);
       })
-      .catch(() => {});
+      .catch((error) => {
+        if (alive) setHistoryError(String(error.message ?? error));
+      });
     return () => {
       alive = false;
     };
@@ -99,7 +107,8 @@ export function useReplayOverlay(activity, pipeline) {
     "div",
     { className: "replay-controls" },
     h(RunPicker, { activity, liveOnly: false, value: runId, onChange: setRunId }),
-    runId ? h(Timeline, { range, position, playing, speed, onScrub, onPlay: () => setPlaying(!playing), onSpeed: setSpeed, onStep: stepBy }) : null,
+    runId && !historyError ? h(Timeline, { range, position, playing, speed, onScrub, onPlay: () => setPlaying(!playing), onSpeed: setSpeed, onStep: stepBy }) : null,
+    historyError ? h("p", { className: "run-control-error", role: "alert" }, historyError) : null,
   );
 
   function onScrub(value) {

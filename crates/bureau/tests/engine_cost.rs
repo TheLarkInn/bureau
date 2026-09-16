@@ -120,6 +120,7 @@ fn step(name: &str, kind: StepKind) -> StepDef {
         kind,
         run: None,
         role: None,
+        copilot_factory: None,
         fixture: None,
         trust: None,
         over: None,

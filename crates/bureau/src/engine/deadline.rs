@@ -40,6 +40,10 @@ pub(super) fn remaining(deadline: tokio::time::Instant) -> Duration {
     deadline.saturating_duration_since(monotonic_now())
 }
 
+pub(super) fn after(duration: Duration) -> tokio::time::Instant {
+    monotonic_now() + duration
+}
+
 pub(super) fn bounded(
     configured_secs: Option<u64>,
     fallback: Duration,

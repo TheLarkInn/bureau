@@ -18,12 +18,14 @@ exhaustive = true
 "bureau:process" = ["identity"]
 "bureau:forge" = ["contract", "process"]
 "bureau:git" = ["forge", "process"]
+"bureau:github_cloud" = ["config", "forge", "runlog", "process", "state"]
 "bureau:label_reconcile" = ["config", "forge", "identity", "state"]
 "bureau:credential" = ["process"]
 "bureau:mcp" = ["contract"]
 "bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
 "bureau:adapters" = ["config", "contract", "mcp", "process"]
 "bureau:runlog" = ["adapters", "config", "contract", "forge", "process"]
+# Admission prepares replay outside state transactions and streams exact-byte digest validation.
 "bureau:state" = ["config", "forge", "identity", "runlog"]
 "bureau:engine" = [
     "adapters",
@@ -32,6 +34,7 @@ exhaustive = true
     "forge",
     "git",
     "identity",
+    "mcp",
     "process",
     "runlog",
     "state",
@@ -65,17 +68,22 @@ exhaustive = true
 # Crate-root shared types.
 "bureau_plugin:PluginSource" = []
 "bureau_plugin:Resolved" = []
+"bureau_plugin:Resolver" = []
 "bureau_plugin:error" = []
+"bureau_plugin:digest" = []
 "bureau_plugin:reference" = ["error"]
 "bureau_plugin:json" = ["error"]
 "bureau_plugin:paths" = ["error"]
-"bureau_plugin:tree" = ["error"]
+"bureau_plugin:tree" = ["error", "digest"]
+"bureau_plugin:storage" = ["error"]
+"bureau_plugin:material" = ["error", "paths", "storage", "tree"]
+"bureau_plugin:pinned" = ["PluginSource", "Resolved", "Resolver", "catalog", "error", "json", "paths", "reference", "settings", "snapshot"]
 "bureau_plugin:package" = ["error"]
 "bureau_plugin:settings" = ["error", "json", "paths"]
 "bureau_plugin:catalog" = ["error", "json", "paths", "settings"]
 "bureau_plugin:global" = ["Resolved", "error", "json", "paths"]
 "bureau_plugin:resolve" = ["Resolved", "catalog", "error", "global", "settings"]
-"bureau_plugin:snapshot" = ["PluginSource", "Resolved", "error", "json", "paths", "tree"]
+"bureau_plugin:snapshot" = ["PluginSource", "Resolved", "error", "json", "paths", "storage", "tree"]
 "bureau_plugin:restoration" = ["error", "package"]
 "bureau_plugin:guard" = ["error", "restoration"]
 "bureau_plugin:activation" = [

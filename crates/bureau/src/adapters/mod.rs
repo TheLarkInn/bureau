@@ -9,6 +9,7 @@
 mod acp;
 pub mod claude;
 pub mod copilot;
+pub mod copilot_factory;
 pub mod fake;
 pub(crate) mod real;
 mod transcript;
@@ -182,6 +183,10 @@ pub async fn execute(
     secrets: Vec<Secret>,
     log: Option<SharedLog>,
 ) -> Execution {
+    if step.copilot_factory.is_some() {
+        return failed("local Copilot factories require the engine's durable execution context")
+            .halt();
+    }
     let future: ExecuteFuture<'_> = match role.adapter {
         AdapterKind::Fake => Box::pin(fake::execute(step, request, timeout, secrets, log)),
         AdapterKind::Copilot => {

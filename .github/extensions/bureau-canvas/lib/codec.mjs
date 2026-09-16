@@ -161,6 +161,7 @@ function presentFields(step) {
   for (const [target, source] of [
     ["run", "run"],
     ["role", "role"],
+    ["copilotFactory", "copilot_factory"],
     ["fixture", "fixture"],
     ["trust", "trust"],
     ["over", "over"],
@@ -256,7 +257,10 @@ function applyValueChange(yamlDoc, path, before, after) {
   if (!changedValue(before, after)) {
     return;
   }
-  if (isPlainMap(before) && isPlainMap(after)) {
+  // Factory args are opaque JSON; their arrays are not editor-managed sets.
+  if (path.at(-2) === "copilot_factory" && path.at(-1) === "args") {
+    yamlDoc.setIn(path, after);
+  } else if (isPlainMap(before) && isPlainMap(after)) {
     applyMapChange(yamlDoc, path, before, after);
   } else if (Array.isArray(before) && Array.isArray(after)) {
     applySequenceChange(yamlDoc, path, before, after);
@@ -394,6 +398,7 @@ function rawStepEdges(step, edges) {
 const RAW_STEP_FIELDS = [
   ["run", "run"],
   ["role", "role"],
+  ["copilotFactory", "copilot_factory"],
   ["fixture", "fixture"],
   ["trust", "trust"],
   ["over", "over"],
@@ -436,6 +441,7 @@ function mutableFields() {
   return [
     ["run", "run"],
     ["role", "role"],
+    ["copilotFactory", "copilot_factory"],
     ["trust", "trust"],
     ["over", "over"],
     ["inputsFrom", "inputs_from"],

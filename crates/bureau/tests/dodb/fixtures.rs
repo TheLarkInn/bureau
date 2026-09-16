@@ -107,6 +107,7 @@ pub fn det_step(run: &str) -> StepDef {
         kind: StepKind::Deterministic,
         run: Some(run.to_owned()),
         role: None,
+        copilot_factory: None,
         fixture: None,
         trust: None,
         over: None,

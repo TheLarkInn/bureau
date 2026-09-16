@@ -5,6 +5,7 @@
 //! authorization model. Loading accumulates every error found into one
 //! `Vec`.
 
+mod copilot_factory;
 mod files;
 mod label_rule;
 mod pipeline;
@@ -16,6 +17,9 @@ mod validate_label_rule;
 mod validate_pipeline;
 
 pub use crate::forge::ForgeKind;
+pub use copilot_factory::{
+    CopilotFactory, CopilotFactoryLimits, CopilotFactoryProfile, CopilotFactoryRuntime,
+};
 pub use files::{
     Access, AdapterKind, Assignment, Limits, Named, Permission, Repo, ReposFile, Role, WorkSource,
 };

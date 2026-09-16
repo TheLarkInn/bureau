@@ -1,0 +1,27 @@
+{
+  "name": "review",
+  "extension": "project:review",
+  "extension_digest": "tree-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "model_credential": "copilot-model",
+  "metadata": "factory.json",
+  "runtime": {
+    "profile": "copilot-sdk-factory-v1",
+    "directory": "/opt/qualified-copilot",
+    "digest": "tree-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "version": "qualified-test-build",
+    "executable": "bin/node",
+    "cli": "dist/index.js",
+    "dist": "dist"
+  },
+  "args": {
+    "step": "verify",
+    "nested": { "inputs_from": ["verify"], "count": 3 },
+    "optional": null
+  },
+  "limits": {
+    "max_concurrent_subagents": 2,
+    "max_total_subagents": 4,
+    "timeout_seconds": 120,
+    "max_ai_credits": 1.5
+  }
+}

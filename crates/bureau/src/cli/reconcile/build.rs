@@ -4,6 +4,7 @@ use crate::cli::out;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::cli::factory_credentials;
 use anyhow::Context as _;
 use bureau::config::{Assignment, Config, ForgeKind, LabelRule, Repo};
 use bureau::forge::ado::AdoForge;
@@ -11,6 +12,7 @@ use bureau::forge::github::GitHubForge;
 use bureau::forge::{Forge, LabelForge};
 use bureau::git::{Credential, credential_for};
 use bureau::process::{Secret, resolve};
+use bureau::runlog::RunSnapshot;
 
 use super::ForgeArg;
 
@@ -99,16 +101,20 @@ pub(super) fn config_credential(
 pub(super) fn credentials(
     config: &Config,
     settings: Option<&bureau::setup::Settings>,
-) -> BTreeMap<String, Secret> {
+) -> anyhow::Result<factory_credentials::Resolution> {
+    let mut credentials = factory_credentials::for_assignments(config, settings)?;
     let references: BTreeSet<_> = config
         .repos
         .values()
         .map(|repo| repo.credential.as_str())
         .collect();
-    references
+    let repos: BTreeMap<_, _> = references
         .into_iter()
+        .filter(|reference| !credentials.values.contains_key(*reference))
         .filter_map(|reference| resolve_optional(settings, reference))
-        .collect()
+        .collect();
+    credentials.values.extend(repos);
+    Ok(credentials)
 }
 
 pub(super) fn credentials_for_repos(
@@ -127,6 +133,16 @@ pub(super) fn credentials_for_repos(
             Ok((reference.to_owned(), secret))
         })
         .collect()
+}
+
+pub(super) fn credentials_for_snapshot(
+    snapshot: &RunSnapshot,
+    settings: Option<&bureau::setup::Settings>,
+) -> anyhow::Result<BTreeMap<String, Secret>> {
+    let models = factory_credentials::for_pipeline(&snapshot.pipeline, settings)?;
+    let mut credentials = credentials_for_repos(&snapshot.repos, settings)?;
+    credentials.extend(models);
+    Ok(credentials)
 }
 
 pub(super) fn forges(
