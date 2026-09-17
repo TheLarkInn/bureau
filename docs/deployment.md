@@ -101,6 +101,12 @@ requires a distinct backing filesystem and a read-only mount, not an ordinary
 empty directory on the Linux root. Other hosts need a reviewed path adjustment.
 Unobservable capacity, the nearly-full native root, or insufficient backing
 space is a refusal, not a cleanup request.
+Filesystem proof uses an existing, non-symlink directory opened with Linux
+`O_PATH`. Its `/proc/self/fdinfo` mount ID selects the exact mountinfo record;
+row order and equal-path hidden mounts cannot establish read-only status.
+Capacity and device identity are read through that same live descriptor.
+Missing/inaccessible paths, malformed metadata and unknown mount IDs fail;
+there is no fallback to a read-only ancestor.
 
 The systemd sample bounds the whole service to 8 GiB RAM, zero extra swap,
 two CPUs and 256 PIDs. It restarts at most three times in fifteen minutes.
@@ -128,6 +134,11 @@ the check's RSS/process ceilings by changing its group. The observation table
 is capped at 8,192 entries and incompatible parent identities fail closed. No
 earlier process state is combined with a later optional `VmRSS` field. A numeric
 zero is an observation; missing, malformed or unreadable live counters fail.
+Scratch/cache walks tolerate only explicitly vanished non-root children
+(`ENOENT`/`ESRCH`), retaining already observed bytes conservatively. Attempted
+entries still count toward the 10,000-entry bound. Root identity is pinned
+before execution and rechecked during and after enumeration; missing/replaced
+roots, permission errors, malformed sizes and escaping names remain failures.
 
 Browser audits have a 150-second outer deadline; short chaos checks have five
 minutes including an offline, single-job rebuild. Full repository verification
@@ -155,7 +166,7 @@ than killing work. Inspect before explicitly retrying a failed/indeterminate run
 
 | Assignment | Deterministic detector | Automatic patch scope |
 |---|---|---|
-| `maintenance-chaos` | `maintenance_chaos` / `seeded_offline_invariants`, fake agents/forges, seed in evidence | `crates/` and required `dylint.toml` edges; invariant suite protected |
+| `maintenance-chaos` | `maintenance_chaos` / `seeded_offline_invariants`, fake agents/forges, seed in evidence | `crates/` and required `dylint.toml` edges; invariant suites and build inputs protected |
 | `maintenance-site-accessibility` | `node site/check.mjs --kind accessibility --json`, real loopback browser/axe | `site/src/**` only |
 | `maintenance-site-responsive` | `node site/check.mjs --kind responsive --json`, real viewport measurements | `site/src/**` only |
 
@@ -235,6 +246,12 @@ current checkout is a later descendant of its source commit.
 It re-runs the real detector, checks paths, pins verification code against the
 initial source even across checkpoint commits, and runs all repository gates
 before reaching the existing engine's lease-fenced PR publication.
+Rust/Node manifests and locks at every depth, `build.rs`, `.cargo`, toolchain,
+formatting and Git-filter inputs are not automatic patch scope. The reviewed
+bootstrap and the command adapter both pin those inputs before any Cargo
+invocation; tracked files are compared as raw bytes with the initial source.
+Ignored/untracked additions and index-hiding flags cannot redirect the exact
+test target. Such changes require a separately reviewed human patch.
 Deterministic `inputs_from` entries come last so agent outputs cannot overwrite
 the source/evidence pins. Checks and model text do not replace human PR review.
 

@@ -85,7 +85,8 @@ test("scratch accounting counts browser profile symlinks without following their
     async lstat(path) {
       visited.push(path);
       const directory = path === "/scratch";
-      return { size: directory ? 100 : 30, isDirectory: () => directory, isSymbolicLink: () => !directory };
+      return { dev: 1n, ino: directory ? 2n : 3n, size: directory ? 100 : 30,
+        isDirectory: () => directory, isSymbolicLink: () => !directory };
     },
     async readdir(path) {
       assert.equal(path, "/scratch");
@@ -93,5 +94,5 @@ test("scratch accounting counts browser profile symlinks without following their
     },
   });
   assert.equal(bytes, 130);
-  assert.equal(visited.length, 2);
+  assert.equal(visited.length, 4);
 });
