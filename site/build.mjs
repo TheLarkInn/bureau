@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { readBoundedFile } from "../scripts/maintenance-files.mjs";
 import { escapeHtml, renderPrinciples, renderScenarios, repository, source } from "./content.mjs";
 import { validateLinks } from "./links.mjs";
 import { isMain, normalizeBase, normalizeOrigin, siteDirectory } from "./paths.mjs";
@@ -32,7 +33,7 @@ async function assertOutput(directory, prefix = "") {
   }
 }
 
-export async function build({ base = "/bureau/", origin, out = join(siteDirectory, "dist") } = {}) {
+export async function build({ base = "/bureau/", origin, out = join(siteDirectory, "dist") } = {}, openFile) {
   const path = normalizeBase(base);
   const canonical = normalizeOrigin(origin);
   const values = {
@@ -42,7 +43,8 @@ export async function build({ base = "/bureau/", origin, out = join(siteDirector
   };
   const files = new Map();
   for (const name of publicFiles) {
-    let bytes = name === ".nojekyll" ? Buffer.alloc(0) : await readFile(join(siteDirectory, "src", name));
+    let bytes = name === ".nojekyll" ? Buffer.alloc(0)
+      : await readBoundedFile(join(siteDirectory, "src", name), maximumBuildBytes, openFile);
     if (name.endsWith(".html")) bytes = Buffer.from(render(bytes.toString(), values));
     files.set(name, bytes);
   }

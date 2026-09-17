@@ -1,22 +1,24 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { readBoundedFile, readBoundedJson } from "../scripts/maintenance-files.mjs";
 import { publicFiles, maximumBuildBytes } from "./build.mjs";
 import { isMain, normalizeBase, siteDirectory } from "./paths.mjs";
 
 const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".svg": "image/svg+xml" };
+const maximumManifestBytes = 16 * 1024;
 
-async function readBuild(directory) {
+async function readBuild(directory, openFile) {
   for (const name of ["", "assets", "site-manifest.json"]) {
     const info = await lstat(join(directory, name));
     if (info.isSymbolicLink()) throw new Error(`Invalid build symlink: ${name}`);
-    if (name === "site-manifest.json" && (!info.isFile() || info.size > 16 * 1024)) {
+    if (name === "site-manifest.json" && (!info.isFile() || info.size > maximumManifestBytes)) {
       throw new Error("Invalid build manifest file.");
     }
   }
-  const manifest = JSON.parse(await readFile(join(directory, "site-manifest.json"), "utf8"));
+  const manifest = await readBoundedJson(join(directory, "site-manifest.json"), maximumManifestBytes, openFile);
   if (manifest.schema !== "bureau-site-build-v1"
     || JSON.stringify(Object.keys(manifest.files).sort()) !== JSON.stringify([...publicFiles].sort())) {
     throw new Error("Build manifest does not contain the exact public file set.");
@@ -28,7 +30,7 @@ async function readBuild(directory) {
     if (!info.isFile() || info.isSymbolicLink() || info.size > maximumBuildBytes) {
       throw new Error(`Invalid public file: ${name}`);
     }
-    const bytes = await readFile(join(directory, name));
+    const bytes = await readBoundedFile(join(directory, name), maximumBuildBytes, openFile);
     const expected = manifest.files[name];
     if (bytes.length !== expected.bytes || createHash("sha256").update(bytes).digest("hex") !== expected.sha256) {
       throw new Error(`Build changed after validation: ${name}`);
@@ -49,9 +51,9 @@ function send(response, status, bytes, type, head) {
   response.end(head ? undefined : bytes);
 }
 
-export async function serve({ directory = join(siteDirectory, "dist"), port = 0 } = {}) {
+export async function serve({ directory = join(siteDirectory, "dist"), port = 0 } = {}, openFile) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("Port must be an integer from 0 to 65535.");
-  const { files, base } = await readBuild(directory);
+  const { files, base } = await readBuild(directory, openFile);
   const server = createServer((request, response) => {
     const head = request.method === "HEAD";
     if (!["GET", "HEAD"].includes(request.method)) {

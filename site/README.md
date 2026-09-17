@@ -43,6 +43,13 @@ local links/anchors, and writes deterministic SHA-256 metadata. Public files
 must total at most 256 KiB. No configuration, state, credentials, source maps,
 or `CNAME` are included. The output and test evidence are ignored by Git.
 
+Input reads use the shared file-descriptor-bounded reader: at most 256 KiB
+per source/public file and 16 KiB for the preview manifest. Each read checks
+the opened descriptor and allocates only its limit plus one lookahead byte,
+so growth after a size check cannot cause an unbounded read. Preview
+manifests also require valid UTF-8. These are file/output limits, not a
+256 KiB cap on the entire Node process.
+
 ## Content contract
 
 `src/index.html` and `src/404.html` are the page templates. Original styles,
