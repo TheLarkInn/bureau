@@ -1,0 +1,15 @@
+{
+  "schema": "bureau-maintenance-policy-v1",
+  "issuer_login": "TheLarkInn",
+  "issuer_id": 3408176,
+  "source_issues": {
+    "chaos": 131,
+    "site-accessibility": 132,
+    "site-responsive": 130
+  },
+  "backing_paths": [],
+  "site_tools": "/opt/bureau/site-tools",
+  "browser_path": "/opt/bureau/browsers",
+  "cargo_target": "/var/cache/bureau-maintenance/cargo",
+  "cargo_cache_max_bytes": 8589934592
+}

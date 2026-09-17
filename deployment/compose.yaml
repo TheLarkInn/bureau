@@ -1,0 +1,40 @@
+services:
+  reconcile:
+    # Build and qualify this image beforehand; never download/install at startup.
+    image: ${BUREAU_IMAGE:?set a reviewed immutable image digest}
+    user: "1000:1000"
+    init: true
+    read_only: true
+    working_dir: /opt/bureau/source
+    entrypoint:
+      - /usr/bin/flock
+      - --nonblock
+      - --no-fork
+      - /var/lib/bureau-maintenance/owner.lock
+      - /bin/bash
+      - /opt/bureau/source/deployment/run-owner.sh
+    environment:
+      HOME: /var/lib/bureau-maintenance-runtime
+      BUREAU_HOME: /var/lib/bureau-maintenance
+      BUREAU_CONFIG_COMMIT: ${BUREAU_CONFIG_COMMIT:?set the reviewed full commit}
+      BUREAU_DEPLOYMENT_APPROVED: ${BUREAU_DEPLOYMENT_APPROVED:-false}
+      PATH: /opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
+    mem_limit: 8g
+    memswap_limit: 8g
+    cpus: "2.0"
+    pids_limit: 256
+    stop_signal: SIGTERM
+    stop_grace_period: 70m
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - bureau-maintenance-state:/var/lib/bureau-maintenance
+      - bureau-maintenance-runtime:/var/lib/bureau-maintenance-runtime
+      - bureau-maintenance-cache:/var/cache/bureau-maintenance
+    # No public ports, host home, SSH agent, container socket, or privileged mode.
+
+volumes:
+  bureau-maintenance-state:
+  bureau-maintenance-runtime:
+  bureau-maintenance-cache:

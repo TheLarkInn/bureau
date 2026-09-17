@@ -1,0 +1,5 @@
+name: maintenance-site-accessibility-fixer
+agent: agents/maintenance-site-accessibility-fixer.agent.md
+adapter: copilot
+permissions: [repo:read, repo:write, model:invoke]
+min_trust: derived

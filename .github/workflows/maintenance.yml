@@ -1,0 +1,39 @@
+name: Maintenance intent
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bureau-maintenance-intent
+  cancel-in-progress: false
+
+jobs:
+  intent:
+    if: >-
+      github.repository == 'TheLarkInn/bureau' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      vars.BUREAU_MAINTENANCE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
+      - name: Update approved source intent, never dispatch runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUREAU_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BUREAU_MAINTENANCE_ENABLED: ${{ vars.BUREAU_MAINTENANCE_ENABLED }}
+        run: node scripts/update-maintenance-intent.mjs
