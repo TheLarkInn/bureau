@@ -7,7 +7,7 @@ const VERIFIER_ROOTS = ["crates/bureau/tests/maintenance_chaos", "crates/bureau/
   "crates/bureau/tests/runlog_framing", "crates/bureau/tests/migration_cli",
   "crates/bureau/tests/edge/testdir", "crates/bureau/src/cli/run/tests",
   "crates/bureau/src/cli/run/claim/tests", "crates/bureau/src/cli/run/observe/tests",
-  "crates/bureau/src/state/accounting/tests"];
+  "crates/bureau/src/state/accounting/tests", "crates/bureau/src/state/claim/fresh/quota/tests"];
 
 export const VERIFICATION_INPUTS = [
   ...INPUT_NAMES.map((name) => `:(glob)**/${name}`),
