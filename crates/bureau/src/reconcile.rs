@@ -180,7 +180,7 @@ impl Reconciler {
         }
     }
 
-    /// Claims one item — CAS first, then dedup — and spawns its run.
+    /// Excludes seen content inside the claim fence before charging and spawning.
     fn claim_one(
         &self,
         observed: &Observed<'_>,
@@ -192,11 +192,12 @@ impl Reconciler {
         let key = forge_key(observed.assignment.work.forge);
         let run_id = new_run_id(name)?;
         let owner = LeaseOwner::new(self.state.clone(), name, key, &external_id, &run_id)?;
-        match owner.claim_fresh_with_limits(
+        match owner.claim_fresh_unseen_with_limits(
             crate::supervise::LEASE_TTL,
             &self.engine.runs_dir,
             &observed.assignment.limits,
             observed.open_prs.len(),
+            &item.content_hash(),
         )? {
             Some(FreshClaim::Claimed) => {
                 self.start_claimed(observed, item, &run_id, owner, started)?;

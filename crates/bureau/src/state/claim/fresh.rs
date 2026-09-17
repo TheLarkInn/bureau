@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use super::super::{Error, Store, limits, now_millis, usage};
+use super::super::{Error, Store, now_millis};
 use super::LeaseOwner;
-use crate::config::Limits;
 use crate::runlog::{FactoryHistory, FactorySource};
+
+mod quota;
 
 #[cfg(test)]
 mod tests;
@@ -127,6 +128,7 @@ impl Store {
 #[derive(Debug, PartialEq, Eq)]
 pub enum FreshClaim {
     Claimed,
+    /// An existing lease or fenced eligibility check excludes this item.
     Busy,
     PreservedFactory(String),
 }
@@ -207,34 +209,5 @@ impl LeaseOwner {
     /// Propagates database failures and unreadable or inconsistent authoritative logs.
     pub fn claim_fresh(&self, ttl: Duration, runs: &Path) -> Result<FreshClaim, Error> {
         self.claim_fresh_with(ttl, runs, || {})
-    }
-
-    /// Rechecks durable assignment usage and claims the item in one write transaction.
-    ///
-    /// Returns `None` when a configured limit is exhausted. `open_prs` is the
-    /// caller's forge observation; this does not reserve future PRs or unmeasured cost.
-    /// Existing-run recovery continues using `claim`, not fresh admission.
-    ///
-    /// # Errors
-    /// Propagates database failures and unreadable or inconsistent authoritative logs.
-    pub fn claim_fresh_with_limits(
-        &self,
-        ttl: Duration,
-        runs: &Path,
-        limits: &Limits,
-        open_prs: usize,
-    ) -> Result<Option<FreshClaim>, Error> {
-        let mut exhausted = false;
-        let claim = self.claim_fresh_if(
-            ttl,
-            runs,
-            |connection, now| {
-                let (live, hour, day, spent) = usage(connection, &self.key.assignment, now)?;
-                exhausted = limits::remaining(limits, open_prs, live, hour, day, spent) == 0;
-                Ok(!exhausted)
-            },
-            || {},
-        )?;
-        Ok((!exhausted).then_some(claim))
     }
 }

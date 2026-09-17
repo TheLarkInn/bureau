@@ -231,6 +231,10 @@ pending work: it has no queue position, retry plan, or scheduling decision.
 Lease renewal, expiry, release, and same-run recovery never erase or retime an
 admission. Hourly and daily limits therefore apply independently of concurrency
 and terminal completion; terminal cost projection must not charge the run twice.
+Standing reconciliation checks seen-content eligibility inside that same claim
+fence, before committing a lease or rate charge. Already-seen work must not consume
+the rate budget of later fresh work. Explicit `run` and `retry` retain their
+ability to repeat seen content; committed admissions are never refunded afterward.
 
 Legacy completed counters retain their recorded times. Upgrade retains every
 remaining legacy lease, including expired leases; an unknown admission time is
