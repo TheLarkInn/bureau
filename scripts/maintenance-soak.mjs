@@ -9,7 +9,7 @@ import { requireValue } from "./maintenance-contract.mjs";
 import { boundedChild } from "./maintenance-child.mjs";
 import { CHAOS_TEST, chaosResult, workspace } from "./maintenance-checks.mjs";
 import { BOUNDS, MiB, admit } from "./maintenance-resources.mjs";
-import { readSuite } from "./maintenance-suite.mjs";
+import { binaryIdentity, readSuite } from "./maintenance-suite.mjs";
 
 export function nextSeed(seed) {
   return (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -77,14 +77,17 @@ async function main() {
   try {
     const result = await runSoak(options, async (seed, timeoutMs) => {
       await admit({ cwd: root, backingPaths });
+      requireValue(await binaryIdentity(suite.binary) === suite.identity, "suite binary changed before repetition");
       const scratch = await mkdtemp(join(parent, "iteration-"));
       try {
-        return await boundedChild(suite.binary, [CHAOS_TEST, "--exact", "--nocapture", "--test-threads=1"], {
+        const run = await boundedChild(suite.binary, [CHAOS_TEST, "--exact", "--nocapture", "--test-threads=1"], {
           cwd: scratch, scratch, timeoutMs, backingPaths,
           lockPath: join(root, "bureau-maintenance-command.lock"),
           bounds: { ...BOUNDS, maxRss: 512 * MiB, maxProcesses: 64 },
           environment: { TMPDIR: scratch, BUREAU_CHAOS_SEED: String(seed) },
         });
+        requireValue(await binaryIdentity(suite.binary) === suite.identity, "suite binary changed during repetition");
+        return run;
       } finally {
         requireValue(await realpath(scratch) === resolve(scratch), "iteration scratch identity changed");
         await rm(scratch, { recursive: true });

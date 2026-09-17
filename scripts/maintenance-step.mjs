@@ -6,7 +6,7 @@ import {
 import { github } from "./maintenance-http.mjs";
 import { loadPolicy } from "./maintenance-policy.mjs";
 import { checkSource, liveFix, observe, verifyDraft, verifyHandoff } from "./maintenance-lifecycle.mjs";
-import { git, requireClean, requirePatch, runCheck, saveEvidence, workspace } from "./maintenance-checks.mjs";
+import { CheckFailure, git, requireClean, requirePatch, runCheck, saveEvidence, workspace } from "./maintenance-checks.mjs";
 
 async function intake(category, request, policy, api) {
   const number = issueNumber(request.item.external_id);
@@ -102,11 +102,23 @@ export async function executeStep(category, request, policy, api) {
   throw new Error(`unknown deterministic maintenance step: ${request.step}`);
 }
 
+export async function failureResult(error, request, persist = saveEvidence) {
+  if (!(error instanceof CheckFailure)) return stepResult("blocked", {}, error.message);
+  try {
+    const value = { complete: false, source: request.inputs?.maintenance_source, message: error.message };
+    const artifacts = await persist(value, error.log, request.step);
+    return stepResult("blocked", {}, error.message, artifacts);
+  } catch (persistence) {
+    return stepResult("blocked", {},
+      `${error.message}; failed to preserve check evidence: ${persistence.message}`);
+  }
+}
+
 export async function runStep(category, request) {
   try {
     const result = await executeStep(category, request, await loadPolicy(), github());
     console.log(JSON.stringify(result));
   } catch (error) {
-    console.log(JSON.stringify(stepResult("blocked", {}, error.message)));
+    console.log(JSON.stringify(await failureResult(error, request)));
   }
 }

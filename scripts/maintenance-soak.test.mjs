@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { nextSeed, runSoak, soakOptions } from "./maintenance-soak.mjs";
-import { validateSuite } from "./maintenance-suite.mjs";
+import { binaryIdentityOf, validateSuite } from "./maintenance-suite.mjs";
 import { COMMIT, libtestRun } from "./maintenance-test-support.mjs";
 
 function clock() {
@@ -24,6 +24,16 @@ test("soak duration and iteration bounds cannot grow without limit", () => {
     { minutes: 0 }, { minutes: NaN }, { maxIterations: 2001 }, { maxIterations: 0 }]) {
     assert.throws(() => soakOptions(options));
   }
+});
+
+test("binary admission identity notices replacement or rebuild without rehashing every repetition", () => {
+  const file = { isFile: () => true, isSymbolicLink: () => false,
+    dev: 1n, ino: 2n, size: 300n, mtimeNs: 40n, ctimeNs: 50n };
+  const original = binaryIdentityOf(file);
+  for (const key of ["dev", "ino", "size", "mtimeNs", "ctimeNs"]) {
+    assert.notEqual(binaryIdentityOf({ ...file, [key]: file[key] + 1n }), original);
+  }
+  assert.throws(() => binaryIdentityOf({ ...file, isSymbolicLink: () => true }), /regular file/u);
 });
 
 test("a successful campaign reaches its requested duration without a real wait or a build", async () => {

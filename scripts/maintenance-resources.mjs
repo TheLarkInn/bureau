@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { requireValue } from "./maintenance-contract.mjs";
 import { readOnlyMount } from "./maintenance-tools.mjs";
 
+export { processGroupUsage } from "./maintenance-process.mjs";
+
 export const MiB = 1024 * 1024;
 export const GiB = 1024 * MiB;
 export const BOUNDS = Object.freeze({
@@ -120,31 +122,6 @@ export async function directoryBytes(root, maximum = BOUNDS.maxScratch, inspect 
     }
   }
   return bytes;
-}
-
-export async function processGroupUsage(pgid) {
-  let rss = 0;
-  let count = 0;
-  for (const name of await readdir("/proc")) {
-    if (!/^\d+$/u.test(name)) continue;
-    let stat;
-    let status;
-    try {
-      stat = await readFile(`/proc/${name}/stat`, "utf8");
-      status = await readFile(`/proc/${name}/status`, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT" || error.code === "ESRCH") continue;
-      throw error;
-    }
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/u);
-    if (Number(fields[2]) !== pgid) continue;
-    count += 1;
-    const memory = /^VmRSS:\s+(\d+) kB$/mu.exec(status);
-    requireValue(memory || fields[0] === "Z", "live process RSS is unobservable");
-    if (memory) rss += Number(memory[1]) * 1024;
-  }
-  requireValue(Number.isFinite(rss), "process-group RSS is unobservable");
-  return { rss, count };
 }
 
 export function runningProblem({ rss, count, output, scratch }, bounds = BOUNDS) {

@@ -9,7 +9,20 @@ import { SHA, requireValue } from "./maintenance-contract.mjs";
 import { CHAOS_TEST, workspace } from "./maintenance-checks.mjs";
 import { readBoundedJson } from "./maintenance-files.mjs";
 
+export function binaryIdentityOf(info) {
+  requireValue(info.isFile() && !info.isSymbolicLink(), "suite binary is not a regular file");
+  return ["dev", "ino", "size", "mtimeNs", "ctimeNs"].map((key) => {
+    requireValue(typeof info[key] === "bigint", "suite binary identity is unobservable");
+    return String(info[key]);
+  }).join(":");
+}
+
+export async function binaryIdentity(binary) {
+  return binaryIdentityOf(await lstat(binary, { bigint: true }));
+}
+
 export async function binaryDigest(binary) {
+  const identity = await binaryIdentity(binary);
   const info = await lstat(binary);
   requireValue(info.isFile() && !info.isSymbolicLink() && info.size <= 512 * 1024 * 1024,
     "suite binary must be a regular file no larger than 512 MiB");
@@ -22,6 +35,7 @@ export async function binaryDigest(binary) {
     hash.update(bytes);
   }
   requireValue(size === info.size, "suite binary shrank while hashing");
+  requireValue(await binaryIdentity(binary) === identity, "suite binary changed while hashing");
   return hash.digest("hex");
 }
 
@@ -38,8 +52,10 @@ export function validateSuite(suite) {
 export async function readSuite(path) {
   const suite = validateSuite(await readBoundedJson(path));
   requireValue(await realpath(suite.binary) === suite.binary, "suite binary path must be canonical");
+  const identity = await binaryIdentity(suite.binary);
   requireValue(await binaryDigest(suite.binary) === suite.sha256, "prebuilt suite binary changed");
-  return suite;
+  requireValue(await binaryIdentity(suite.binary) === identity, "suite binary changed during admission");
+  return { ...suite, identity };
 }
 
 async function main() {

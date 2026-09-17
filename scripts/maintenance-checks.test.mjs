@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { chaosResult, patchProblem, siteResult } from "./maintenance-checks.mjs";
-import { libtestRun } from "./maintenance-test-support.mjs";
+import { CheckFailure, chaosResult, patchProblem, siteResult } from "./maintenance-checks.mjs";
+import { failureResult } from "./maintenance-step.mjs";
+import { fixture, libtestRun } from "./maintenance-test-support.mjs";
 
 function siteRun(findings = []) {
   return { code: findings.length ? 1 : 0, signal: null, problem: null,
@@ -43,7 +44,34 @@ test("patches cannot edit verification, dependencies, automation or another cate
   }
   for (const paths of [[], ["crates/bureau/tests/maintenance_chaos.rs"],
     ["crates/bureau/tests/maintenance_chaos/support.rs"], ["Cargo.toml"],
+    ["crates/bureau/tests/runlog_framing.rs"], ["crates/bureau/tests/edge/testdir.rs"],
+    ["crates/bureau/src/cli/run/tests.rs"], ["crates/bureau/src/cli/run/claim/tests.rs"],
+    ["crates/bureau/src/cli/run/observe/tests.rs"],
     Array.from({ length: 21 }, (_, index) => `crates/source${index}.rs`)]) {
     assert.equal(typeof patchProblem(paths, "chaos"), "string");
   }
+});
+
+test("incomplete/manual browser evidence remains blocked but retains bounded raw diagnostics", async () => {
+  const { request } = fixture("site-accessibility");
+  request.step = "detect";
+  const raw = '{"complete":false,"findings":[{"id":"manual-review"}]}\n';
+  const error = new CheckFailure("site check needs manual review", raw);
+  let captured;
+  const artifacts = [{ name: "detect.log", path: "target/bureau-maintenance/detect.log" }];
+  const result = await failureResult(error, request, async (value, log) => {
+    captured = { value, log };
+    return artifacts;
+  });
+  assert.deepEqual([result.outcome, result.artifacts, captured.log, captured.value.complete],
+    ["blocked", artifacts, raw, false]);
+});
+
+test("failed evidence persistence is explicit and never turns a blocked check into success", async () => {
+  const error = new CheckFailure("incomplete check", "bounded output");
+  const result = await failureResult(error, { step: "detect", inputs: {} }, async () => {
+    throw new Error("disk unavailable");
+  });
+  assert.equal(result.outcome, "blocked");
+  assert.match(result.message, /incomplete check; failed to preserve check evidence: disk unavailable/u);
 });
