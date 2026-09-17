@@ -47,7 +47,7 @@ fn example_plan(rig: &Rig, id: &str) -> RunPlan {
     offline_steps(id, &mut pipeline);
     let primary = config.repos.get_mut("code").expect("primary");
     primary.url.clone_from(&rig.url);
-    primary.credential = "git-main".to_owned();
+    "git-main".clone_into(&mut primary.credential);
     let mut plan = rig.plan(Vec::new());
     plan.assignment = assignment;
     plan.pipeline = pipeline;
