@@ -6,10 +6,46 @@ pub mod watch_support;
 
 use bureau::contract::StepOutcome;
 use bureau::runlog::RunStatus;
+use bureau::state::Store;
 use bureau::watch;
 use watch_support::{
-    TestDir, write_active, write_chatty_run, write_finished_run, write_running_run, write_state_db,
+    TestDir, load_read_only, write_active, write_chatty_run, write_finished_run, write_running_run,
+    write_state_db,
 };
+
+const INVALID_ACCOUNTING: [(&str, &str, Option<u32>); 4] = [
+    (
+        "DROP TABLE run_admissions",
+        "state database unreadable:",
+        None,
+    ),
+    (
+        "PRAGMA user_version = 0",
+        "state database unreadable:",
+        None,
+    ),
+    (
+        "PRAGMA user_version = 2",
+        "state database unreadable:",
+        None,
+    ),
+    (
+        "PRAGMA user_version = 0; DROP TABLE run_admissions; DROP TABLE runs",
+        "budget for `demo` unreadable:",
+        Some(1),
+    ),
+];
+
+fn observed_budget(roots: &watch::Roots) -> (Option<u32>, f64, u32, Option<usize>) {
+    let frame = load_read_only(roots);
+    let row = frame.budgets.first().expect("one budget row");
+    (
+        frame.header.active_leases,
+        row.spent_usd,
+        row.runs_hour,
+        row.headroom,
+    )
+}
 
 /// A torn state cache and a torn final event line, as a daemon kill
 /// mid-append leaves them, plus the strays a runs dir collects.
@@ -122,7 +158,7 @@ fn budgets_pair_config_limits_with_store_counters() {
     let dir = TestDir::new("budget");
     write_active(dir.path(), "abc1234567890def");
     write_state_db(dir.path());
-    let frame = watch::load(&dir.roots(), None, 16, 1_000_000);
+    let frame = load_read_only(&dir.roots());
     let header = (
         frame.header.config_commit.as_deref(),
         frame.header.active_leases,
@@ -132,8 +168,8 @@ fn budgets_pair_config_limits_with_store_counters() {
     let fields = (row.spent_usd, row.runs_hour, row.headroom);
     assert_eq!(
         fields,
-        (6.0, 2, Some(1)),
-        "headroom: concurrent limit binds"
+        (6.0, 3, Some(1)),
+        "two completions plus one admission; concurrent and hourly limits both bind"
     );
 }
 
@@ -142,13 +178,64 @@ fn unreadable_state_db_degrades_to_notes() {
     let dir = TestDir::new("baddb");
     write_active(dir.path(), "abc1234567890def");
     std::fs::write(dir.roots().state, b"not a sqlite database").expect("garbage db");
-    let frame = watch::load(&dir.roots(), None, 16, 1_000_000);
+    let frame = load_read_only(&dir.roots());
     let degraded = (
         frame.budgets.is_empty(),
         frame.header.active_leases,
-        frame.notes.iter().any(|n| n.contains("budget for `demo`")),
+        frame
+            .notes
+            .iter()
+            .any(|n| n.starts_with("state database unreadable:")),
     );
     assert_eq!(degraded, (true, None, true));
+}
+
+#[test]
+fn released_admission_remains_charged_when_terminal_cost_is_projected() {
+    let dir = TestDir::new("released-budget");
+    write_active(dir.path(), "abc1234567890def");
+    write_state_db(dir.path());
+    let roots = dir.roots();
+    let store = Store::open(&roots.state).expect("writer");
+    let live = observed_budget(&roots);
+    store
+        .release("demo", "42")
+        .expect("release unprojected admission");
+    let released = observed_budget(&roots);
+    store
+        .record_run("42", "demo", 2.0)
+        .expect("project terminal cost");
+    let projected = observed_budget(&roots);
+    assert_eq!(
+        [live, released, projected],
+        [
+            (Some(1), 6.0, 3, Some(1)),
+            (Some(0), 6.0, 3, Some(1)),
+            (Some(0), 8.0, 3, Some(1)),
+        ],
+        "release restores concurrency, not the rate budget; projection charges cost only"
+    );
+}
+
+#[test]
+fn invalid_accounting_never_projects_free_capacity_or_repairs_evidence() {
+    for (sql, note, leases) in INVALID_ACCOUNTING {
+        let dir = TestDir::new("invalid-accounting");
+        write_active(dir.path(), "abc1234567890def");
+        write_state_db(dir.path());
+        let roots = dir.roots();
+        rusqlite::Connection::open(&roots.state)
+            .expect("fixture connection")
+            .execute_batch(sql)
+            .expect("inject invalid accounting");
+        let frame = load_read_only(&roots);
+        let unknown = (
+            frame.budgets.is_empty(),
+            frame.header.active_leases,
+            frame.notes.iter().any(|n| n.starts_with(note)),
+        );
+        assert_eq!(unknown, (true, leases, true), "{sql}");
+    }
 }
 
 #[test]

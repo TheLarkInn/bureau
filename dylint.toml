@@ -80,6 +80,10 @@ exhaustive = true
 "scenario_catalog:Catalog" = []
 "scenario_catalog:prerequisites" = []
 
+# --- watch (read-only accounting integration tests) ---
+"watch:watch_support" = []
+"watch_render:watch_support" = []
+
 # --- bureau-lifecycle ---
 "bureau_lifecycle:home" = []
 "bureau_lifecycle:maintenance" = []
