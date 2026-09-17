@@ -229,9 +229,13 @@ async fn unprojected_rate_budget(seed: u32) {
     );
 }
 
-pub async fn check(seed: u32) {
-    shared_assignment_limit(seed).await;
+async fn budget_checks(seed: u32) {
     recorded_budget(seed).await;
     unavailable_budget(seed).await;
     unprojected_rate_budget(seed).await;
+}
+
+pub async fn check(seed: u32) {
+    shared_assignment_limit(seed).await;
+    budget_checks(seed).await;
 }
