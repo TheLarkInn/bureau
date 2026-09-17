@@ -49,7 +49,7 @@ fn stop_if_running(child: &mut Child) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn interrupt(mut child: Child) -> anyhow::Result<Output> {
+pub fn interrupt(mut child: Child) -> anyhow::Result<Output> {
     let stopped = wait_until("signal handlers", || ready(child.id()))
         .and_then(|()| send_interrupt(child.id()))
         .and_then(|()| wait_until("daemon shutdown", || Ok(child.try_wait()?.is_some())));
