@@ -59,6 +59,7 @@ export function useReplayOverlay(activity, pipeline) {
         const start = list.length ? list[0].at_ms ?? 0 : 0;
         const end = list.length ? (list.at(-1).at_ms ?? start) : start;
         setEvents(list);
+        setHistoryError(payload.warning ?? null);
         setRange({ start, end });
         positionRef.current = start;
         setPosition(start);

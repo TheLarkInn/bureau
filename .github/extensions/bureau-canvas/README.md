@@ -1,6 +1,6 @@
 # Bureau canvas
 
-Edit Bureau config, explore pipelines, and inspect live or replayed runs.
+Understand local Bureau operations, edit config, and inspect live or replayed runs.
 
 ## Open
 
@@ -20,7 +20,10 @@ shows a labeled sample, **not a validation pass**.
 
 ## Use
 
-- Open an assignment, then its pipeline. **Transitions** is the default editor.
+- Start at **Operations** for authoring provenance, validation, observed runs,
+  and assignment safeguards. Count buttons filter and focus the run list.
+- Open **Configuration**, an assignment, then its pipeline.
+  **Transitions** remains the default pipeline authoring view.
 - Use **Find**, **Review next**, and **Fit** to navigate graphs.
 - Select a step to read its configuration or run output.
 - Switch between **Design**, **Live**, and **Replay** to inspect runs.
@@ -30,6 +33,64 @@ shows a labeled sample, **not a validation pass**.
 Saving edits the working tree; it never commits, pushes, or opens a PR.
 Config still needs review and merge before execution. Pipeline saves revert
 on relevant validation errors; advisories do not block saves.
+
+### Operations overview
+
+The app canvas and dashboard use the same overview and navigation. Opening a
+specific pipeline still goes directly to that pipeline. Nothing starts merely
+by opening Operations, refreshing evidence, or following a run link.
+
+Authoring HEAD, changed/untracked config files, pending plans, and validation
+are separate from execution. Reconcile reads the configured committed
+remote/ref, not these local edits. The overview cannot observe the currently
+adopted source through the existing CLI contract; it says so explicitly.
+Recorded run-source revisions are **historical evidence**, not proof of today's
+settings or daemon. Use `bureau doctor --json` to inspect local setup and
+`bureau setup` to change the reviewed source.
+
+Runs appear attention-first. Exact run links open the existing Live controls
+or Replay timeline; assignment links open the real configuration editor.
+Missing directories, unreadable/corrupt logs, partial appends, and bounded
+previews are labeled rather than silently dropped. A quiet unfinished run
+becomes stale after five minutes; event freshness is not a daemon heartbeat.
+After a listing failure, the last readable snapshot is labeled historical and
+counts become unknown. Paused and failed runs also count as needing attention.
+
+Configured limits are declarations, not remaining capacity. Missing run cost
+or incomplete local-factory accounting is **Unknown**, not zero; explicitly
+recorded zero stays zero. SDK credits and native completion remain distinct
+from the Bureau outcome. Cloud controls stay unsupported, and the public
+website does not connect to your runner. For reviewed starting points, see the
+[scenario catalog](../../../docs/scenarios.md).
+
+### Managed read-only inspection
+
+Set `BUREAU_CANVAS_READ_ONLY=1` when opening a dashboard for a managed runtime.
+The existing `bureau dashboard` launcher inherits this environment; no new
+CLI flag or dispatch profile is implied. For the managed maintenance runtime:
+
+```sh
+BUREAU_HOME=/var/lib/bureau-maintenance \
+BUREAU_CANVAS_READ_ONLY=1 \
+/opt/bureau/bin/bureau dashboard \
+  --dir /opt/bureau/source/.bureau/maintenance --no-open --port 7331
+```
+
+Use the managed runtime's documented user, `HOME`, and executable environment.
+`--dir` selects **displayed configuration only**. It does not configure a
+reconcile profile, propagate a config subdirectory, or acquire an external
+owner lock. The managed daemon owns dispatch; edit a separate authoring
+worktree and review a config PR instead of saving into its immutable source.
+
+Read-only mode disables configuration writes and run controls in the UI and
+rejects them at both the HTTP and app-action backends. Inspection, navigation,
+and config validation remain available. Run history is read directly without
+repairing a partial log; native continuation approval is not queried here.
+The app canvas also accepts `{ "readOnly": true }` to restrict an instance.
+Input cannot relax environment enforcement or an already restricted instance.
+An invalid environment value fails closed with an explanation. Unset or `0`
+preserves ordinary local behavior. This policy does not stop existing work or
+replace loopback request authorization.
 
 ### Local Copilot factories
 

@@ -15,10 +15,16 @@ import { createRunTail, listRuns, parseEvents, readRunEvents, resolveRunsDir, ru
 import { configView, pipelineView, relationView } from "./lib/view.mjs";
 import { deriveWorkSource } from "./lib/worksource.mjs";
 import { resolveRepoUrl } from "./lib/repourl.mjs";
+import { authoringProvenance } from "./lib/provenance.mjs";
+import { readRunListing, readRunLog } from "./lib/run-observation.mjs";
+import { inspectEvents } from "./web/run-evidence.mjs";
+import { navigationSchema, navigationTarget } from "./web/navigation.mjs";
+import { operationsOverview } from "./web/operations.mjs";
+import { canvasAccess, isReadOnly, mutationRefusal } from "./web/access-policy.mjs";
 
 const CANVAS_ID = "bureau";
 const DISPLAY_NAME = "Bureau";
-const DESCRIPTION = "Renders Bureau config assignments, roles, repos, and pipelines.";
+const DESCRIPTION = "Monitor Bureau operations, configure assignments, and inspect pipeline run evidence.";
 const ENTRY_FILE = fileURLToPath(import.meta.url);
 const EXTENSION_DIR = dirname(ENTRY_FILE);
 const WEB_DIR = resolve(EXTENSION_DIR, "web");
@@ -72,6 +78,10 @@ export const inputSchema = {
             type: "boolean",
             description: "Reload the page when dashboard web files change.",
         },
+        readOnly: {
+            type: "boolean",
+            description: "Open an inspection-only view. Cannot relax a host-enforced read-only policy.",
+        },
     },
 };
 
@@ -112,7 +122,7 @@ async function publishEvent(instanceId, event, payload) {
         return;
     }
     if (event === "state" && payload?.subject) {
-        entry.state = await buildState({ ...entry.state, ...resolvedSubject(payload.subject), instanceId }, {});
+        entry.state = await buildState({ ...entry.state, ...resolvedSubject(payload.subject), instanceId }, { access: entry.access });
         publishState(entry);
         return;
     }
@@ -134,8 +144,49 @@ export function canvasActions(deps = actionDependencies()) {
         name: action.name,
         description: action.description,
         inputSchema: action.inputSchema,
-        handler: (ctx) => action.handler(ctx, deps),
-    }));
+        handler: async (ctx) => {
+            const refusal = mutationRefusal(servers.get(ctx.instanceId)?.access, action.name, "action");
+            if (refusal) throw new Error(refusal);
+            return action.handler(ctx, deps);
+        },
+    })).concat([
+        {
+            name: "operations",
+            description: "Read the operations overview. Refresh revalidates authoring files without discarding pending plans or starting work.",
+            inputSchema: { type: "object", additionalProperties: false, properties: { refresh: { type: "boolean" } } },
+            handler: (ctx) => readOperations(requireServer(ctx.instanceId), ctx.input?.refresh === true),
+        },
+        {
+            name: "navigate",
+            description: "Open Operations, an assignment's configuration, or an exact pipeline/run in Design, Live, or Replay. Does not execute work.",
+            inputSchema: navigationSchema,
+            handler: (ctx) => navigateCanvas(requireServer(ctx.instanceId), ctx.input),
+        },
+    ]);
+}
+
+function requireServer(instanceId) {
+    const entry = servers.get(instanceId);
+    if (!entry) throw new Error("Open the Bureau canvas before selecting a view.");
+    return entry;
+}
+
+async function readOperations(entry, refresh = false) {
+    if (refresh) await refreshState(entry);
+    const listing = await readRunListing(runsRoot(entry));
+    return { state: entry.state, listing, overview: operationsOverview(entry.state, listing) };
+}
+
+async function navigateCanvas(entry, input) {
+    const listing = input?.run_id ? await readRunListing(runsRoot(entry)) : { runs: [] };
+    const target = navigationTarget(input, entry.state, listing.runs);
+    const pipeline = target.view === "pipeline" ? target.pipeline : null;
+    entry.state = { ...entry.state, pipeline,
+        navigation: { ...target, revision: randomBytes(8).toString("hex") },
+        selectedPipeline: selectedPipeline(entry.state, pipeline) };
+    subjects.set(entry.state.instanceId, subjectFromState(entry.state));
+    publishState(entry);
+    return entry.state;
 }
 
 export function resolveInput(input = {}) {
@@ -173,8 +224,12 @@ function testValidationOptions(options) {
 
 export async function openBureauCanvas(ctx, options = {}) {
     const input = resolveInput(ctx.input ?? {});
+    const existing = servers.get(ctx.instanceId);
+    const access = existing?.access?.mode === "read-only" ? existing.access
+        : canvasAccess(ctx.input, options, process.env.BUREAU_CANVAS_READ_ONLY);
     const serverOptions = testValidationOptions({
         ...options,
+        access,
         dev: ctx.input?.dev ?? options.dev ?? false,
     });
     const state = await buildState({ ...input, instanceId: ctx.instanceId }, serverOptions);
@@ -186,6 +241,7 @@ export async function openBureauCanvas(ctx, options = {}) {
         servers.set(ctx.instanceId, entry);
     } else {
         entry.state = state;
+        entry.access = access;
         await configureDevelopment(entry, serverOptions);
         publishState(entry);
     }
@@ -226,10 +282,17 @@ export async function buildState(input, options = {}) {
     const view = configView(payload);
     const layouts = await loadLayoutSidecar(input.dir, options);
     const pipelines = pipelineStates(payload, config, layouts);
+    const authoring = options.authoring ?? (options.payload
+        ? { state: "unavailable", commit: null, changes: null, message: "Git state was not supplied with this config snapshot." }
+        : await authoringProvenance(input.dir, { sample: result.state === "fixture" }));
+    const access = options.access ?? canvasAccess(input, options, process.env.BUREAU_CANVAS_READ_ONLY);
     const state = {
         ...input,
+        ...(access.mode === "read-only" ? { access } : {}),
+        navigation: input.navigation ?? { view: input.pipeline ? "pipeline" : "operations" },
         status: statusFor(result),
         validation: validationState(result),
+        authoring,
         findings: result.findings ?? [],
         findingsByItem: findingsByItem(result.findings ?? []),
         findingsByStep: findingsByStep(result.findings ?? []),
@@ -424,6 +487,7 @@ function validationState(result) {
         dir: result.dir,
         errors: result.errors ?? [],
         message: result.message ?? null,
+        checked_at_ms: result.state === "validated" ? Date.now() : null,
     };
 }
 
@@ -483,6 +547,7 @@ function selectedPipeline(state, name) {
 
 async function startServer(state, options = {}) {
     const entry = {
+        access: options.access ?? canvasAccess({}, options, process.env.BUREAU_CANVAS_READ_ONLY),
         capability: randomBytes(24).toString("base64url"),
         clients: new Set(),
         development: false,
@@ -587,7 +652,7 @@ async function handleRequest(entry, request, response) {
     } else if (pathname === "/events") {
         sendEvents(entry, request, response);
     } else if (pathname === "/runs") {
-        sendJson(response, { runs: await listRuns(runsRoot(entry)) }, request.method === "HEAD");
+        sendJson(response, await readRunListing(runsRoot(entry)), request.method === "HEAD");
     } else if (pathname.startsWith("/runs/") && pathname.endsWith("/events")) {
         const runId = pathname.slice("/runs/".length, -"/events".length);
         await sendRunEvents(runId, entry, response, request.method === "HEAD");
@@ -619,6 +684,10 @@ async function sendRunEvents(runId, entry, response, headOnly) {
         return;
     }
     const dir = runsRoot(entry);
+    if (isReadOnly(entry.access)) {
+        await sendRunEventsFromLog(runId, dir, response, headOnly);
+        return;
+    }
     const run = await runBureau(["show", runId, "--events", "--json", "--runs", dir], entry.options ?? {});
     if (run === null) {
         await sendRunEventsFromLog(runId, dir, response, headOnly);
@@ -632,7 +701,9 @@ async function sendRunEvents(runId, entry, response, headOnly) {
         sendStatus(response, 404);
         return;
     }
-    sendJson(response, { run_id: runId, events: parseJson(run.stdout) ?? [] }, headOnly);
+    const events = parseJson(run.stdout);
+    const error = inspectEvents(events);
+    sendJson(response, error ? { error } : { run_id: runId, events }, headOnly, error ? 422 : 200);
 }
 
 /** A `bureau` on PATH can predate `show --events --json`; read the log directly instead of failing. */
@@ -641,17 +712,18 @@ function lacksEventsFlag(run) {
 }
 
 async function sendRunEventsFromLog(runId, dir, response, headOnly) {
-    const events = await readRunEvents(dir, runId);
-    if (!events) {
-        sendStatus(response, 404);
-        return;
-    }
-    sendJson(response, { run_id: runId, events, source: "log" }, headOnly);
+    const log = await readRunLog(dir, runId);
+    const status = log.error ? (log.error.startsWith("Run log is missing") ? 404 : 422) : 200;
+    sendJson(response, { run_id: runId, ...log, source: "log" }, headOnly, status);
 }
 
 async function sendRunControls(runId, entry, response, headOnly) {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(runId)) {
         sendStatus(response, 400);
+        return;
+    }
+    if (isReadOnly(entry.access)) {
+        sendJson(response, { error: entry.access.reason, access: entry.access }, headOnly, 403);
         return;
     }
     try {
@@ -702,6 +774,22 @@ const CRUD_INTENTS = { create, delete: removeEntity, rename };
 
 async function handleIntent(entry, request, response) {
     const intent = await readIntent(request);
+    const refusal = mutationRefusal(entry.access, intent?.kind);
+    if (refusal) {
+        sendJson(response, { ok: false, error: refusal, access: entry.access }, false, 403);
+        return;
+    }
+    if (intent?.kind === "navigate" || intent?.kind === "operations") {
+        try {
+            const result = intent.kind === "navigate"
+                ? { state: await navigateCanvas(entry, intent.input) }
+                : await readOperations(entry, intent.refresh === true);
+            sendJson(response, { ok: true, ...result }, false);
+        } catch (error) {
+            sendJson(response, { ok: false, error: String(error.message ?? error) }, false);
+        }
+        return;
+    }
     if (intent?.kind === "derive-work-source") {
         // A preview only: deriving reads the URL and changes nothing, so the
         // paste field can show what it would write before anything is written.
@@ -750,21 +838,15 @@ async function handleIntent(entry, request, response) {
         return;
     }
     if (intent?.kind === "back-to-config") {
-        entry.state = { ...entry.state, pipeline: null, selectedPipeline: null };
-        subjects.set(entry.state.instanceId, subjectFromState(entry.state));
-        publishState(entry);
-        sendJson(response, { ok: true, state: entry.state }, false);
+        sendJson(response, { ok: true, state: await navigateCanvas(entry, { view: "config" }) }, false);
         return;
     }
     if (intent?.kind !== "open-pipeline" || typeof intent.pipeline !== "string") {
         sendStatus(response, 400);
         return;
     }
-    entry.state = { ...entry.state, pipeline: intent.pipeline };
-    entry.state.selectedPipeline = selectedPipeline(entry.state, intent.pipeline);
-    subjects.set(entry.state.instanceId, subjectFromState(entry.state));
-    publishState(entry);
-    sendJson(response, { ok: true, state: entry.state }, false);
+    const state = await navigateCanvas(entry, { view: "pipeline", pipeline: intent.pipeline });
+    sendJson(response, { ok: true, state }, false);
 }
 
 function readIntent(request) {
@@ -901,7 +983,7 @@ async function runPlanIntent(entry, intent, response) {
  * want, so the base owes them no selection at all.
  */
 async function sendSample(entry, response, headOnly) {
-    const input = { dir: SAMPLE_DIR, instanceId: entry.state.instanceId };
+    const input = { dir: SAMPLE_DIR, instanceId: entry.state.instanceId, navigation: { view: "config" } };
     const state = await buildState(input, { ...(entry.options ?? {}), sample: true });
     sendJson(response, state, headOnly);
 }
@@ -928,8 +1010,11 @@ async function refreshState(entry) {
     const input = {
         dir: entry.state.dir,
         pipeline: entry.state.pipeline ?? undefined,
+        navigation: entry.state.navigation,
     };
-    entry.state = await buildState({ ...input, instanceId: entry.state.instanceId }, entry.options ?? {});
+    const refreshed = await buildState({ ...input, instanceId: entry.state.instanceId }, entry.options ?? {});
+    const { pipeline, navigation } = entry.state;
+    entry.state = { ...refreshed, pipeline, navigation, selectedPipeline: selectedPipeline(refreshed, pipeline) };
     publishState(entry);
 }
 

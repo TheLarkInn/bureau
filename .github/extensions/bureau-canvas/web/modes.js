@@ -4,6 +4,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { runsForPipeline, runsOffered, unattributedRuns } from "./live/overlay.js";
+import { runListingResult } from "./run-evidence.mjs";
 
 const h = React.createElement;
 export const MODES = ["design", "live", "replay"];
@@ -46,10 +47,9 @@ async function readRuns() {
     if (!response.ok) {
       throw new Error(`run listing returned ${response.status}`);
     }
-    const payload = await response.json();
-    return { status: "ready", runs: payload.runs ?? [] };
-  } catch {
-    return { status: "error", runs: [] };
+    return runListingResult(await response.json());
+  } catch (error) {
+    return { status: "error", runs: [], observation: { state: "error", message: String(error.message ?? error) } };
   }
 }
 
@@ -62,7 +62,7 @@ async function readRuns() {
  * poll interval to say so would make the button's report arrive after the fact
  * it reports on.
  */
-export function useRunActivity(pipeline, assignments) {
+export function useRunListing() {
   const [snapshot, setSnapshot] = useState({ status: "loading", runs: [] });
   // One clock over both writers. The poll and `refresh` read the same endpoint
   // concurrently, and a poll issued *before* a refresh can resolve *after* it —
@@ -96,14 +96,6 @@ export function useRunActivity(pipeline, assignments) {
       clearInterval(timer);
     };
   }, []);
-  const runs = useMemo(
-    () => runsForPipeline(snapshot.runs, pipeline, assignments),
-    [snapshot.runs, pipeline, assignments],
-  );
-  const orphans = useMemo(
-    () => unattributedRuns(snapshot.runs, assignments),
-    [snapshot.runs, assignments],
-  );
   const refresh = async () => {
     const seq = ++clock.current.issued;
     const next = await readRuns();
@@ -114,13 +106,25 @@ export function useRunActivity(pipeline, assignments) {
     // pass "claimed no work for this pipeline" over a run that did start, with
     // the Open in Replay hand-off withheld.
     const listing = publish(next, seq) ? next : clock.current.latest;
-    return { status: listing.status, runs: runsForPipeline(listing.runs, pipeline, assignments) };
+    return listing;
   };
+  return { ...snapshot, refresh };
+}
+
+export function useRunActivity(pipeline, assignments) {
+  const snapshot = useRunListing();
+  const runs = useMemo(() => runsForPipeline(snapshot.runs, pipeline, assignments),
+    [snapshot.runs, pipeline, assignments]);
+  const orphans = useMemo(() => unattributedRuns(snapshot.runs, assignments),
+    [snapshot.runs, assignments]);
   return {
     status: snapshot.status,
     runs,
     orphans,
-    refresh,
+    refresh: async () => {
+      const listing = await snapshot.refresh();
+      return { status: listing.status, runs: runsForPipeline(listing.runs, pipeline, assignments) };
+    },
     liveCount: runs.filter((run) => run.live).length,
   };
 }

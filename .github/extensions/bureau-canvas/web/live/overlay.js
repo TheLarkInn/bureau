@@ -295,6 +295,7 @@ function stepStarted(overlay, event) {
   const step = stepName(event);
   const parent = parentOf(overlay, step);
   let next = withEvent(overlay, event, {
+    status: factoryRunState(overlay.factories, step, "running"),
     steps: {
       ...overlay.steps,
       [step]: {
@@ -353,6 +354,7 @@ function groupStarted(overlay, event) {
     members[name] = { state: STEP_PENDING, outcome: null, attempts: 0 };
   }
   return withEvent(overlay, event, {
+    status: "running",
     groups: {
       ...overlay.groups,
       [group]: {

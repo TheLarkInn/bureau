@@ -147,7 +147,7 @@ test("malformed factory events latch diagnostics and cloud events never become l
 });
 
 test("unreadable native history is an error, never an empty successful replay", async () => {
-  await assert.rejects(readHistory({ ok: false, status: 404 }), /Run history unavailable/u);
+  await assert.rejects(readHistory(new Response("not found", { status: 404 })), /Run history unavailable/u);
   await assert.rejects(readHistory({ ok: true, json: async () => ({ result: [] }) }), /no event array/u);
   assert.deepEqual(await readHistory({ ok: true, json: async () => ({ events: [] }) }), { events: [] });
 });

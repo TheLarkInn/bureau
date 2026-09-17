@@ -112,7 +112,7 @@ export const test = base.extend({
   host: [
     async ({}, use) => {
       const { child, url } = await bootCanvas();
-      const base = await fetch(new URL("/state", url)).then((response) => response.json());
+      const base = await fetch(new URL("/sample", url)).then((response) => response.json());
       await mkdir(galleryDir(), { recursive: true });
       await use({ url, base });
       child.kill("SIGTERM");

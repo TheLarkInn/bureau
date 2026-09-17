@@ -96,6 +96,33 @@ returns to native controls. Transitions remains the default authoring view.
 - Flat native content; restrained depth on graph cards and chrome
 - 4px-rem spacing scale (`--space-1` … `--space-5`)
 
+### Operations start surface
+
+Operations is the shared app/dashboard entry point, not another dashboard.
+Its first controls expose observed attention, active, paused, and failed
+counts and lead directly to filtered evidence. Unknown observations never
+look like healthy zero activity.
+
+Keep authoring provenance and validation beside, but distinct from, committed
+execution-source evidence. Historical run snapshots cannot prove the current
+adopted source or daemon state. Assignment safeguards are declarations, not
+measured headroom. Native SDK status and credits do not certify a Bureau
+outcome. Every next action uses existing configuration, editor, Live/Replay,
+or CLI-control paths; the public site and unsupported cloud controls stay
+separate.
+
+Managed inspection has an explicit, enforced read-only policy. Keep source
+and run inspection available, disable mutation controls with their reason,
+and direct changes to a separate authoring worktree and reviewed PR. Displayed
+paths never imply a runtime profile, dispatch authority, or an owner lock.
+
+Use native semantic host tokens, flat divided sections, explicit status
+words, 44px controls, and visible keyboard focus. The source columns and run
+rows collapse at the existing 56rem breakpoint. Preserve content at 320px,
+including errors and long identifiers. Reduced motion disables Operations
+and navigation transitions. Check text contrast after applying actual host
+tokens rather than assuming the light fallback is sufficient.
+
 ## Colors
 
 A native Primer fallback palette where functional gray dominates and

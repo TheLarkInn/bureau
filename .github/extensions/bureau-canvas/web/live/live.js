@@ -11,6 +11,7 @@ import { factoryForStep, factoryPauseAvailable, factoryResumeBlocked } from "./c
 import { useFactoryControls } from "./factory-controls.js";
 import { factoryControlsMatch } from "./factory-controls.mjs";
 import { readHistory } from "./history.mjs";
+import { isReadOnly, readOnlyControl } from "../access-policy.mjs";
 
 const h = React.createElement;
 
@@ -82,7 +83,7 @@ function postReconcile() {
  * `toFlow(pipeline, state, selectedStep, decoration)`; `controls` renders
  * into the pipeline toolbar.
  */
-export function useLiveOverlay(activity, onOpenReplay, pipeline) {
+export function useLiveOverlay(activity, onOpenReplay, pipeline, access) {
   const storageKey = `live-run:${pipeline}`;
   const [runId, setRunId] = useState(() => sessionValue(storageKey));
   const [overlay, setOverlay] = useState(emptyOverlay);
@@ -109,7 +110,8 @@ export function useLiveOverlay(activity, onOpenReplay, pipeline) {
   // switched runs while it was out.
   const reconcileTicket = useRef(0);
   const factory = factoryForStep(overlay.factories, overlay.current);
-  const factoryControls = useFactoryControls(runId, factory, controlBusy);
+  const nativeControls = useFactoryControls(isReadOnly(access) ? null : runId, factory, controlBusy);
+  const factoryControls = isReadOnly(access) ? { control: null, error: access.reason } : nativeControls;
 
   useEffect(() => storeSessionValue(storageKey, runId), [runId, storageKey]);
 
@@ -167,6 +169,7 @@ export function useLiveOverlay(activity, onOpenReplay, pipeline) {
           return;
         }
         settle(payload.events ?? []);
+        setHistoryError(payload.warning ?? null);
       })
       // A history that never arrives must not strand the tail in the buffer:
       // without this, a failed backfill left a live run drawing nothing at all.
@@ -274,6 +277,10 @@ export function useLiveOverlay(activity, onOpenReplay, pipeline) {
    * have started after the click is what keeps the sentence true.
    */
   const reconcileNow = () => {
+    if (isReadOnly(access)) {
+      setReconcileResult({ ok: false, message: access.reason });
+      return;
+    }
     const known = new Set(activity.runs.map((run) => run.run_id));
     const since = Date.now();
     const mine = reconcileTicket.current;
@@ -319,9 +326,10 @@ export function useLiveOverlay(activity, onOpenReplay, pipeline) {
       className: "btn btn--small btn--primary",
       "data-testid": "reconcile-now",
       disabled: reconciling,
+      ...readOnlyControl(access),
       onClick: reconcileNow,
     }, reconciling ? "Reconciling…" : "Run reconcile now"),
-    runId ? h(RunButtons, { overlay, onAction: send, busy: controlBusy, historyError, factoryControls }) : null,
+    runId ? h(RunButtons, { overlay, onAction: send, busy: controlBusy, historyError, factoryControls, access }) : null,
     historyError ? h("p", { className: "run-control-error", role: "alert" }, historyError) : null,
     controlResult && !controlResult.ok ? h("p", { className: "run-control-error" }, controlResult.error) : null,
     /*
@@ -419,7 +427,7 @@ function activityMessage(activity) {
  * Which run controls a status can still act on lives in `overlay.js`, beside
  * the reducer that produces the status — pure, and testable without a browser.
  */
-function RunButtons({ overlay, onAction, busy, historyError, factoryControls }) {
+function RunButtons({ overlay, onAction, busy, historyError, factoryControls, access }) {
   const offered = runActions(overlay.status);
   const factory = factoryForStep(overlay.factories, overlay.current);
   const blocked = historyError || overlay.status === "indeterminate" || overlay.factories?.error;
@@ -436,13 +444,13 @@ function RunButtons({ overlay, onAction, busy, historyError, factoryControls }) 
         ?? (factoryControlsMatch(factory, authority) ? authority.reason : "Bureau is verifying local factory resume eligibility."))
       : null,
     transport === "resume"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", disabled: Boolean(busy), onClick: () => onAction("resume-run") }, label("resume-run", "Resume"))
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-resume", disabled: Boolean(busy), ...readOnlyControl(access), onClick: () => onAction("resume-run") }, label("resume-run", "Resume"))
       : null,
     transport === "pause"
-      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", disabled: Boolean(busy), onClick: () => onAction("pause-run") }, label("pause-run", "Pause"))
+      ? h("button", { type: "button", className: "run-control", "data-testid": "run-pause", disabled: Boolean(busy), ...readOnlyControl(access), onClick: () => onAction("pause-run") }, label("pause-run", "Pause"))
       : null,
     cancel
-      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", disabled: Boolean(busy), onClick: () => onAction("cancel-run") }, label("cancel-run", "Cancel"))
+      ? h("button", { type: "button", className: "run-control run-control--danger", "data-testid": "run-cancel", disabled: Boolean(busy), ...readOnlyControl(access), onClick: () => onAction("cancel-run") }, label("cancel-run", "Cancel"))
       : null,
     h("span", { className: "run-status", "data-status": overlay.status }, overlay.status),
     overlay.factories?.error ? h("p", { className: "run-control-error", role: "alert" }, overlay.factories.error) : null,
