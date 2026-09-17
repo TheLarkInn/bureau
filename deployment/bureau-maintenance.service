@@ -11,11 +11,15 @@ User=bureau
 Group=bureau
 WorkingDirectory=/opt/bureau/source
 Environment=HOME=/var/lib/bureau-maintenance-runtime
+Environment=COPILOT_HOME=/var/lib/bureau-maintenance-runtime/copilot
 Environment=BUREAU_HOME=/var/lib/bureau-maintenance
 Environment=PATH=/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/bureau/maintenance.env
-StateDirectory=bureau-maintenance bureau-maintenance-runtime
+StateDirectory=bureau-maintenance
 StateDirectoryMode=0700
+ReadWritePaths=/var/lib/bureau-maintenance-runtime/copilot
+ReadWritePaths=/var/lib/bureau-maintenance-runtime/logs
+ReadWritePaths=/var/lib/bureau-maintenance-runtime/tmp
 CacheDirectory=bureau-maintenance
 CacheDirectoryMode=0700
 RuntimeDirectory=bureau-maintenance

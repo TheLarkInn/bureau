@@ -15,6 +15,7 @@ services:
       - /opt/bureau/source/deployment/run-owner.sh
     environment:
       HOME: /var/lib/bureau-maintenance-runtime
+      COPILOT_HOME: /var/lib/bureau-maintenance-runtime/copilot
       BUREAU_HOME: /var/lib/bureau-maintenance
       BUREAU_CONFIG_COMMIT: ${BUREAU_CONFIG_COMMIT:?set the reviewed full commit}
       BUREAU_DEPLOYMENT_APPROVED: ${BUREAU_DEPLOYMENT_APPROVED:-false}

@@ -94,6 +94,19 @@ test("service and container use the same single owner and explicit maintenance-o
   assert.doesNotMatch(launcher, /\brm\b|repair|git clean|truncate/u);
 });
 
+test("managed runtime preserves operator-owned executable ancestors and explicit writable state", async () => {
+  const service = await read("deployment/bureau-maintenance.service");
+  const compose = await read("deployment/compose.yaml");
+  const values = (name) => [...service.matchAll(new RegExp(`^${name}=(.*)$`, "gmu"))]
+    .flatMap((match) => match[1].split(/\s+/u));
+  const runtime = "/var/lib/bureau-maintenance-runtime";
+  assert.deepEqual(values("StateDirectory"), ["bureau-maintenance"]);
+  assert.equal(values("Environment").includes(`COPILOT_HOME=${runtime}/copilot`), true);
+  assert.deepEqual(values("ReadWritePaths"), ["copilot", "logs", "tmp"].map((name) => `${runtime}/${name}`));
+  assert.deepEqual(values("ProtectSystem"), ["strict"]);
+  assert.match(compose, /COPILOT_HOME: \/var\/lib\/bureau-maintenance-runtime\/copilot/u);
+});
+
 test("durable admission rejects temporary/Windows filesystems and tool writability", () => {
   for (const type of [0xef53, 0x58465342, 0x9123683e]) assert.equal(durableFilesystem(type), true);
   for (const type of [0x01021994, 0x01021997, 0x794c7630, 0, NaN]) assert.equal(durableFilesystem(type), false);

@@ -54,6 +54,12 @@ Before activation, provision and qualify:
    are an operator action. Protect executable-cache ancestors against replacement,
    not only their files or final bind mount. Keep those ancestors operator-owned,
    with only explicit private state/log/temp directories writable by the daemon.
+   For the supplied service, pre-create `/var/lib/bureau-maintenance-runtime`
+   and its executable-cache ancestors as `root:bureau` mode `0750`; create only
+   its `copilot`, `logs`, and `tmp` subdirectories as `bureau:bureau` mode `0700`.
+   The service preserves that ownership rather than managing this home as a
+   `StateDirectory`; its writable exceptions and `COPILOT_HOME` are explicit.
+   Pre-provision the container's runtime volume with the same ownership boundary.
 3. Prepared read-only browser tools at `policy.site_tools`: the `site/` package
    and the existing canvas Playwright package at their ordinary relative paths,
    each with its reviewed manifests, lockfiles and installed `node_modules`.
