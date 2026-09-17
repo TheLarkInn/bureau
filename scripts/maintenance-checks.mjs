@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { evidence, requireValue, seedFor, validateFindings } from "./maintenance-contract.mjs";
 import { BOUNDS, GiB, admit, directoryBytes } from "./maintenance-resources.mjs";
 import { boundedChild } from "./maintenance-child.mjs";
+import { waitingBounds } from "./maintenance-command.mjs";
 import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedTools } from "./maintenance-tools.mjs";
 
 export const CHAOS_TEST = "seeded_offline_invariants";
@@ -62,7 +63,8 @@ export function chaosResult(run, seed) {
 }
 
 async function checkDirectory(root, policy) {
-  await admit({ cwd: root, backingPaths: policy.backing_paths, extraPaths: [policy.cargo_target] });
+  await admit({ cwd: root, backingPaths: policy.backing_paths, extraPaths: [policy.cargo_target] },
+    waitingBounds(BOUNDS));
   await directoryBytes(policy.cargo_target, policy.cargo_cache_max_bytes);
   const parent = join(root, "target", "bureau-maintenance");
   await mkdir(parent, { recursive: true });

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 import { BOUNDS, admit, directoryBytes, processGroupUsage, runningProblem } from "./maintenance-resources.mjs";
 import { requireValue } from "./maintenance-contract.mjs";
+import { lockedCommand, waitingBounds } from "./maintenance-command.mjs";
 
 export function childEnvironment(extra = {}) {
   const allowed = ["TMPDIR", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
@@ -20,14 +21,15 @@ export async function boundedChild(command, args, {
 } = {}) {
   requireValue(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 900_000,
     "invalid child deadline");
-  await admit({ cwd, backingPaths, extraPaths }, bounds);
+  const context = { cwd, backingPaths, extraPaths };
+  await admit(context, lockPath ? waitingBounds(bounds) : bounds);
   const isolated = [
     "--user", "--map-root-user", "--pid", "--fork", "--mount-proc", "--kill-child=SIGKILL",
     command, ...args,
   ];
   const executable = lockPath ? "flock" : "unshare";
   const argv = lockPath
-    ? ["--nonblock", "--conflict-exit-code", "75", lockPath, "unshare", ...isolated] : isolated;
+    ? lockedCommand(lockPath, isolated, context, bounds, timeoutMs) : isolated;
   const child = spawn(executable, argv, {
     cwd, env: childEnvironment(environment), detached: true, stdio: ["ignore", "pipe", "pipe"],
   });

@@ -44,6 +44,8 @@ Before activation, provision and qualify:
 2. A read-only `/opt/bureau/source` at the reviewed commit, its matching built
    Bureau executable in `/opt/bureau/bin`, Node 24, Git, Bash, `flock`, `unshare`,
    `getconf`, the repository's Rust toolchains/lint tools, and offline Cargo dependencies.
+   Node must provide Linux `process.execve`; missing replacement support fails
+   closed rather than substituting a detached command.
    Qualify unprivileged user/PID isolation under the actual service/container
    policy. Do not disable the command sandbox, run privileged, auto-install
    tools, or use a personal home/SSH agent/container socket to bypass a refusal.
@@ -106,14 +108,24 @@ Container samples use the same hard bounds but do not automatically restart.
 Deterministic helpers additionally reserve the complete allowed child RSS plus
 1 GiB headroom, independently on the host and every cgroup ancestor, and require
 16 PID slots before spawn. Hierarchical cgroup limits are checked,
-not just host RAM. Checks run with a nonblocking shared command lock, one
-bounded child, a clean explicit environment, combined stdout/stderr <=1 MiB,
+not just host RAM. Checks share one command lock, waiting only within their
+existing deadline so concurrently selected assignments do not immediately fail
+each other. Waiting retains the disk/PID/output guards and a 256 MiB memory
+floor; full child RSS plus headroom is checked again after acquisition and
+before execution. The lock holder waits for the original process, which replaces
+itself with `unshare` rather than leaving an intermediate command parent.
+Executed checks are never retried by the lock helper. Checks have one bounded
+child, a clean explicit environment, combined stdout/stderr <=1 MiB,
 and <=128 MiB owned scratch. Runtime probes recheck disk, cgroup headroom,
 group RSS/PIDs, at least 256 MiB remaining memory, scratch and the bounded reusable
 Cargo cache. Other users can still consume resources after admission; these
 checks refuse known insufficiency rather than promising an absolute OOM guarantee.
-Process group and resident-page counters come from the same `/proc/PID/stat`
-record, multiplied by the observed, validated `getconf PAGESIZE` result. No
+Process identity, parent, start time, group and resident-page counters come
+from the same `/proc/PID/stat` record, multiplied by the observed, validated
+`getconf PAGESIZE` result. Accounting follows descendants across `setsid` and
+reparenting to the child PID namespace's init; a detached browser cannot escape
+the check's RSS/process ceilings by changing its group. The observation table
+is capped at 8,192 entries and incompatible parent identities fail closed. No
 earlier process state is combined with a later optional `VmRSS` field. A numeric
 zero is an observation; missing, malformed or unreadable live counters fail.
 

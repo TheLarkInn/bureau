@@ -27,27 +27,60 @@ function integer(value, field) {
   return number;
 }
 
-export function parseProcessStat(text, pageSize, expectedPid) {
+function processRecord(text, pageSize, expectedPid) {
   const opening = /^([1-9]\d*) \(/u.exec(text);
   const closing = text.lastIndexOf(")");
   requireValue(opening && closing >= opening[0].length && text[closing + 1] === " ",
     "malformed process stat record");
-  requireValue(integer(opening[1], "pid") === expectedPid, "process stat identity changed");
+  const pid = integer(opening[1], "pid");
+  requireValue(pid === expectedPid, "process stat identity changed");
   const fields = text.slice(closing + 1).trim().split(/\s+/u);
   requireValue(fields.length >= 22 && /^[a-zA-Z]$/u.test(fields[0]), "truncated process stat record");
+  const parent = integer(fields[1], "parent");
   const group = integer(fields[2], "group");
+  const started = integer(fields[19], "start time");
   const rss = integer(fields[21], "RSS pages") * parsePageSize(String(pageSize));
   requireValue(Number.isSafeInteger(rss), "process RSS is outside the safe range");
+  return { pid, parent, group, started, rss };
+}
+
+export function parseProcessStat(text, pageSize, expectedPid) {
+  const { group, rss } = processRecord(text, pageSize, expectedPid);
   return { group, rss };
+}
+
+function treeUsage(records, pgid) {
+  const children = new Map();
+  const pending = [];
+  for (const record of records) {
+    if (!children.has(record.parent)) children.set(record.parent, []);
+    children.get(record.parent).push(record);
+    if (record.group === pgid) pending.push(record);
+  }
+  const seen = new Set();
+  let rss = 0;
+  for (let index = 0; index < pending.length; index += 1) {
+    const record = pending[index];
+    if (seen.has(record.pid)) continue;
+    seen.add(record.pid);
+    rss += record.rss;
+    requireValue(Number.isSafeInteger(rss), "process-group RSS is outside the safe range");
+    for (const child of children.get(record.pid) ?? []) {
+      requireValue(child.started >= record.started, "process ancestry identity changed");
+      pending.push(child);
+    }
+  }
+  return { rss, count: seen.size };
 }
 
 export async function processGroupUsage(pgid, {
   read = readFile, list = readdir, pageSize = systemPageSize(),
 } = {}) {
   requireValue(Number.isSafeInteger(pgid) && pgid > 0, "invalid process group");
-  let rss = 0;
-  let count = 0;
-  for (const name of await list("/proc")) {
+  const names = await list("/proc");
+  requireValue(names.length <= 8192, "process table exceeds the observation bound");
+  const records = [];
+  for (const name of names) {
     if (!/^[1-9]\d*$/u.test(name)) continue;
     let text;
     try {
@@ -56,13 +89,10 @@ export async function processGroupUsage(pgid, {
       if (error.code === "ENOENT" || error.code === "ESRCH") continue;
       throw error;
     }
-    // Group and resident pages must come from one record, not an earlier
-    // stat state combined with a later status after exit_mm released memory.
-    const observed = parseProcessStat(text, pageSize, Number(name));
-    if (observed.group !== pgid) continue;
-    count += 1;
-    rss += observed.rss;
-    requireValue(Number.isSafeInteger(rss), "process-group RSS is outside the safe range");
+    // Ancestry, identity and RSS belong to one record, including during exit.
+    records.push(processRecord(text, pageSize, Number(name)));
   }
-  return { rss, count };
+  // setsid changes a descendant's group, not its parent chain. Namespace
+  // orphans are reparented to the child namespace's init within this tree.
+  return treeUsage(records, pgid);
 }
