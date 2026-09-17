@@ -49,6 +49,8 @@ test("patches cannot edit verification, dependencies, automation or another cate
     ["crates/bureau/src/cli/run/observe/tests.rs"],
     ["crates/bureau/tests/rate_admission.rs"], ["crates/bureau/tests/rate_admission/support.rs"],
     ["crates/bureau/src/state/accounting/tests.rs"], ["crates/bureau/src/state/accounting/tests/nested.rs"],
+    ["crates/bureau/src/state/claim/fresh/quota/tests.rs"],
+    ["crates/bureau/src/state/claim/fresh/quota/tests/nested.rs"],
     ["crates/bureau/tests/migration_cli.rs"],
     ["crates/bureau/Cargo.toml"], ["crates/nested/deeper/Cargo.lock"],
     ["crates/bureau/build.rs"], ["crates/bureau/.cargo/config.toml"],
@@ -58,8 +60,10 @@ test("patches cannot edit verification, dependencies, automation or another cate
   }
 });
 
-test("accounting implementation remains editable while its ledger and migration proofs stay protected", () => {
-  assert.equal(patchProblem(["crates/bureau/src/state/accounting.rs"], "chaos"), null);
+test("accounting and quota implementations remain editable while their proofs stay protected", () => {
+  for (const path of ["crates/bureau/src/state/accounting.rs", "crates/bureau/src/state/claim/fresh/quota.rs"]) {
+    assert.equal(patchProblem([path], "chaos"), null);
+  }
 });
 
 test("incomplete/manual browser evidence remains blocked but retains bounded raw diagnostics", async () => {

@@ -79,16 +79,18 @@ test("manifest, lock and build-input exclusions apply at every depth and to site
   }
 });
 
-test("ledger verification bytes stay pinned even when index flags hide an edit", async (t) => {
-  const { root, source } = await repository(t);
-  const path = "crates/bureau/src/state/accounting/tests.rs";
-  await mkdir(dirname(join(root, path)), { recursive: true });
-  await writeFile(join(root, path), "fn original_ledger_proof() {}\n");
-  git(root, "add", path);
-  git(root, "commit", "--quiet", "-m", "ledger fixture\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>");
-  source.commit = git(root, "rev-parse", "HEAD");
-  await requireVerificationInputs(source, root);
-  git(root, "update-index", "--assume-unchanged", path);
-  await writeFile(join(root, path), "fn weakened_ledger_proof() {}\n");
-  await assert.rejects(requireVerificationInputs(source, root), /protected verification input changed/u);
+test("ledger and quota verification bytes stay pinned even when index flags hide an edit", async (t) => {
+  for (const path of ["crates/bureau/src/state/accounting/tests.rs",
+    "crates/bureau/src/state/claim/fresh/quota/tests.rs", "crates/bureau/src/state/claim/fresh/quota/tests/seen.rs"]) {
+    const { root, source } = await repository(t);
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), "fn original_proof() {}\n");
+    git(root, "add", path);
+    git(root, "commit", "--quiet", "-m", "verification fixture\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>");
+    source.commit = git(root, "rev-parse", "HEAD");
+    await requireVerificationInputs(source, root);
+    git(root, "update-index", "--assume-unchanged", path);
+    await writeFile(join(root, path), "fn weakened_proof() {}\n");
+    await assert.rejects(requireVerificationInputs(source, root), /protected verification input changed/u);
+  }
 });
