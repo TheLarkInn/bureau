@@ -2,7 +2,11 @@
 //! a terminal (DESIGN.md sections 11 and 13).
 mod claim;
 pub(super) mod committed;
+mod observe;
 mod signal;
+
+#[cfg(test)]
+mod tests;
 
 use crate::cli::out;
 use std::collections::BTreeMap;
@@ -20,12 +24,7 @@ use bureau::runlog::{self, EventKind, RunStartedData};
 use bureau::state::{LeaseOwner, Store};
 
 use super::{Paths, prepare};
-
-struct Prepared {
-    forge: Arc<dyn Forge>,
-    item: Item,
-    credentials: BTreeMap<String, Secret>,
-}
+use observe::{Prepared, prepare_execution};
 
 /// The one assignment bound to `pipeline`; v0 runs exactly one, so zero
 /// matches and ambiguity are both errors that name what was found.
@@ -77,47 +76,6 @@ fn retry_target(runs: &Path, run_id: &str) -> anyhow::Result<Option<(String, Str
         "run `{run_id}` recorded no work item; nothing to retry"
     ));
     Ok(None)
-}
-
-async fn approved(
-    forge: &dyn Forge,
-    assignment: &Assignment,
-    item_query: &str,
-) -> anyhow::Result<Option<Item>> {
-    let Some(item) = prepare::find_item(forge, assignment, item_query).await? else {
-        out::error(format_args!(
-            "no item `{item_query}` in `{}`",
-            assignment.work.source
-        ));
-        return Ok(None);
-    };
-    let Some(item) = bureau::reconcile::approved_item(assignment, item) else {
-        out::error(format_args!(
-            "item `{item_query}` is missing the required approval label"
-        ));
-        return Ok(None);
-    };
-    Ok(Some(item))
-}
-
-async fn prepare_execution(
-    config: &Config,
-    assignment: &Assignment,
-    settings: &bureau::setup::Settings,
-    item_query: &str,
-) -> anyhow::Result<Option<Prepared>> {
-    let Some(credentials) = prepare::resolve_credentials(config, assignment, settings) else {
-        return Ok(None);
-    };
-    let forge = prepare::work_forge(config, assignment, &credentials)?;
-    let Some(item) = approved(&*forge, assignment, item_query).await? else {
-        return Ok(None);
-    };
-    Ok(Some(Prepared {
-        forge,
-        item,
-        credentials,
-    }))
 }
 
 fn plan(
@@ -228,6 +186,7 @@ async fn execute(
         &prepared.item,
         &run_id,
         &paths.runs,
+        prepared.open_prs,
     )?
     else {
         return Ok(1);

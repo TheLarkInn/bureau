@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use super::super::{Error, Store, now_millis};
+use super::super::{Error, Store, limits, now_millis, usage};
 use super::LeaseOwner;
+use crate::config::Limits;
 use crate::runlog::{FactoryHistory, FactorySource};
 
 #[cfg(test)]
@@ -157,9 +158,10 @@ impl LeaseOwner {
         ttl: Duration,
         runs: &Path,
         prepared: &mut Option<FactoryHistory>,
+        available: &mut impl FnMut(&Connection, i64) -> Result<bool, Error>,
     ) -> Result<Verification<FreshClaim>, Error> {
         let mut checked = None;
-        let won = self.store.claim_owner_if(self, ttl, |connection, _| {
+        let won = self.store.claim_owner_if(self, ttl, |connection, now| {
             let result = inspect(
                 connection,
                 runs,
@@ -167,12 +169,25 @@ impl LeaseOwner {
                 &self.key.forge,
                 prepared,
             )?;
-            let available = matches!(&result, Verification::Current(work)
+            let unreserved = matches!(&result, Verification::Current(work)
                 if !work.contains_key(&self.key.external_id));
             checked = Some(result);
-            Ok(available)
+            Ok(unreserved && available(connection, now)?)
         })?;
         checked_claim(won, checked, &self.key.external_id)
+    }
+
+    fn claim_fresh_if(
+        &self,
+        ttl: Duration,
+        runs: &Path,
+        mut available: impl FnMut(&Connection, i64) -> Result<bool, Error>,
+        before_replay: impl FnMut(),
+    ) -> Result<FreshClaim, Error> {
+        prepared(
+            |history| self.claim_once(ttl, runs, history, &mut available),
+            before_replay,
+        )
     }
 
     fn claim_fresh_with(
@@ -181,7 +196,7 @@ impl LeaseOwner {
         runs: &Path,
         before_replay: impl FnMut(),
     ) -> Result<FreshClaim, Error> {
-        prepared(|history| self.claim_once(ttl, runs, history), before_replay)
+        self.claim_fresh_if(ttl, runs, |_, _| Ok(true), before_replay)
     }
 
     /// Claims fresh work after exact fenced validation of replay prepared outside the fence.
@@ -192,5 +207,34 @@ impl LeaseOwner {
     /// Propagates database failures and unreadable or inconsistent authoritative logs.
     pub fn claim_fresh(&self, ttl: Duration, runs: &Path) -> Result<FreshClaim, Error> {
         self.claim_fresh_with(ttl, runs, || {})
+    }
+
+    /// Rechecks durable assignment usage and claims the item in one write transaction.
+    ///
+    /// Returns `None` when a configured limit is exhausted. `open_prs` is the
+    /// caller's forge observation; this does not reserve future PRs or unmeasured cost.
+    /// Existing-run recovery continues using `claim`, not fresh admission.
+    ///
+    /// # Errors
+    /// Propagates database failures and unreadable or inconsistent authoritative logs.
+    pub fn claim_fresh_with_limits(
+        &self,
+        ttl: Duration,
+        runs: &Path,
+        limits: &Limits,
+        open_prs: usize,
+    ) -> Result<Option<FreshClaim>, Error> {
+        let mut exhausted = false;
+        let claim = self.claim_fresh_if(
+            ttl,
+            runs,
+            |connection, now| {
+                let (live, hour, day, spent) = usage(connection, &self.key.assignment, now)?;
+                exhausted = limits::remaining(limits, open_prs, live, hour, day, spent) == 0;
+                Ok(!exhausted)
+            },
+            || {},
+        )?;
+        Ok((!exhausted).then_some(claim))
     }
 }

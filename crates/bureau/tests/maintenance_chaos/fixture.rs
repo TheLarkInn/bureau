@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bureau::config::Config;
+use bureau::config::{Config, Limits};
 use bureau::contract::Trust;
 use bureau::engine::Engine;
 use bureau::forge::fake::FakeForge;
@@ -52,7 +52,7 @@ pub(super) fn item(id: u32) -> Item {
 
 struct Observation {
     forge: FakeForge,
-    barrier: Barrier,
+    barrier: Arc<Barrier>,
 }
 
 #[async_trait]
@@ -167,7 +167,8 @@ pub(super) struct Fixture {
     pub(super) one: Reconciler,
     pub(super) two: Reconciler,
     pub(super) limit: u32,
-    _directory: TestDir,
+    pub(super) barrier: Arc<Barrier>,
+    directory: TestDir,
 }
 
 impl Fixture {
@@ -177,15 +178,28 @@ impl Fixture {
         let mut items: Vec<Item> = (0..2 * limit + 2).map(item).collect();
         let rotation = usize::try_from(seed).expect("seed fits usize") % items.len();
         items.rotate_left(rotation);
+        let barrier = Arc::new(Barrier::new(3));
         let forge: Arc<dyn Forge> = Arc::new(Observation {
             forge: FakeForge::new(items),
-            barrier: Barrier::new(2),
+            barrier: barrier.clone(),
         });
         Self {
             one: reconciler(directory.path(), &forge, limit),
             two: reconciler(directory.path(), &forge, limit),
             limit,
-            _directory: directory,
+            barrier,
+            directory,
         }
+    }
+
+    pub(super) fn set_limits(&mut self, limits: &Limits) {
+        for reconciler in [&mut self.one, &mut self.two] {
+            reconciler.config.assignments.get_mut(ASSIGNMENT)
+                .expect("fixture assignment").limits.clone_from(limits);
+        }
+    }
+
+    pub(super) fn database(&self) -> PathBuf {
+        self.directory.path().join("state.db")
     }
 }

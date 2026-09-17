@@ -3,30 +3,44 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
+use bureau::config::Limits;
 use bureau::reconcile::{Error, Started};
 use bureau::state::Disposition;
 
 use super::fixture::{ASSIGNMENT, Fixture, item};
 
-fn ready(result: Poll<Result<Vec<Started>, Error>>) -> Vec<Started> {
+fn ready(result: Poll<Result<Vec<Started>, Error>>) -> Result<Vec<Started>, Error> {
     match result {
-        Poll::Ready(result) => result.expect("reconcile pass"),
+        Poll::Ready(result) => result,
         Poll::Pending => panic!("the released observation must complete synchronously"),
     }
 }
 
-fn competing_passes(fixture: &Fixture) -> Vec<Started> {
+fn collect(passes: [Result<Vec<Started>, Error>; 2]) -> (Vec<Started>, Vec<Error>) {
+    let (mut started, mut errors) = (Vec::new(), Vec::new());
+    for result in passes {
+        match result {
+            Ok(mut runs) => started.append(&mut runs),
+            Err(error) => errors.push(error),
+        }
+    }
+    (started, errors)
+}
+
+fn competing_passes(fixture: &Fixture, between: impl FnOnce()) -> (Vec<Started>, Vec<Error>) {
     let mut one = pin!(fixture.one.reconcile_once());
     let mut two = pin!(fixture.two.reconcile_once());
     let mut context = Context::from_waker(Waker::noop());
-    assert!(
-        one.as_mut().poll(&mut context).is_pending(),
-        "the first pass must stop after observing the assignment's headroom"
-    );
+    assert!(one.as_mut().poll(&mut context).is_pending(), "first observation");
+    assert!(two.as_mut().poll(&mut context).is_pending(), "second observation");
+    between();
+    let mut release = pin!(fixture.barrier.wait());
+    assert!(release.as_mut().poll(&mut context).is_ready(), "release observations");
     // Poll directly so both stale snapshots are consumed without scheduling engine tasks.
-    let mut started = ready(two.as_mut().poll(&mut context));
-    started.extend(ready(one.as_mut().poll(&mut context)));
-    started
+    collect([
+        ready(two.as_mut().poll(&mut context)),
+        ready(one.as_mut().poll(&mut context)),
+    ])
 }
 
 fn preclaimed(fixture: &Fixture, seed: u32) -> u32 {
@@ -63,19 +77,66 @@ async fn cancel_unpolled(started: Vec<Started>) {
     }
 }
 
-pub(super) async fn shared_assignment_limit(seed: u32) {
+async fn shared_assignment_limit(seed: u32) {
     let fixture = Fixture::new(seed);
     let existing = preclaimed(&fixture, seed);
-    let started = competing_passes(&fixture);
+    let (started, failed) = competing_passes(&fixture, || {});
     let claimed = (
         started.len(),
         fixture.one.state.budget(ASSIGNMENT).expect("budget").live_leases,
+        failed.len(),
     );
     cancel_unpolled(started).await;
     let expected = usize::try_from(fixture.limit - existing).expect("small limit");
     assert_eq!(
         claimed,
-        (expected, fixture.limit),
+        (expected, fixture.limit, 0),
         "seed state={seed}: independent shared-store reconcilers must share capacity"
     );
+}
+
+fn exhausted_limit(seed: u32) -> Limits {
+    match seed % 3 {
+        0 => Limits { max_runs_per_hour: Some(1), ..Limits::default() },
+        1 => Limits { max_runs_per_day: Some(1), ..Limits::default() },
+        _ => Limits { max_cost_per_day_usd: Some(1.0), ..Limits::default() },
+    }
+}
+
+async fn recorded_budget(seed: u32) {
+    let mut fixture = Fixture::new(seed);
+    fixture.set_limits(&exhausted_limit(seed));
+    let (started, failed) = competing_passes(&fixture, || {
+        fixture.one.state.record_run("completed-elsewhere", ASSIGNMENT, 1.0)
+            .expect("exhaust budget after both observations");
+    });
+    let count = started.len();
+    cancel_unpolled(started).await;
+    assert_eq!(
+        (count, failed.len(), fixture.one.state.active(ASSIGNMENT).expect("leases").len()),
+        (0, 0, 0),
+        "state={seed}: current recorded budget must override stale headroom"
+    );
+}
+
+async fn unavailable_budget(seed: u32) {
+    let fixture = Fixture::new(seed);
+    let (started, failed) = competing_passes(&fixture, || {
+        rusqlite::Connection::open(fixture.database()).expect("failure injection")
+            .execute("DROP TABLE runs", []).expect("inject unavailable budget");
+    });
+    let count = started.len();
+    cancel_unpolled(started).await;
+    let messages: Vec<String> = failed.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        (count, failed.len(), fixture.one.state.active(ASSIGNMENT).expect("leases").len()),
+        (0, 2, 0),
+        "state={seed}: budget errors must surface without claims: {messages:?}"
+    );
+}
+
+pub(super) async fn check(seed: u32) {
+    shared_assignment_limit(seed).await;
+    recorded_budget(seed).await;
+    unavailable_budget(seed).await;
 }

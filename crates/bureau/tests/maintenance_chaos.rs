@@ -2,6 +2,8 @@
 
 #[path = "maintenance_chaos/admission.rs"]
 mod admission;
+#[path = "maintenance_chaos/durability.rs"]
+mod durability;
 #[path = "maintenance_chaos/fixture.rs"]
 mod fixture;
 
@@ -20,6 +22,8 @@ async fn seeded_offline_invariants() {
     for case in 0..8 {
         state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         eprintln!("BUREAU_CHAOS_SEED={seed} case={case} state={state}");
-        admission::shared_assignment_limit(state).await;
+        admission::check(state).await;
+        durability::lease_takeover(state);
+        durability::replay_restart(state);
     }
 }
