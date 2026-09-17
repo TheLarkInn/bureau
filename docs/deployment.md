@@ -49,6 +49,11 @@ Before activation, provision and qualify:
    Qualify unprivileged user/PID isolation under the actual service/container
    policy. Do not disable the command sandbox, run privileged, auto-install
    tools, or use a personal home/SSH agent/container socket to bypass a refusal.
+   Provision the selected agent CLI as reviewed, read-only tooling. Bureau
+   disables Copilot auto-updates for both ACP and SDK factory launches; upgrades
+   are an operator action. Protect executable-cache ancestors against replacement,
+   not only their files or final bind mount. Keep those ancestors operator-owned,
+   with only explicit private state/log/temp directories writable by the daemon.
 3. Prepared read-only browser tools at `policy.site_tools`: the `site/` package
    and the existing canvas Playwright package at their ordinary relative paths,
    each with its reviewed manifests, lockfiles and installed `node_modules`.

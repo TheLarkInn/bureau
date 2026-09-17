@@ -115,6 +115,7 @@ fn copilot_reserves_stdin_for_acp_and_preserves_native_policy() {
             "--sandbox",
             "--allow-tool=bureau-io",
             "--deny-tool=shell(*)",
+            "--no-auto-update",
         ]
     );
     let shape = (
