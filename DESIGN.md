@@ -87,8 +87,10 @@ It is **a CI runner with a work queue and a reconcile loop**. The step body happ
 to be an LLM instead of a shell script. That is the only novel part of the execution
 model; everything else is ordinary systems engineering and should look ordinary.
 
-It runs in a Linux dev container on one developer's machine. One process. No cluster,
-no control plane, no service.
+It runs in a Linux dev container on one developer's machine. A self-hosted Linux VM
+or container with one owner and local durable state is the same single-machine
+topology. One engine process. No cluster, no control plane, no public service.
+GitHub Pages may host static documentation, never the daemon or its state.
 
 ### What it does NOT own
 
@@ -201,6 +203,10 @@ The loop must be fully correct with every webhook unplugged. A webhook only shor
 the interval from minutes to seconds. Because polling works identically on every
 forge, your correctness path stays forge-agnostic and only the optimization is
 forge-specific.
+
+External automation may update reviewed, approved forge intent or wake a poll.
+It is not another execution engine, queue, or source of run truth; missed or
+duplicated wakes do not change what the next reconciliation pass observes.
 
 ### Consequence: there is no queue table
 
@@ -758,8 +764,10 @@ Properties this gives you for free, which you must not undermine:
 - **Idempotent by construction.** A loop computing "what is missing" cannot
   double-submit. A cron job that says "do a pass" can.
 - **Restart is free.** Kill it mid-run, restart, it re-observes and continues.
-- **Multi-host works with no shared queue.** Two daemons on two machines reconciling
-  the same forge arbitrate solely through lease CAS.
+- **Lease CAS protects one shared transactional state.** Cooperating processes
+  using the same local database cannot claim the same item. Independent hosts
+  with separate SQLite files do not share leases and are not a supported
+  deployment. This does not authorize a distributed database or control plane.
 
 A panic inside one run must not abort the loop. `tokio::spawn` isolates the task;
 join the handle and log the panic, then release the lease.

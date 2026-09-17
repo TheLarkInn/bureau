@@ -1,0 +1,7 @@
+name: maintenance-reporter
+agent: agents/maintenance-reporter.agent.md
+adapter: copilot
+# repo:write is needed by the current adapter for any shell invocation.
+# Deterministic checks require an unchanged worktree before/after reporting.
+permissions: [repo:read, repo:write, issues:read, issues:write, model:invoke]
+min_trust: derived
