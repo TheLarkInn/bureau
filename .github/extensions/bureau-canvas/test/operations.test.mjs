@@ -56,6 +56,17 @@ test("read-only policy is explicit, cannot be relaxed by input, and invalid envi
     .map((name) => Boolean(mutationRefusal(access, name))), [false, false, true, true, true, true]);
 });
 
+test("missing, unknown, and incomplete access policies never authorize mutations", () => {
+  const policies = [undefined, null, {}, { mode: "unknown" }, { mode: "read-only" }, { mode: "read-only", reason: "" }];
+  assert.deepEqual(policies.map((access) => [
+    Boolean(mutationRefusal(access, "save", "action")),
+    Boolean(mutationRefusal(access, "save-plan")),
+    mutationRefusal(access, "describe", "action"),
+  ]), policies.map(() => [true, true, null]));
+  assert.deepEqual(["save", "create", "set_field"].map((name) =>
+    mutationRefusal(canvasAccess(), name, "action")), [null, null, null]);
+});
+
 test("ordinary observed active, paused, resumed, failed and human-needed states are distinct", () => {
   const pause = { kind: "output", data: { stream: "run", data: "run paused at a step boundary: review required" } };
   const start = { kind: "step_started", data: { step: "verify" } };

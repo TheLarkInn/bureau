@@ -1,7 +1,8 @@
 import { readdir } from "node:fs/promises";
 
 import { STATES } from "../../../web/statelab/registry.mjs";
-import { enterState, expect, test } from "../matrix-fixtures.mjs";
+import { enterState, expect, isolationFindings, test } from "../matrix-fixtures.mjs";
+import { enterOperationsVisual } from "../operations-visual.mjs";
 
 const DESKTOP = { width: 1280, height: 900 };
 const COMPACT = { width: 760, height: 900 };
@@ -18,6 +19,12 @@ const SCREENS = [
   screen("assignment-overview-compact", "surface:config+data:validated+section:stack+card:collapsed", COMPACT),
   screen("unsaved-pipeline-edit-compact", "surface:editor+tab:pipeline+pick:agent+edit:renamed", COMPACT),
 ];
+const OPERATIONS_SCREENS = [
+  { name: "operations-overview", variant: "observed", viewport: DESKTOP },
+  { name: "operations-overview-mobile", variant: "observed", viewport: { width: 375, height: 900 } },
+  { name: "operations-unavailable-read-only", variant: "unavailable", viewport: DESKTOP },
+];
+const APPROVED = [...SCREENS, ...OPERATIONS_SCREENS];
 
 /**
  * The header prints the absolute directory the config was loaded from, which is
@@ -45,6 +52,16 @@ const SCREENS = [
 const HOST_PATH = ".config-path";
 const PIN_HOST_PATH = `${HOST_PATH} { width: 12rem; }`;
 
+async function approvedScreenshot(page, name) {
+  await page.addStyleTag({ content: PIN_HOST_PATH });
+  await expect(page).toHaveScreenshot(`${name}.png`, {
+    animations: "disabled",
+    caret: "hide",
+    fullPage: true,
+    mask: [page.locator(HOST_PATH)],
+  });
+}
+
 test.describe("@visual approved product screens", () => {
   for (const item of SCREENS) {
     test(item.name, async ({ watched, host }) => {
@@ -52,22 +69,26 @@ test.describe("@visual approved product screens", () => {
       const result = await enterState(item.state, watched.page, host);
 
       expect(result.failures, `${item.name} must satisfy its structural checks`).toEqual([]);
-      await watched.page.addStyleTag({ content: PIN_HOST_PATH });
-      await expect(watched.page).toHaveScreenshot(`${item.name}.png`, {
-        animations: "disabled",
-        caret: "hide",
-        fullPage: true,
-        mask: [watched.page.locator(HOST_PATH)],
-      });
+      await expect(watched.page.locator(".operations")).toHaveCount(0);
+      await approvedScreenshot(watched.page, item.name);
+    });
+  }
+  for (const item of OPERATIONS_SCREENS) {
+    test(item.name, async ({ watched, host }) => {
+      await watched.page.setViewportSize(item.viewport);
+      await enterOperationsVisual(watched.page, host, item.variant);
+      expect([...watched.errors, ...isolationFindings(watched.page)]).toEqual([]);
+      await approvedScreenshot(watched.page, item.name);
+      expect([...watched.errors, ...isolationFindings(watched.page)]).toEqual([]);
     });
   }
 });
 
 /**
- * How many approved screens there are is printed to every reader of a run and
- * asserted, until now, by nothing: the job is named `10 approved screens` and
- * its summary line repeats the figure. Add an eleventh screen and both keep
- * saying ten, green. That is this branch's own subject one layer out — a count
+ * The approved count is printed to every reader of a run, so
+ * the job name and summary must agree with the baseline inventory. Adding a
+ * screen without changing the published count leaves a misleading green run.
+ * That is this branch's own subject one layer out — a count
  * reported to a human that no test can falsify — and the reason the rest of
  * `summary()` is pinned to literals a few files away.
  *
@@ -77,18 +98,18 @@ test.describe("@visual approved product screens", () => {
  * Rename a screen and the old image stays, gating nothing, while the folder a
  * reviewer scrolls to see what was approved grows a picture no test reads.
  */
-test("@visual the ten approved screens are exactly the baselines on disk", async ({}, testInfo) => {
+test("@visual the thirteen approved screens are exactly the baselines on disk", async ({}, testInfo) => {
   const suffix = `-${testInfo.project.name}-${process.platform}.png`;
   const files = await readdir(new URL("./visual-regression.spec.mjs-snapshots/", import.meta.url));
   const approved = files.filter((name) => name.endsWith(suffix)).map((name) => name.slice(0, -suffix.length));
 
   expect({
     approved: approved.sort(),
-    count: SCREENS.length,
+    count: APPROVED.length,
     unreadable: files.filter((name) => !name.endsWith(suffix)),
   }).toEqual({
-    approved: SCREENS.map((item) => item.name).sort(),
-    count: 10,
+    approved: APPROVED.map((item) => item.name).sort(),
+    count: 13,
     unreadable: [],
   });
 });
@@ -122,10 +143,5 @@ test("@visual an approved screen does not depend on the host's config path", asy
     node.textContent = "/var/lib/some-other-runner/deeply/nested/checkout/bureau/.bureau";
   });
 
-  await expect(watched.page).toHaveScreenshot(`${item.name}.png`, {
-    animations: "disabled",
-    caret: "hide",
-    fullPage: true,
-    mask: [watched.page.locator(HOST_PATH)],
-  });
+  await approvedScreenshot(watched.page, item.name);
 });

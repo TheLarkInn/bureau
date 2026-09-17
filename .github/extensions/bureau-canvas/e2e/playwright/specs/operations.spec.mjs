@@ -255,3 +255,16 @@ test("Operations text and controls meet contrast in light and host-token dark th
       dark ? "dark contrast" : "light contrast").toEqual([]);
   }
 });
+
+test("selected global navigation stays readable on the graph's own dark surface", async ({ page, canvas }) => {
+  await page.goto(canvas.url);
+  await page.getByRole("button", { name: `Open pipeline ${PIPELINE}`, exact: true }).click();
+  await page.getByTestId("design-surface-graph").click();
+  await expect(page.locator(".pipeline-flow")).toBeVisible();
+  const selected = page.getByRole("button", { name: "Configuration", exact: true });
+  await expect(selected).toHaveAttribute("aria-current", "page");
+  const snapshot = await page.evaluate((source) => new Function(`return (${source})`)()(document,
+    { selectors: [], measure: [], contrast: [".bureau-navigation button"] }), collect.toString());
+  expect(snapshot.contrast).toHaveLength(2);
+  expect(snapshot.contrast.filter((item) => !Number.isFinite(item.ratio) || item.ratio < 4.5)).toEqual([]);
+});

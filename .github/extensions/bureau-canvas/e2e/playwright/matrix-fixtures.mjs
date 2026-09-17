@@ -701,7 +701,11 @@ async function sample(state, page) {
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
     { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) } },
   );
-  return { snapshot, failures: [...heldWrites(page), ...leftTheMachine(page), ...verdict(state, snapshot, { slack: 2 })] };
+  return { snapshot, failures: [...isolationFindings(page), ...verdict(state, snapshot, { slack: 2 })] };
+}
+
+export function isolationFindings(page) {
+  return [...heldWrites(page), ...leftTheMachine(page)];
 }
 
 /**

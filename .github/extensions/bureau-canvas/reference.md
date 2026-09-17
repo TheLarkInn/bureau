@@ -48,6 +48,13 @@ planning writes, or spawning a run command. Configuration creation, cloning,
 saving, deletion, retries, and all run controls are included. Unknown mutation
 names are denied, not optimistically allowed.
 
+Registered mutators require a listening, initialized instance with an explicit
+access policy. Before open, during a failed open, and after close, missing
+context refuses writes rather than defaulting to local access. Closing does
+not erase pending plans or field drafts. Read-only restrictions remain attached
+to the same instance for the provider lifetime, including close/reopen; use a
+fresh instance for a separately authorized local editing view.
+
 Only navigation, inspection, pure URL derivation, and config validation remain
 available. Read-only run history uses the bounded raw reader; even an older
 CLI cannot repair a tail through this route. Native control approval is denied
@@ -150,6 +157,10 @@ The focused `operations.spec.mjs` browser cases cover exact handoffs, polling,
 unknown/error evidence, native/Bureau separation, 320/375px layouts, keyboard
 focus, reduced motion, and light/dark host-token contrast. These cases do not
 replace the existing state-matrix or visual-baseline suites.
+Navigation contrast is also checked on the graph's independently dark surface.
+The approved visual suite preserves its ten legacy views and adds desktop/mobile
+Operations evidence and a read-only invalid/missing-evidence view. Its fixed
+clock does not turn missing accounting, provenance, or activity into success.
 `read-only.spec.mjs` additionally exercises the real managed server policy,
 disabled mutation widgets, raw request override attempts, and direct editor
 entry without Save or clone paths.

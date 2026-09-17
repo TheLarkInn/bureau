@@ -121,7 +121,9 @@ words, 44px controls, and visible keyboard focus. The source columns and run
 rows collapse at the existing 56rem breakpoint. Preserve content at 320px,
 including errors and long identifiers. Reduced motion disables Operations
 and navigation transitions. Check text contrast after applying actual host
-tokens rather than assuming the light fallback is sufficient.
+tokens and on the graph's independently dark surface rather than assuming the
+light fallback is sufficient. Selected global navigation uses the scoped focus
+accent so it remains readable when the graph overrides the surrounding palette.
 
 ## Colors
 

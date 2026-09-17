@@ -16,6 +16,10 @@
   color: var(--true-color-blue, #0969da);
   background: var(--background-color-default, #fff);
 }
+.bureau-navigation [aria-current="page"] {
+  border-color: var(--color-focus-outline, #0969da);
+  color: var(--color-focus-outline, #0969da);
+}
 .operations {
   width: 100%;
   max-width: 100rem;

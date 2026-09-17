@@ -95,6 +95,8 @@ export const canvasDeclaration = {
 export const servers = new Map();
 const subjects = new Map();
 const plans = new Map();
+// Closing the listener must not relax a restriction or discard pending work.
+const readOnlyInstances = new Map();
 
 /**
  * Actions receive a relative `dir` default, so resolve it the same way
@@ -145,7 +147,9 @@ export function canvasActions(deps = actionDependencies()) {
         description: action.description,
         inputSchema: action.inputSchema,
         handler: async (ctx) => {
-            const refusal = mutationRefusal(servers.get(ctx.instanceId)?.access, action.name, "action");
+            const entry = servers.get(ctx.instanceId);
+            const access = entry?.initialized && entry.server?.listening ? entry.access : null;
+            const refusal = mutationRefusal(access, action.name, "action");
             if (refusal) throw new Error(refusal);
             return action.handler(ctx, deps);
         },
@@ -167,7 +171,7 @@ export function canvasActions(deps = actionDependencies()) {
 
 function requireServer(instanceId) {
     const entry = servers.get(instanceId);
-    if (!entry) throw new Error("Open the Bureau canvas before selecting a view.");
+    if (!entry?.initialized || !entry.server?.listening) throw new Error("Open the Bureau canvas before selecting a view.");
     return entry;
 }
 
@@ -222,17 +226,37 @@ function testValidationOptions(options) {
     };
 }
 
+function applyAccess(entry, access) {
+    entry.access = access;
+    entry.options = { ...entry.options, access };
+    if (isReadOnly(access)) entry.state = { ...entry.state, access };
+}
+
+function instanceAccess(instanceId, input, options) {
+    const previous = readOnlyInstances.get(instanceId) ?? servers.get(instanceId)?.access;
+    const access = isReadOnly(previous) ? previous : canvasAccess(input, options, process.env.BUREAU_CANVAS_READ_ONLY);
+    if (isReadOnly(access)) {
+        readOnlyInstances.set(instanceId, access);
+        const entry = servers.get(instanceId);
+        if (entry) {
+            applyAccess(entry, access);
+            publishState(entry);
+        }
+    }
+    return access;
+}
+
 export async function openBureauCanvas(ctx, options = {}) {
     const input = resolveInput(ctx.input ?? {});
-    const existing = servers.get(ctx.instanceId);
-    const access = existing?.access?.mode === "read-only" ? existing.access
-        : canvasAccess(ctx.input, options, process.env.BUREAU_CANVAS_READ_ONLY);
+    const access = instanceAccess(ctx.instanceId, ctx.input, options);
     const serverOptions = testValidationOptions({
         ...options,
         access,
         dev: ctx.input?.dev ?? options.dev ?? false,
     });
     const state = await buildState({ ...input, instanceId: ctx.instanceId }, serverOptions);
+    serverOptions.access = readOnlyInstances.get(ctx.instanceId) ?? access;
+    if (isReadOnly(serverOptions.access)) state.access = serverOptions.access;
     subjects.set(ctx.instanceId, subjectFromState(state));
     let entry = servers.get(ctx.instanceId);
 
@@ -241,12 +265,13 @@ export async function openBureauCanvas(ctx, options = {}) {
         servers.set(ctx.instanceId, entry);
     } else {
         entry.state = state;
-        entry.access = access;
         await configureDevelopment(entry, serverOptions);
-        publishState(entry);
     }
     // Kept so a later refresh rebuilds state the same way this open did.
     entry.options = serverOptions;
+    applyAccess(entry, readOnlyInstances.get(ctx.instanceId) ?? access);
+    entry.initialized = true;
+    publishState(entry);
 
     return { title: DISPLAY_NAME, status: state.status, url: entry.url };
 }
@@ -257,6 +282,7 @@ export async function closeBureauCanvas(ctx) {
         return;
     }
 
+    entry.initialized = false;
     servers.delete(ctx.instanceId);
     subjects.delete(ctx.instanceId);
     await closeServer(entry);
@@ -552,6 +578,7 @@ async function startServer(state, options = {}) {
         clients: new Set(),
         development: false,
         host: "",
+        initialized: false,
         options,
         origin: "",
         reloadFingerprint: "",
@@ -622,6 +649,10 @@ async function abandonServer(entry) {
 }
 
 async function handleRequest(entry, request, response) {
+    if (!entry.initialized) {
+        sendStatus(response, 503);
+        return;
+    }
     if (request.headers.host !== entry.host) {
         sendStatus(response, 421);
         return;
@@ -774,7 +805,7 @@ const CRUD_INTENTS = { create, delete: removeEntity, rename };
 
 async function handleIntent(entry, request, response) {
     const intent = await readIntent(request);
-    const refusal = mutationRefusal(entry.access, intent?.kind);
+    const refusal = mutationRefusal(entry.initialized ? entry.access : null, intent?.kind);
     if (refusal) {
         sendJson(response, { ok: false, error: refusal, access: entry.access }, false, 403);
         return;
