@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parsePageSize, parseProcessStat, processGroupUsage } from "./maintenance-process.mjs";
+import { BOUNDS, MiB, runningProblem } from "./maintenance-resources.mjs";
 
-function stat({ pid = 123, group = 42, state = "R", pages = "2", name = "test (process)" } = {}) {
+function stat({ pid = 123, parent = 0, group = 42, started = 1, state = "R",
+  pages = "2", name = "test (process)" } = {}) {
   const fields = Array(22).fill("0");
   fields[0] = state;
+  fields[1] = String(parent);
   fields[2] = String(group);
+  fields[19] = String(started);
   fields[21] = pages;
   return `${pid} (${name}) ${fields.join(" ")}\n`;
 }
@@ -63,4 +67,43 @@ test("only the requested process group's observed pages are accumulated", async 
     read: async (path) => path === "/proc/123/stat" ? stat() : stat({ pid: 124, group: 99, pages: "800" }),
   });
   assert.deepEqual(result, { rss: 8192, count: 1 });
+});
+
+test("detached groups and namespace orphans remain in the check's descendant accounting", async () => {
+  for (const group of [42, 124]) {
+    const records = new Map([
+      ["123", stat()],
+      ["124", stat({ pid: 124, parent: 123, group, started: 2, pages: "3", name: "namespace init" })],
+      ["125", stat({ pid: 125, parent: 124, group: 125, started: 3, pages: String(75 * MiB / 4096) })],
+      ["126", stat({ pid: 126, parent: 124, group: 126, started: 4, pages: "5" })],
+      ["888", stat({ pid: 888, parent: 1, group: 888, pages: "10000" })],
+    ]);
+    const result = await processGroupUsage(42, {
+      pageSize: 4096, list: async () => [...records.keys()].reverse(),
+      read: async (path) => records.get(path.split("/")[2]),
+    });
+    assert.deepEqual(result, { rss: 75 * MiB + 10 * 4096, count: 4 });
+    assert.match(runningProblem({ ...result, output: 0, scratch: 0 },
+      { ...BOUNDS, maxRss: 64 * MiB }), /memory ceiling/u);
+  }
+});
+
+test("missing ancestry counters and a reused parent identity cannot hide live usage", async () => {
+  for (const change of [{ parent: "" }, { parent: "-1" }, { started: "" }, { started: "-1" }]) {
+    assert.throws(() => parseProcessStat(stat(change), 4096, 123), /unobservable|truncated/u);
+  }
+  await assert.rejects(processGroupUsage(42, {
+    pageSize: 4096, list: async () => ["123", "124"],
+    read: async (path) => path === "/proc/123/stat" ? stat({ started: 10 })
+      : stat({ pid: 124, parent: 123, group: 124, started: 2 }),
+  }), /ancestry identity changed/u);
+});
+
+test("the process observation table is bounded before reading any records", async () => {
+  let reads = 0;
+  await assert.rejects(processGroupUsage(42, {
+    pageSize: 4096, list: async () => Array(8193).fill("123"),
+    read: async () => { reads += 1; return stat(); },
+  }), /observation bound/u);
+  assert.equal(reads, 0);
 });
