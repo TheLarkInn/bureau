@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { SHA, requireValue } from "./maintenance-contract.mjs";
 import { CHAOS_TEST, workspace } from "./maintenance-checks.mjs";
+import { readBoundedJson } from "./maintenance-files.mjs";
 
 export async function binaryDigest(binary) {
   const info = await lstat(binary);
@@ -14,7 +15,13 @@ export async function binaryDigest(binary) {
     "suite binary must be a regular file no larger than 512 MiB");
   requireValue(process.platform === "linux" && (info.mode & 0o111) !== 0, "suite binary must be Linux-executable");
   const hash = createHash("sha256");
-  for await (const bytes of createReadStream(binary)) hash.update(bytes);
+  let size = 0;
+  for await (const bytes of createReadStream(binary)) {
+    size += bytes.length;
+    requireValue(size <= info.size, "suite binary grew while hashing");
+    hash.update(bytes);
+  }
+  requireValue(size === info.size, "suite binary shrank while hashing");
   return hash.digest("hex");
 }
 
@@ -29,9 +36,7 @@ export function validateSuite(suite) {
 }
 
 export async function readSuite(path) {
-  const bytes = await readFile(path, "utf8");
-  requireValue(bytes.length <= 8192, "suite manifest exceeds the byte limit");
-  const suite = validateSuite(JSON.parse(bytes));
+  const suite = validateSuite(await readBoundedJson(path));
   requireValue(await realpath(suite.binary) === suite.binary, "suite binary path must be canonical");
   requireValue(await binaryDigest(suite.binary) === suite.sha256, "prebuilt suite binary changed");
   return suite;

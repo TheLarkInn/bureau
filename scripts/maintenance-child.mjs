@@ -33,7 +33,7 @@ export async function boundedChild(command, args, {
   });
   const output = { stdout: [], stderr: [], bytes: 0 };
   let problem = null;
-  let checking = false;
+  let checking = null;
   let spawned = false;
   let finished = false;
   const terminate = (reason) => {
@@ -55,21 +55,18 @@ export async function boundedChild(command, args, {
   child.stdout.on("data", capture("stdout"));
   child.stderr.on("data", capture("stderr"));
   const timer = setTimeout(() => terminate("maintenance child deadline exceeded"), timeoutMs);
-  const monitor = setInterval(async () => {
+  const checkUsage = async () => {
+    await admit({ cwd, backingPaths, extraPaths },
+      { ...bounds, maxRss: 0, memoryFloor: 256 * 1024 * 1024 });
+    const usage = await processGroupUsage(child.pid);
+    const size = scratch ? await directoryBytes(scratch, bounds.maxScratch) : 0;
+    for (const watched of watchedPaths) await directoryBytes(watched.path, watched.maximum);
+    const failure = runningProblem({ ...usage, output: output.bytes, scratch: size }, bounds);
+    if (failure) terminate(failure);
+  };
+  const monitor = setInterval(() => {
     if (!spawned || finished || checking) return;
-    checking = true;
-    try {
-      await admit({ cwd, backingPaths, extraPaths }, { ...bounds, memoryFloor: 256 * 1024 * 1024 });
-      const usage = await processGroupUsage(child.pid);
-      const size = scratch ? await directoryBytes(scratch, bounds.maxScratch) : 0;
-      for (const watched of watchedPaths) await directoryBytes(watched.path, watched.maximum);
-      const failure = runningProblem({ ...usage, output: output.bytes, scratch: size }, bounds);
-      if (failure) terminate(failure);
-    } catch (error) {
-      terminate(error.message);
-    } finally {
-      checking = false;
-    }
+    checking = checkUsage().catch((error) => terminate(error.message)).finally(() => { checking = null; });
   }, 250);
   try {
     const result = await new Promise((resolveRun) => {
@@ -79,10 +76,12 @@ export async function boundedChild(command, args, {
     });
     finished = true;
     clearInterval(monitor);
+    clearTimeout(timer);
+    if (checking) await checking;
     // Recheck at completion; an unobserved guard is never a successful check.
     if (!problem) {
       try {
-        await admit({ cwd, backingPaths, extraPaths }, { ...bounds, memoryFloor: 256 * 1024 * 1024 });
+        await admit({ cwd, backingPaths, extraPaths }, { ...bounds, maxRss: 0, memoryFloor: 256 * 1024 * 1024 });
         if (scratch) await directoryBytes(scratch, bounds.maxScratch);
         for (const watched of watchedPaths) await directoryBytes(watched.path, watched.maximum);
       } catch (error) {

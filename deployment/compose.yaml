@@ -32,6 +32,12 @@ services:
       - bureau-maintenance-state:/var/lib/bureau-maintenance
       - bureau-maintenance-runtime:/var/lib/bureau-maintenance-runtime
       - bureau-maintenance-cache:/var/cache/bureau-maintenance
+      - type: bind
+        source: ${BUREAU_BACKING_DIRECTORY:?set a dedicated existing backing-capacity directory}
+        target: /mnt/bureau-q-capacity
+        read_only: true
+        bind:
+          create_host_path: false
     # No public ports, host home, SSH agent, container socket, or privileged mode.
 
 volumes:

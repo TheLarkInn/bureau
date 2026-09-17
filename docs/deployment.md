@@ -92,18 +92,26 @@ backing-volume path is mandatory in `backing_paths`; free virtual-disk space
 alone is not a host-volume capacity check. If host automount is disabled, an
 administrator may expose only a dedicated read-only capacity-check directory
 on the backing filesystem. Never auto-mount a whole host home or drive for this.
+This repository's reviewed path is `/mnt/bureau-q-capacity`, a read-only bind of
+the empty `Q:\WSL\BureauOperationsTelemetry` directory. Provision that narrow
+mount before the service starts; no broad Q: mount stays exposed. The guard
+requires a distinct backing filesystem and a read-only mount, not an ordinary
+empty directory on the Linux root. Other hosts need a reviewed path adjustment.
 Unobservable capacity, the nearly-full native root, or insufficient backing
 space is a refusal, not a cleanup request.
 
 The systemd sample bounds the whole service to 8 GiB RAM, zero extra swap,
 two CPUs and 256 PIDs. It restarts at most three times in fifteen minutes.
 Container samples use the same hard bounds but do not automatically restart.
-Deterministic helpers additionally require at least 1 GiB host/cgroup memory
-headroom and 16 PID slots before spawn. Hierarchical cgroup limits are checked,
+Deterministic helpers additionally reserve the complete allowed child RSS plus
+1 GiB headroom, independently on the host and every cgroup ancestor, and require
+16 PID slots before spawn. Hierarchical cgroup limits are checked,
 not just host RAM. Checks run with a nonblocking shared command lock, one
 bounded child, a clean explicit environment, combined stdout/stderr <=1 MiB,
 and <=128 MiB owned scratch. Runtime probes recheck disk, cgroup headroom,
-group RSS/PIDs, scratch and the bounded reusable Cargo cache.
+group RSS/PIDs, at least 256 MiB remaining memory, scratch and the bounded reusable
+Cargo cache. Other users can still consume resources after admission; these
+checks refuse known insufficiency rather than promising an absolute OOM guarantee.
 
 Browser audits have a 150-second outer deadline; short chaos checks have five
 minutes including an offline, single-job rebuild. Full repository verification
@@ -190,11 +198,18 @@ the reporter record an exact source report and add the category-specific
 deterministic step verifies those observed effects. Ordinary `agent-eligible`
 and design-scan labels are forbidden. Zero findings likewise require a verified
 source report, not simply an agent saying "no work".
+Same-cycle draft evidence must exactly match the detector. Reuse of an older
+cycle requires a canonical source report whose forge-created and last-edited
+timestamps both precede the source's forge timestamp observed at deterministic
+intake (not the host clock); the reporting agent cannot create
+a new "previous report" to justify replacing the current scan's evidence.
 
 The same assignment picks up that derived finding on a later pass. It rechecks
 the canonical source's **current** approval, the issue's readiness, configured
 issuer, exact source report and finding provenance, then reproduces the failure
 before authorizing a local patch. It allows one proposal and at most one repair.
+Reproduction and validation retain the original finding's seed even when the
+current checkout is a later descendant of its source commit.
 It re-runs the real detector, checks paths, pins verification code against the
 initial source even across checkpoint commits, and runs all repository gates
 before reaching the existing engine's lease-fenced PR publication.

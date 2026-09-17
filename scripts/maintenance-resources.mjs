@@ -3,6 +3,7 @@ import { homedir, release, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { requireValue } from "./maintenance-contract.mjs";
+import { readOnlyMount } from "./maintenance-tools.mjs";
 
 export const MiB = 1024 * 1024;
 export const GiB = 1024 * MiB;
@@ -13,6 +14,7 @@ export const BOUNDS = Object.freeze({
 });
 
 export function admissionProblem(snapshot, bounds = BOUNDS) {
+  const requiredMemory = bounds.maxRss + bounds.memoryFloor;
   if (snapshot.platform !== "linux") return "Linux process and filesystem isolation is required";
   if (snapshot.wsl && !snapshot.backingChecked) return "WSL backing-volume capacity was not supplied";
   if (!snapshot.disks?.length) return "filesystem capacity was not observed";
@@ -21,7 +23,7 @@ export function admissionProblem(snapshot, bounds = BOUNDS) {
       return `disk floor violated at ${disk.path}`;
     }
   }
-  if (!Number.isFinite(snapshot.availableMemory) || snapshot.availableMemory < bounds.memoryFloor) {
+  if (!Number.isFinite(snapshot.availableMemory) || snapshot.availableMemory < requiredMemory) {
     return "host memory headroom is below the admission floor";
   }
   if (!snapshot.groups?.length) return "cgroup v2 resource limits were not observed";
@@ -33,7 +35,7 @@ export function admissionProblem(snapshot, bounds = BOUNDS) {
   if (!cpuLimits.length || Math.min(...cpuLimits) > bounds.maxCpus) return "finite bounded cgroup cpu.max is required";
   for (const group of snapshot.groups) {
     if (!Number.isFinite(group.memoryCurrent) || !Number.isFinite(group.pidsCurrent)) return "cgroup usage is unobservable";
-    if (group.memoryMax - group.memoryCurrent < bounds.memoryFloor) return "cgroup memory headroom is below the floor";
+    if (group.memoryMax - group.memoryCurrent < requiredMemory) return "cgroup memory headroom is below the floor";
     if (group.pidsMax - group.pidsCurrent < 16) return "cgroup PID headroom is below the floor";
   }
   return null;
@@ -83,12 +85,16 @@ export async function resourceSnapshot({ cwd = process.cwd(), backingPaths = [],
     const fs = await statfs(path, { bigint: true });
     const bytes = fs.bavail * fs.bsize;
     requireValue(bytes <= BigInt(Number.MAX_SAFE_INTEGER), "filesystem capacity exceeds the safe numeric range");
-    return { path, free: Number(bytes) };
+    return { path, free: Number(bytes), type: Number(fs.type) };
   }));
   const memory = /^MemAvailable:\s+(\d+) kB$/mu.exec(await readFile("/proc/meminfo", "utf8"));
   requireValue(memory, "Linux MemAvailable is unobservable");
+  const mountinfo = await readFile("/proc/self/mountinfo", "utf8");
+  const rootType = disks.find((disk) => disk.path === "/").type;
+  const backingChecked = backingPaths.length > 0 && backingPaths.every((path) =>
+    disks.some((disk) => disk.path === path && disk.type !== rootType) && readOnlyMount(mountinfo, path));
   return { platform: process.platform, wsl: /microsoft/iu.test(release()),
-    backingChecked: backingPaths.length > 0, disks,
+    backingChecked, disks,
     availableMemory: Number(memory[1]) * 1024, groups: await cgroups() };
 }
 
@@ -99,19 +105,18 @@ export async function admit(options = {}, bounds = BOUNDS) {
   return snapshot;
 }
 
-export async function directoryBytes(root, maximum = BOUNDS.maxScratch) {
+export async function directoryBytes(root, maximum = BOUNDS.maxScratch, inspect = { lstat, readdir }) {
   const pending = [root];
   let bytes = 0;
   let entries = 0;
   while (pending.length) {
     const path = pending.pop();
-    const info = await lstat(path);
-    requireValue(!info.isSymbolicLink(), "scratch contains a symlink");
+    const info = await inspect.lstat(path);
     bytes += info.size;
     entries += 1;
     requireValue(bytes <= maximum && entries <= 10_000, "scratch byte or entry ceiling exceeded");
-    if (info.isDirectory()) {
-      for (const name of await readdir(path)) pending.push(join(path, name));
+    if (info.isDirectory() && !info.isSymbolicLink()) {
+      for (const name of await inspect.readdir(path)) pending.push(join(path, name));
     }
   }
   return bytes;

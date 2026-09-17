@@ -73,10 +73,12 @@ function checkOptions(root, scratch, policy) {
   };
 }
 
-export async function runCheck(source, policy, { root = process.cwd(), gates = false } = {}) {
+export async function runCheck(source, policy, {
+  root = process.cwd(), gates = false, seed = seedFor(source),
+} = {}) {
+  requireValue(Number.isInteger(seed) && seed >= 0 && seed <= 0xffff_ffff, "check seed must be a u32");
   const scratch = await checkDirectory(root, policy);
   const options = checkOptions(root, scratch, policy);
-  const seed = seedFor(source);
   let run;
   let links = [];
   try {
@@ -95,7 +97,8 @@ export async function runCheck(source, policy, { root = process.cwd(), gates = f
         ...options, timeoutMs: 900_000, bounds: { ...BOUNDS, maxRss: 4 * GiB },
         environment: { ...options.environment,
           BUREAU_CANVAS_BUREAU: join(policy.cargo_target, "debug", "bureau"),
-          BUREAU_SITE_TOOLS: policy.site_tools, PLAYWRIGHT_BROWSERS_PATH: policy.browser_path },
+          BUREAU_SITE_TOOLS: policy.site_tools, PLAYWRIGHT_BROWSERS_PATH: policy.browser_path,
+          BUREAU_CHAOS_SEED: String(seed) },
       });
       requireValue(!run.problem && run.code === 0 && !run.signal,
         run.problem ?? `repository gates failed: ${(run.stdout + run.stderr).slice(-4000)}`);
@@ -128,6 +131,7 @@ export async function runCheck(source, policy, { root = process.cwd(), gates = f
 export function patchProblem(paths, category) {
   if (!paths.length || paths.length > 20) return "patch must change between one and twenty files";
   for (const path of paths) {
+    if (path.split("/").some((part) => ["", ".", ".."].includes(part))) return "patch contains a noncanonical path";
     const protectedPath = /^crates\/bureau\/tests\/maintenance_chaos(?:[/.]|$)/u.test(path);
     if (protectedPath) return `patch changes protected verification code: ${path}`;
     const allowed = category.startsWith("site-") ? path.startsWith("site/src/")

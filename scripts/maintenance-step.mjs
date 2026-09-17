@@ -11,6 +11,8 @@ import { git, requireClean, requirePatch, runCheck, saveEvidence, workspace } fr
 async function intake(category, request, policy, api) {
   const number = issueNumber(request.item.external_id);
   const issue = await api.issue(number);
+  const observedAt = issue.updated_at;
+  requireValue(Number.isFinite(Date.parse(observedAt)), "forge source timestamp was not observed");
   requireValue(labels(issue).includes(categoryLabel(category)), "work item has the wrong category");
   const state = workspace();
   requireValue(!state.status, "maintenance requires a clean initial worktree");
@@ -18,11 +20,13 @@ async function intake(category, request, policy, api) {
     const recorded = await liveFix(api, request, category, policy);
     git(["merge-base", "--is-ancestor", recorded.source.commit, state.commit]);
     return stepResult("no-work", { maintenance_source: { ...recorded.source, commit: state.commit },
+      maintenance_observed_at: observedAt,
       maintenance_finding: recorded }, "route the verified finding to bounded reproduction");
   }
   checkSource(issue, category, policy);
   return stepResult("success", {
     maintenance_source: sourcePin(request, category, state.commit, issue),
+    maintenance_observed_at: observedAt,
   }, "recorded the exact approved source and cycle");
 }
 
@@ -43,7 +47,7 @@ async function verifyPublication(category, request, policy, api) {
   requireClean(request.inputs.maintenance_source);
   const observed = await observe(api, category, policy);
   if (request.step === "verify-draft") {
-    const receipt = verifyDraft(observed, value, policy);
+    const receipt = verifyDraft(observed, value, policy, request.inputs.maintenance_observed_at);
     requireValue(JSON.stringify(receipt) === JSON.stringify(request.inputs.maintenance_publication),
       "agent publication claim differs from independently observed forge state");
     return stepResult("success", { maintenance_draft: receipt }, "draft independently verified; no handoff yet");
@@ -57,7 +61,7 @@ async function fixCheck(category, request, policy, api) {
   await liveFix(api, request, category, policy);
   const source = request.inputs.maintenance_source;
   if (request.step !== "reproduce") requirePatch(source);
-  const checked = await runCheck(source, policy);
+  const checked = await runCheck(source, policy, { seed: request.inputs.maintenance_finding.seed });
   await liveFix(api, request, category, policy);
   const artifacts = await saveEvidence(checked.evidence, checked.log, request.step);
   if (request.step === "reproduce") {
@@ -76,7 +80,8 @@ async function fixCheck(category, request, policy, api) {
 async function fullGates(category, request, policy, api) {
   await liveFix(api, request, category, policy);
   requirePatch(request.inputs.maintenance_source);
-  const checked = await runCheck(request.inputs.maintenance_source, policy, { gates: true });
+  const checked = await runCheck(request.inputs.maintenance_source, policy,
+    { gates: true, seed: request.inputs.maintenance_finding.seed });
   await liveFix(api, request, category, policy);
   requirePatch(request.inputs.maintenance_source);
   const artifacts = await saveEvidence({ gates: "passed" }, checked.log, "full-gates");
