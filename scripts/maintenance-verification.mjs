@@ -5,6 +5,7 @@ const INPUT_NAMES = ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.j
 
 const VERIFIER_ROOTS = ["crates/bureau/tests/maintenance_chaos", "crates/bureau/tests/rate_admission",
   "crates/bureau/tests/runlog_framing", "crates/bureau/tests/migration_cli",
+  "crates/bureau/tests/watch", "crates/bureau/tests/watch_render", "crates/bureau/tests/watch_support",
   "crates/bureau/tests/edge/testdir", "crates/bureau/src/cli/run/tests",
   "crates/bureau/src/cli/run/claim/tests", "crates/bureau/src/cli/run/observe/tests",
   "crates/bureau/src/state/accounting/tests", "crates/bureau/src/state/claim/fresh/quota/tests"];
