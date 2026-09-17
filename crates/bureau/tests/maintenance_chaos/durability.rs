@@ -91,12 +91,17 @@ fn append(path: &Path, bytes: &[u8]) {
     file.sync_all().expect("durable injected bytes");
 }
 
-fn cache_and_torn_tail(directory: &Path, seed: u32) {
-    let before = runlog::replay_state(directory).expect("intact replay");
-    fs::write(directory.join("state.json"), b"invalid disposable cache").expect("stale cache");
+fn torn_tail(directory: &Path, seed: u32) -> usize {
     let tail = br#"{"seq":99,"at_ms":0,"kind":"output","data":{}}"#;
     let cut = 1 + usize::try_from(seed).expect("seed fits usize") % (tail.len() - 1);
     append(&directory.join("events.jsonl"), &tail[..cut]);
+    cut
+}
+
+fn cache_and_torn_tail(directory: &Path, seed: u32) {
+    let before = runlog::replay_state(directory).expect("intact replay");
+    fs::write(directory.join("state.json"), b"invalid disposable cache").expect("stale cache");
+    let cut = torn_tail(directory, seed);
     let replayed = runlog::replay_state(directory).expect("ignore only the unframed tail");
     fs::remove_file(directory.join("state.json")).expect("lost cache");
     assert_eq!(
@@ -111,6 +116,7 @@ fn cache_and_torn_tail(directory: &Path, seed: u32) {
 
 fn resume_tail(directory: &Path, seed: u32) {
     let before = runlog::read_events(directory).expect("committed prefix");
+    let cut = torn_tail(directory, seed);
     let mut log = RunLog::resume(directory, &[]).expect("resume truncated tail");
     let sequence = log
         .append(EventKind::Output, output(None, "stdout", "resumed"))
@@ -124,35 +130,53 @@ fn resume_tail(directory: &Path, seed: u32) {
             &after[..before.len()]
         ),
         (before.len(), before.len() + 1, before.as_slice()),
-        "state={seed}: restart must keep the exact committed prefix"
+        "state={seed} torn-tail cut={cut}: restart must keep the exact committed prefix"
     );
 }
 
 fn corrupt_record(seed: u32) -> &'static [u8] {
     match seed % 3 {
         0 => b"{not-json}\n",
-        1 => b"{\"seq\":999,\"at_ms\":0,\"kind\":\"output\",\"data\":{}}\n",
+        1 => b"{\"seq\":\"invalid\",\"at_ms\":0,\"kind\":\"output\",\"data\":{}}\n",
         _ => b"{\"seq\":0,\"at_ms\":0,\"kind\":\"unknown\",\"data\":{}}\n",
     }
+}
+
+fn read_errors(directory: &Path) -> [Option<io::ErrorKind>; 4] {
+    [
+        runlog::read_events_tolerant(directory)
+            .err()
+            .map(|error| error.kind()),
+        runlog::read_events(directory)
+            .err()
+            .map(|error| error.kind()),
+        RunLog::resume(directory, &[])
+            .err()
+            .map(|error| error.kind()),
+        runlog::replay_state(directory)
+            .err()
+            .map(|error| error.kind()),
+    ]
 }
 
 fn rejected_corruption(root: &Path, directory: &Path, seed: u32) {
     let events = directory.join("events.jsonl");
     append(&events, corrupt_record(seed));
+    if seed % 2 == 0 {
+        append(&events, b"{\"seq\":");
+    }
     let before = fs::read(&events).expect("corrupt authoritative bytes");
     let store = Arc::new(Store::open(&root.join("state.db")).expect("fresh admission"));
     let candidate = owner(&store, "new", "candidate");
     let admission = candidate.claim_fresh(TTL, &root.join("runs"));
     assert_eq!(
         (
-            runlog::replay_state(directory)
-                .expect_err("corrupt record")
-                .kind(),
+            read_errors(directory),
             admission.is_err(),
             candidate.owns().expect("no claim after corruption"),
             fs::read(&events).expect("preserved evidence")
         ),
-        (io::ErrorKind::InvalidData, true, false, before),
+        ([Some(io::ErrorKind::InvalidData); 4], true, false, before),
         "state={seed}: framed corruption must block replay and fresh admission"
     );
 }
