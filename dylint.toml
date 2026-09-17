@@ -25,7 +25,7 @@ exhaustive = true
 "bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
 "bureau:adapters" = ["config", "contract", "mcp", "process"]
 "bureau:runlog" = ["adapters", "config", "contract", "forge", "process"]
-# Admission prepares replay outside state transactions and streams exact-byte digest validation.
+# Admission prepares replay outside state transactions; immutable rate accounting shares the claim fence.
 "bureau:state" = ["config", "forge", "identity", "runlog"]
 "bureau:engine" = [
     "adapters",
@@ -71,6 +71,9 @@ exhaustive = true
 "maintenance_chaos:fixture" = []
 "runlog_framing:testdir" = []
 "rate_admission:support" = []
+"rate_admission:lifecycle" = ["support"]
+"rate_admission:projection" = ["support"]
+"rate_admission:legacy" = ["support"]
 
 # --- scenario catalog integration tests ---
 "scenario_catalog:Scenario" = []

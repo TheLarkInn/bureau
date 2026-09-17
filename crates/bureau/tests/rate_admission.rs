@@ -6,6 +6,12 @@ use std::thread;
 use bureau::config::Limits;
 use bureau::state::FreshClaim;
 
+#[path = "rate_admission/legacy.rs"]
+mod legacy;
+#[path = "rate_admission/lifecycle.rs"]
+mod lifecycle;
+#[path = "rate_admission/projection.rs"]
+mod projection;
 #[path = "rate_admission/support.rs"]
 mod support;
 

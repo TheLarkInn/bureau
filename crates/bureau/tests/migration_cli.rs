@@ -56,6 +56,7 @@ fn imported_state_is_valid(home: &Path) -> bool {
         .mode();
     let saved = load_settings(&home.join("settings.yaml")).expect("saved settings");
     row_count(&state, "runs") == 1
+        && row_count(&state, "run_admissions") == 1
         && row_count(&state, "label_rule_events") == 1
         && home.join("runs/old-run/events.jsonl").is_file()
         && !home.join("runs/old-run/wt").exists()
@@ -153,12 +154,25 @@ fn symlinked_source_is_rejected_without_partial_import() {
     assert!(!output.status.success() && !home.join("state.db").exists());
 }
 
-fn seed_source(source: &Path) {
-    std::fs::create_dir_all(source).expect("source");
-    let store = bureau::state::Store::open(&source.join("state.db")).expect("state");
+fn record_admitted_run(store: &bureau::state::Store) {
+    store
+        .try_claim_run(
+            "assignment",
+            "github",
+            "42",
+            "old-run",
+            std::time::Duration::ZERO,
+        )
+        .expect("admission accounting");
     store
         .record_run("old-run", "assignment", 1.5)
         .expect("record run");
+}
+
+fn seed_source(source: &Path) {
+    std::fs::create_dir_all(source).expect("source");
+    let store = bureau::state::Store::open(&source.join("state.db")).expect("state");
+    record_admitted_run(&store);
     seed_label_audit(&store);
     drop(store);
     let mut log =

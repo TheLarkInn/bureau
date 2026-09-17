@@ -181,8 +181,36 @@ async fn unavailable_budget(seed: u32) {
     );
 }
 
+async fn unprojected_rate_budget(seed: u32) {
+    let mut fixture = Fixture::new(seed);
+    fixture.set_limits(&exhausted_limit(seed % 2));
+    let (first, first_errors) = competing_passes(&fixture, || {});
+    let count = first.len();
+    cancel_unpolled(first).await;
+    let (second, second_errors) = competing_passes(&fixture, || {});
+    let repeated = second.len();
+    cancel_unpolled(second).await;
+    let budget = fixture
+        .one
+        .state
+        .budget(ASSIGNMENT)
+        .expect("admitted budget");
+    assert_eq!(
+        (
+            count,
+            repeated,
+            first_errors.len() + second_errors.len(),
+            budget.runs_this_hour,
+            budget.runs_today
+        ),
+        (1, 0, 0, 1, 1),
+        "state={seed}: releasing an unprojected run must not reopen rate capacity"
+    );
+}
+
 pub async fn check(seed: u32) {
     shared_assignment_limit(seed).await;
     recorded_budget(seed).await;
     unavailable_budget(seed).await;
+    unprojected_rate_budget(seed).await;
 }

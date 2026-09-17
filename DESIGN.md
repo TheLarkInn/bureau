@@ -225,6 +225,20 @@ Scheduler state stores exactly two things:
 
 Plus run logs and label-rule audit events, which are records, not scheduler state.
 
+Rate counters retain one admission record per durable run identity, committed
+atomically with the winning lease. This is budget-accounting evidence, not
+pending work: it has no queue position, retry plan, or scheduling decision.
+Lease renewal, expiry, release, and same-run recovery never erase or retime an
+admission. Hourly and daily limits therefore apply independently of concurrency
+and terminal completion; terminal cost projection must not charge the run twice.
+
+Legacy completed counters retain their recorded times. Upgrade retains every
+remaining legacy lease, including expired leases; an unknown admission time is
+conservatively charged at first migration observation, never inferred from lease
+expiry or replaced with zero. Ambiguous synthetic identities from older tables
+remain separately counted. Read-only legacy views do not migrate and conservatively
+include retained leases until a writable open establishes durable accounting.
+
 ---
 
 ## 5. Configuration is git

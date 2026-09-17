@@ -118,8 +118,6 @@ impl Store {
         run_id: &str,
         ttl: Duration,
     ) -> Result<bool, Error> {
-        let now = now_millis();
-        let expires = now.saturating_add(duration_millis(ttl));
         let claim = Claim {
             assignment,
             forge,
@@ -127,7 +125,7 @@ impl Store {
             run_id,
             owner_id: run_id,
         };
-        claim_tx(&mut self.lock(), &claim, now, expires, |_, _| Ok(true))
+        claim_tx(&mut self.lock(), &claim, ttl, |_, _| Ok(true))
     }
 
     /// Reclaims a crashed run's own lease or claims it after expiry.
@@ -214,8 +212,6 @@ impl Store {
         ttl: Duration,
         available: impl FnOnce(&rusqlite::Connection, i64) -> Result<bool, Error>,
     ) -> Result<bool, Error> {
-        let now = now_millis();
-        let expires = now.saturating_add(duration_millis(ttl));
         let claim = Claim {
             assignment: &owner.key.assignment,
             forge: &owner.key.forge,
@@ -223,7 +219,7 @@ impl Store {
             run_id: &owner.key.run_id,
             owner_id: &owner.owner_id,
         };
-        claim_tx(&mut self.lock(), &claim, now, expires, available)
+        claim_tx(&mut self.lock(), &claim, ttl, available)
     }
 
     fn renew_owner(&self, owner: &LeaseOwner, ttl: Duration) -> Result<bool, Error> {

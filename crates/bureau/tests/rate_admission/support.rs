@@ -10,10 +10,11 @@ pub const ASSIGNMENT: &str = "rate-limited";
 pub const TTL: Duration = Duration::from_secs(60);
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
-struct TestDir(PathBuf);
+pub struct TestDir(PathBuf);
 
 impl TestDir {
-    fn new(tag: &str) -> Self {
+    pub fn new(tag: &str) -> Self {
+        eprintln!("BUREAU_CHAOS_SEED=0 private rate fixture={tag}");
         let path = std::env::temp_dir().join(format!(
             "bureau-rate-{}-{}-{tag}",
             std::process::id(),
@@ -29,7 +30,7 @@ impl TestDir {
         Self(path)
     }
 
-    fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -74,6 +75,26 @@ impl Fixture {
         owner
             .claim_fresh_with_limits(TTL, &self.directory.path().join("runs"), limits, 0)
             .expect("fresh admission")
+    }
+
+    pub fn database(&self) -> PathBuf {
+        self.directory.path().join("state.db")
+    }
+
+    pub fn execute(&self, sql: &str) {
+        rusqlite::Connection::open(self.database())
+            .expect("fixture connection")
+            .execute_batch(sql)
+            .expect("fixture mutation");
+    }
+
+    pub fn admission_time(&self) -> i64 {
+        rusqlite::Connection::open(self.database())
+            .expect("fixture connection")
+            .query_row("SELECT admitted_at_ms FROM run_admissions", [], |row| {
+                row.get(0)
+            })
+            .expect("first admission time")
     }
 }
 
