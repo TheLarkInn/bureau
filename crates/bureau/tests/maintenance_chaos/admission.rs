@@ -75,20 +75,24 @@ fn preclaimed(fixture: &Fixture, seed: u32) -> u32 {
     count
 }
 
+async fn cancelled(run: Started) {
+    let error = run
+        .handle
+        .await
+        .expect_err("unpolled run must be cancelled");
+    assert!(error.is_cancelled(), "run must never execute");
+    run.owner
+        .expect("claimed owner")
+        .release()
+        .expect("release");
+}
+
 async fn cancel_unpolled(started: Vec<Started>) {
     for run in &started {
         run.handle.abort();
     }
     for run in started {
-        let error = run
-            .handle
-            .await
-            .expect_err("unpolled run must be cancelled");
-        assert!(error.is_cancelled(), "run must never execute");
-        run.owner
-            .expect("claimed owner")
-            .release()
-            .expect("release");
+        cancelled(run).await;
     }
 }
 
@@ -177,7 +181,7 @@ async fn unavailable_budget(seed: u32) {
     );
 }
 
-pub(super) async fn check(seed: u32) {
+pub async fn check(seed: u32) {
     shared_assignment_limit(seed).await;
     recorded_budget(seed).await;
     unavailable_budget(seed).await;

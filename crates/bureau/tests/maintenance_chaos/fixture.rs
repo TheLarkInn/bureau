@@ -13,7 +13,7 @@ use bureau::runlog::ConfigSource;
 use bureau::state::Store;
 use tokio::sync::Barrier;
 
-pub(super) const ASSIGNMENT: &str = "work";
+pub const ASSIGNMENT: &str = "work";
 
 const CONFIG: &str = "
 repos:
@@ -39,7 +39,7 @@ pipelines:
     steps: [{name: check, type: deterministic, run: 'true', next: done}]
 ";
 
-pub(super) fn item(id: u32) -> Item {
+pub fn item(id: u32) -> Item {
     Item {
         external_id: id.to_string(),
         title: format!("Item {id}"),
@@ -95,7 +95,7 @@ impl Forge for Observation {
     }
 }
 
-pub(super) struct TestDir(PathBuf);
+pub struct TestDir(PathBuf);
 
 impl TestDir {
     pub(super) fn new(seed: u32) -> Self {
@@ -131,8 +131,8 @@ fn config(root: &Path, limit: u32) -> Config {
     let assignment = config.assignments.get_mut(ASSIGNMENT).expect("assignment");
     assignment.limits.max_concurrent = Some(limit);
     let mut barrier = assignment.clone();
-    barrier.name = "z-observation".to_owned();
-    barrier.work.source = "barrier".to_owned();
+    "z-observation".clone_into(&mut barrier.name);
+    "barrier".clone_into(&mut barrier.work.source);
     config.assignments.insert(barrier.name.clone(), barrier);
     config
 }
@@ -162,7 +162,7 @@ fn reconciler(root: &Path, forge: &Arc<dyn Forge>, limit: u32) -> Reconciler {
     }
 }
 
-pub(super) struct Fixture {
+pub struct Fixture {
     pub(super) one: Reconciler,
     pub(super) two: Reconciler,
     pub(super) limit: u32,

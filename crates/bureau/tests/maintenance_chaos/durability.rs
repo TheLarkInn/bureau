@@ -46,7 +46,7 @@ fn stale_actions(old: &LeaseOwner, seed: u32) {
     }
 }
 
-pub(super) fn lease_takeover(seed: u32) {
+pub fn lease_takeover(seed: u32) {
     let directory = TestDir::new(seed);
     let database = directory.path().join("state.db");
     let first = Arc::new(Store::open(&database).expect("first connection"));
@@ -73,7 +73,7 @@ fn write_log(runs: &Path, seed: u32) -> std::path::PathBuf {
     let mut log = RunLog::create(runs, "logged", &[]).expect("run log");
     log.append(EventKind::RunStarted, run_started("logged", "durability"))
         .expect("run start");
-    for index in 0..1 + seed % 4 {
+    for index in 0..=(seed % 4) {
         log.append(
             EventKind::Output,
             output(None, "stdout", &format!("record-{index}")),
@@ -134,7 +134,7 @@ fn resume_tail(directory: &Path, seed: u32) {
     );
 }
 
-fn corrupt_record(seed: u32) -> &'static [u8] {
+const fn corrupt_record(seed: u32) -> &'static [u8] {
     match seed % 3 {
         0 => b"{not-json}\n",
         1 => b"{\"seq\":\"invalid\",\"at_ms\":0,\"kind\":\"output\",\"data\":{}}\n",
@@ -162,7 +162,7 @@ fn read_errors(directory: &Path) -> [Option<io::ErrorKind>; 4] {
 fn rejected_corruption(root: &Path, directory: &Path, seed: u32) {
     let events = directory.join("events.jsonl");
     append(&events, corrupt_record(seed));
-    if seed % 2 == 0 {
+    if seed.is_multiple_of(2) {
         append(&events, b"{\"seq\":");
     }
     let before = fs::read(&events).expect("corrupt authoritative bytes");
@@ -174,14 +174,14 @@ fn rejected_corruption(root: &Path, directory: &Path, seed: u32) {
             read_errors(directory),
             admission.is_err(),
             candidate.owns().expect("no claim after corruption"),
-            fs::read(&events).expect("preserved evidence")
+            fs::read(&events).expect("preserved evidence") == before
         ),
-        ([Some(io::ErrorKind::InvalidData); 4], true, false, before),
+        ([Some(io::ErrorKind::InvalidData); 4], true, false, true),
         "state={seed}: framed corruption must block replay and fresh admission"
     );
 }
 
-pub(super) fn replay_restart(seed: u32) {
+pub fn replay_restart(seed: u32) {
     let root = TestDir::new(seed);
     let directory = write_log(&root.path().join("runs"), seed);
     cache_and_torn_tail(&directory, seed);

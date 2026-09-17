@@ -73,6 +73,21 @@ fn omitted_limits_preserve_explicit_admission() {
     assert_eq!(fixture.store.active("manual").expect("leases").len(), 1);
 }
 
+fn competing_retry(fixture: &Fixture, limits: Limits) -> Option<LeaseOwner> {
+    let other = Arc::new(Store::open(&fixture.root().join("state.db")).expect("other process"));
+    let mut assignment = assignment();
+    assignment.limits = limits;
+    fresh(
+        other,
+        &assignment,
+        &item("retry"),
+        "retried",
+        &fixture.runs(),
+        0,
+    )
+    .expect("retry admission")
+}
+
 #[test]
 fn explicit_run_and_retry_share_capacity_with_another_connection() {
     let fixture = Fixture::new();
@@ -81,18 +96,7 @@ fn explicit_run_and_retry_share_capacity_with_another_connection() {
         ..Limits::default()
     };
     let current = attempt(&fixture, limits.clone(), "running", 0).expect("first run");
-    let other = Arc::new(Store::open(&fixture.root().join("state.db")).expect("other process"));
-    let mut assignment = assignment();
-    assignment.limits = limits.clone();
-    let denied = fresh(
-        other,
-        &assignment,
-        &item("retry"),
-        "retried",
-        &fixture.runs(),
-        0,
-    )
-    .expect("retry admission");
+    let denied = competing_retry(&fixture, limits.clone());
     current.release().expect("completed current work");
     let retry = attempt(&fixture, limits, "retry", 0).expect("released capacity is reusable");
     assert_eq!(

@@ -66,6 +66,7 @@ exhaustive = true
 "maintenance_chaos:admission" = ["fixture"]
 "maintenance_chaos:durability" = ["fixture"]
 "maintenance_chaos:fixture" = []
+"runlog_framing:testdir" = []
 
 # --- scenario catalog integration tests ---
 "scenario_catalog:Scenario" = []
