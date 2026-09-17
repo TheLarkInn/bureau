@@ -10,9 +10,9 @@ async function workflow(name) {
 
 test("one CI gate includes lint, all browser suites, and every native architecture", async () => {
   const ci = await workflow("ci");
-  assert.deepEqual(ci.jobs.checks.needs, ["source", "lint", "matrix", "visual", "binaries"]);
+  assert.deepEqual(ci.jobs.checks.needs, ["source", "lint", "matrix", "visual", "binaries", "site"]);
   assert.equal(ci.jobs.checks.if, "always()");
-  for (const name of ["lint", "matrix", "visual", "binaries"]) {
+  for (const name of ["lint", "matrix", "visual", "binaries", "site"]) {
     assert.deepEqual(ci.jobs[name].needs, "source");
     assert.equal(ci.jobs[name].with.ref, "${{ needs.source.outputs.sha }}");
   }
@@ -61,7 +61,7 @@ test("jobs running real Engine tests enable namespaces before the test gate", as
 });
 
 test("untrusted test jobs have no repository write token", async () => {
-  for (const name of ["rust-lints", "canvas-state-matrix", "canvas-visual-regression", "release-build"]) {
+  for (const name of ["rust-lints", "canvas-state-matrix", "canvas-visual-regression", "release-build", "site-checks"]) {
     const file = await workflow(name);
     assert.deepEqual(file.permissions, { contents: "read" });
     const jobs = Object.values(file.jobs);

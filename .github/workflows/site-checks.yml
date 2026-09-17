@@ -1,0 +1,81 @@
+name: Site checks
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      upload_pages:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  site:
+    name: Build, accessibility, and responsive checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      NODE_OPTIONS: --max-old-space-size=1024
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            site/package-lock.json
+            .github/extensions/bureau-canvas/e2e/playwright/package-lock.json
+      - name: Install accessibility tooling
+        working-directory: site
+        timeout-minutes: 3
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Reuse the pinned browser tooling
+        working-directory: .github/extensions/bureau-canvas/e2e/playwright
+        timeout-minutes: 5
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Check build, links, base paths, and workflow boundaries
+        run: node site/test.mjs
+      - name: Build the public artifact
+        run: node site/build.mjs --base /bureau/ --origin https://thelarkinn.github.io
+      - name: Verify documentation paths and anchors against the same checkout
+        run: node site/verify-links.mjs
+      - name: Check keyboard, mobile, tablet, desktop, and no-JavaScript use
+        timeout-minutes: 4
+        run: node site/browser.mjs
+      - name: Check WCAG accessibility
+        timeout-minutes: 3
+        run: |
+          mkdir -p site/.cache/evidence
+          node site/check.mjs --kind accessibility --json | tee site/.cache/evidence/accessibility.json
+      - name: Check every responsive sample state
+        timeout-minutes: 3
+        run: node site/check.mjs --kind responsive --json | tee site/.cache/evidence/responsive.json
+      - name: Upload bounded failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: site-check-failures
+          path: |
+            site/test-results/
+            site/.cache/evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload the checked Pages artifact
+        if: inputs.upload_pages && github.repository == 'TheLarkInn/bureau' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-pages-artifact@v3.0.1
+        with:
+          path: site/dist
+          retention-days: 1

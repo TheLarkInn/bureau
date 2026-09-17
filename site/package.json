@@ -1,0 +1,12 @@
+{
+  "name": "bureau-site-checks",
+  "private": true,
+  "type": "module",
+  "description": "Offline accessibility tooling only. The public Bureau site builds and runs without dependencies.",
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "axe-core": "4.10.3"
+  }
+}
