@@ -195,10 +195,18 @@ async fn unavailable_budget(seed: u32) {
     );
 }
 
+fn mark_first_seen(fixture: &Fixture) {
+    fixture
+        .one
+        .state
+        .mark_seen(&fixture.first_item.content_hash(), Disposition::NoChange)
+        .expect("first item becomes seen after both observations");
+}
+
 async fn unprojected_rate_budget(seed: u32) {
     let mut fixture = Fixture::new(seed);
     fixture.set_limits(&exhausted_limit(seed % 2));
-    let (first, first_errors) = competing_passes(&fixture, || {});
+    let (first, first_errors) = competing_passes(&fixture, || mark_first_seen(&fixture));
     let count = cancel_unpublished(&fixture, first).await;
     let (second, second_errors) = competing_passes(&fixture, || {});
     let repeated = second.len();
@@ -217,7 +225,7 @@ async fn unprojected_rate_budget(seed: u32) {
             budget.runs_today
         ),
         (1, 0, 0, 1, 1),
-        "state={seed}: releasing an unprojected run must not reopen rate capacity"
+        "state={seed}: seen work must not consume quota, and release must not reopen it"
     );
 }
 

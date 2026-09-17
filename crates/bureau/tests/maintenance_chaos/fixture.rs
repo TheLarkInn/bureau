@@ -162,11 +162,19 @@ fn reconciler(root: &Path, forge: &Arc<dyn Forge>, limit: u32) -> Reconciler {
     }
 }
 
+fn ordered_items(seed: u32, limit: u32) -> Vec<Item> {
+    let mut items: Vec<Item> = (0..2 * limit + 2).map(item).collect();
+    let rotation = usize::try_from(seed).expect("seed fits usize") % items.len();
+    items.rotate_left(rotation);
+    items
+}
+
 pub struct Fixture {
     pub(super) one: Reconciler,
     pub(super) two: Reconciler,
     pub(super) limit: u32,
     pub(super) barrier: Arc<Barrier>,
+    pub(super) first_item: Item,
     directory: TestDir,
 }
 
@@ -174,9 +182,8 @@ impl Fixture {
     pub(super) fn new(seed: u32) -> Self {
         let directory = TestDir::new(seed);
         let limit = 1 + seed % 3;
-        let mut items: Vec<Item> = (0..2 * limit + 2).map(item).collect();
-        let rotation = usize::try_from(seed).expect("seed fits usize") % items.len();
-        items.rotate_left(rotation);
+        let items = ordered_items(seed, limit);
+        let first_item = items.first().cloned().expect("nonempty work fixture");
         let barrier = Arc::new(Barrier::new(3));
         let forge: Arc<dyn Forge> = Arc::new(Observation {
             forge: FakeForge::new(items),
@@ -187,6 +194,7 @@ impl Fixture {
             two: reconciler(directory.path(), &forge, limit),
             limit,
             barrier,
+            first_item,
             directory,
         }
     }
