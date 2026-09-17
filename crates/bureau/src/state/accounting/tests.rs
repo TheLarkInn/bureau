@@ -107,10 +107,10 @@ fn unrecorded_legacy_completions_retain_their_existing_counters() {
 fn migration_retains_expired_unfinished_attempts_without_retiming_on_reopen() {
     let mut conn = legacy();
     retained(&conn, "unfinished");
-    migrate(&mut conn, NOW).expect("first migration");
+    migrate(&mut conn, || NOW).expect("first migration");
     conn.execute("DELETE FROM leases", [])
         .expect("expired lease removed");
-    migrate(&mut conn, NOW + DAY_MS).expect("reopen");
+    migrate(&mut conn, || NOW + DAY_MS).expect("reopen");
     assert_eq!(
         (
             admitted_at(&conn),
@@ -125,7 +125,7 @@ fn known_legacy_terminal_identity_is_not_charged_again() {
     let mut conn = legacy();
     retained(&conn, "known-run");
     completed(&conn, "known-run", NOW - 100);
-    migrate(&mut conn, NOW).expect("migration");
+    migrate(&mut conn, || NOW).expect("migration");
     assert_eq!(
         (
             admitted_at(&conn),
@@ -140,7 +140,7 @@ fn ambiguous_synthetic_legacy_ids_preserve_both_existing_histories() {
     let mut conn = legacy();
     retained(&conn, "legacy-1");
     completed(&conn, "legacy-1", NOW - 100);
-    migrate(&mut conn, NOW).expect("migration");
+    migrate(&mut conn, || NOW).expect("migration");
     admit(&conn, "legacy-1", NOW + 1);
     completed(&conn, "legacy-1", NOW + 1);
     assert_eq!(

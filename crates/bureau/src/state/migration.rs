@@ -1,11 +1,10 @@
-//! Preserves legacy run and lease identities before admission accounting is established.
+//! Legacy transformations run under the same write fence as admission backfill.
 
 use rusqlite::Connection;
 
 use super::Error;
 
 const RUNS: &str = "
-BEGIN;
 ALTER TABLE runs RENAME TO runs_legacy;
 CREATE TABLE runs (
     run_id TEXT PRIMARY KEY,
@@ -16,11 +15,9 @@ CREATE TABLE runs (
 INSERT INTO runs (run_id, assignment, started_at_ms, cost_usd)
 SELECT 'legacy-' || rowid, assignment, started_at_ms, cost_usd FROM runs_legacy;
 DROP TABLE runs_legacy;
-COMMIT;
 ";
 
 const LEASES: &str = "
-BEGIN;
 ALTER TABLE leases RENAME TO leases_legacy;
 CREATE TABLE leases (
     assignment TEXT NOT NULL,
@@ -35,11 +32,9 @@ INSERT INTO leases (assignment, forge, external_id, run_id, owner_id, expires_at
 SELECT assignment, forge, external_id, 'legacy-' || rowid, 'legacy-' || rowid, expires_at_ms
 FROM leases_legacy;
 DROP TABLE leases_legacy;
-COMMIT;
 ";
 
 const OWNERS: &str = "
-BEGIN;
 ALTER TABLE leases RENAME TO leases_legacy;
 CREATE TABLE leases (
     assignment TEXT NOT NULL,
@@ -53,7 +48,6 @@ CREATE TABLE leases (
 INSERT INTO leases (assignment, forge, external_id, run_id, owner_id, expires_at_ms)
 SELECT assignment, forge, external_id, run_id, run_id, expires_at_ms FROM leases_legacy;
 DROP TABLE leases_legacy;
-COMMIT;
 ";
 
 fn columns(conn: &Connection, table: &str) -> Result<Vec<String>, Error> {

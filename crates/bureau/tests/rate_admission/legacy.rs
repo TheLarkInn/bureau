@@ -5,11 +5,11 @@ use rusqlite::Connection;
 
 use super::support::{ASSIGNMENT, TestDir};
 
-fn seed_legacy(path: &Path) {
+fn seed_legacy_with_cost(path: &Path, cost: Option<f64>) {
     let conn = Connection::open(path).expect("legacy database");
     conn.execute_batch(
         "CREATE TABLE runs (
-            assignment TEXT NOT NULL, started_at_ms INTEGER NOT NULL, cost_usd REAL NOT NULL
+            assignment TEXT NOT NULL, started_at_ms INTEGER NOT NULL, cost_usd REAL
         );
         CREATE TABLE leases (
             assignment TEXT NOT NULL, forge TEXT NOT NULL, external_id TEXT NOT NULL,
@@ -18,8 +18,8 @@ fn seed_legacy(path: &Path) {
     )
     .expect("legacy schema without run identities");
     conn.execute(
-        "INSERT INTO runs VALUES (?1, 9999999999999, 3.0)",
-        [ASSIGNMENT],
+        "INSERT INTO runs VALUES (?1, 9999999999999, ?2)",
+        (ASSIGNMENT, cost),
     )
     .expect("existing completed counter");
     conn.execute(
@@ -27,6 +27,29 @@ fn seed_legacy(path: &Path) {
         [ASSIGNMENT],
     )
     .expect("undated expired attempt");
+}
+
+fn seed_legacy(path: &Path) {
+    seed_legacy_with_cost(path, Some(3.0));
+}
+
+#[test]
+fn a_failed_run_upgrade_does_not_partially_rewrite_lease_evidence() {
+    let directory = TestDir::new("migration-rollback");
+    let path = directory.path().join("state.db");
+    seed_legacy_with_cost(&path, None);
+    let refused = Store::open(&path).is_err();
+    let conn = Connection::open(&path).expect("preserved database");
+    let evidence: (u32, u32, bool) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM leases),
+                    (SELECT COUNT(*) FROM runs WHERE cost_usd IS NULL),
+                    EXISTS(SELECT 1 FROM pragma_table_info('leases') WHERE name = 'run_id')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("original evidence");
+    assert_eq!((refused, evidence), (true, (1, 1, false)));
 }
 
 #[test]

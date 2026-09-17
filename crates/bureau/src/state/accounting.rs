@@ -4,7 +4,7 @@ use std::io;
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use super::{Error, sql};
+use super::{Error, migration, sql};
 
 #[cfg(test)]
 mod tests;
@@ -105,14 +105,17 @@ pub(super) fn schema_ready(conn: &Connection) -> Result<bool, Error> {
 
 /// Retains undated legacy leases, including expired ones, at their first observation.
 /// Synthetic legacy identities may collide across old tables; never merge those histories.
-pub(super) fn migrate(conn: &mut Connection, now: i64) -> Result<(), Error> {
+pub(super) fn migrate(conn: &mut Connection, clock: impl FnOnce() -> i64) -> Result<(), Error> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    if schema_ready(&tx)? {
-        return Ok(());
+    let current = schema_ready(&tx)?;
+    tx.execute_batch(sql::SCHEMA)?;
+    migration::leases(&tx)?;
+    migration::runs(&tx)?;
+    if !current {
+        tx.execute_batch(SCHEMA)?;
+        tx.execute(BACKFILL, [clock()])?;
+        tx.pragma_update(None, "user_version", VERSION)?;
     }
-    tx.execute_batch(SCHEMA)?;
-    tx.execute(BACKFILL, [now])?;
-    tx.pragma_update(None, "user_version", VERSION)?;
     tx.commit()?;
     Ok(())
 }

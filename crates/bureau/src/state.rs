@@ -271,11 +271,7 @@ impl Store {
     /// Applies the schema to a connection behind the sharing mutex.
     fn init(mut conn: Connection) -> Result<Self, Error> {
         conn.busy_timeout(Duration::from_secs(5))?;
-        accounting::schema_ready(&conn)?;
-        conn.execute_batch(sql::SCHEMA)?;
-        migration::leases(&conn)?;
-        migration::runs(&conn)?;
-        accounting::migrate(&mut conn, now_millis())?;
+        accounting::migrate(&mut conn, now_millis)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
