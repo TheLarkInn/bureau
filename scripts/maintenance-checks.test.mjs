@@ -52,6 +52,8 @@ test("patches cannot edit verification, dependencies, automation or another cate
     ["crates/bureau/src/state/claim/fresh/quota/tests.rs"],
     ["crates/bureau/src/state/claim/fresh/quota/tests/nested.rs"],
     ["crates/bureau/tests/migration_cli.rs"],
+    ["crates/bureau/tests/watch.rs"], ["crates/bureau/tests/watch_render.rs"],
+    ["crates/bureau/tests/watch_support/mod.rs"], ["crates/bureau/tests/watch_support/nested/fixture.json"],
     ["crates/bureau/Cargo.toml"], ["crates/nested/deeper/Cargo.lock"],
     ["crates/bureau/build.rs"], ["crates/bureau/.cargo/config.toml"],
     ["crates/nested/package.json"], ["crates/nested/package-lock.json"],
@@ -60,8 +62,9 @@ test("patches cannot edit verification, dependencies, automation or another cate
   }
 });
 
-test("accounting and quota implementations remain editable while their proofs stay protected", () => {
-  for (const path of ["crates/bureau/src/state/accounting.rs", "crates/bureau/src/state/claim/fresh/quota.rs"]) {
+test("production implementations remain editable while their proofs stay protected", () => {
+  for (const path of ["crates/bureau/src/state/accounting.rs", "crates/bureau/src/state/claim/fresh/quota.rs",
+    "crates/bureau/src/watch/load.rs", "crates/bureau/src/watch/render.rs", "crates/bureau/src/cli/watch.rs"]) {
     assert.equal(patchProblem([path], "chaos"), null);
   }
 });
