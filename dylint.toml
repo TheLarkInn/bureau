@@ -70,6 +70,7 @@ exhaustive = true
 "maintenance_chaos:durability" = ["fixture"]
 "maintenance_chaos:fixture" = []
 "runlog_framing:testdir" = []
+"rate_admission:support" = []
 
 # --- scenario catalog integration tests ---
 "scenario_catalog:Scenario" = []
