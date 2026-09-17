@@ -100,7 +100,10 @@ fn cache_and_torn_tail(directory: &Path, seed: u32) {
     let replayed = runlog::replay_state(directory).expect("ignore only the unframed tail");
     fs::remove_file(directory.join("state.json")).expect("lost cache");
     assert_eq!(
-        (replayed, runlog::replay_state(directory).expect("cache-free replay")),
+        (
+            replayed,
+            runlog::replay_state(directory).expect("cache-free replay")
+        ),
         (before.clone(), before),
         "state={seed} torn-tail cut={cut}"
     );
@@ -142,7 +145,9 @@ fn rejected_corruption(root: &Path, directory: &Path, seed: u32) {
     let admission = candidate.claim_fresh(TTL, &root.join("runs"));
     assert_eq!(
         (
-            runlog::replay_state(directory).expect_err("corrupt record").kind(),
+            runlog::replay_state(directory)
+                .expect_err("corrupt record")
+                .kind(),
             admission.is_err(),
             candidate.owns().expect("no claim after corruption"),
             fs::read(&events).expect("preserved evidence")

@@ -99,8 +99,7 @@ pub(super) struct TestDir(PathBuf);
 
 impl TestDir {
     pub(super) fn new(seed: u32) -> Self {
-        let path = std::env::temp_dir()
-            .join(format!("bureau-chaos-{}-{seed}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("bureau-chaos-{}-{seed}", std::process::id()));
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -194,8 +193,13 @@ impl Fixture {
 
     pub(super) fn set_limits(&mut self, limits: &Limits) {
         for reconciler in [&mut self.one, &mut self.two] {
-            reconciler.config.assignments.get_mut(ASSIGNMENT)
-                .expect("fixture assignment").limits.clone_from(limits);
+            reconciler
+                .config
+                .assignments
+                .get_mut(ASSIGNMENT)
+                .expect("fixture assignment")
+                .limits
+                .clone_from(limits);
         }
     }
 

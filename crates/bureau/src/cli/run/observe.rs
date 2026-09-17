@@ -23,10 +23,13 @@ async fn open_pr_count(
     assignment: &Assignment,
     forge: &dyn Forge,
 ) -> anyhow::Result<usize> {
-    let primary = assignment.primary_repo()
+    let primary = assignment
+        .primary_repo()
         .and_then(|name| config.repos.get(name))
         .context("assignment has no primary repo")?;
-    let prs = forge.open_prs(&primary.url, &assignment.branch_prefix).await
+    let prs = forge
+        .open_prs(&primary.url, &assignment.branch_prefix)
+        .await
         .context("observing open pull requests before fresh admission")?;
     Ok(prs.len())
 }
@@ -63,7 +66,12 @@ async fn prepare_item(
         return Ok(None);
     };
     let open_prs = open_pr_count(config, assignment, &*forge).await?;
-    Ok(Some(Prepared { forge, item, credentials, open_prs }))
+    Ok(Some(Prepared {
+        forge,
+        item,
+        credentials,
+        open_prs,
+    }))
 }
 
 pub(super) async fn prepare_execution(
