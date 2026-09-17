@@ -146,6 +146,11 @@ has fifteen minutes and a 4 GiB group RSS ceiling; ordinary checks have 2 GiB.
 Run Node test files serially with `--test-concurrency=1`, as the integrated lint
 entry point does. CPU quota throttles execution but does not constrain Node's
 reported available parallelism or its default number of test-file processes.
+Maintenance children set `CARGO_PROFILE_DEV_DEBUG=0` and
+`CARGO_PROFILE_TEST_DEBUG=0` so duplicate full-symbol test artifacts do not
+consume the bounded compiler cache. These settings remove debug symbols only:
+debug assertions, overflow checks, optimization levels and test coverage remain
+unchanged. Existing developer and CI profiles outside this helper are not changed.
 `unshare` provides a PID-namespace init inside a dedicated process group.
 Timeout/cancellation kills the group and namespace, including descendants which
 create new sessions. Required isolation failure is infrastructure failure, not
@@ -280,7 +285,8 @@ Use the exact executable reported by Cargo's `--no-run` output, not a guessed
 glob or the newest unrelated binary:
 
 ```sh
-CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/var/cache/bureau-maintenance/cargo \
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/var/cache/bureau-maintenance/cargo \
   cargo test --offline --test maintenance_chaos --no-run
 node scripts/maintenance-suite.mjs \
   --binary /absolute/path/reported/by/cargo/maintenance_chaos-HASH \

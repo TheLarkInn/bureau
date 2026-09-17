@@ -74,9 +74,24 @@ test("runtime memory, process, output and scratch ceilings fail explicitly", () 
 
 test("offline child environment forwards no ambient credential or runtime hooks", () => {
   const environment = childEnvironment({ BUREAU_CHAOS_SEED: "3", TMPDIR: "/scratch" });
-  assert.deepEqual(Object.keys(environment).sort(), ["BUREAU_CHAOS_SEED", "HOME", "LANG", "PATH", "TMPDIR"]
+  assert.deepEqual(Object.keys(environment).sort(), [
+    "BUREAU_CHAOS_SEED", "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG",
+    "HOME", "LANG", "PATH", "TMPDIR",
+  ]
     .filter((key) => key !== "HOME" || process.env.HOME).sort());
   assert.throws(() => childEnvironment({ GH_TOKEN: "not-authorized" }), /unapproved/u);
+});
+
+test("maintenance compiler symbols are bounded without changing test semantics", () => {
+  const environment = childEnvironment();
+  assert.deepEqual(
+    [environment.CARGO_PROFILE_DEV_DEBUG, environment.CARGO_PROFILE_TEST_DEBUG],
+    ["0", "0"],
+  );
+  for (const key of ["CARGO_PROFILE_TEST_DEBUG_ASSERTIONS", "CARGO_PROFILE_DEV_DEBUG_ASSERTIONS",
+    "CARGO_PROFILE_TEST_OPT_LEVEL", "CARGO_PROFILE_TEST_OVERFLOW_CHECKS", "CARGO_PROFILE_DEV_DEBUG"]) {
+    assert.throws(() => childEnvironment({ [key]: "false" }), /unapproved/u);
+  }
 });
 
 test("scratch accounting counts browser profile symlinks without following their targets", async () => {

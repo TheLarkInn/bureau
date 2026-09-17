@@ -10,7 +10,10 @@ export function childEnvironment(extra = {}) {
     "BUREAU_SITE_TOOLS", "PLAYWRIGHT_BROWSERS_PATH"];
   requireValue(Object.keys(extra).every((key) => allowed.includes(key)
     && typeof extra[key] === "string"), "unapproved child environment variable");
-  const environment = { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" };
+  const environment = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8",
+    CARGO_PROFILE_DEV_DEBUG: "0", CARGO_PROFILE_TEST_DEBUG: "0",
+  };
   if (process.env.HOME) environment.HOME = process.env.HOME;
   return { ...environment, ...extra };
 }
