@@ -172,6 +172,11 @@ them, never the reverse. Each page must resolve its own module graph and bare
 imports through its own import map. [Import tests](test/web-imports.test.mjs)
 enforce this offline.
 
+The run-event reducer is explicit ESM at `web/live/overlay.mjs`, shared by the
+Node observation reader and browser modes. `web/live/overlay.js` only re-exports
+it for existing browser URLs; Node and Playwright imports use `.mjs`. Do not
+rely on Node's syntax detection or change the extension/vendor package boundary.
+
 Every React Flow surface uses [MeasurementGuard](web/graph-measure.mjs) so
 missed measurements cannot leave it blank. Expected edge counts come from the
 model, not the renderer's projection; drawn edges need visible paint, not

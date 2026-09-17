@@ -20,7 +20,7 @@ import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
 import { factoryForStep } from "./live/copilot-factory.mjs";
 import { useReplayOverlay } from "./replay/replay.js";
-import { resolveOverlay } from "./live/overlay.js";
+import { resolveOverlay } from "./live/overlay.mjs";
 import { terminalCopy } from "./terminals.js";
 import { drawableEdges } from "./graph-edges.mjs";
 import { emptyVerdict } from "./panel-verdict.mjs";
@@ -1607,7 +1607,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   const name = state.selectedPipeline.name;
   const pipeline = state.pipelines?.[name];
   // graph-overlays: design keeps the static graph; live and replay restyle
-  // it from run events via the shared reducer in web/live/overlay.js.
+  // it from run events via the shared reducer in web/live/overlay.mjs.
   const [mode, setMode] = useState(() => {
     const stored = sessionValue("pipeline-mode", "design");
     return MODES.includes(stored) ? stored : "design";

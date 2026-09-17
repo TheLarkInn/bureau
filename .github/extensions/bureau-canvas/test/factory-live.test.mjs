@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { summarize } from "../lib/runs.mjs";
-import { applyEvents, stateUpTo } from "../web/live/overlay.js";
+import { applyEvents, stateUpTo } from "../web/live/overlay.mjs";
 import { factoryDetails, factoryEvents, factoryForStep, factoryResumeBlocked } from "../web/live/copilot-factory.mjs";
 import { readHistory } from "../web/live/history.mjs";
 

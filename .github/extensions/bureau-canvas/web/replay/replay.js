@@ -1,12 +1,12 @@
 // Replay mode: fetch one run's full event log once, then scrub it on a
 // timeline. Scrubbing to time T applies every event with at_ms <= T through
-// the same pure reducer (web/live/overlay.js) live mode uses — there is no
+// the same pure reducer (web/live/overlay.mjs) live mode uses — there is no
 // second code path for historical runs.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
 import { sessionValue, storeSessionValue } from "../session-state.js";
-import { emptyOverlay, stateUpTo } from "../live/overlay.js";
+import { emptyOverlay, stateUpTo } from "../live/overlay.mjs";
 import { readHistory } from "../live/history.mjs";
 
 const h = React.createElement;

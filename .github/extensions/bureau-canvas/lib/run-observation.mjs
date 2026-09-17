@@ -1,7 +1,7 @@
 import { open, opendir } from "node:fs/promises";
 import { join } from "node:path";
 import { summarize } from "./runs.mjs";
-import { applyEvents } from "../web/live/overlay.js";
+import { applyEvents } from "../web/live/overlay.mjs";
 import { inspectEventLog, runIdentityProblem } from "../web/run-evidence.mjs";
 
 export const MAX_RUN_LOG_BYTES = 2 * 1024 * 1024;

@@ -3,7 +3,7 @@
 // pure UI state — the server knows nothing about it.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { runsForPipeline, runsOffered, unattributedRuns } from "./live/overlay.js";
+import { runsForPipeline, runsOffered, unattributedRuns } from "./live/overlay.mjs";
 import { runListingResult } from "./run-evidence.mjs";
 
 const h = React.createElement;

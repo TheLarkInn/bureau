@@ -1,12 +1,12 @@
 // Live mode: overlay the selected run's SSE events onto the static pipeline
-// graph. The overlay itself is the shared pure reducer in ./overlay.js; this
+// graph. The overlay itself is the shared pure reducer in ./overlay.mjs; this
 // module only owns the subscription, the run-control intents, and the
 // collapsed-group toggle state.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { RunPicker } from "../modes.js";
 import { sessionValue, storeSessionValue } from "../session-state.js";
-import { RECONCILE_REFUSED, applyEvent, applyEvents, emptyOverlay, mergeRunEvents, newRunSince, reconcileReason, runActions } from "./overlay.js";
+import { RECONCILE_REFUSED, applyEvent, applyEvents, emptyOverlay, mergeRunEvents, newRunSince, reconcileReason, runActions } from "./overlay.mjs";
 import { factoryForStep, factoryPauseAvailable, factoryResumeBlocked } from "./copilot-factory.mjs";
 import { useFactoryControls } from "./factory-controls.js";
 import { factoryControlsMatch } from "./factory-controls.mjs";
@@ -424,7 +424,7 @@ function activityMessage(activity) {
 }
 
 /**
- * Which run controls a status can still act on lives in `overlay.js`, beside
+ * Which run controls a status can still act on lives in `overlay.mjs`, beside
  * the reducer that produces the status — pure, and testable without a browser.
  */
 function RunButtons({ overlay, onAction, busy, historyError, factoryControls, access }) {
