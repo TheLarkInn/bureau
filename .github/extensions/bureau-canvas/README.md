@@ -50,6 +50,8 @@ settings or daemon. Use `bureau doctor --json` to inspect local setup and
 
 Runs appear attention-first. Exact run links open the existing Live controls
 or Replay timeline; assignment links open the real configuration editor.
+Delete preflight only inspects references; it does not replace the current
+view or another open draft. Saves and explicit refreshes retain navigation.
 Missing directories, unreadable/corrupt logs, partial appends, and bounded
 previews are labeled rather than silently dropped. A quiet unfinished run
 becomes stale after five minutes; event freshness is not a daemon heartbeat.

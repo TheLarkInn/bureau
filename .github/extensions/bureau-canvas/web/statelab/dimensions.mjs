@@ -546,18 +546,6 @@ const field = {
       shows: [S.preflight],
       derive: (combo) => (combo.fieldState === "n/a" ? { shows: [offered(S.deleteConfirm)] } : {}),
       copy: ["Nothing references this"],
-      /*
-       * The preflight is a real intent, and `runCrudIntent` answers even a
-       * read-only one by refreshing and republishing the host's own state —
-       * which replaces the injected payload, status line and all. So the
-       * status axis has nothing left to assert here.
-       *
-       * Only the status. What the republished config *contains* is covered by
-       * an exclusion instead: suppressing `section` too would have let the
-       * host's one-card screen pass under the name `two-cards`, which is a
-       * harness artifact recorded as a state.
-       */
-      suppress: ["data"],
     },
     /*
      * The refusal, kept as a value so it is excluded by a named rule rather
@@ -575,7 +563,6 @@ const field = {
       summary: "a preflight that found referrers, so the confirm is withheld",
       shows: [S.preflight, withheld(S.deleteConfirm)],
       copy: ["Repoint these references before deleting this item."],
-      suppress: ["data"],
     },
   ],
 };

@@ -11,6 +11,10 @@
   --surface-hover: var(--background-color-default, #fff);
   --surface-active: var(--background-color-default, #fff);
 }
+.bureau-navigation .btn {
+  /* Light/dark text and backgrounds must switch together, not cross-fade. */
+  transition-property: border-color;
+}
 .bureau-navigation [aria-current="page"], .ops-filters [aria-pressed="true"] {
   border-color: var(--true-color-blue, #0969da);
   color: var(--true-color-blue, #0969da);

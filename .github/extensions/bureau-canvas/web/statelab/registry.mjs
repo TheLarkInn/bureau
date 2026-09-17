@@ -382,28 +382,10 @@ export const REVERSIBLE = [
   { via: S.signalsValue, undo: S.signalsValue, gone: S.signalsEditor },
   { via: S.reposValue, undo: S.reposValue, gone: S.reposEditor },
   { via: S.limitsValue, undo: S.limitsValue, gone: S.limitsEditor },
+  { via: S.deleteStart, undo: S.deleteCancel, gone: S.preflight },
   { via: S.editorTabRelations, undo: S.editorTabPipeline, gone: S.relationFlow },
   { via: S.modeLive, undo: S.modeDesign, gone: S.runControls },
   { via: S.modeReplay, undo: S.modeDesign, gone: S.replayControls },
-  /*
-   * The delete preflight is deliberately absent, and this is the one entry that
-   * needs saying so.
-   *
-   * Its Cancel was pressed by nothing for a while, which is a real gap — but it
-   * cannot be closed here. A return edge holds the child's render to the
-   * *parent's* expectations, and the parent of an open preflight is a card whose
-   * expectations include its fixture's own copy. Opening the preflight answers
-   * through `runCrudIntent`, which calls `refreshState` and republishes the
-   * host's config over the injected payload, so by the time Cancel has closed
-   * the prompt the page is no longer showing the fixture the parent was
-   * enumerated with. Declared as reversible, the edge fails on `missing-copy`
-   * for a reason that is about the harness rather than about the control.
-   *
-   * That is the same fact `a-preflight-answers-with-the-hosts-own-config`
-   * already names. So the undo is walked by `probe--delete-refusal-dismissed`
-   * instead, which presses the same Cancel and carries expectations that do not
-   * depend on a fixture the preflight has already replaced.
-   */
   // The fold on a finished concurrent group, and the one toggle whose first
   // press *removes* a region. It sits on the card rather than inside the member
   // list precisely so that collapsing does not take the only button that could

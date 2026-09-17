@@ -1,11 +1,9 @@
 // The driver adapter the lab uses: real events against the real page, inside
 // an iframe.
 //
-// Nothing here reaches into React. Every verb is a DOM event a user would
-// have produced, which is the whole point — if the lab could set component
-// state directly, "reachable" would stop meaning anything. Controlled inputs
-// go through the native value setter because that is the only way a synthetic
-// value reaches React's onChange.
+// Nothing here reaches into React. Interaction verbs use DOM events; the
+// network-condition verb changes only the installed read shim. Controlled
+// inputs use the native setter so React's onChange receives the value.
 
 const MOUNT_TIMEOUT = 8000;
 const POLL_MS = 25;
@@ -19,7 +17,7 @@ const POLL_MS = 25;
 const NEVER_ARMED = "the SSE observer never armed";
 
 import { assertAdapter, PUBLISH_EVENT } from "./driver.mjs";
-import { installFloor, installIntercept, isPreSurface, servableInFrame } from "./intercept.mjs";
+import { installFloor, installIntercept, isPreSurface, servableInFrame, setRunListingFailure } from "./intercept.mjs";
 
 export function domAdapter(frame) {
   const win = () => frame.contentWindow;
@@ -107,6 +105,7 @@ export function domAdapter(frame) {
       await dragNode(win(), await find(selector), dx, dy);
       return settle();
     },
+    failRuns: () => setRunListingFailure(true, win()),
     wait: (selector) => find(selector, true),
     present: (selector) => find(selector),
     async waitGone(selector) {

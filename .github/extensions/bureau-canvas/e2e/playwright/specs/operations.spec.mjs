@@ -256,15 +256,39 @@ test("Operations text and controls meet contrast in light and host-token dark th
   }
 });
 
-test("selected global navigation stays readable on the graph's own dark surface", async ({ page, canvas }) => {
-  await page.goto(canvas.url);
-  await page.getByRole("button", { name: `Open pipeline ${PIPELINE}`, exact: true }).click();
-  await page.getByTestId("design-surface-graph").click();
-  await expect(page.locator(".pipeline-flow")).toBeVisible();
-  const selected = page.getByRole("button", { name: "Configuration", exact: true });
-  await expect(selected).toHaveAttribute("aria-current", "page");
+async function navigationContrast(page) {
   const snapshot = await page.evaluate((source) => new Function(`return (${source})`)()(document,
     { selectors: [], measure: [], contrast: [".bureau-navigation button"] }), collect.toString());
   expect(snapshot.contrast).toHaveLength(2);
   expect(snapshot.contrast.filter((item) => !Number.isFinite(item.ratio) || item.ratio < 4.5)).toEqual([]);
-});
+}
+
+for (const motion of ["no-preference", "reduce"]) {
+  test(`selected global navigation stays readable on the graph's own dark surface (${motion})`, async ({ page, canvas }) => {
+    await page.emulateMedia({ reducedMotion: motion });
+    await page.goto(canvas.url);
+    await page.getByRole("button", { name: `Open pipeline ${PIPELINE}`, exact: true }).click();
+    const properties = await page.locator(".bureau-navigation button").evaluateAll((buttons) =>
+      buttons.flatMap((button) => getComputedStyle(button).transitionProperty.split(",").map((value) => value.trim())));
+    expect(properties.filter((property) => ["all", "color", "background-color"].includes(property))).toEqual([]);
+    await page.getByTestId("design-surface-graph").click();
+    await expect(page.locator(".pipeline-flow")).toBeVisible();
+    const navigation = page.getByRole("navigation", { name: "Bureau views" });
+    const selected = navigation.getByRole("button", { name: "Configuration", exact: true });
+    const inactive = navigation.getByRole("button", { name: "Operations", exact: true });
+    await expect(selected).toHaveAttribute("aria-current", "page");
+    await navigationContrast(page);
+    for (const button of [inactive, selected]) {
+      await button.hover();
+      await navigationContrast(page);
+    }
+    await inactive.focus();
+    for (const [key, button] of [["Tab", selected], ["Shift+Tab", inactive]]) {
+      await page.keyboard.press(key);
+      await expect(button).toBeFocused();
+      expect(await button.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+      expect(await button.evaluate((element) => getComputedStyle(element).outlineWidth)).toBe("3px");
+      await navigationContrast(page);
+    }
+  });
+}

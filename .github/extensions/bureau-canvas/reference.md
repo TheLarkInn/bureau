@@ -85,6 +85,10 @@ Both assignment fields and the standalone editor follow these same
 navigation requests, confirming discard only for a dirty draft. Declining
 keeps the editor and its draft intact even when another state update arrives.
 Refreshing authoring data cannot overwrite a newer navigation request.
+An unconfirmed delete returns its referrer report without rebuilding or
+broadcasting configuration. It must not dismiss another disclosure or replace
+the current view. Confirmed plans, saves, and explicit refreshes still publish
+their updated state.
 
 Authoring Git reads are local, read-only, and scoped to the config directory.
 Sample, unavailable Git, dirty files, pending plans, and validated saved files
@@ -157,7 +161,16 @@ The focused `operations.spec.mjs` browser cases cover exact handoffs, polling,
 unknown/error evidence, native/Bureau separation, 320/375px layouts, keyboard
 focus, reduced motion, and light/dark host-token contrast. These cases do not
 replace the existing state-matrix or visual-baseline suites.
-Navigation contrast is also checked on the graph's independently dark surface.
+Navigation contrast is also checked immediately on the graph's independently
+dark surface, including hover and keyboard focus with and without reduced
+motion. Navigation text and backgrounds switch together rather than fading
+through unreadable intermediate colors.
+`operations-navigation.spec.mjs` uses real HTTP, SSE, and file writes to check
+preflight, plan save, pipeline save, and refresh without losing navigation or
+an unrelated draft; only CLI validation uses the standard offline fixture.
+The selected-run failure probe switches its read-only network fixture explicitly
+after the run is selected and observed. Earlier Operations reads cannot consume
+that transition.
 The approved visual suite preserves its ten legacy views and adds desktop/mobile
 Operations evidence and a read-only invalid/missing-evidence view. Its fixed
 clock does not turn missing accounting, provenance, or activity into success.

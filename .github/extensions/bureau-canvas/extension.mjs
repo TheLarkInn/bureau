@@ -35,7 +35,7 @@ const TEST_MISSING_BUREAU = resolve(EXTENSION_DIR, "test", "fixtures", "missing-
 /**
  * The run logs the pinned payload is paired with.
  *
- * `/sample` exists so the State Lab renders all 270 states over one payload
+ * `/sample` exists so the State Lab renders its states over one payload
  * rather than over the reader's own `.bureau/`, and the config half of that was
  * already pinned: no pending plan, no layout sidecar, no host pipeline. The run
  * half was not. Replay and Live do not read `/state` at all — they read `/runs`
@@ -920,13 +920,15 @@ async function runPlanAction(entry, intent, response, name) {
     }
 }
 
-/** Runs one CRUD verb and republishes state so a pending plan is visible. */
+/** Publishes changed plans; a delete preflight must not replace the reader's view. */
 async function runCrudIntent(entry, intent, response) {
     const deps = actionDependencies(entry.options ?? {});
     const ctx = { instanceId: entry.state.instanceId, input: { dir: entry.state.dir, ...intent.input } };
     try {
         const result = await CRUD_INTENTS[intent.kind](ctx, deps);
-        await refreshState(entry);
+        if (intent.kind !== "delete" || result.confirmed !== false) {
+            await refreshState(entry);
+        }
         sendJson(response, { ok: true, result, state: entry.state }, false);
     } catch (error) {
         sendJson(response, { ok: false, error: String(error?.message ?? error), state: entry.state }, false);

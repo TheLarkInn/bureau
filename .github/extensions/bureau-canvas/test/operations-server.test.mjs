@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { operationsOverview } from "../web/operations.mjs";
 import { readHistory } from "../web/live/history.mjs";
+import { editable } from "../lib/edit.mjs";
 
 process.env.BUREAU_CANVAS_TEST = "1";
 const canvas = await import("../extension.mjs");
@@ -76,6 +77,64 @@ test("refreshing config revalidates saved files without discarding a pending pla
   const before = created.state.plan;
   const refreshed = await server.post({ kind: "operations", refresh: true });
   assert.deepEqual([refreshed.ok, refreshed.state.plan, refreshed.overview.configuration.pending], [true, before, 1]);
+});
+
+test("app and iframe preflights do not rebuild state or broadcast over an open view", async (t) => {
+  const server = await host(t);
+  const entry = canvas.servers.get(server.instanceId);
+  const before = entry.state;
+  const events = [];
+  const client = { write: (text) => events.push(text) };
+  entry.clients.add(client);
+  try {
+    for (const input of [{ kind: "assignment", name: "agent-eligible" }, { kind: "role", name: "implementer" }]) {
+      const app = await server.action("delete", input);
+      const browser = await server.post({ kind: "delete", input });
+      assert.deepEqual([browser.ok, browser.result], [true, app]);
+      assert.equal(browser.result.confirmed, false);
+    }
+    assert.equal(entry.state, before);
+    assert.deepEqual(events, []);
+  } finally {
+    entry.clients.delete(client);
+  }
+});
+
+test("confirmed deletion still publishes its pending plan without changing navigation", async (t) => {
+  const server = await host(t);
+  const chosen = await server.action("navigate", { view: "config", assignment: "agent-eligible" });
+  const entry = canvas.servers.get(server.instanceId);
+  const events = [];
+  const client = { write: (text) => events.push(text) };
+  entry.clients.add(client);
+  try {
+    const result = await server.post({ kind: "delete", input: { kind: "assignment", name: "agent-eligible", confirm: true } });
+    assert.deepEqual([result.ok, result.result.confirmed, result.state.plan.removals.length], [true, true, 1]);
+    assert.deepEqual(result.state.navigation, chosen.navigation);
+    assert.equal(events.some((text) => text.startsWith("event: state\n")), true);
+  } finally {
+    entry.clients.delete(client);
+  }
+});
+
+test("real plan and pipeline file writes preserve navigation through an authoring refresh", async (t) => {
+  const server = await host(t);
+  const path = join(server.dir, "pipelines", `${PIPELINE}.yaml`);
+  await mkdir(join(server.dir, "pipelines"));
+  await writeFile(path, await readFile(new URL("./fixtures/pipeline-roundtrip/agent-eligible-pipeline.yaml", import.meta.url), "utf8"));
+  const selected = await server.action("navigate", { view: "pipeline", pipeline: PIPELINE, mode: "design" });
+  const created = await server.post({ kind: "create", input: { kind: "role", name: "navigation-review", fields: {} } });
+  assert.equal(created.ok, true);
+  const plan = await server.post({ kind: "save-plan" });
+  assert.deepEqual([plan.ok, plan.state.plan, plan.state.navigation], [true, null, selected.navigation]);
+  assert.match(await readFile(join(server.dir, "roles", "navigation-review.yaml"), "utf8"), /navigation-review/u);
+  const view = editable(selected.pipelines[PIPELINE].view);
+  view.steps.find((step) => step.name === "verify").fields.run = "node --version";
+  const saved = await server.post({ kind: "save-pipeline", pipeline: PIPELINE, view });
+  const refreshed = await server.post({ kind: "operations", refresh: true });
+  assert.deepEqual([saved.ok, saved.state.navigation, refreshed.state.navigation],
+    [true, selected.navigation, selected.navigation]);
+  assert.match(await readFile(path, "utf8"), /node --version/u);
 });
 
 test("an in-flight authoring refresh does not overwrite a newer navigation request", async (t) => {
