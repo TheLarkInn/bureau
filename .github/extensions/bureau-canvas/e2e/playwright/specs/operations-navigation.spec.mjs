@@ -61,44 +61,73 @@ test("unconfirmed deletion and authoring refresh preserve a real Configuration f
 });
 
 test("genuine plan and pipeline saves preserve editor navigation and subsequent drafts", async ({ page, canvas }) => {
+  const path = join(canvas.dir, "pipelines", `${PIPELINE}.yaml`);
+  const rolePath = join(canvas.dir, "roles", "navigation-review.yaml");
+  const original = await readFile(path, "utf8");
   await observeStateUpdates(page);
   await page.goto(canvas.url);
   await page.getByRole("button", { name: "Configuration", exact: true }).click();
   await page.getByRole("button", { name: "+ New pipeline or role", exact: true }).click();
   await page.getByLabel("Kind", { exact: true }).selectOption("role");
   await page.getByLabel("Name", { exact: true }).fill("navigation-review");
+  const creating = page.waitForResponse((response) => response.url().endsWith("/intent")
+    && response.request().postDataJSON()?.kind === "create");
   await page.getByRole("button", { name: "Create role", exact: true }).click();
+  const created = await (await creating).json();
+  expect(created.ok, created.error).toBe(true);
+  expect(created.state.plan).toEqual({ writes: [rolePath], removals: [] });
+  await expect(readFile(rolePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   await expect(page.getByTestId("draft-save")).toBeVisible();
   await page.locator(".assignment-head").first().click();
   await page.getByRole("button", { name: `Open pipeline ${PIPELINE}`, exact: true }).click();
   await page.getByRole("link", { name: "Edit pipeline", exact: true }).click();
-  await page.getByRole("tab", { name: "graph", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Pipeline editor", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pipeline", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const graph = page.getByRole("tablist", { name: "Pipeline editor view", exact: true })
+    .getByRole("tab", { name: "graph", exact: true });
+  await graph.click();
   await page.locator('[data-ref="verify"]').click();
-  const command = page.getByLabel("run", { exact: true });
+  const panel = page.locator(".editor-panel");
+  await expect(panel.getByRole("heading", { name: "verify", exact: true })).toBeVisible();
+  // Label text includes the textarea's contents; its accessible textbox name is exactly "run".
+  const command = panel.getByRole("textbox", { name: "run", exact: true });
+  const save = page.getByRole("button", { name: "Save changes", exact: true });
+  await expect(command).toHaveValue("cargo test --offline");
+  await expect(save).toBeDisabled();
   await command.fill("node --version");
+  await expect(save).toBeEnabled();
+  expect(await readFile(path, "utf8")).toBe(original);
   const savedPlan = await update(page, { kind: "save-plan" });
-  expect(savedPlan.state.navigation).toMatchObject({ view: "pipeline", pipeline: PIPELINE });
+  expect(savedPlan.state.navigation).toMatchObject({ view: "pipeline", pipeline: PIPELINE, mode: "design" });
   expect(savedPlan.state.plan).toBeNull();
-  expect(await readFile(join(canvas.dir, "roles", "navigation-review.yaml"), "utf8")).toContain("navigation-review");
-  await update(page, { kind: "operations", refresh: true });
-  await expect(page.getByRole("tab", { name: "graph", exact: true })).toHaveAttribute("aria-selected", "true");
+  expect(await readFile(rolePath, "utf8")).toContain("navigation-review");
+  const refreshed = await update(page, { kind: "operations", refresh: true });
+  expect(refreshed.state.navigation).toEqual(savedPlan.state.navigation);
+  await expect(graph).toHaveAttribute("aria-selected", "true");
   await expect(command).toHaveValue("node --version");
-  await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
+  await expect(save).toBeEnabled();
+  expect(await readFile(path, "utf8")).toBe(original);
 
   // The standard offline fixture stubs CLI validation, not HTTP or file writes.
   const before = await stateVersion(page);
   const reply = page.waitForResponse((response) => response.url().endsWith("/intent")
     && response.request().postDataJSON()?.kind === "save-pipeline");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  expect((await (await reply).json()).ok).toBe(true);
+  await save.click();
+  const saved = await (await reply).json();
+  expect(saved.ok, saved.error).toBe(true);
+  expect(saved.state.navigation).toEqual(savedPlan.state.navigation);
+  expect(saved.state.plan).toBeNull();
   await receivedUpdate(page, before);
   await expect(page.locator(".editor-status")).toHaveText("saved");
-  const path = join(canvas.dir, "pipelines", `${PIPELINE}.yaml`);
-  expect(await readFile(path, "utf8")).toContain("node --version");
+  await expect(save).toBeDisabled();
+  const persisted = await readFile(path, "utf8");
+  expect(persisted).toContain("node --version");
   await command.fill("node --help");
-  await update(page, { kind: "operations", refresh: true });
+  await expect(save).toBeEnabled();
+  const final = await update(page, { kind: "operations", refresh: true });
+  expect(final.state.navigation).toEqual(savedPlan.state.navigation);
   await expect(command).toHaveValue("node --help");
-  await expect(page.getByRole("tab", { name: "graph", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
-  expect(await readFile(path, "utf8")).toContain("node --version");
+  await expect(graph).toHaveAttribute("aria-selected", "true");
+  await expect(save).toBeEnabled();
+  expect(await readFile(path, "utf8")).toBe(persisted);
 });

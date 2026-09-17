@@ -120,21 +120,28 @@ test("confirmed deletion still publishes its pending plan without changing navig
 test("real plan and pipeline file writes preserve navigation through an authoring refresh", async (t) => {
   const server = await host(t);
   const path = join(server.dir, "pipelines", `${PIPELINE}.yaml`);
+  const rolePath = join(server.dir, "roles", "navigation-review.yaml");
+  const original = await readFile(new URL("./fixtures/pipeline-roundtrip/agent-eligible-pipeline.yaml", import.meta.url), "utf8");
   await mkdir(join(server.dir, "pipelines"));
-  await writeFile(path, await readFile(new URL("./fixtures/pipeline-roundtrip/agent-eligible-pipeline.yaml", import.meta.url), "utf8"));
+  await writeFile(path, original);
   const selected = await server.action("navigate", { view: "pipeline", pipeline: PIPELINE, mode: "design" });
   const created = await server.post({ kind: "create", input: { kind: "role", name: "navigation-review", fields: {} } });
-  assert.equal(created.ok, true);
+  assert.deepEqual([created.ok, created.state.plan], [true, { writes: [rolePath], removals: [] }]);
+  await assert.rejects(readFile(rolePath, "utf8"), { code: "ENOENT" });
   const plan = await server.post({ kind: "save-plan" });
   assert.deepEqual([plan.ok, plan.state.plan, plan.state.navigation], [true, null, selected.navigation]);
-  assert.match(await readFile(join(server.dir, "roles", "navigation-review.yaml"), "utf8"), /navigation-review/u);
+  assert.match(await readFile(rolePath, "utf8"), /navigation-review/u);
+  assert.equal(await readFile(path, "utf8"), original);
   const view = editable(selected.pipelines[PIPELINE].view);
   view.steps.find((step) => step.name === "verify").fields.run = "node --version";
   const saved = await server.post({ kind: "save-pipeline", pipeline: PIPELINE, view });
+  const persisted = await readFile(path, "utf8");
+  assert.match(persisted, /node --version/u);
+  view.steps.find((step) => step.name === "verify").fields.run = "node --help";
   const refreshed = await server.post({ kind: "operations", refresh: true });
-  assert.deepEqual([saved.ok, saved.state.navigation, refreshed.state.navigation],
-    [true, selected.navigation, selected.navigation]);
-  assert.match(await readFile(path, "utf8"), /node --version/u);
+  assert.deepEqual([saved.ok, saved.state.plan, saved.state.navigation, refreshed.state.navigation],
+    [true, null, selected.navigation, selected.navigation]);
+  assert.equal(await readFile(path, "utf8"), persisted);
 });
 
 test("an in-flight authoring refresh does not overwrite a newer navigation request", async (t) => {
