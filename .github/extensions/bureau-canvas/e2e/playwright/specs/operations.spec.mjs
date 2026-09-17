@@ -287,7 +287,11 @@ for (const motion of ["no-preference", "reduce"]) {
       await page.keyboard.press(key);
       await expect(button).toBeFocused();
       expect(await button.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
-      expect(await button.evaluate((element) => getComputedStyle(element).outlineWidth)).toBe("3px");
+      const outline = await button.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, color: style.outlineColor };
+      });
+      expect(outline).toEqual({ width: "2px", offset: "3px", style: "solid", color: "rgb(128, 183, 255)" });
       await navigationContrast(page);
     }
   });

@@ -307,6 +307,12 @@ export const RENDER_TWINS = [
     why: "a dismissed create refusal must leave nothing behind, so reopening the form is the form",
   },
   {
+    a: "probe--delete-refusal-dismissed",
+    b: "surface:config+data:validated+section:stack+card:expanded",
+    viewports: ["desktop", "compact"],
+    why: "Cancel clears the refused deletion's prompt and error without refreshing configuration, restoring the untouched expanded assignment",
+  },
+  {
     a: "probe--run-refusal-dismissed",
     b: "probe--step-log-idle",
     viewports: ["desktop", "compact"],

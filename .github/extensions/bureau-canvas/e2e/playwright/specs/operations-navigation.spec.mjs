@@ -47,7 +47,7 @@ test("unconfirmed deletion and authoring refresh preserve a real Configuration f
   const path = join(canvas.dir, "assignments", "agent-eligible.yaml");
   const original = await readFile(path, "utf8");
   await page.locator(".limits-value").click();
-  await page.getByRole("button", { name: "runs per day limit", exact: true }).click();
+  await page.getByRole("button", { name: "Runs per day limit", exact: true }).click();
   await page.getByTestId("delete-start").first().click();
   await expect(page.getByTestId("preflight")).toContainText("Nothing references this");
   await update(page, { kind: "operations", refresh: true });
@@ -72,7 +72,7 @@ test("genuine plan and pipeline saves preserve editor navigation and subsequent 
   await page.locator(".assignment-head").first().click();
   await page.getByRole("button", { name: `Open pipeline ${PIPELINE}`, exact: true }).click();
   await page.getByRole("link", { name: "Edit pipeline", exact: true }).click();
-  await page.getByRole("tab", { name: "Graph", exact: true }).click();
+  await page.getByRole("tab", { name: "graph", exact: true }).click();
   await page.locator('[data-ref="verify"]').click();
   const command = page.getByLabel("run", { exact: true });
   await command.fill("node --version");
@@ -81,7 +81,7 @@ test("genuine plan and pipeline saves preserve editor navigation and subsequent 
   expect(savedPlan.state.plan).toBeNull();
   expect(await readFile(join(canvas.dir, "roles", "navigation-review.yaml"), "utf8")).toContain("navigation-review");
   await update(page, { kind: "operations", refresh: true });
-  await expect(page.getByRole("tab", { name: "Graph", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "graph", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(command).toHaveValue("node --version");
   await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
 
@@ -98,7 +98,7 @@ test("genuine plan and pipeline saves preserve editor navigation and subsequent 
   await command.fill("node --help");
   await update(page, { kind: "operations", refresh: true });
   await expect(command).toHaveValue("node --help");
-  await expect(page.getByRole("tab", { name: "Graph", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "graph", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeEnabled();
   expect(await readFile(path, "utf8")).toContain("node --version");
 });
