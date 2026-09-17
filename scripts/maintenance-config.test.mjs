@@ -10,9 +10,9 @@ const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.u
 
 test("isolated profile has exactly three selective bounded assignments, never ordinary root assignment copies", async () => {
   const directory = new URL("../.bureau/maintenance/assignments/", import.meta.url);
-  assert.deepEqual((await readdir(directory)).sort(), CATEGORIES.map((category) => `${category}.yaml`).sort());
+  assert.deepEqual((await readdir(directory)).sort(), CATEGORIES.map((category) => `maintenance-${category}.yaml`).sort());
   for (const category of CATEGORIES) {
-    const assignment = await read(`.bureau/maintenance/assignments/${category}.yaml`);
+    const assignment = await read(`.bureau/maintenance/assignments/maintenance-${category}.yaml`);
     for (const required of [`name: maintenance-${category}`, `pipeline: maintenance-${category}`,
       'source: TheLarkInn/bureau', `label:"bureau:maintenance-${category}"`,
       `approval_label: ${LABELS.ready}`, "max_concurrent: 1", "max_runs_per_hour: 2",
@@ -26,7 +26,7 @@ test("isolated profile has exactly three selective bounded assignments, never or
 
 test("every pipeline wires reporting, independent handoff verification, reproduction, patch validation and gates", async () => {
   for (const category of CATEGORIES) {
-    const pipeline = await read(`.bureau/maintenance/pipelines/${category}.yaml`);
+    const pipeline = await read(`.bureau/maintenance/pipelines/maintenance-${category}.yaml`);
     for (const step of ["intake", "detect", "report-findings", "verify-draft", "handoff",
       "verify-handoff", "report-clean", "verify-clear", "reproduce", "implement", "validate-patch", "repair", "full-gates"]) {
       assert.equal(pipeline.includes(`- name: ${step}\n`), true, `${category}:${step}`);
@@ -43,13 +43,24 @@ test("every pipeline wires reporting, independent handoff verification, reproduc
 
 test("fixer roles never get forge/push/merge grants; reporting permissions remain separately scoped", async () => {
   for (const category of CATEGORIES) {
-    const role = await read(`.bureau/maintenance/roles/${category}-fixer.yaml`);
+    const role = await read(`.bureau/maintenance/roles/maintenance-${category}-fixer.yaml`);
     assert.match(role, /permissions: \[repo:read, repo:write, model:invoke\]/u);
     assert.doesNotMatch(role, /issues:|pr:|repo:push/u);
   }
-  const reporter = await read(".bureau/maintenance/roles/reporter.yaml");
+  const reporter = await read(".bureau/maintenance/roles/maintenance-reporter.yaml");
   assert.match(reporter, /issues:read, issues:write/u);
   assert.doesNotMatch(reporter, /pr:merge|repo:push/u);
+});
+
+test("every named resource matches the actual Bureau loader's filename identity rule", async () => {
+  for (const kind of ["assignments", "pipelines", "roles"]) {
+    const directory = new URL(`../.bureau/maintenance/${kind}/`, import.meta.url);
+    for (const file of await readdir(directory)) {
+      const text = await read(`.bureau/maintenance/${kind}/${file}`);
+      const name = /^name: ([a-z-]+)$/mu.exec(text)?.[1];
+      assert.equal(file, `${name}.yaml`, `${kind}/${file}`);
+    }
+  }
 });
 
 test("external wake cannot create issues, approve work, or dispatch Bureau runs", async () => {

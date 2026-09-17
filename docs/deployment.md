@@ -43,7 +43,7 @@ Before activation, provision and qualify:
    does not prove that a VM disk survives deletion of its host.
 2. A read-only `/opt/bureau/source` at the reviewed commit, its matching built
    Bureau executable in `/opt/bureau/bin`, Node 24, Git, Bash, `flock`, `unshare`,
-   the repository's Rust toolchains/lint tools, and offline Cargo dependencies.
+   `getconf`, the repository's Rust toolchains/lint tools, and offline Cargo dependencies.
    Qualify unprivileged user/PID isolation under the actual service/container
    policy. Do not disable the command sandbox, run privileged, auto-install
    tools, or use a personal home/SSH agent/container socket to bypass a refusal.
@@ -112,10 +112,17 @@ and <=128 MiB owned scratch. Runtime probes recheck disk, cgroup headroom,
 group RSS/PIDs, at least 256 MiB remaining memory, scratch and the bounded reusable
 Cargo cache. Other users can still consume resources after admission; these
 checks refuse known insufficiency rather than promising an absolute OOM guarantee.
+Process group and resident-page counters come from the same `/proc/PID/stat`
+record, multiplied by the observed, validated `getconf PAGESIZE` result. No
+earlier process state is combined with a later optional `VmRSS` field. A numeric
+zero is an observation; missing, malformed or unreadable live counters fail.
 
 Browser audits have a 150-second outer deadline; short chaos checks have five
 minutes including an offline, single-job rebuild. Full repository verification
 has fifteen minutes and a 4 GiB group RSS ceiling; ordinary checks have 2 GiB.
+Run Node test files serially with `--test-concurrency=1`, as the integrated lint
+entry point does. CPU quota throttles execution but does not constrain Node's
+reported available parallelism or its default number of test-file processes.
 `unshare` provides a PID-namespace init inside a dedicated process group.
 Timeout/cancellation kills the group and namespace, including descendants which
 create new sessions. Required isolation failure is infrastructure failure, not
@@ -181,6 +188,9 @@ has moved from the requested SHA. If main advances before a scan starts, refresh
 intent and explicitly review/clear the terminal diagnostic; never silently audit
 one revision while reporting another. Incomplete/skipped checks, missing tooling,
 resource refusals and malformed evidence escalate without manufacturing findings.
+Executed checks retain their bounded raw stdout/stderr as failure artifacts,
+including incomplete accessibility reports needing manual review. Failure to
+persist those artifacts is reported explicitly, never converted to a clean scan.
 
 With real findings, the model-facing reporter invokes the bounded helper to
 create or adopt **one inert finding issue**. Its body is canonical deterministic
@@ -255,6 +265,10 @@ All named parent directories must already exist on an admitted filesystem.
 Record the manifest only after verifying the selected executable was built
 from that source; its digest detects later modification, not a dishonest build.
 Manifest creation is exclusive and never overwrites earlier campaign evidence.
+Keep the prebuilt executable immutable for the campaign. The runner checks
+device/inode, size and modification/change timestamps around hashing and every
+repetition, so a concurrent rebuild fails explicitly instead of silently testing
+different code under the old source/binary receipt.
 
 The campaign invokes only the prebuilt exact test, with
 `BUREAU_CHAOS_SEED=<u32>` and its private `TMPDIR`. No Cargo, browser, API or model
@@ -277,22 +291,35 @@ function; that does not waive or emulate production admission.
 
 ## Private inspection and updates
 
-All local surfaces must use the same dedicated home and config:
+Run local inspection as the dedicated `bureau` account, with the reviewed service
+PATH and the same runtime home and config, never from a personal authenticated home:
 
 ```sh
 export BUREAU_HOME=/var/lib/bureau-maintenance
+export HOME=/var/lib/bureau-maintenance-runtime
 /opt/bureau/bin/bureau validate /opt/bureau/source/.bureau/maintenance
 /opt/bureau/bin/bureau doctor --json
 /opt/bureau/bin/bureau watch
-/opt/bureau/bin/bureau dashboard --dir /opt/bureau/source/.bureau/maintenance --no-open --port 7331
+BUREAU_CANVAS_READ_ONLY=1 /opt/bureau/bin/bureau dashboard \
+  --dir /opt/bureau/source/.bureau/maintenance --no-open --port 7331
 ```
 
 `doctor` is offline and reads this home's active config cache, populated by the
 explicit maintenance reconcile path. It has no subdirectory flag; before the
 first activation it can honestly report that no committed snapshot is cached.
-The dashboard command selects `.bureau/maintenance`; the Bureau canvas can
-likewise be opened with `dir=.bureau/maintenance`. Neither changes which source
-the daemon runs. The reviewed launcher, not bare CLI defaults, selects execution.
+The reviewed launcher, not bare CLI defaults, selects execution. Use the matching
+integrated binary whose backend-enforced `BUREAU_CANVAS_READ_ONLY=1` mode has
+been qualified. Confirm the State/Operations response reports
+`access.mode=read-only` and an explicit reason before forwarding the dashboard;
+setting an environment variable on an older binary is not proof of enforcement.
+Merely selecting `--dir /opt/bureau/source/.bureau/maintenance` or canvas `dir=.bureau/maintenance`
+does not bind execution: a manual bare `reconcile --now` can select root `.bureau`
+and bypass the owner lock. Managed inspection must reject run/reconcile/retry,
+state controls, and config writes with an explicit reason, not just gray a button.
+Keep editable authoring canvases in the separate workspace with the normal PR
+review path. Use `watch`, `list` and `show` instead if the dashboard guard has not
+been qualified. The read-only mode is immutable for the server lifetime; invalid
+values fail closed and request bodies cannot relax it.
 
 Keep the dashboard on its existing loopback bind. Use an existing authenticated
 private forwarding channel, for example an SSH local forward from the developer

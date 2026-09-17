@@ -9,6 +9,13 @@ import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedT
 
 export const CHAOS_TEST = "seeded_offline_invariants";
 
+export class CheckFailure extends Error {
+  constructor(message, log) {
+    super(message);
+    this.log = log;
+  }
+}
+
 export function git(args, cwd = process.cwd()) {
   return execFileSync("git", ["--no-pager", "--no-optional-locks", ...args], {
     cwd, encoding: "utf8", timeout: 10_000, maxBuffer: 256 * 1024,
@@ -81,6 +88,7 @@ export async function runCheck(source, policy, {
   const options = checkOptions(root, scratch, policy);
   let run;
   let links = [];
+  let failure;
   try {
     if (gates) {
       for (const path of TOOL_PACKAGES) git(["check-ignore", "--quiet", `${path}/node_modules`], root);
@@ -121,10 +129,19 @@ export async function runCheck(source, policy, {
     }
     const result = source.category === "chaos" ? chaosResult(run, seed) : siteResult(run, source.category);
     return { evidence: evidence(source, result.checks, result.findings, seed), log: run.stdout + run.stderr };
+  } catch (error) {
+    failure = error;
+    if (run) throw new CheckFailure(error.message, run.stdout + run.stderr);
+    throw error;
   } finally {
-    await unlinkPreparedTools(links);
-    requireValue(await realpath(scratch) === resolve(scratch), "scratch identity changed; preserve for inspection");
-    await rm(scratch, { recursive: true });
+    try {
+      await unlinkPreparedTools(links);
+      requireValue(await realpath(scratch) === resolve(scratch), "scratch identity changed; preserve for inspection");
+      await rm(scratch, { recursive: true });
+    } catch (error) {
+      const reason = `${failure ? `${failure.message}; ` : ""}scratch cleanup failed: ${error.message}`;
+      throw new CheckFailure(reason, run ? run.stdout + run.stderr : "");
+    }
   }
 }
 
@@ -132,7 +149,10 @@ export function patchProblem(paths, category) {
   if (!paths.length || paths.length > 20) return "patch must change between one and twenty files";
   for (const path of paths) {
     if (path.split("/").some((part) => ["", ".", ".."].includes(part))) return "patch contains a noncanonical path";
-    const protectedPath = /^crates\/bureau\/tests\/maintenance_chaos(?:[/.]|$)/u.test(path);
+    const protectedPath = /^crates\/bureau\/tests\/maintenance_chaos(?:[/.]|$)/u.test(path)
+      || ["crates/bureau/tests/runlog_framing.rs", "crates/bureau/tests/edge/testdir.rs",
+        "crates/bureau/src/cli/run/tests.rs", "crates/bureau/src/cli/run/claim/tests.rs",
+        "crates/bureau/src/cli/run/observe/tests.rs"].includes(path);
     if (protectedPath) return `patch changes protected verification code: ${path}`;
     const allowed = category.startsWith("site-") ? path.startsWith("site/src/")
       : path.startsWith("crates/") || path === "dylint.toml";
