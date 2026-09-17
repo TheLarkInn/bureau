@@ -96,6 +96,20 @@ async fn cancel_unpolled(started: Vec<Started>) {
     }
 }
 
+async fn cancel_unpublished(fixture: &Fixture, started: Vec<Started>) -> usize {
+    let directories: Vec<_> = started
+        .iter()
+        .map(|run| fixture.one.engine.runs_dir.join(&run.run_id))
+        .collect();
+    let count = directories.len();
+    cancel_unpolled(started).await;
+    // Spawn creates the directory synchronously; never erase a log if a task actually ran.
+    for directory in directories {
+        std::fs::remove_dir(directory).expect("cancelled unpolled run directory must be empty");
+    }
+    count
+}
+
 async fn shared_assignment_limit(seed: u32) {
     let fixture = Fixture::new(seed);
     let existing = preclaimed(&fixture, seed);
@@ -185,8 +199,7 @@ async fn unprojected_rate_budget(seed: u32) {
     let mut fixture = Fixture::new(seed);
     fixture.set_limits(&exhausted_limit(seed % 2));
     let (first, first_errors) = competing_passes(&fixture, || {});
-    let count = first.len();
-    cancel_unpolled(first).await;
+    let count = cancel_unpublished(&fixture, first).await;
     let (second, second_errors) = competing_passes(&fixture, || {});
     let repeated = second.len();
     cancel_unpolled(second).await;
