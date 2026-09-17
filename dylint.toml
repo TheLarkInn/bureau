@@ -57,6 +57,9 @@ exhaustive = true
 # bureau (binary target): a single `cli` module over the library.
 "bureau:cli" = []
 
+# --- cli integration tests ---
+"cli:signals" = []
+
 # --- engine integration tests ---
 "engine:rig" = []
 "engine:scenario_offline" = ["rig"]

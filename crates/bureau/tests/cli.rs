@@ -1,10 +1,12 @@
 //! Binary-level tests: `--version`, `validate`, and the `fake` adapter
 //! testing seam, driven through the built `bureau` binary.
 
+#[path = "cli/signals.rs"]
+mod signals;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
 
 use bureau::adapters::fake::Transcript;
 
@@ -82,18 +84,15 @@ fn reconcile_drains_when_signalled_during_observation() {
     let child = Command::new(env!("CARGO_BIN_EXE_bureau"))
         .args(reconcile_args(dir.path()))
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn reconcile");
-    std::thread::sleep(Duration::from_millis(500));
-    let interrupted = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .expect("send SIGINT");
-    let output = child.wait_with_output().expect("wait for reconcile");
+    let output = signals::interrupt(child).expect("interrupt ready reconcile daemon");
     let text = stdout(&output);
     assert!(
-        interrupted.success() && output.status.success() && text.contains("draining active runs"),
-        "{}",
+        output.status.success() && text.contains("draining active runs"),
+        "status: {}; stdout: {text}; stderr: {}",
+        output.status,
         stderr(&output)
     );
 }
