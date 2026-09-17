@@ -6,7 +6,7 @@ set -euo pipefail
 : "${BUREAU_DEPLOYMENT_APPROVED:?explicit deployment approval is required}"
 [[ "$BUREAU_DEPLOYMENT_APPROVED" == true ]] || { echo "deployment is not approved" >&2; exit 1; }
 [[ "$BUREAU_CONFIG_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo "config commit must be a full SHA" >&2; exit 1; }
-[[ "$(git rev-parse HEAD)" == "$BUREAU_CONFIG_COMMIT" ]] || { echo "installed source differs from the reviewed commit" >&2; exit 1; }
+[[ "$(git -c safe.directory=/opt/bureau/source rev-parse HEAD)" == "$BUREAU_CONFIG_COMMIT" ]] || { echo "installed source differs from the reviewed commit" >&2; exit 1; }
 
 node deployment/check.mjs --home "$BUREAU_HOME"
 /opt/bureau/bin/bureau validate .bureau/maintenance

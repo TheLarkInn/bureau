@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LABELS, findingBody, labels, reportBody } from "./maintenance-contract.mjs";
+import { LABELS, evidence, findingBody, intentBlock, labels, reportBody } from "./maintenance-contract.mjs";
 import { draft, handoff, clear } from "./maintenance-publish.mjs";
 import { checkSource, observe, verifyDraft, verifyFix, verifyHandoff } from "./maintenance-lifecycle.mjs";
 import { POLICY, fixture, fakeForge } from "./maintenance-test-support.mjs";
@@ -92,6 +92,39 @@ test("closed or rejected findings are reported without reopening or authorizing 
   const receipt = verifyDraft(await observe(forge.api, "chaos", POLICY), value, POLICY);
   await handoff(forge.api, value, receipt, POLICY);
   assert.deepEqual([forge.issues.get(42).state, labels(forge.issues.get(42))], ["closed", []]);
+});
+
+test("a later scan of a previously rejected finding stays deduplicated and never reopens it", async () => {
+  const { source, value, intent } = fixture();
+  const forge = fakeForge(source);
+  await draft(forge.api, value, POLICY);
+  forge.issues.get(42).state = "closed";
+  const receipt = verifyDraft(await observe(forge.api, "chaos", POLICY), value, POLICY);
+  await handoff(forge.api, value, receipt, POLICY);
+  const cycle = "2026-09-17T18:00:00Z";
+  const freshSource = forge.issues.get(7);
+  freshSource.body = source.body.replace(intentBlock(intent), intentBlock({ ...intent, cycle }));
+  freshSource.labels = labels(source);
+  const later = evidence({ ...value.source, cycle }, 8, value.findings);
+  const observedAt = "2026-09-17T18:01:00Z";
+  const repeated = verifyDraft(await observe(forge.api, "chaos", POLICY), later, POLICY, observedAt);
+  await handoff(forge.api, later, repeated, POLICY, observedAt);
+  assert.deepEqual([forge.issues.get(42).state, labels(forge.issues.get(42))], ["closed", []]);
+  assert.equal(forge.writes.filter((write) => write.path === "/issues").length, 1);
+});
+
+test("a model cannot authorize altered evidence with its own newly written prior-report claim", async () => {
+  const { source, value } = fixture();
+  const forge = fakeForge(source);
+  const receipt = await draft(forge.api, value, POLICY);
+  const altered = { ...value, checks: value.checks + 1 };
+  forge.issues.get(42).body = findingBody(altered);
+  forge.comments.get(7).push({ body: reportBody(altered, receipt),
+    user: { login: POLICY.issuer_login, id: POLICY.issuer_id },
+    created_at: "2026-09-17T12:01:00Z", updated_at: "2026-09-17T12:01:00Z" });
+  assert.throws(() => verifyDraft({
+    source, issues: [...forge.issues.values()], comments: forge.comments.get(7),
+  }, value, POLICY, "2026-09-17T12:00:01Z"), /deterministic evidence/u);
 });
 
 test("marker text and a copied author login cannot substitute for issuer identity or canonical source", () => {

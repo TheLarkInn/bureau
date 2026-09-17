@@ -7,7 +7,7 @@
     "site-accessibility": 132,
     "site-responsive": 130
   },
-  "backing_paths": [],
+  "backing_paths": ["/mnt/bureau-q-capacity"],
   "site_tools": "/opt/bureau/site-tools",
   "browser_path": "/opt/bureau/browsers",
   "cargo_target": "/var/cache/bureau-maintenance/cargo",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BOUNDS, GiB, admissionProblem, runningProblem } from "./maintenance-resources.mjs";
+import { BOUNDS, GiB, admissionProblem, directoryBytes, runningProblem } from "./maintenance-resources.mjs";
 import { childEnvironment } from "./maintenance-child.mjs";
 
 function safeSnapshot() {
@@ -40,6 +40,19 @@ test("finite limits and ancestor headroom are independently enforced", () => {
   assert.match(admissionProblem(snapshot), /memory headroom/u);
 });
 
+test("admission reserves the complete child RSS allowance plus headroom on host and cgroup", () => {
+  const threshold = BOUNDS.maxRss + BOUNDS.memoryFloor;
+  for (const field of ["host", "cgroup"]) {
+    const snapshot = safeSnapshot();
+    if (field === "host") snapshot.availableMemory = threshold;
+    else snapshot.groups[0].memoryCurrent = snapshot.groups[0].memoryMax - threshold;
+    assert.equal(admissionProblem(snapshot), null);
+    if (field === "host") snapshot.availableMemory -= 1;
+    else snapshot.groups[0].memoryCurrent += 1;
+    assert.match(admissionProblem(snapshot), /memory headroom/u);
+  }
+});
+
 test("disk threshold is exact; a WSL backing observation is not a native root exemption", () => {
   const snapshot = { ...safeSnapshot(), wsl: true, backingChecked: true };
   snapshot.disks[0].free = BOUNDS.diskFloor;
@@ -63,4 +76,22 @@ test("offline child environment forwards no ambient credential or runtime hooks"
   const environment = childEnvironment({ BUREAU_CHAOS_SEED: "3", TMPDIR: "/scratch" });
   assert.deepEqual(Object.keys(environment).sort(), ["BUREAU_CHAOS_SEED", "HOME", "LANG", "PATH", "TMPDIR"]
     .filter((key) => key !== "HOME" || process.env.HOME).sort());
+  assert.throws(() => childEnvironment({ GH_TOKEN: "not-authorized" }), /unapproved/u);
+});
+
+test("scratch accounting counts browser profile symlinks without following their targets", async () => {
+  const visited = [];
+  const bytes = await directoryBytes("/scratch", 1000, {
+    async lstat(path) {
+      visited.push(path);
+      const directory = path === "/scratch";
+      return { size: directory ? 100 : 30, isDirectory: () => directory, isSymbolicLink: () => !directory };
+    },
+    async readdir(path) {
+      assert.equal(path, "/scratch");
+      return ["SingletonLock"];
+    },
+  });
+  assert.equal(bytes, 130);
+  assert.equal(visited.length, 2);
 });

@@ -1,8 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 import { AUTHOR, CATEGORIES, requireValue } from "./maintenance-contract.mjs";
 import { GiB } from "./maintenance-resources.mjs";
+import { readBoundedJson } from "./maintenance-files.mjs";
 
 export function validatePolicy(policy, requireIdentity = true) {
   requireValue(policy?.schema === "bureau-maintenance-policy-v1", "invalid maintenance policy");
@@ -30,9 +30,8 @@ export function validatePolicy(policy, requireIdentity = true) {
 }
 
 export async function loadPolicy(root = process.cwd(), requireIdentity = true) {
-  const bytes = await readFile(resolve(root, "deployment", "maintenance-policy.json"), "utf8");
-  requireValue(bytes.length <= 8192, "maintenance policy exceeds the byte limit");
-  return validatePolicy(JSON.parse(bytes), requireIdentity);
+  const policy = await readBoundedJson(resolve(root, "deployment", "maintenance-policy.json"));
+  return validatePolicy(policy, requireIdentity);
 }
 
 export function issuer(object, policy) {

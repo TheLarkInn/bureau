@@ -59,7 +59,9 @@ export function readIntent(body, category) {
   requireValue(intent.category === category, "intent category mismatch");
   requireValue(SHA.test(intent.commit), "intent requires a full source commit");
   requireValue(/^\d{4}-\d{2}-\d{2}T(00|06|12|18):00:00Z$/u.test(intent.cycle)
-    && Number.isFinite(Date.parse(intent.cycle)), "invalid six-hour intent cycle");
+    && Number.isFinite(Date.parse(intent.cycle))
+    && new Date(intent.cycle).toISOString().replace(".000Z", "Z") === intent.cycle,
+  "invalid six-hour intent cycle");
   return intent;
 }
 
@@ -127,7 +129,8 @@ export function validateFindings(findings, category) {
   requireValue(Array.isArray(findings) && findings.length <= 20, "invalid or excessive findings");
   const ids = new Set();
   for (const finding of findings) {
-    requireValue(/^[a-zA-Z0-9._:-]{1,160}$/u.test(finding?.id ?? ""), "invalid finding id");
+    requireValue(typeof finding?.id === "string" && /^[a-zA-Z0-9._:-]{1,160}$/u.test(finding.id),
+      "invalid finding id");
     requireValue(!ids.has(finding.id), "duplicate finding id");
     ids.add(finding.id);
     for (const [key, maximum] of [["title", 160], ["detail", 4000]]) {

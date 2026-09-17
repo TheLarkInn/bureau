@@ -78,11 +78,11 @@ async function markReported(api, value, policy) {
   await api.request("DELETE", `/issues/${number}/labels/${encodeURIComponent(LABELS.scan)}`);
 }
 
-export async function handoff(api, value, expected, policy) {
+export async function handoff(api, value, expected, policy, observedAt) {
   const checked = validateEvidence(value);
   await actor(api, policy);
   const observed = await observe(api, checked.source.category, policy);
-  const verified = verifyDraft(observed, checked, policy);
+  const verified = verifyDraft(observed, checked, policy, observedAt);
   requireValue(JSON.stringify(verified) === JSON.stringify(expected), "draft receipt changed after verification");
   await sourceStillCurrent(api, checked, policy);
   await recordReport(api, checked, expected, policy);
@@ -113,7 +113,7 @@ export async function clear(api, value, policy) {
 
 async function main() {
   try {
-    const request = await readStepRequest();
+    const request = await readStepRequest({ maximumBytes: 1024 * 1024 });
     requireValue(request?.schema === "v2", "publisher requires a v2 request");
     const policy = await loadPolicy();
     const value = validateEvidence(request.inputs?.maintenance_evidence);
@@ -123,7 +123,8 @@ async function main() {
     const mode = process.argv[2];
     let receipt = null;
     if (mode === "draft") receipt = await draft(api, value, policy);
-    else if (mode === "handoff") receipt = await handoff(api, value, request.inputs.maintenance_draft, policy);
+    else if (mode === "handoff") receipt = await handoff(api, value, request.inputs.maintenance_draft,
+      policy, request.inputs.maintenance_observed_at);
     else if (mode === "clear") await clear(api, value, policy);
     else throw new Error("publisher operation must be draft, handoff, or clear");
     console.log(JSON.stringify(stepResult("success", {

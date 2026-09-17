@@ -2,6 +2,7 @@ import { lstat, readFile, readlink, realpath, symlink, unlink } from "node:fs/pr
 import { join, resolve } from "node:path";
 
 import { requireValue } from "./maintenance-contract.mjs";
+import { readBoundedFile } from "./maintenance-files.mjs";
 
 export const TOOL_PACKAGES = ["site", ".github/extensions/bureau-canvas/e2e/playwright"];
 
@@ -33,8 +34,8 @@ export async function linkPreparedTools(root, policy) {
   try {
     for (const packagePath of TOOL_PACKAGES) {
       for (const name of ["package.json", "package-lock.json"]) {
-        const expected = await readFile(join(root, packagePath, name));
-        const observed = await readFile(join(policy.site_tools, packagePath, name));
+        const expected = await readBoundedFile(join(root, packagePath, name), 1024 * 1024);
+        const observed = await readBoundedFile(join(policy.site_tools, packagePath, name), 1024 * 1024);
         requireValue(expected.equals(observed), `prepared ${packagePath}/${name} differs from the checkout`);
       }
       const target = await realpath(join(policy.site_tools, packagePath, "node_modules"));

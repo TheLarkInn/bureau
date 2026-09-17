@@ -57,18 +57,39 @@ export function verifyReport(comments, value, published, policy) {
   issuer(matches[0], policy);
 }
 
-export function verifyDraft({ source, issues, comments }, value, policy) {
+function verifyPreviousReport(comments, value, issue, policy, observedAt) {
+  const cutoff = Date.parse(observedAt);
+  requireValue(Number.isFinite(cutoff), "previous evidence requires the deterministic intake timestamp");
+  const receipt = publication(issue, value);
+  const bodies = ["open", "closed"].map((disposition) => reportBody(value, { ...receipt, disposition }));
+  const matches = comments.filter((comment) => bodies.includes(comment.body));
+  requireValue(matches.length > 0 && new Set(matches.map((comment) => comment.body)).size === matches.length,
+    "previous finding has no unique verified source report");
+  for (const comment of matches) {
+    issuer(comment, policy);
+    requireValue(Date.parse(comment.created_at) < cutoff && Date.parse(comment.updated_at) < cutoff,
+      "previous evidence was created or edited after deterministic intake");
+  }
+}
+
+export function verifyDraft({ source, issues, comments }, value, policy, observedAt) {
   const expected = validateEvidence(value);
   checkSource(source, expected.source.category, policy, expected.source);
   const matches = matchingIssues(issues, expected);
   requireValue(matches.length === 1, `expected one finding-marker issue, observed ${matches.length}`);
   const issue = matches[0];
   const recorded = checkedFinding(issue, expected, policy);
+  if (recorded.source.cycle === expected.source.cycle) {
+    requireValue(digest(recorded) === digest(expected), "draft differs from the deterministic evidence");
+  } else {
+    requireValue(Date.parse(recorded.source.cycle) < Date.parse(expected.source.cycle),
+      "finding evidence is from a future cycle");
+  }
   requireValue(["open", "closed"].includes(issue.state), "unknown issue state");
   const observed = labels(issue);
   const previouslyReady = observed.includes(LABELS.ready) || observed.includes(LABELS.fix);
   if (previouslyReady || digest(recorded) !== digest(expected)) {
-    verifyReport(comments, recorded, { ...publication(issue, recorded), disposition: "open" }, policy);
+    verifyPreviousReport(comments, recorded, issue, policy, observedAt);
   }
   return publication(issue, expected);
 }

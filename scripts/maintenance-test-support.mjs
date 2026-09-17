@@ -15,7 +15,7 @@ export function fixture(category = "chaos", findings = undefined) {
   const number = POLICY.source_issues[category];
   const intent = { schema: "bureau-maintenance-intent-v1", category, commit: COMMIT, cycle: CYCLE };
   const source = {
-    number, html_url: issueUrl(number), state: "open",
+    number, html_url: issueUrl(number), state: "open", updated_at: "2026-09-17T12:00:00Z",
     user: { login: AUTHOR, id: 17 },
     labels: [categoryLabel(category), LABELS.approved, LABELS.ready, LABELS.scan, "human-context"],
     body: `${sourceMarker(category)}\n\nHuman instructions stay here.\n\n${intentBlock(intent)}\n`,
@@ -60,7 +60,8 @@ export function fakeForge(source) {
         const issue = issues.get(number);
         if (method === "PATCH" && !match[2]) Object.assign(issue, body);
         else if (method === "POST" && match[2] === "/comments") {
-          result = { ...body, user: { login: AUTHOR, id: 17 } };
+          result = { ...body, user: { login: AUTHOR, id: 17 },
+            created_at: "2026-09-17T12:01:00Z", updated_at: "2026-09-17T12:01:00Z" };
           comments.get(number).push(result);
         } else if (method === "POST" && match[2] === "/labels") {
           issue.labels = [...new Set([...labels(issue), ...body.labels])];
