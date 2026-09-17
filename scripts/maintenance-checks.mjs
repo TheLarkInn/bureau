@@ -177,12 +177,7 @@ export function patchProblem(paths, category) {
   if (!paths.length || paths.length > 20) return "patch must change between one and twenty files";
   for (const path of paths) {
     if (path.split("/").some((part) => ["", ".", ".."].includes(part))) return "patch contains a noncanonical path";
-    const protectedPath = verificationInput(path)
-      || /^crates\/bureau\/tests\/(?:maintenance_chaos|rate_admission)(?:[/.]|$)/u.test(path)
-      || ["crates/bureau/tests/runlog_framing.rs", "crates/bureau/tests/edge/testdir.rs",
-        "crates/bureau/src/cli/run/tests.rs", "crates/bureau/src/cli/run/claim/tests.rs",
-        "crates/bureau/src/cli/run/observe/tests.rs"].includes(path);
-    if (protectedPath) return `patch changes protected verification code: ${path}`;
+    if (verificationInput(path)) return `patch changes protected verification code: ${path}`;
     const allowed = category.startsWith("site-") ? path.startsWith("site/src/")
       : path.startsWith("crates/") || path === "dylint.toml";
     if (!allowed) return `patch is outside the category scope: ${path}`;
