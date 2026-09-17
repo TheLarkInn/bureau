@@ -1,0 +1,85 @@
+name: design-review
+steps:
+  - name: baseline
+    type: deterministic
+    run: |
+      python3 -c '
+      import json, subprocess
+      base = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+      print(json.dumps({"schema": "v2", "outcome": "success", "trust": "derived",
+          "outputs": {"baseline_commit": base}, "artifacts": [], "message": "Recorded the pre-step Git commit."}))
+      '
+    timeout_secs: 30
+    next: analyze
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: analyze
+    type: agent
+    role: design-review
+    max_attempts: 2
+    timeout_secs: 600
+    next: render
+    on_failure: analyze
+    on_blocked: escalate
+    on_no_work: render
+  - name: render
+    type: deterministic
+    inputs_from: [analyze]
+    run: |
+      python3 -c '
+      import json, pathlib, sys
+      review = json.load(sys.stdin)["inputs"]["design_review"]
+      fields = {"summary", "recommendation", "alternatives", "risks", "evidence"}
+      if not isinstance(review, dict) or set(review) != fields:
+          raise SystemExit("design_review must contain exactly the documented fields")
+      if not isinstance(review["summary"], str) or not review["summary"].strip():
+          raise SystemExit("design_review.summary must be nonempty")
+      if review["recommendation"] not in ("accept", "revise", "reject"):
+          raise SystemExit("design_review.recommendation is invalid")
+      for field in ("alternatives", "risks", "evidence"):
+          entries = review[field]
+          if not isinstance(entries, list) or not entries or not all(isinstance(x, str) and x.strip() for x in entries):
+              raise SystemExit("design_review." + field + " must contain nonempty strings")
+      target = pathlib.Path("docs/reviews/design-review.json")
+      if pathlib.Path.cwd().resolve() not in target.resolve().parents:
+          raise SystemExit("review destination escapes the worktree")
+      target.parent.mkdir(parents=True, exist_ok=True)
+      target.write_text(json.dumps(review, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+      '
+    timeout_secs: 30
+    next: review
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: review
+    type: agent
+    role: reviewer
+    inputs_from: [analyze, render]
+    timeout_secs: 600
+    next: verify
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: verify
+  - name: verify
+    type: deterministic
+    inputs_from: [baseline]
+    run: |
+      python3 -c '
+      import json, pathlib, subprocess, sys
+      base = json.load(sys.stdin)["inputs"]["baseline_commit"]
+      target = pathlib.Path("docs/reviews/design-review.json")
+      if pathlib.Path.cwd().resolve() not in target.resolve().parents:
+          raise SystemExit("review destination escapes the worktree")
+      json.loads(target.read_text(encoding="utf-8"))
+      changed = subprocess.check_output(["git", "diff", "--name-only", base, "--"], text=True).splitlines()
+      untracked = subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"], text=True).splitlines()
+      if set(changed + untracked) - {target.as_posix()}:
+          raise SystemExit("design review changed files outside its report")
+      subprocess.run(["git", "diff", "--check", base, "--"], check=True)
+      '
+    timeout_secs: 30
+    next: done
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort

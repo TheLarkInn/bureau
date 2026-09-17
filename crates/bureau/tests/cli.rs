@@ -57,7 +57,10 @@ fn stderr(output: &Output) -> String {
 fn version_prints_name_and_version() {
     let output = bureau(&["--version"]);
     assert!(ok(&output), "{}", stderr(&output));
-    assert_eq!(stdout(&output), "bureau 0.1.0\n");
+    assert_eq!(
+        stdout(&output),
+        format!("bureau {}\n", env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[test]

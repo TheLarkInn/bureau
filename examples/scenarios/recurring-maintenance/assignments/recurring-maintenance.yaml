@@ -1,0 +1,20 @@
+name: recurring-maintenance
+work:
+  forge: github
+  source: example-org/example-repo
+  filter: "is:issue is:open label:maintenance label:agent-eligible -label:bureau:failed -label:bureau:needs-human"
+  approval_label: bureau:approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos: [code]
+pipeline: recurring-maintenance
+role: implementer
+verify: "cargo test --offline"
+branch_prefix: bureau/maintenance/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 1
+  max_runs_per_day: 3
+  max_open_prs: 1
+  max_cost_per_day_usd: 5
+  max_run_hours: 1

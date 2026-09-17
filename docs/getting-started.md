@@ -159,10 +159,36 @@ credentials:
 
 ## First-time setup: `bureau init`
 
-`init` is driven by one YAML file. It previews and validates the config it
+Start without credentials, network access, or local state:
+
+```sh
+bureau init --print-template
+```
+
+This prints an editable initialization request and exits. It does not read
+existing settings, create directories, install plugins, open a PR, or run
+anything. To save it, choose an unused filename and redirect stdout:
+
+```sh
+bureau init --print-template > init.yaml
+```
+
+The shell writes that file; ordinary `>` redirection overwrites an existing
+file. `--print-template` and `--from` cannot be combined. The printed request
+defaults to a fixed pipeline, explicit approval, bounded spending, and no
+plugin installation. Replace its repository names, test command, credentials
+*references*, and limits before using it.
+
+`init --from` is the execution path, not a dry run. It is driven by one YAML
+file. It previews and validates the config it
 generates, opens a config PR, waits for you to merge it, validates the exact
 merged commit, runs one foreground reconcile pass, and only then marks the
 install initialized. It never runs unmerged config.
+
+Requested plugin installation or state migration can happen before the
+config PR is merged. Review those local settings before invoking `--from`.
+Keep the work source unmatched or withhold its approval label until you
+intend the post-merge pass to spend model budget.
 
 Re-running `init` after an interruption is safe: when the committed config
 at the tracked ref already matches the generated draft byte for byte, no new
@@ -177,6 +203,9 @@ settings:
     remote: https://github.com/acme/web.git   # repo holding the config
     reference: main                  # ref reconcile tracks
   credentials:
+    config:                           # required for the config PR
+      source: environment
+      variable: GH_TOKEN
     github-main:
       source: environment
       variable: GH_TOKEN
@@ -196,6 +225,7 @@ assignment:                          # becomes assignments/<name>.yaml
     forge: github
     source: acme/web                 # owner/name
     filter: "is:open label:agent-eligible"   # forge-native query (see below)
+    approval_label: bureau:approved   # a maintainer applies this separately
     abort_label: bureau:failed
     escalate_label: bureau:needs-human
   primary_repo: web
@@ -214,6 +244,12 @@ first_pipeline:
   # request: "Prioritize flaky tests"  # skill draft it (needs `copilot`)
 ```
 
+`config` is the explicit reference used to fetch/propose the configuration;
+it is not inferred from the work repository's credential. For a
+single-repository installation both references may intentionally resolve
+the same variable. With a separate config repository or a different work
+forge, provision each intended credential separately.
+
 Then:
 
 ```sh
@@ -225,6 +261,24 @@ referencing the bundled plugin agents) and a three-step pipeline:
 `implement` (agent) → `verify` (deterministic, your `verify` command) →
 `review` (agent). Review it in the config PR like any other change — merging
 it is what authorizes bureau to act.
+
+The implementer's `no-work` result still passes through the deterministic
+verification step. A model result cannot waive the configured check.
+
+### Choose a first scenario
+
+The [ten scenario setups](scenarios.md#choose-a-first-scenario) are complete
+config trees, not `init --from` requests. Start with the normal initialization
+above, then adopt one through a reviewed config change; the guide also
+explains replacing the initial draft while its PR is awaiting review.
+It includes design review, issue intake and triage, feedback-to-fix,
+failing tests, cross-repository context, Azure DevOps, qualified local
+factories, explicit cloud controls, and recurring maintenance.
+
+Before spending model budget, run the
+[zero-cost end-to-end example](scenarios.md#try-the-zero-cost-offline-example).
+It uses the real engine with local git and fake effects, not a simulated
+successful factory or a real cloud submission.
 
 ## Forge specifics
 
@@ -631,9 +685,27 @@ only to this opt-in mode; see [DESIGN section 17](../DESIGN.md#17-local-copilot-
 No forge, no model, no network:
 
 ```sh
+bureau fake replay examples/scenarios/design-review/fixtures/analyze.json
 bureau fake record fixture.json -- python3 -m pytest -q   # capture a real run
 bureau fake replay fixture.json                            # replay it
 ```
+
+The shipped replay is a clearly labeled transcript, not a live assessment.
+`fake record` executes the command you supply; choose a deterministic offline
+command. For a full run through the shipped design-review pipeline, from
+a source checkout with the normal Rust build prerequisites:
+
+```sh
+cargo test --offline -p bureau --test engine \
+  scenario_offline::design_review_demo_runs_offline_end_to_end -- --exact
+```
+
+That test creates a temporary local repository, replays the included
+zero-cost agent fixtures, checks and pushes the review document locally,
+and records a PR only in an in-memory fake forge. Temporary state is removed
+afterward. No real token, model session, or forge request is used. See the
+[scenario guide](scenarios.md#try-the-zero-cost-offline-example) for the
+scope of this proof.
 
 The `fake` adapter replays recorded transcripts; config validation allows
 `fixture:` paths only on roles using it. The repository's own test suite is
@@ -645,6 +717,7 @@ cargo test --offline    # engine, reconcile, plugins, forges — all fake-backed
 
 ## Where to go next
 
+- [Scenario setups](scenarios.md) — ten editable, version-matched examples.
 - [DESIGN.md](../DESIGN.md) — architecture, control model, trust, and limits.
 - [README.md](../README.md) — quick start and everyday commands.
 - `bureau doctor` — when anything in this guide misbehaves, start there.

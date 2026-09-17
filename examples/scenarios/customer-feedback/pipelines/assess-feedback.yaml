@@ -1,0 +1,68 @@
+name: assess-feedback
+steps:
+  - name: baseline
+    type: deterministic
+    run: |
+      python3 -c '
+      import json, subprocess
+      base = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+      print(json.dumps({"schema": "v2", "outcome": "success", "trust": "derived",
+          "outputs": {"baseline_commit": base}, "artifacts": [], "message": "Recorded the pre-step Git commit."}))
+      '
+    timeout_secs: 30
+    next: assess
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: assess
+    type: agent
+    role: feedback-assessor
+    max_attempts: 2
+    timeout_secs: 300
+    next: verify-read-only
+    on_failure: assess
+    on_blocked: escalate
+    on_no_work: verify-read-only
+  - name: verify-read-only
+    type: deterministic
+    inputs_from: [baseline]
+    run: |
+      python3 -c '
+      import json, subprocess, sys
+      base = json.load(sys.stdin)["inputs"]["baseline_commit"]
+      subprocess.run(["git", "diff", "--exit-code", base, "--"], check=True)
+      if subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"]):
+          raise SystemExit("feedback assessment created untracked files")
+      '
+    timeout_secs: 30
+    next: validate-feedback
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: validate-feedback
+    type: deterministic
+    inputs_from: [assess]
+    run: |
+      python3 -c '
+      import json, sys
+      feedback = json.load(sys.stdin)["inputs"]["feedback"]
+      fields = {"category", "summary", "reproduction", "evidence"}
+      if not isinstance(feedback, dict) or set(feedback) != fields:
+          raise SystemExit("feedback must contain exactly the documented fields")
+      if feedback["category"] not in ("bug", "question", "feature"):
+          raise SystemExit("feedback.category is invalid")
+      for field in ("summary", "reproduction"):
+          if not isinstance(feedback[field], str) or not feedback[field].strip():
+              raise SystemExit("feedback." + field + " must be nonempty")
+      evidence = feedback["evidence"]
+      if not isinstance(evidence, list) or not evidence or not all(isinstance(x, str) and x.strip() for x in evidence):
+          raise SystemExit("feedback.evidence must contain nonempty strings")
+      print(json.dumps({"schema": "v2", "outcome": "blocked", "trust": "derived",
+          "outputs": {"feedback": feedback}, "artifacts": [],
+          "message": "Human bug triage required; no fix approved: " + json.dumps(feedback, sort_keys=True)}))
+      '
+    timeout_secs: 30
+    next: escalate
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: escalate

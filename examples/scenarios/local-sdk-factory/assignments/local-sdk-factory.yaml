@@ -1,0 +1,20 @@
+name: local-sdk-factory
+work:
+  forge: github
+  source: example-org/example-repo
+  filter: "is:issue is:open label:factory-review -label:bureau:failed -label:bureau:needs-human"
+  approval_label: bureau:factory-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos: [code]
+pipeline: local-sdk-factory
+role: factory-reviewer
+verify: "git diff --check"
+branch_prefix: bureau/factory-review/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 1
+  max_runs_per_day: 2
+  max_open_prs: 1
+  max_cost_per_day_usd: 2
+  max_run_hours: 1

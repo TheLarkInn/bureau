@@ -1,0 +1,5 @@
+name: repairer
+agent: agents/repairer.agent.md
+adapter: copilot
+permissions: [repo:read, repo:write, model:invoke]
+min_trust: untrusted

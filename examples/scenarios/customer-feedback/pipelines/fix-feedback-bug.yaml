@@ -1,0 +1,37 @@
+name: fix-feedback-bug
+steps:
+  - name: implement
+    type: agent
+    role: implementer
+    max_attempts: 2
+    timeout_secs: 900
+    next: verify
+    on_failure: implement
+    on_blocked: escalate
+    on_no_work: verify
+  - name: verify
+    type: deterministic
+    inputs_from: [implement]
+    run: "cargo test --offline"
+    timeout_secs: 1200
+    next: review
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort
+  - name: review
+    type: agent
+    role: reviewer
+    inputs_from: [implement, verify]
+    timeout_secs: 600
+    next: final-verify
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: final-verify
+  - name: final-verify
+    type: deterministic
+    run: "cargo test --offline"
+    timeout_secs: 1200
+    next: done
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort

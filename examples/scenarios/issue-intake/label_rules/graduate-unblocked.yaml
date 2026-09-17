@@ -1,0 +1,10 @@
+name: graduate-unblocked
+work:
+  forge: github
+  source: example-org/example-repo
+  filter: "is:issue is:open label:agent-blocked"
+when: dependencies_closed
+add_labels: [agent-eligible]
+remove_labels: [agent-blocked]
+limits:
+  max_updates_per_hour: 10

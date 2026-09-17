@@ -1,0 +1,33 @@
+name: recurring-maintenance
+steps:
+  - name: maintain
+    type: agent
+    role: implementer
+    max_attempts: 2
+    timeout_secs: 900
+    next: evidence
+    on_failure: maintain
+    on_blocked: escalate
+    on_no_work: evidence
+  - name: evidence
+    type: concurrent
+    steps: [format, tests, review]
+    completion: all
+    max_concurrent: 2
+    next: done
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort
+  - name: format
+    type: deterministic
+    run: "cargo fmt --all -- --check"
+    timeout_secs: 120
+  - name: tests
+    type: deterministic
+    run: "cargo test --offline"
+    timeout_secs: 1200
+  - name: review
+    type: agent
+    role: reviewer
+    inputs_from: [maintain]
+    timeout_secs: 600

@@ -1,0 +1,27 @@
+name: issue-triage
+work:
+  forge: github
+  source: example-org/example-repo
+  filter: "is:issue is:open label:needs-triage -label:bureau:failed -label:bureau:needs-human"
+  approval_label: bureau:triage-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos: [code]
+pipeline: issue-triage
+role: triager
+verify: |
+  python3 -c '
+  import json, subprocess, sys
+  base = json.load(sys.stdin)["inputs"]["baseline_commit"]
+  subprocess.run(["git", "diff", "--exit-code", base, "--"], check=True)
+  if subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"]):
+      raise SystemExit("read-only triage created untracked files")
+  '
+branch_prefix: bureau/triage/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 2
+  max_runs_per_day: 8
+  max_open_prs: 1
+  max_cost_per_day_usd: 3
+  max_run_hours: 1

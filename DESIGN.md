@@ -1188,6 +1188,13 @@ fixed or AI-authored first pipeline. It previews and validates config, creates
 a config PR, waits for merge, validates the merged commit, runs one reconcile
 pass, and waits for its outcomes. It never runs unmerged config.
 
+`init --print-template` is an authoring-only alternative to `--from`: emit
+an editable initialization request to stdout and exit without discovering
+local state, resolving credentials, installing plugins, contacting a forge,
+or starting work. The modes are mutually exclusive. Shell redirection is
+the operator's file write, not an initialization effect. A fixed pipeline's
+writable step still reaches deterministic verification after `no-work`.
+
 `doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
 and recovery state. `repair` may restore directories/permissions, disposable
 caches, the same plugin version, stale activation, expired ownership, orphan

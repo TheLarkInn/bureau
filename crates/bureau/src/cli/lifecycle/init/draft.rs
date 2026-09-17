@@ -42,7 +42,7 @@ fn agent_step(name: &str, role: &str, next: &str, inputs: &[&str]) -> StepDef {
     step.next = Some(next.to_owned());
     step.on_failure = Some("escalate".to_owned());
     step.on_blocked = Some("escalate".to_owned());
-    step.on_no_work = Some("done".to_owned());
+    step.on_no_work = Some(next.to_owned());
     step.inputs_from = inputs.iter().map(ToString::to_string).collect();
     step
 }

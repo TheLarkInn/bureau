@@ -1,0 +1,19 @@
+{
+  "schema": "v2",
+  "chunks": [
+    {
+      "delay_ms": 0,
+      "stream": "stdout",
+      "data": "{\"schema\":\"v2\",\"outcome\":\"success\",\"outputs\":{\"design_review\":{\"summary\":\"Offline fixture: review the seed file before changing its behavior.\",\"recommendation\":\"revise\",\"alternatives\":[\"Keep the documented behavior.\"],\"risks\":[\"A behavior change needs a regression check.\"],\"evidence\":[\"file.txt:1 contains start in the local test repository.\"]}},\"artifacts\":[],\"trust\":\"derived\",\"message\":\"Offline fixture assessment; no model was invoked.\"}\n"
+    }
+  ],
+  "exit_code": 0,
+  "usage": {
+    "provider": "fake",
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "credits": 0,
+    "cost_usd": 0,
+    "cost_basis": "known_zero"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "schema": "bureau-scenarios-v1",
+  "scenarios": [
+    {
+      "id": "design-review",
+      "title": "Design review",
+      "path": "design-review",
+      "docs_anchor": "design-review",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Propose a checked design-review document for human review, without implementing the design."
+    },
+    {
+      "id": "issue-intake",
+      "title": "Issue intake",
+      "path": "issue-intake",
+      "docs_anchor": "issue-intake",
+      "execution": "label-reconciliation",
+      "readiness": "customization-required",
+      "summary": "Graduate dependency-unblocked GitHub issues to eligibility without granting approval or invoking a model."
+    },
+    {
+      "id": "issue-triage",
+      "title": "Issue triage",
+      "path": "issue-triage",
+      "docs_anchor": "issue-triage",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Collect a bounded read-only diagnosis and escalate the classification to a human."
+    },
+    {
+      "id": "customer-feedback",
+      "title": "Customer feedback",
+      "path": "customer-feedback",
+      "docs_anchor": "customer-feedback",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Separate feedback assessment from a human-approved bug-fix assignment."
+    },
+    {
+      "id": "failing-test-repair",
+      "title": "Failing-test repair",
+      "path": "failing-test-repair",
+      "docs_anchor": "failing-test-repair",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Reproduce a failing test, attempt bounded repairs, and require deterministic checks before publication."
+    },
+    {
+      "id": "multi-repo-fix",
+      "title": "Multi-repo fix",
+      "path": "multi-repo-fix",
+      "docs_anchor": "multi-repo-fix",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Read an explicitly pinned public contract from a second repository while changing only the primary."
+    },
+    {
+      "id": "azure-devops",
+      "title": "Azure DevOps",
+      "path": "azure-devops",
+      "docs_anchor": "azure-devops",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Select approved Azure DevOps bugs with native WIQL and verify a proposed .NET fix."
+    },
+    {
+      "id": "local-sdk-factory",
+      "title": "Local SDK factory",
+      "path": "local-sdk-factory",
+      "docs_anchor": "local-sdk-factory",
+      "execution": "qualified-local-factory",
+      "readiness": "qualification-required",
+      "summary": "Start from a blocked qualification guard; enable a real local factory only with reviewed runtime and provider identities."
+    },
+    {
+      "id": "cloud-automation",
+      "title": "Cloud automation",
+      "path": "cloud-automation",
+      "docs_anchor": "cloud-automation",
+      "execution": "existing-cloud-control",
+      "readiness": "eligibility-required",
+      "summary": "Inspect an existing experimental cloud automation before any explicitly authorized, acceptance-only submission."
+    },
+    {
+      "id": "recurring-maintenance",
+      "title": "Recurring maintenance",
+      "path": "recurring-maintenance",
+      "docs_anchor": "recurring-maintenance",
+      "execution": "pipeline",
+      "readiness": "customization-required",
+      "summary": "Reconcile open approved maintenance work with concurrent evidence checks, not a cron language."
+    }
+  ]
+}

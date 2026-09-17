@@ -1,0 +1,19 @@
+{
+  "schema": "v2",
+  "chunks": [
+    {
+      "delay_ms": 0,
+      "stream": "stdout",
+      "data": "{\"schema\":\"v2\",\"outcome\":\"success\",\"outputs\":{},\"artifacts\":[],\"trust\":\"derived\",\"message\":\"Offline fixture review; deterministic checks remain authoritative.\"}\n"
+    }
+  ],
+  "exit_code": 0,
+  "usage": {
+    "provider": "fake",
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "credits": 0,
+    "cost_usd": 0,
+    "cost_basis": "known_zero"
+  }
+}

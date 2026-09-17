@@ -170,3 +170,68 @@ fn indent(value: &str, spaces: usize) -> String {
         output
     })
 }
+
+fn init_without_environment(home: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_bureau"))
+        .args(args)
+        .env_clear()
+        .env("BUREAU_HOME", home)
+        .env("HOME", home)
+        .env("COPILOT_HOME", home)
+        .env("PATH", "")
+        .output()
+        .expect("print-only init")
+}
+
+#[test]
+fn init_template_needs_no_settings_credentials_or_executables() {
+    let directory = TestDir::new();
+    let home = directory.0.join("absent");
+    let output = init_without_environment(&home, &["init", "--print-template"]);
+    let template = include_str!("../src/cli/lifecycle/init/request.yaml");
+    let expected = format!("{}\n", template.trim_end());
+    assert_eq!(
+        (
+            output.status.code(),
+            output.stdout.as_slice(),
+            output.stderr.as_slice(),
+            home.exists(),
+        ),
+        (Some(0), expected.as_bytes(), &[][..], false)
+    );
+}
+
+#[test]
+fn init_template_does_not_read_or_replace_existing_settings() {
+    let home = TestDir::new();
+    let settings = home.0.join("settings.yaml");
+    std::fs::write(&settings, "not: [valid YAML").expect("existing settings");
+    let output = init_without_environment(&home.0, &["init", "--print-template"]);
+    let contents = std::fs::read_to_string(settings).expect("unchanged settings");
+    let entries = std::fs::read_dir(&home.0).expect("entries").count();
+    assert_eq!(
+        (output.status.code(), contents.as_str(), entries),
+        (Some(0), "not: [valid YAML", 1)
+    );
+}
+
+#[test]
+fn init_requires_exactly_one_authoring_or_execution_mode() {
+    let directory = TestDir::new();
+    let home = directory.0.join("absent");
+    let cases = [
+        vec!["init"],
+        vec!["init", "--print-template", "--from", "missing.yaml"],
+    ];
+    for args in cases {
+        let output = init_without_environment(&home, &args);
+        assert_eq!(
+            (
+                output.status.code(),
+                output.stdout.is_empty(),
+                home.exists()
+            ),
+            (Some(2), true, false)
+        );
+    }
+}

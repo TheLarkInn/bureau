@@ -1,0 +1,5 @@
+name: triager
+agent: agents/triager.agent.md
+adapter: copilot
+permissions: [repo:read, model:invoke]
+min_trust: untrusted
