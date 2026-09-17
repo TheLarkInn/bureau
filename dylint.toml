@@ -57,6 +57,10 @@ exhaustive = true
 # bureau (binary target): a single `cli` module over the library.
 "bureau:cli" = []
 
+# --- maintenance_chaos (offline integration test) ---
+"maintenance_chaos:admission" = ["fixture"]
+"maintenance_chaos:fixture" = []
+
 # --- bureau-lifecycle ---
 "bureau_lifecycle:home" = []
 "bureau_lifecycle:maintenance" = []
