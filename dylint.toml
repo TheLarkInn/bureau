@@ -25,7 +25,7 @@ exhaustive = true
 "bureau:config" = ["ConfigError", "contract", "forge", "git", "identity"]
 "bureau:adapters" = ["config", "contract", "mcp", "process"]
 "bureau:runlog" = ["adapters", "config", "contract", "forge", "process"]
-# Admission prepares replay outside state transactions and streams exact-byte digest validation.
+# Admission prepares replay outside transactions; dedup eligibility and immutable rate accounting share the claim fence.
 "bureau:state" = ["config", "forge", "identity", "runlog"]
 "bureau:engine" = [
     "adapters",
@@ -56,6 +56,33 @@ exhaustive = true
 "bureau:watch" = ["config", "runlog", "state"]
 # bureau (binary target): a single `cli` module over the library.
 "bureau:cli" = []
+
+# --- cli integration tests ---
+"cli:signals" = []
+
+# --- engine integration tests ---
+"engine:rig" = []
+"engine:scenario_offline" = ["rig"]
+"engine:terminal_labels" = ["rig"]
+
+# --- maintenance_chaos (offline integration test) ---
+"maintenance_chaos:admission" = ["fixture"]
+"maintenance_chaos:durability" = ["fixture"]
+"maintenance_chaos:fixture" = []
+"runlog_framing:testdir" = []
+"rate_admission:support" = []
+"rate_admission:lifecycle" = ["support"]
+"rate_admission:projection" = ["support"]
+"rate_admission:legacy" = ["support"]
+
+# --- scenario catalog integration tests ---
+"scenario_catalog:Scenario" = []
+"scenario_catalog:Catalog" = []
+"scenario_catalog:prerequisites" = []
+
+# --- watch (read-only accounting integration tests) ---
+"watch:watch_support" = []
+"watch_render:watch_support" = []
 
 # --- bureau-lifecycle ---
 "bureau_lifecycle:home" = []

@@ -27,9 +27,8 @@ export const READ_INTENTS = new Set(["derive-work-source", "resolve-repo"]);
  * Wider than `READ_INTENTS` by exactly one entry, and the difference is not a
  * drift: the delete preflight belongs on this list and not that one, because
  * `lib/crud.mjs` `remove()` answers an unconfirmed delete with the referrer
- * report and writes nothing. It is a read that only looks like a write, which
- * is what `a-preflight-answers-with-the-hosts-own-config` is a `harness` rule
- * about.
+ * report and writes nothing. It is a read that only looks like a write; the
+ * response does not refresh or republish the host's configuration.
  *
  * There used to be a second, narrower predicate beside this one, reading
  * `READ_INTENTS` directly, and the gap between them was exactly that entry. It
@@ -303,12 +302,9 @@ function offerEndedRun(win) {
 /**
  * Stages the run-listing states that cannot come from the shared fixture.
  *
- * `fail-runs-later` serves the real listing once and refuses every read after
- * it. That ordering is the whole point: a run can only be *selected* from a
- * listing that answered, so the screen where a reader is watching a run while
- * the listing has since failed is unreachable if the very first read fails.
- * It is also the screen where the two halves of this surface can contradict
- * each other, which is why it has to be stageable at all.
+ * `fail-runs-later` serves the real listing until the path explicitly switches
+ * its phase after selecting a run. Operations and Design may read it first;
+ * a global request count cannot prove that a run was selected before failure.
  *
  * `stall-runs` is the read that has not come back yet — the badge before it has
  * a number. Every other run state describes an answer; this is the only one that
@@ -317,13 +313,12 @@ function offerEndedRun(win) {
  */
 function interceptRuns(win, kind) {
   const native = win.fetch.bind(win);
-  let served = 0;
+  if (kind === "fail-runs-later") setRunListingFailure(false, win);
   win.fetch = async (input, init) => {
     if (!/\/runs$/u.test(urlOf(input))) {
       return native(input, init);
     }
-    served += 1;
-    if (kind === "fail-runs-later" && served === 1) {
+    if (kind === "fail-runs-later" && !runListingFailed(win)) {
       return native(input, init);
     }
     if (kind === "stall-runs") {
@@ -335,6 +330,22 @@ function interceptRuns(win, kind) {
       { status: failing ? 503 : 200, headers: { "Content-Type": "application/json" } },
     );
   };
+}
+
+/** Shared with Playwright through serialization; never touches renderer state. */
+export function setRunListingFailure(failed, win = window) {
+  if (typeof failed !== "boolean") throw new TypeError("The run-listing phase must be boolean.");
+  if (failed && typeof win.__bureauLabRunListingFailed !== "boolean") {
+    throw new Error("The late run-listing failure was not initialized.");
+  }
+  win.__bureauLabRunListingFailed = failed;
+}
+
+export function runListingFailed(win = window) {
+  if (typeof win.__bureauLabRunListingFailed !== "boolean") {
+    throw new Error("The late run-listing failure was not initialized.");
+  }
+  return win.__bureauLabRunListingFailed;
 }
 
 /**

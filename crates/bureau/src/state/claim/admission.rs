@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-use super::super::{Error, sql};
+use super::super::{Error, accounting, duration_millis, now_millis, sql};
 
 #[cfg(test)]
 mod tests;
@@ -13,7 +15,25 @@ pub(super) struct Claim<'a> {
     pub(super) owner_id: &'a str,
 }
 
-fn insert_claim(tx: Transaction<'_>, claim: &Claim<'_>, expires: i64) -> Result<bool, Error> {
+fn commit_claim(tx: Transaction<'_>, claim: &Claim<'_>, now: i64) -> Result<bool, Error> {
+    accounting::record(
+        &tx,
+        claim.assignment,
+        claim.forge,
+        claim.external_id,
+        claim.run_id,
+        now,
+    )?;
+    tx.commit()?;
+    Ok(true)
+}
+
+fn insert_claim(
+    tx: Transaction<'_>,
+    claim: &Claim<'_>,
+    now: i64,
+    expires: i64,
+) -> Result<bool, Error> {
     let params = (
         claim.assignment,
         claim.forge,
@@ -23,10 +43,7 @@ fn insert_claim(tx: Transaction<'_>, claim: &Claim<'_>, expires: i64) -> Result<
         expires,
     );
     match tx.execute(sql::INSERT_LEASE, params) {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(true)
-        }
+        Ok(_) => commit_claim(tx, claim, now),
         Err(error) if sql::is_unique_violation(&error) => Ok(false),
         Err(error) => Err(error.into()),
     }
@@ -35,11 +52,12 @@ fn insert_claim(tx: Transaction<'_>, claim: &Claim<'_>, expires: i64) -> Result<
 pub(super) fn claim_tx(
     conn: &mut Connection,
     claim: &Claim<'_>,
-    now: i64,
-    expires: i64,
+    ttl: Duration,
     available: impl FnOnce(&Connection, i64) -> Result<bool, Error>,
 ) -> Result<bool, Error> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = now_millis();
+    let expires = now.saturating_add(duration_millis(ttl));
     if !available(&tx, now)? {
         return Ok(false);
     }
@@ -47,5 +65,5 @@ pub(super) fn claim_tx(
         sql::REAP_EXPIRED,
         (claim.assignment, claim.forge, claim.external_id, now),
     )?;
-    insert_claim(tx, claim, expires)
+    insert_claim(tx, claim, now, expires)
 }

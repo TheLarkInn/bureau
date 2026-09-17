@@ -1,4 +1,4 @@
-// Offline tests for the run-event overlay reducer (web/live/overlay.js).
+// Offline tests for the run-event overlay reducer (web/live/overlay.mjs).
 // Each fixture is an event sequence shaped exactly like the run log the
 // server parses (crates/bureau runlog): seq + at_ms + kind + data. No
 // network, no DOM, no React — the same reducer live and replay both use.
@@ -18,7 +18,7 @@ import {
   runsOffered,
   unattributedRuns,
   stateUpTo,
-} from "../web/live/overlay.js";
+} from "../web/live/overlay.mjs";
 
 let seq = 0;
 function at(atMs, kind, data) {

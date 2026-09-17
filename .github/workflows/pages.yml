@@ -1,0 +1,94 @@
+name: Bureau Pages
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/site*.mjs"
+      - "scripts/pages-*.mjs"
+      - "scripts/release-assets.mjs"
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/site-checks.yml"
+      - ".github/extensions/bureau-canvas/e2e/playwright/package*.json"
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/site*.mjs"
+      - "scripts/pages-*.mjs"
+      - "scripts/release-assets.mjs"
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/site-checks.yml"
+      - ".github/extensions/bureau-canvas/e2e/playwright/package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/github-script@v7.0.1
+        id: source
+        with:
+          script: |
+            const { pagesSource } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/pages-source.mjs`);
+            core.setOutput("sha", await pagesSource({ github, context }));
+
+  validate:
+    needs: source
+    uses: ./.github/workflows/site-checks.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ needs.source.outputs.sha }}
+      upload_pages: ${{ github.repository == 'TheLarkInn/bureau' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+
+  deploy:
+    if: github.repository == 'TheLarkInn/bureau' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [source, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Refuse a stale or untrusted source
+        uses: actions/github-script@v7.0.1
+        env:
+          TESTED_SHA: ${{ needs.source.outputs.sha }}
+        with:
+          script: |
+            if (context.repo.owner !== "TheLarkInn" || context.repo.repo !== "bureau"
+                || context.ref !== "refs/heads/main"
+                || !["push", "workflow_dispatch"].includes(context.eventName)
+                || context.sha !== process.env.TESTED_SHA) {
+              throw new Error("Pages requires this run's checked main commit.");
+            }
+            const { data } = await github.rest.git.getRef({ ...context.repo, ref: "heads/main" });
+            if (data.object.type !== "commit" || data.object.sha !== process.env.TESTED_SHA) {
+              throw new Error("Main advanced during validation. Rerun Pages on current main.");
+            }
+      - uses: actions/configure-pages@v5.0.0
+        with:
+          enablement: false
+      - name: Deploy the same-run checked artifact
+        id: deployment
+        uses: actions/deploy-pages@v4.0.5

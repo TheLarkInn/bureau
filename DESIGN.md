@@ -87,8 +87,10 @@ It is **a CI runner with a work queue and a reconcile loop**. The step body happ
 to be an LLM instead of a shell script. That is the only novel part of the execution
 model; everything else is ordinary systems engineering and should look ordinary.
 
-It runs in a Linux dev container on one developer's machine. One process. No cluster,
-no control plane, no service.
+It runs in a Linux dev container on one developer's machine. A self-hosted Linux VM
+or container with one owner and local durable state is the same single-machine
+topology. One engine process. No cluster, no control plane, no public service.
+GitHub Pages may host static documentation, never the daemon or its state.
 
 ### What it does NOT own
 
@@ -202,6 +204,10 @@ the interval from minutes to seconds. Because polling works identically on every
 forge, your correctness path stays forge-agnostic and only the optimization is
 forge-specific.
 
+External automation may update reviewed, approved forge intent or wake a poll.
+It is not another execution engine, queue, or source of run truth; missed or
+duplicated wakes do not change what the next reconciliation pass observes.
+
 ### Consequence: there is no queue table
 
 Pending work is a **query**, not stored state:
@@ -218,6 +224,24 @@ Scheduler state stores exactly two things:
 - **budget counters** — must be checkable cheaply before spawning anything.
 
 Plus run logs and label-rule audit events, which are records, not scheduler state.
+
+Rate counters retain one admission record per durable run identity, committed
+atomically with the winning lease. This is budget-accounting evidence, not
+pending work: it has no queue position, retry plan, or scheduling decision.
+Lease renewal, expiry, release, and same-run recovery never erase or retime an
+admission. Hourly and daily limits therefore apply independently of concurrency
+and terminal completion; terminal cost projection must not charge the run twice.
+Standing reconciliation checks seen-content eligibility inside that same claim
+fence, before committing a lease or rate charge. Already-seen work must not consume
+the rate budget of later fresh work. Explicit `run` and `retry` retain their
+ability to repeat seen content; committed admissions are never refunded afterward.
+
+Legacy completed counters retain their recorded times. Upgrade retains every
+remaining legacy lease, including expired leases; an unknown admission time is
+conservatively charged at first migration observation, never inferred from lease
+expiry or replaced with zero. Ambiguous synthetic identities from older tables
+remain separately counted. Read-only legacy views do not migrate and conservatively
+include retained leases until a writable open establishes durable accounting.
 
 ---
 
@@ -758,8 +782,10 @@ Properties this gives you for free, which you must not undermine:
 - **Idempotent by construction.** A loop computing "what is missing" cannot
   double-submit. A cron job that says "do a pass" can.
 - **Restart is free.** Kill it mid-run, restart, it re-observes and continues.
-- **Multi-host works with no shared queue.** Two daemons on two machines reconciling
-  the same forge arbitrate solely through lease CAS.
+- **Lease CAS protects one shared transactional state.** Cooperating processes
+  using the same local database cannot claim the same item. Independent hosts
+  with separate SQLite files do not share leases and are not a supported
+  deployment. This does not authorize a distributed database or control plane.
 
 A panic inside one run must not abort the loop. `tokio::spawn` isolates the task;
 join the handle and log the panic, then release the lease.
@@ -1179,6 +1205,13 @@ three credential sources, optional user-global plugin installation, and a
 fixed or AI-authored first pipeline. It previews and validates config, creates
 a config PR, waits for merge, validates the merged commit, runs one reconcile
 pass, and waits for its outcomes. It never runs unmerged config.
+
+`init --print-template` is an authoring-only alternative to `--from`: emit
+an editable initialization request to stdout and exit without discovering
+local state, resolving credentials, installing plugins, contacting a forge,
+or starting work. The modes are mutually exclusive. Shell redirection is
+the operator's file write, not an initialization effect. A fixed pipeline's
+writable step still reaches deterministic verification after `no-work`.
 
 `doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
 and recovery state. `repair` may restore directories/permissions, disposable

@@ -1,0 +1,73 @@
+name: multi-repo-fix
+steps:
+  - name: read-context
+    type: deterministic
+    run: |
+      python3 -c '
+      import json, os, pathlib, re, subprocess, tempfile
+      revision = "REPLACE_WITH_REVIEWED_CONTEXT_COMMIT"
+      repository = "https://github.com/example-org/contracts.git"
+      source = "api/contract.json"
+      if not re.fullmatch("[0-9a-f]{40}", revision):
+          raise SystemExit("Set the reviewed context commit before running; no fetch attempted.")
+      environment = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+      with tempfile.TemporaryDirectory(prefix=".bureau-context-", dir=".") as directory:
+          mirror = str(pathlib.Path(directory).resolve() / "context.git")
+          subprocess.run(["git", "init", "--bare", "--quiet", mirror], check=True)
+          git = ["git", "--git-dir", mirror, "-c", "credential.helper=", "-c", "core.askPass="]
+          subprocess.run(git + ["fetch", "--quiet", "--depth=1", repository, revision], env=environment, check=True)
+          actual = subprocess.check_output(git + ["rev-parse", "FETCH_HEAD"], text=True).strip()
+          if actual != revision:
+              raise SystemExit("Fetched context does not match the reviewed commit")
+          identity = revision + ":" + source
+          size = int(subprocess.check_output(git + ["cat-file", "-s", identity], text=True))
+          if size > 65536:
+              raise SystemExit("Context file exceeds the reviewed 64 KiB bound")
+          text = subprocess.check_output(git + ["show", identity], text=True)
+          json.loads(text)
+      print(json.dumps({"schema": "v2", "outcome": "success", "trust": "derived", "artifacts": [],
+          "outputs": {"context_repository": repository, "context_commit": revision,
+              "context_path": source, "context_text": text},
+          "message": "Read the exact reviewed public context revision without forge credentials."}))
+      '
+    timeout_secs: 120
+    next: implement
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort
+  - name: implement
+    type: agent
+    role: context-implementer
+    inputs_from: [read-context]
+    max_attempts: 2
+    timeout_secs: 900
+    next: verify
+    on_failure: implement
+    on_blocked: escalate
+    on_no_work: verify
+  - name: verify
+    type: deterministic
+    inputs_from: [implement]
+    run: "cargo test --offline"
+    timeout_secs: 1200
+    next: review
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort
+  - name: review
+    type: agent
+    role: reviewer
+    inputs_from: [implement, verify, read-context]
+    timeout_secs: 600
+    next: final-verify
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: final-verify
+  - name: final-verify
+    type: deterministic
+    run: "cargo test --offline"
+    timeout_secs: 1200
+    next: done
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort

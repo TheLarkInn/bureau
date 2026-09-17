@@ -15,6 +15,7 @@ a trusted checkout. `--port <port>` fixes the otherwise ephemeral port.
 | Run directory | `BUREAU_CANVAS_RUNS`, then `BUREAU_HOME/runs` |
 | Default runs | The workspace/binary's WSL Bureau home when applicable; otherwise local `~/.bureau/runs` |
 | Missing binary/config | Labeled bundled sample; validation has not run |
+| `BUREAU_CANVAS_READ_ONLY=1` | Immutable inspection-only policy for this host; invalid values also fail closed |
 
 On Windows, automatically discovered WSL UNC binaries run through `wsl.exe`.
 Share paths translate to Linux paths for CLI arguments. An explicit binary
@@ -25,11 +26,11 @@ override bypasses that bridge. See [binary lookup](lib/findings.mjs) and
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /state` | Config, pipeline views, and validation state |
-| `GET /runs` | Run summaries and liveness |
+| `GET /state` | Config, pipeline views, validation timestamp, authoring Git observation, and navigation |
+| `GET /runs` | Bounded run summaries with per-run evidence and directory-level observation |
 | `GET /runs/<id>/events` | CLI-backed event replay, falling back to `events.jsonl` with `source: "log"` |
 | `GET /events` | SSE state updates and `run-event` notifications |
-| `POST /intent` | Config edits and CLI-backed run controls |
+| `POST /intent` | Config edits, shared navigation/overview intents, and CLI-backed run controls |
 
 `pause-run`, `resume-run`, and `cancel-run` take `{ run_id }`;
 `reconcile-now` runs one foreground pass. The canvas never writes run markers.
@@ -37,6 +38,63 @@ Run listing/tailing polls the filesystem because WSL watch events are unreliable
 No `run_finished` event means live, not proof that a daemon is running.
 Zero runs, a failed listing, and a pass claiming no work are distinct states.
 A reconcile pass must not replace a run the reader already selected.
+
+Managed inspection is explicitly read-only, not a guessed execution profile.
+`access.mode: "read-only"` and its reason appear in state and the Operations
+projection. An instance may restrict access with `readOnly: true`, but no
+input, intent, action, refresh, or reopen may relax an existing restriction.
+The backend denies every non-allowlisted mutation before invoking an action,
+planning writes, or spawning a run command. Configuration creation, cloning,
+saving, deletion, retries, and all run controls are included. Unknown mutation
+names are denied, not optimistically allowed.
+
+Registered mutators require a listening, initialized instance with an explicit
+access policy. Before open, during a failed open, and after close, missing
+context refuses writes rather than defaulting to local access. Closing does
+not erase pending plans or field drafts. Read-only restrictions remain attached
+to the same instance for the provider lifetime, including close/reopen; use a
+fresh instance for a separately authorized local editing view.
+
+Only navigation, inspection, pure URL derivation, and config validation remain
+available. Read-only run history uses the bounded raw reader; even an older
+CLI cannot repair a tail through this route. Native control approval is denied
+without probing the CLI. Ordinary unset/`0` mode retains the existing behavior.
+`--dir` and displayed HEAD never establish runtime ownership, a pinned
+dispatch profile, config subdirectory, or external owner-lock membership.
+
+## Operations and navigation
+
+With no initial pipeline, the canonical canvas open handler selects
+**Operations** in both hosts. Configuration, the standalone editor, and
+Design/Live/Replay remain the existing surfaces.
+
+| Canvas action / intent kind | Input | Result |
+|---|---|---|
+| `operations` | `{ "refresh": true }` optionally reloads config/validation/Git state | `{ state, listing, overview }` |
+| `navigate` | `{ "view": "operations" }` | Operations |
+| `navigate` | `{ "view": "config", "assignment": "name" }` (assignment optional) | Configuration, expanding/focusing the named assignment |
+| `navigate` | `{ "view": "pipeline", "pipeline": "name", "mode": "live", "run_id": "id" }` | Exact pipeline/run in the existing mode |
+
+Pipeline mode is `design`, `live`, or `replay`; omitted mode defaults to
+Design. A run ID is valid only in Live/Replay and must belong to that pipeline.
+Unsupported destinations and mismatched IDs fail explicitly. Canvas actions
+and iframe intents use the same host implementation and shared validation.
+Navigation revisions apply once, so later manual run selections survive a
+reload instead of being overwritten by an older request.
+Both assignment fields and the standalone editor follow these same
+navigation requests, confirming discard only for a dirty draft. Declining
+keeps the editor and its draft intact even when another state update arrives.
+Refreshing authoring data cannot overwrite a newer navigation request.
+An unconfirmed delete returns its referrer report without rebuilding or
+broadcasting configuration. It must not dismiss another disclosure or replace
+the current view. Confirmed plans, saves, and explicit refreshes still publish
+their updated state.
+
+Authoring Git reads are local, read-only, and scoped to the config directory.
+Sample, unavailable Git, dirty files, pending plans, and validated saved files
+remain distinct. A clean authoring HEAD never certifies execution. The
+currently adopted source is explicitly **not observed**; `config_source`
+remote/ref/commit values from run snapshots are labeled historical.
 
 ## Editing and validation
 
@@ -77,12 +135,60 @@ rendering; other output stays verbatim.
 Displayed agent identities are config projections, not observations of a
 spawn. A mismatch compares the recorded selection with today's config.
 
+Operations projects the same reducer and factory evidence used by Live and
+Replay. It never polls a remote control plane or certifies a running daemon.
+Unfinished evidence older than five minutes, future timestamps, and missing
+timestamps are stale/unknown. Failed, paused, indeterminate, incomplete
+accounting, and invalid evidence contribute to attention; counts may overlap.
+Measured zero USD is retained; absent, invalid, or incomplete accounting is
+unknown. Native factory completion alone is not a Bureau outcome.
+
+The filesystem preview processes at most 200 directory entries, in filesystem
+order, and at most 2 MiB / 10,000 events per log. A listing retains at most
+16 MiB of log evidence; detecting that cap can read one additional bounded
+log. These are observation limits,
+not execution ceilings or a claim to show the newest 200 runs. Limited
+inventories have unknown overall counts and direct readers to CLI inspection.
+Invalid complete JSONL records or run-identity mismatches cannot produce a
+success-looking prefix. Only a torn unterminated final append may return a
+readable prefix, with a warning. Raw-log fallback does not grant native resume
+eligibility.
+Sequence numbers are reader metadata, not an integrity check. As in Bureau
+replay, gaps, duplicates, and nonzero starts retain file-order event meaning;
+they do not make a log corrupt or remove its navigation.
+
+The focused `operations.spec.mjs` browser cases cover exact handoffs, polling,
+unknown/error evidence, native/Bureau separation, 320/375px layouts, keyboard
+focus, reduced motion, and light/dark host-token contrast. These cases do not
+replace the existing state-matrix or visual-baseline suites.
+Navigation contrast is also checked immediately on the graph's independently
+dark surface, including hover and keyboard focus with and without reduced
+motion. Navigation text and backgrounds switch together rather than fading
+through unreadable intermediate colors.
+`operations-navigation.spec.mjs` uses real HTTP, SSE, and file writes to check
+preflight, plan save, pipeline save, and refresh without losing navigation or
+an unrelated draft; only CLI validation uses the standard offline fixture.
+The selected-run failure probe switches its read-only network fixture explicitly
+after the run is selected and observed. Earlier Operations reads cannot consume
+that transition.
+The approved visual suite preserves its ten legacy views and adds desktop/mobile
+Operations evidence and a read-only invalid/missing-evidence view. Its fixed
+clock does not turn missing accounting, provenance, or activity into success.
+`read-only.spec.mjs` additionally exercises the real managed server policy,
+disabled mutation widgets, raw request override attempts, and direct editor
+entry without Save or clone paths.
+
 ## Browser boundaries
 
 Only `web/` is served. Shared host/browser rules live there; `lib/` may import
 them, never the reverse. Each page must resolve its own module graph and bare
 imports through its own import map. [Import tests](test/web-imports.test.mjs)
 enforce this offline.
+
+The run-event reducer is explicit ESM at `web/live/overlay.mjs`, shared by the
+Node observation reader and browser modes. `web/live/overlay.js` only re-exports
+it for existing browser URLs; Node and Playwright imports use `.mjs`. Do not
+rely on Node's syntax detection or change the extension/vendor package boundary.
 
 Every React Flow surface uses [MeasurementGuard](web/graph-measure.mjs) so
 missed measurements cannot leave it blank. Expected edge counts come from the

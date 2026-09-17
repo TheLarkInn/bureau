@@ -1,0 +1,6 @@
+repos:
+  code:
+    url: https://github.com/example-org/example-repo.git
+    forge: github
+    access: push
+    credential: github-work

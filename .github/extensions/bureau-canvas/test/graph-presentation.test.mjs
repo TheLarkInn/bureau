@@ -9,7 +9,7 @@ import {
   nextAttention, searchGraphItems,
 } from "../web/graph-presentation.mjs";
 import { layoutPipeline } from "../web/layout.js";
-import { applyEvents, emptyOverlay, resolveOverlay } from "../web/live/overlay.js";
+import { applyEvents, emptyOverlay, resolveOverlay } from "../web/live/overlay.mjs";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url);
 

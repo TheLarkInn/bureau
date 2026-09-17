@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f6f5f0">
+  <meta name="description" content="Bureau is a local agent work runner. Turn GitHub issues and Azure DevOps work items into reviewable pull requests, with leases, budgets, and deterministic verification.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta property="og:title" content="Bureau - agent work, with operating discipline">
+  <meta property="og:description" content="Agents propose. Code verifies. Reviewed configuration sets the limits. A local runner for GitHub and Azure DevOps.">
+  <meta property="og:type" content="website">
+  {{CANONICAL}}
+  <title>Bureau - agent work, with operating discipline</title>
+  <link rel="icon" type="image/svg+xml" href="{{BASE}}assets/mark.svg">
+  <link rel="stylesheet" href="{{BASE}}assets/base.css">
+  <link rel="stylesheet" href="{{BASE}}assets/layout.css">
+  <link rel="stylesheet" href="{{BASE}}assets/sample.css">
+  <script type="module" src="{{BASE}}assets/demo.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="{{BASE}}" aria-label="Bureau home"><img src="{{BASE}}assets/mark.svg" width="28" height="28" alt="">bureau<span class="wordmark-period" aria-hidden="true">.</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#principles">How it works</a>
+      <a href="#scenarios">Scenarios</a>
+      <a href="#local">Run locally</a>
+    </nav>
+    <a class="source-link" href="{{REPOSITORY}}">View source <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a>
+  </header>
+  <main id="main" tabindex="-1">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="square" aria-hidden="true"></span> A local agent work runner</p>
+        <h1 id="hero-title">Move work forward.<br><em>Keep the judgment.</em></h1>
+        <p class="hero-description">Turn GitHub issues and Azure DevOps work items into reviewable pull requests. Agents propose. Code verifies. Your policies set the limits.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#start">Start with Bureau <span class="icon-arrow" aria-hidden="true"></span></a>
+          <a class="button button-quiet" href="#sample">Explore a sample <span class="icon-arrow icon-arrow-down-right" aria-hidden="true"></span></a>
+        </div>
+        <p class="hero-note">A single binary for your Linux environment.</p>
+      </div>
+      <figure class="sample" id="sample" aria-labelledby="sample-title" aria-describedby="sample-disclaimer">
+        <figcaption class="sample-header">
+          <span class="eyebrow" id="sample-title">Inside a run</span>
+          <span class="sample-label">Illustrative sample</span>
+        </figcaption>
+        <div class="sample-heading"><span class="sample-ref">WORK ITEM / 042</span><h2>Repair a failing test</h2></div>
+        <div class="sample-modes" role="group" aria-label="Sample outcome" data-enhance hidden>
+          <button type="button" data-outcome="pass" aria-pressed="true">Passes</button>
+          <button type="button" data-outcome="repair" aria-pressed="false">Needs changes</button>
+          <button type="button" data-outcome="budget" aria-pressed="false">Budget reached</button>
+        </div>
+        <ol class="pipeline" aria-label="Example pipeline">
+          <li data-step="observe"><span class="step-index" aria-hidden="true">01</span><span><strong>Observe &amp; claim</strong><small>Eligible item. Owned lease.</small></span><span class="step-kind">deterministic</span></li>
+          <li data-step="implement"><span class="step-index" aria-hidden="true">02</span><span><strong>Propose the change</strong><small>Isolated Git worktree.</small></span><span class="step-kind">agent</span></li>
+          <li data-step="verify"><span class="step-index" aria-hidden="true">03</span><span><strong>Verify the result</strong><small data-verify>Required checks pass.</small></span><span class="step-kind">deterministic</span></li>
+          <li data-step="review"><span class="step-index" aria-hidden="true">04</span><span><strong>Review the diff</strong><small data-review>Evidence accompanies the proposal.</small></span><span class="step-kind">agent</span></li>
+          <li data-step="publish"><span class="step-index" aria-hidden="true">05</span><span><strong>Open a pull request</strong><small data-publish>The forge owns review and merge.</small></span><span class="step-kind">deterministic</span></li>
+        </ol>
+        <div class="sample-result" role="status" aria-live="polite" aria-atomic="true">
+          <span class="result-marker" aria-hidden="true"></span>
+          <div><strong data-result-title>Ready for human review</strong><span data-result-detail>Verified work is a proposal, not an automatic merge.</span></div>
+        </div>
+        <p class="sample-disclaimer" id="sample-disclaimer">Sample states only, with no connection, model call, or execution.</p>
+      </figure>
+    </section>
+
+    <div class="contract-strip wrap" role="group" aria-label="Operating model">
+      <span><span aria-hidden="true">+</span> Pull-based work</span>
+      <span><span aria-hidden="true">+</span> Git-reviewed intent</span>
+      <span><span aria-hidden="true">+</span> Explicit limits</span>
+      <span><span aria-hidden="true">+</span> Durable evidence</span>
+    </div>
+
+    <section class="section wrap" id="principles" aria-labelledby="principles-title">
+      <div class="section-heading">
+        <p class="eyebrow">01 / Operating discipline</p>
+        <h2 id="principles-title">A clear contract<br>for every run.</h2>
+        <p>Bureau asks what is missing, not just what happened. Each reconcile pass compares your work source with open pull requests and active leases, then starts eligible work within headroom.</p>
+      </div>
+      <div class="principles">{{PRINCIPLES}}
+      </div>
+      <div class="section-footnote"><span class="small-rule" aria-hidden="true"></span><p>The forge remains the source of truth for issues, identity, reviews, and merge queues. Bureau owns the run, not another work database.</p><a class="text-link" href="{{SOURCE}}/DESIGN.md">Read the design <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></div>
+    </section>
+
+    <section class="scenarios-section" id="scenarios" aria-labelledby="scenarios-title">
+      <div class="wrap">
+        <div class="section-heading">
+          <p class="eyebrow">02 / Choose your starting point</p>
+          <h2 id="scenarios-title">Start with the work<br>you already have.</h2>
+          <p>Explore ten example configurations. Read the prerequisites, adapt the example to your repository, and review the configuration before it runs.</p>
+        </div>
+        <div class="scenario-toolbar">
+          <div class="scenario-filters" role="group" aria-label="Filter scenarios" data-enhance hidden>
+            <button type="button" data-filter="all" aria-pressed="true">All scenarios</button>
+            <button type="button" data-filter="plan" aria-pressed="false">Plan &amp; understand</button>
+            <button type="button" data-filter="build" aria-pressed="false">Build &amp; verify</button>
+            <button type="button" data-filter="operate" aria-pressed="false">Run &amp; maintain</button>
+          </div>
+          <p class="scenario-count" role="status" aria-live="polite" aria-atomic="true">10 scenarios</p>
+        </div>
+        <ul class="scenario-list">{{SCENARIOS}}
+        </ul>
+        <a class="text-link" href="{{SOURCE}}/docs/scenarios.md">Read the complete scenario guide <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a>
+      </div>
+    </section>
+
+    <section class="section wrap local-section" id="local" aria-labelledby="local-title">
+      <div class="section-heading">
+        <p class="eyebrow">03 / A deliberately small footprint</p>
+        <h2 id="local-title">Inspect the work<br>where it runs.</h2>
+        <p>One owner runs a single reconcile process on a Linux machine, VM, or container. Keep state and worktrees on a native Linux filesystem, with the tools your repository needs.</p>
+      </div>
+      <div class="local-grid">
+        <figure class="host-diagram" aria-labelledby="host-title">
+          <figcaption class="eyebrow" id="host-title">Your Linux environment</figcaption>
+          <div class="host-intent"><span>Reviewed Git config</span><span class="diagram-arrow" aria-hidden="true"><span class="icon-arrow icon-arrow-down"></span></span></div>
+          <div class="host-process"><img src="{{BASE}}assets/mark.svg" width="26" height="26" alt=""><strong>bureau reconcile</strong><span>one process / bounded work</span></div>
+          <div class="host-storage"><div><strong>Isolated worktrees</strong><span>One working context per run</span></div><div><strong>Local durable state</strong><span>Leases, budgets, run logs</span></div></div>
+          <div class="forge-connection"><span class="exchange" aria-hidden="true"><span class="icon-arrow icon-arrow-down"></span><span class="icon-arrow icon-arrow-upward"></span></span><span>GitHub &amp; Azure DevOps</span><small>work items / pull requests / review</small></div>
+        </figure>
+        <div class="surfaces">
+          <article><span class="eyebrow">Terminal</span><h3>Stay close to the work.</h3><p><code>bureau watch</code> shows runs, leases, and budget headroom. Use <code>bureau show</code> to inspect the evidence behind a run.</p></article>
+          <article><span class="eyebrow">App canvas &amp; browser</span><h3>The same local view, two ways.</h3><p>Explore and edit pipelines in the GitHub Copilot app's Bureau canvas, or open <code>bureau dashboard</code> in your browser. The dashboard needs Node.js and stays on loopback.</p><a class="text-link" href="{{SOURCE}}/.github/extensions/bureau-canvas/README.md">Explore the canvas <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></article>
+          <p class="local-boundary"><strong>This public site is not that dashboard.</strong> It cannot read private state, accept credentials, or control a run. For a remote VM, keep the dashboard private and use an authenticated SSH tunnel.</p>
+        </div>
+      </div>
+      <div class="deployment-note"><h3>Small does not mean unconfined.</h3><p>Use a provisioned Linux container as the outer boundary; enable user namespaces and the required command sandbox. Do not mount a host home directory or forward its SSH agent. Resolve only declared credentials, with reviewed per-repository grants.</p><a class="text-link" href="{{SOURCE}}/docs/getting-started.md#prerequisites">Environment prerequisites <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></div>
+    </section>
+
+    <section class="execution-section wrap" aria-labelledby="execution-title">
+      <div class="execution-heading"><p class="eyebrow">Execution, without ambiguity</p><h2 id="execution-title">Choose an<br>execution path.</h2></div>
+      <div class="execution-modes">
+        <article><span class="mode-label">The standard path</span><h3>Local agent pipelines</h3><p>Copilot or Claude through ACP, alternating with deterministic steps. Bureau owns local leases, worktrees, deadlines, and evidence.</p><a class="text-link" href="{{SOURCE}}/docs/getting-started.md#agent-transport">Agent setup <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></article>
+        <article><span class="mode-label">Opt-in / qualification required</span><h3>Local SDK factories</h3><p>Explicitly pinned provider and runtime, reviewed model access, and native limits. Requires a qualified runtime and account eligibility; no generally available version mapping is verified. Recovery also needs preserved SDK state.</p><a class="text-link" href="{{SOURCE}}/docs/getting-started.md#opt-in-local-copilot-factories">Read the factory contract <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></article>
+        <article><span class="mode-label mode-experimental">Experimental / limited availability</span><h3>Cloud automation controls</h3><p>Inspect, explicitly submit, and monitor existing GitHub automations through internal APIs, rather than a supported public REST factory API. These controls do not run as pipeline steps or support automatic dispatch, pause, approvals, or steering. Remote permissions, cost, and lifetime remain separate.</p><a class="text-link" href="{{SOURCE}}/docs/github-cloud-factories.md">Read the limitations <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a></article>
+      </div>
+    </section>
+
+    <section class="start-section" id="start" aria-labelledby="start-title">
+      <div class="wrap start-grid">
+        <div>
+          <p class="eyebrow">04 / Put intent into practice</p>
+          <h2 id="start-title">Set up your<br>first assignment.</h2>
+          <p class="start-intro">Install a release. Review the configuration. Run one deliberately bounded assignment.</p>
+          <ol class="start-steps">
+            <li><strong>Download and verify.</strong><p>Choose a Linux x86-64 or ARM64 archive and its matching <code>.sha256</code> file from the <a href="{{REPOSITORY}}/releases/latest">latest release</a>. No Rust toolchain required.</p></li>
+            <li><strong>Prepare your first configuration.</strong><p>Follow the <a href="{{SOURCE}}/docs/getting-started.md#first-time-setup-bureau-init">setup guide</a> to create <code>init.yaml</code>. <code>init</code> opens a config PR and waits for merge before running work.</p></li>
+            <li><strong>Observe before expanding.</strong><p>Inspect the run log and required checks. Keep initial limits tight. The <a href="{{SOURCE}}/docs/getting-started.md#try-it-offline-first">fake adapter walkthrough</a> is the offline starting point.</p></li>
+          </ol>
+          <a class="button button-primary" href="{{REPOSITORY}}/releases/latest">Get the Linux release <span class="icon-arrow icon-arrow-up" aria-hidden="true"></span></a>
+        </div>
+        <div class="install-card">
+          <div class="install-header"><span class="eyebrow">Linux / first run</span><span class="mono">01 &#8212; 03</span></div>
+          <div class="architecture" role="group" aria-label="Release architecture" data-enhance hidden><button type="button" data-arch="x86_64" aria-pressed="true">x86-64</button><button type="button" data-arch="aarch64" aria-pressed="false">ARM64</button></div>
+          <p class="asset-label">Archive filename <span>(use the selected release's version)</span></p>
+          <p class="asset-name" data-asset aria-live="polite">bureau-v&lt;version&gt;-x86_64-unknown-linux-musl.tar.gz</p>
+          <p class="install-instruction">Replace <code>&lt;archive&gt;</code> with that downloaded filename. Verify before extracting into an empty directory.</p>
+          <pre role="group" aria-label="Verify and install the downloaded Bureau archive"><code><span class="code-comment"># Verify the matching checksum</span>
+sha256sum --check &lt;archive&gt;.sha256
+
+<span class="code-comment"># Extract into an empty directory</span>
+tar -xzf &lt;archive&gt;
+install -Dm755 bureau "$HOME/.local/bin/bureau"
+export PATH="$HOME/.local/bin:$PATH"
+bureau --version
+
+<span class="code-comment"># Prepare init.yaml using the setup guide first</span>
+bureau init --from init.yaml
+bureau reconcile</code></pre>
+          <p class="install-footnote">Linux binaries only, including WSL2 and Linux VMs. Git, <code>unshare</code>, and your agent CLI are separate prerequisites. Never commit credential values.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer wrap">
+    <div><a class="wordmark" href="{{BASE}}">bureau<span class="wordmark-period" aria-hidden="true">.</span></a><p>Agent work, with operating discipline.</p></div>
+    <nav aria-label="Footer navigation"><a href="{{SOURCE}}/docs/getting-started.md">Documentation</a><a href="{{REPOSITORY}}">Source</a><a href="{{REPOSITORY}}/releases">Releases</a><a href="{{SOURCE}}/LICENSE">License</a></nav>
+    <p class="footer-note">Local by design. Reviewed through Git.</p>
+  </footer>
+</body>
+</html>

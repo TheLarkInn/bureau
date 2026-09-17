@@ -467,6 +467,7 @@ function missingPipeline(state) {
 /** No pipeline chosen at all, which the editor page has to explain. */
 function noPipeline(state) {
   const next = clone(state);
+  next.navigation = { view: "config" };
   next.selectedPipeline = null;
   next.pipeline = null;
   return next;

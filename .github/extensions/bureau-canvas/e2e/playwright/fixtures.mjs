@@ -83,9 +83,10 @@ async function scratchRuns() {
   return dir;
 }
 
-async function bootCanvas(dir, runs) {
+async function bootCanvas(dir, runs, readOnly) {
   const child = spawn(process.execPath, [SERVE, "--dir", dir, "--bureau", join(dir, ".missing-bureau-for-tests")], {
-    env: { ...process.env, BUREAU_CANVAS_TEST: "1", BUREAU_CANVAS_RUNS: runs },
+    env: { ...process.env, BUREAU_CANVAS_TEST: "1", BUREAU_CANVAS_RUNS: runs,
+      ...(readOnly ? { BUREAU_CANVAS_READ_ONLY: "1" } : {}) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stderr = "";
@@ -118,10 +119,15 @@ async function resetView(page, url) {
 }
 
 /** One canvas host and scratch config per test, so writes are always safe. */
-async function canvasHost({}, use) {
+async function canvasHost({ page, entryView, readOnly }, use) {
   const dir = await scratchConfig();
   const runs = await scratchRuns();
-  const { child, url } = await bootCanvas(dir, runs);
+  const { child, url } = await bootCanvas(dir, runs, readOnly);
+  if (entryView === "config") {
+    await page.goto(url);
+    await page.getByRole("button", { name: "Configuration", exact: true }).click();
+    await page.locator(".view-shell--config").waitFor();
+  }
   await use({ url, dir, runs });
   child.kill("SIGTERM");
   await rm(dir, { recursive: true, force: true });
@@ -129,6 +135,8 @@ async function canvasHost({}, use) {
 }
 
 export const test = base.extend({
+  readOnly: [false, { option: true }],
+  entryView: ["config", { option: true }],
   /**
    * Every page in this suite sits on the offline floor before it is navigated.
    *
@@ -204,4 +212,4 @@ export { expect } from "@playwright/test";
  * So `specs/offline-floor.spec.mjs` installs the floor itself, on this, and
  * reads what it recorded rather than being thrown by it.
  */
-export const floorTest = base.extend({ canvas: canvasHost });
+export const floorTest = base.extend({ entryView: ["operations", { option: true }], readOnly: [false, { option: true }], canvas: canvasHost });

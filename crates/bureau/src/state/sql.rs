@@ -96,10 +96,6 @@ pub(super) const LIVE_LEASES_TOTAL: &str = "
 SELECT COUNT(*) FROM leases
 WHERE expires_at_ms > ?1";
 
-pub(super) const RUNS_SINCE: &str = "
-SELECT COUNT(*) FROM runs
-WHERE assignment = ?1 AND started_at_ms > ?2";
-
 pub(super) const COST_SINCE: &str = "
 SELECT COALESCE(SUM(cost_usd), 0.0) FROM runs
 WHERE assignment = ?1 AND started_at_ms > ?2";
@@ -158,21 +154,6 @@ SELECT EXISTS(
     )
 )";
 
-const MIGRATE_RUNS: &str = "
-BEGIN;
-ALTER TABLE runs RENAME TO runs_legacy;
-CREATE TABLE runs (
-    run_id TEXT PRIMARY KEY,
-    assignment TEXT NOT NULL,
-    started_at_ms INTEGER NOT NULL,
-    cost_usd REAL NOT NULL
-);
-INSERT INTO runs (run_id, assignment, started_at_ms, cost_usd)
-SELECT 'legacy-' || rowid, assignment, started_at_ms, cost_usd FROM runs_legacy;
-DROP TABLE runs_legacy;
-COMMIT;
-";
-
 pub(super) const SEEN: &str = "SELECT EXISTS(SELECT 1 FROM dedup WHERE content_hash = ?1)";
 
 /// Reads back the stored disposition token, when the hash has one.
@@ -202,6 +183,10 @@ pub(super) fn lease_from_row(row: &Row<'_>) -> rusqlite::Result<Lease> {
     })
 }
 
+pub(super) fn count_value(count: i64) -> Result<u32, Error> {
+    u32::try_from(count).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, count).into())
+}
+
 /// Runs a `COUNT(*)` query scoped to an assignment and a time bound.
 pub(super) fn count(
     conn: &Connection,
@@ -211,7 +196,7 @@ pub(super) fn count(
 ) -> Result<u32, Error> {
     let params = (assignment, since_ms);
     let count: i64 = conn.query_row(statement, params, |row| row.get(0))?;
-    Ok(u32::try_from(count).unwrap_or(0))
+    count_value(count)
 }
 
 /// The stored disposition token for a content hash, when present.
@@ -235,66 +220,4 @@ pub(super) fn is_unique_violation(err: &rusqlite::Error) -> bool {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.code == ErrorCode::ConstraintViolation
     )
-}
-
-/// Adds the v0.2 run id key without discarding legacy budget history.
-pub(super) fn migrate_runs(conn: &Connection) -> Result<(), Error> {
-    let mut statement = conn.prepare("PRAGMA table_info(runs)")?;
-    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
-    let has_run_id = names.filter_map(Result::ok).any(|name| name == "run_id");
-    if !has_run_id {
-        conn.execute_batch(MIGRATE_RUNS)?;
-    }
-    Ok(())
-}
-
-const MIGRATE_LEASES_LEGACY: &str = "
-BEGIN;
-ALTER TABLE leases RENAME TO leases_legacy;
-CREATE TABLE leases (
-    assignment TEXT NOT NULL,
-    forge TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    expires_at_ms INTEGER NOT NULL,
-    UNIQUE (assignment, forge, external_id)
-);
-INSERT INTO leases (assignment, forge, external_id, run_id, owner_id, expires_at_ms)
-SELECT assignment, forge, external_id, 'legacy-' || rowid, 'legacy-' || rowid, expires_at_ms
-FROM leases_legacy;
-DROP TABLE leases_legacy;
-COMMIT;
-";
-
-const MIGRATE_LEASE_OWNERS: &str = "
-BEGIN;
-ALTER TABLE leases RENAME TO leases_legacy;
-CREATE TABLE leases (
-    assignment TEXT NOT NULL,
-    forge TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
-    owner_id TEXT NOT NULL,
-    expires_at_ms INTEGER NOT NULL,
-    UNIQUE (assignment, forge, external_id)
-);
-INSERT INTO leases (assignment, forge, external_id, run_id, owner_id, expires_at_ms)
-SELECT assignment, forge, external_id, run_id, run_id, expires_at_ms FROM leases_legacy;
-DROP TABLE leases_legacy;
-COMMIT;
-";
-
-pub(super) fn migrate_leases(conn: &Connection) -> Result<(), Error> {
-    let mut statement = conn.prepare("PRAGMA table_info(leases)")?;
-    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
-    let names: Vec<String> = names.filter_map(Result::ok).collect();
-    let has_run_id = names.iter().any(|name| name == "run_id");
-    let has_owner_id = names.iter().any(|name| name == "owner_id");
-    if !has_run_id {
-        conn.execute_batch(MIGRATE_LEASES_LEGACY)?;
-    } else if !has_owner_id {
-        conn.execute_batch(MIGRATE_LEASE_OWNERS)?;
-    }
-    Ok(())
 }

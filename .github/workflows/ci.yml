@@ -69,10 +69,16 @@ jobs:
     with:
       ref: ${{ needs.source.outputs.sha }}
 
+  site:
+    needs: source
+    uses: ./.github/workflows/site-checks.yml
+    with:
+      ref: ${{ needs.source.outputs.sha }}
+
   checks:
     name: All checks passed
     if: always()
-    needs: [source, lint, matrix, visual, binaries]
+    needs: [source, lint, matrix, visual, binaries, site]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -1,0 +1,12 @@
+config:
+  kind: single_repository
+  remote: https://github.com/TheLarkInn/bureau.git
+  reference: REPLACE_WITH_REVIEWED_FULL_COMMIT
+credentials:
+  github-maintenance:
+    source: file
+    path: /var/lib/bureau-maintenance/credentials/github-maintenance
+plugin:
+  install_user_global: false
+migration:
+  source: null

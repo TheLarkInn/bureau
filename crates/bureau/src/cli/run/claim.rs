@@ -8,16 +8,23 @@ use bureau::state::{FreshClaim, LeaseOwner, Store};
 
 use crate::cli::{out, prepare};
 
-fn accepted(claim: FreshClaim, item: &Item) -> bool {
+#[cfg(test)]
+mod tests;
+
+fn accepted(claim: Option<FreshClaim>, assignment: &Assignment, item: &Item) -> bool {
     match claim {
-        FreshClaim::Claimed => return true,
-        FreshClaim::Busy => out::line(format_args!(
+        Some(FreshClaim::Claimed) => return true,
+        Some(FreshClaim::Busy) => out::line(format_args!(
             "item `{}` is already claimed",
             item.external_id
         )),
-        FreshClaim::PreservedFactory(run) => out::error(format_args!(
+        Some(FreshClaim::PreservedFactory(run)) => out::error(format_args!(
             "item `{}` is preserved by local factory run `{run}`; inspect or resume that run instead",
             item.external_id,
+        )),
+        None => out::error(format_args!(
+            "assignment `{}` has exhausted its configured limits",
+            assignment.name
         )),
     }
     false
@@ -29,6 +36,7 @@ pub(super) fn fresh(
     item: &Item,
     run_id: &str,
     runs_dir: &Path,
+    open_prs: usize,
 ) -> anyhow::Result<Option<LeaseOwner>> {
     let owner = LeaseOwner::new(
         store,
@@ -39,7 +47,12 @@ pub(super) fn fresh(
     )
     .context("creating lease owner")?;
     let claim = owner
-        .claim_fresh(bureau::supervise::LEASE_TTL, runs_dir)
+        .claim_fresh_with_limits(
+            bureau::supervise::LEASE_TTL,
+            runs_dir,
+            &assignment.limits,
+            open_prs,
+        )
         .context("claiming work item")?;
-    Ok(accepted(claim, item).then_some(owner))
+    Ok(accepted(claim, assignment, item).then_some(owner))
 }

@@ -1,0 +1,11 @@
+name: local-sdk-factory
+steps:
+  - name: require-qualification
+    type: deterministic
+    run: |
+      printf '%s\n' '{"schema":"v2","outcome":"blocked","outputs":{},"artifacts":[],"trust":"derived","message":"Local factory unavailable until runtime, provider, exact tree digests, metadata, model credential and account eligibility are independently qualified. Review qualified-pipeline.yaml.example; no factory or ACP fallback was started."}'
+    timeout_secs: 10
+    next: escalate
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: escalate

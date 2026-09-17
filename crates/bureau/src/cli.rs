@@ -228,7 +228,7 @@ fn dispatch(verb: Verb) -> CliFuture {
             state,
             config_cache,
         } => Box::pin(async move { watch::run(runs, state, config_cache) }),
-        Verb::Init { from } => Box::pin(async move { lifecycle::init(&from).await }),
+        Verb::Init(args) => Box::pin(async move { lifecycle::init(&args).await }),
         Verb::Setup { from } => Box::pin(async move { lifecycle::setup(&from).await }),
         Verb::Doctor { json } => Box::pin(async move { lifecycle::doctor(json) }),
         Verb::Repair {

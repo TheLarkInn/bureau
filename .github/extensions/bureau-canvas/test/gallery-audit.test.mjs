@@ -16,7 +16,7 @@ import { crc32 } from "node:zlib";
 import { auditBytes, auditMotion, auditNames, auditSettled, auditTwins, auditUnaudited, expectedShots, isDrift, movingShots, partitionFindings, PNG_HEAD, PNG_TAIL, shotName, walkChunks } from "../e2e/playwright/gallery-audit.mjs";
 import { notices } from "../e2e/playwright/global-teardown.mjs";
 import { applyMarks, escape, figurePrefix, figureTag, indexPage, markTag, NOTICE_ANCHOR, rowsFor, SETTLED_INK, SETTLED_MARK, SETTLED_SLOT } from "../e2e/playwright/gallery-index.mjs";
-import { STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
+import { RENDER_TWINS, STATES as REGISTRY_STATES } from "../web/statelab/registry.mjs";
 import { VIEWPORTS as REAL_VIEWPORTS } from "../web/statelab/selectors.mjs";
 
 const VIEWPORTS = [{ id: "desktop" }, { id: "compact" }];
@@ -100,6 +100,27 @@ test("two states drawing one screen are reported unless the registry says why", 
     [auditTwins(drew(same), []).map((finding) => finding.kind), auditTwins(drew(same), [twin])],
     [["undeclared-twin"], []],
   );
+});
+
+test("Cancel returns to the expanded assignment without excusing changed or unrelated screens", () => {
+  const twin = RENDER_TWINS.find((entry) => entry.a === "probe--delete-refusal-dismissed"
+    && entry.b === "surface:config+data:validated+section:stack+card:expanded");
+  assert.ok(twin, "the inspected Cancel outcome must be declared");
+  assert.deepEqual(twin.viewports, ["desktop", "compact"]);
+  for (const viewport of twin.viewports) {
+    const canceled = shotName(twin.a, viewport);
+    const expanded = shotName(twin.b, viewport);
+    const unrelated = shotName("surface:config+section:empty", viewport);
+    const kinds = (signatures) => {
+      const settled = Object.fromEntries(Object.keys(signatures).map((name) => [name, true]));
+      return auditTwins(drew(signatures, settled), [{ ...twin, viewports: [viewport] }]).map((finding) => finding.kind);
+    };
+    assert.deepEqual([
+      kinds({ [canceled]: "expanded", [expanded]: "expanded" }),
+      kinds({ [canceled]: "leftover error", [expanded]: "expanded" }),
+      kinds({ [canceled]: "expanded", [expanded]: "expanded", [unrelated]: "expanded" }),
+    ], [[], ["broken-twin"], ["undeclared-twin"]]);
+  }
 });
 
 /**

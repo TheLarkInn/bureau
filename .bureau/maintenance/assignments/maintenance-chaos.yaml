@@ -1,0 +1,21 @@
+name: maintenance-chaos
+work:
+  forge: github
+  source: TheLarkInn/bureau
+  filter: 'is:issue is:open label:"bureau:maintenance-chaos" label:"bureau:maintenance-ready" -label:"bureau:maintenance-reported" -label:"bureau:maintenance-failed" -label:"bureau:maintenance-needs-human" -label:agent-eligible -label:"bureau:design-scan"'
+  approval_label: bureau:maintenance-ready
+  abort_label: bureau:maintenance-failed
+  escalate_label: bureau:maintenance-needs-human
+repos: [bureau]
+pipeline: maintenance-chaos
+role: maintenance-chaos-fixer
+verify: cargo fmt --all -- --check && bash scripts/lint.sh && cargo test --offline
+branch_prefix: bureau/maintenance-chaos/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 2
+  max_runs_per_day: 6
+  max_open_prs: 2
+  # Unknown usage must block, not silently become a zero-dollar run.
+  max_cost_per_day_usd: 10
+  max_run_hours: 1

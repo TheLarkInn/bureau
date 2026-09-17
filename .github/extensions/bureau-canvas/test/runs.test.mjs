@@ -41,7 +41,8 @@ async function fixtureRuns() {
   await mkdir(join(dir, "run-live"), { recursive: true });
   await mkdir(join(dir, "run-done"), { recursive: true });
   await writeFile(join(dir, "run-live", "events.jsonl"), log(RUN_STARTED, STEP_STARTED));
-  await writeFile(join(dir, "run-done", "events.jsonl"), log(RUN_STARTED, STEP_STARTED, STEP_FINISHED, RUN_FINISHED));
+  const doneStart = { ...RUN_STARTED, data: { ...RUN_STARTED.data, run_id: "run-done", snapshot: { ...SNAPSHOT, run_id: "run-done" } } };
+  await writeFile(join(dir, "run-done", "events.jsonl"), log(doneStart, STEP_STARTED, STEP_FINISHED, RUN_FINISHED));
   return dir;
 }
 
@@ -68,7 +69,7 @@ test("lists runs with liveness and current step", async (t) => {
 
   try {
     const { body } = await json(new URL("/runs", opened.url));
-    assert.deepStrictEqual(body.runs, [
+    assert.deepStrictEqual(body.runs.map(({ evidence, ...summary }) => summary), [
       {
         run_id: "run-done",
         assignment: "triage",

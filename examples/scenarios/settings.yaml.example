@@ -1,0 +1,24 @@
+# Local settings, not reviewed assignment config. Never add token values here.
+# Copy to a private file outside the repository and customize before bureau setup.
+config:
+  kind: separate_repository
+  remote: https://github.com/example-org/bureau-config.git
+  reference: main
+credentials:
+  config: # Access to the config repository, independently of the work forge.
+    source: environment
+    variable: BUREAU_CONFIG_TOKEN
+  github-work:
+    source: environment
+    variable: BUREAU_GITHUB_TOKEN
+  github-context-read: # Only the multi-repo setup needs this reference.
+    source: environment
+    variable: BUREAU_CONTEXT_READ_TOKEN
+  ado-work: # Only the Azure DevOps setup needs this reference.
+    source: environment
+    variable: BUREAU_ADO_TOKEN
+  copilot-model: # Only an actually qualified local factory uses this reference.
+    source: environment
+    variable: BUREAU_COPILOT_MODEL_TOKEN
+plugin:
+  install_user_global: false

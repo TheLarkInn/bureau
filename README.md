@@ -23,7 +23,13 @@ cargo install --path crates/bureau
 
 ## Start
 
-Create `init.yaml` using the
+Print a template without credentials, network calls, or state changes:
+
+```sh
+bureau init --print-template > init.yaml
+```
+
+Edit the repository, credential references, and limits using the
 [setup guide](https://github.com/TheLarkInn/bureau/blob/main/docs/getting-started.md#first-time-setup-bureau-init), then:
 
 ```sh
@@ -54,6 +60,10 @@ bureau repair                   # preview and confirm repairs
 For one item: `bureau run <pipeline> --item owner/repo#42`
 (GitHub) or `--item Project/42` (Azure DevOps).
 
+The browser dashboard and GitHub Copilot app canvas share an **Operations**
+view for attention, recorded run evidence, and configuration safeguards.
+Saving config edits the working tree; review and merge still authorize execution.
+
 ## Before real runs
 
 Config review is authorization. **Never commit credential values.**
@@ -81,7 +91,10 @@ cargo test --offline
 See [contributor rules](https://github.com/TheLarkInn/bureau/blob/main/AGENTS.md)
 for tool setup and enforced limits.
 
+[Website](https://thelarkinn.github.io/bureau/) |
 [Setup](https://github.com/TheLarkInn/bureau/blob/main/docs/getting-started.md) |
+[Ten scenarios](https://github.com/TheLarkInn/bureau/blob/main/docs/scenarios.md) |
+[Deployment](https://github.com/TheLarkInn/bureau/blob/main/docs/deployment.md) |
 [Canvas](https://github.com/TheLarkInn/bureau/blob/main/.github/extensions/bureau-canvas/README.md) |
 [Design](https://github.com/TheLarkInn/bureau/blob/main/DESIGN.md) |
 [Release process](https://github.com/TheLarkInn/bureau/blob/main/docs/releases.md)

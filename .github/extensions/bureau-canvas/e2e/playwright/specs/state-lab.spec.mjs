@@ -268,7 +268,10 @@ test("the picker judges any combination a reviewer assembles", async ({ page, ho
  */
 test("the lab prints the registry's harness note, and the overclaim appears nowhere", async ({ page, host }) => {
   const errors = await openLab(page, host);
-  const rule = CONSTRAINTS.find((item) => item.kind === "harness");
+  const rule = CONSTRAINTS.find((item) => item.id === "playing-outlasts-only-the-longest-run");
+  expect(rule?.kind).toBe("harness");
+  const combination = { surface: "pipeline", data: "validated", mode: "replay", run: "running", transport: "playing" };
+  expect(rule.holds(combination)).toBe(false);
   const [limit, instead] = harnessNotes(rule);
 
   const listed = page.locator("#constraints details", { hasText: rule.title });
@@ -277,7 +280,6 @@ test("the lab prints the registry's harness note, and the overclaim appears nowh
   await expect(listed).toContainText(instead);
 
   // The picker's copy, driven onto a combination this harness rule rejects.
-  const combination = { surface: "config", data: "validated", section: "two-cards", card: "expanded", field: "delete" };
   for (const [axis, value] of Object.entries(combination)) {
     await page.locator(`#picker select[aria-label="${axis}"]`).selectOption(value);
   }

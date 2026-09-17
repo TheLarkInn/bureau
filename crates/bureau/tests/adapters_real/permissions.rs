@@ -25,6 +25,7 @@ fn assert_scoped(permissions: &[Permission], push: bool, gh: bool) {
     if !gh {
         expected.push("--deny-tool=shell(gh:*)".to_owned());
     }
+    expected.push("--no-auto-update".to_owned());
     assert_sandboxed(&req);
     assert_eq!(permission_args(&req), expected.join(SEP));
 }
@@ -34,7 +35,10 @@ fn assert_denied(permissions: &[Permission]) {
     let role = role("/p:a", AdapterKind::Copilot, permissions);
     let req = copilot_request(&role, &step(None), dir.path());
     assert_sandboxed(&req);
-    assert_eq!(permission_args(&req), "--deny-tool=shell(*)");
+    assert_eq!(
+        permission_args(&req),
+        ["--deny-tool=shell(*)", "--no-auto-update"].join(SEP)
+    );
 }
 
 #[test]

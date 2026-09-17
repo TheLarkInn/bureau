@@ -19,7 +19,7 @@ fn render_plain_formats_a_full_frame() {
         text.contains("demo-1000-aa")
             && text.contains("finished(success)")
             && text.contains("$2.50"),
-        text.contains("$6.00 / $25.00") && text.contains("2 / 4"),
+        text.contains("$6.00 / $25.00") && text.contains("3 / 4"),
     ];
     assert_eq!(checks, [true, true, true], "{text}");
 }

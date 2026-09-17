@@ -4,6 +4,8 @@
 
 #[path = "engine/rig.rs"]
 mod rig;
+#[path = "engine/scenario_offline.rs"]
+mod scenario_offline;
 #[path = "engine/terminal_labels.rs"]
 mod terminal_labels;
 

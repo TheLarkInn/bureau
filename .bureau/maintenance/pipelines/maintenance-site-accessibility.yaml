@@ -1,0 +1,121 @@
+name: maintenance-site-accessibility
+steps:
+- name: intake
+  type: deterministic
+  run: &check >-
+    node --input-type=module -e 'import {execFileSync} from "node:child_process"; let text=""; for await (const chunk of process.stdin) { text+=chunk; if(Buffer.byteLength(text)>1048576) throw Error("request too large"); } const r=JSON.parse(text); if(r.step!=="intake") { const base=r.inputs?.maintenance_source?.commit; if(!/^[a-f0-9]{40}$/.test(base)) throw Error("missing deterministic source pin"); execFileSync("git",["--no-pager","--no-replace-objects","-c","core.fsmonitor=false","diff","--no-ext-diff","--no-textconv","--exit-code",base,"--","scripts","deployment",".bureau",".github","site",":(exclude)site/src"],{maxBuffer:1048576,timeout:10000}); await (await import("./scripts/maintenance-checks.mjs")).requireVerificationInputs(r.inputs.maintenance_source); } await (await import("./scripts/maintenance-step.mjs")).runStep("site-accessibility",r);'
+  next: detect
+  on_no_work: reproduce
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 120
+- name: detect
+  type: deterministic
+  run: *check
+  inputs_from: [intake]
+  next: report-findings
+  on_no_work: report-clean
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 210
+- name: report-findings
+  type: agent
+  role: maintenance-reporter
+  inputs_from: [intake, detect]
+  next: verify-draft
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 1
+  timeout_secs: 300
+- name: verify-draft
+  type: deterministic
+  run: *check
+  inputs_from: [report-findings, intake, detect]
+  next: handoff
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 120
+- name: handoff
+  type: agent
+  role: maintenance-reporter
+  inputs_from: [intake, detect, verify-draft]
+  next: verify-handoff
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 1
+  timeout_secs: 300
+- name: verify-handoff
+  type: deterministic
+  run: *check
+  inputs_from: [handoff, intake, detect, verify-draft]
+  next: done
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 120
+- name: report-clean
+  type: agent
+  role: maintenance-reporter
+  inputs_from: [intake, detect]
+  next: verify-clear
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 1
+  timeout_secs: 300
+- name: verify-clear
+  type: deterministic
+  run: *check
+  inputs_from: [report-clean, intake, detect]
+  next: done
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 120
+- name: reproduce
+  type: deterministic
+  run: *check
+  inputs_from: [intake]
+  next: implement
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  timeout_secs: 210
+- name: implement
+  type: agent
+  role: maintenance-site-accessibility-fixer
+  inputs_from: [intake, reproduce]
+  next: validate-patch
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 1
+  timeout_secs: 720
+- name: validate-patch
+  type: deterministic
+  run: *check
+  inputs_from: [intake, reproduce]
+  next: full-gates
+  on_failure: repair
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 2
+  timeout_secs: 210
+- name: repair
+  type: agent
+  role: maintenance-site-accessibility-fixer
+  inputs_from: [validate-patch, intake, reproduce]
+  next: validate-patch
+  on_failure: escalate
+  on_blocked: escalate
+  on_no_work: escalate
+  max_attempts: 1
+  timeout_secs: 720
+- name: full-gates
+  type: deterministic
+  run: *check
+  inputs_from: [intake, reproduce]
+  next: done
+  on_failure: escalate
+  on_blocked: escalate
+  timeout_secs: 960

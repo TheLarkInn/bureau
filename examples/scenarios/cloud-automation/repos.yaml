@@ -1,0 +1,7 @@
+# Inspection only. A reviewed access: push change is required before dispatch.
+repos:
+  code:
+    url: https://github.com/example-org/example-repo.git
+    forge: github
+    access: read
+    credential: github-work
