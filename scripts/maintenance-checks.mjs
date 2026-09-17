@@ -2,11 +2,13 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { evidence, requireValue, seedFor, validateFindings } from "./maintenance-contract.mjs";
+import { SHA, evidence, requireValue, seedFor, validateFindings } from "./maintenance-contract.mjs";
 import { BOUNDS, GiB, admit, directoryBytes } from "./maintenance-resources.mjs";
 import { boundedChild } from "./maintenance-child.mjs";
 import { waitingBounds } from "./maintenance-command.mjs";
 import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedTools } from "./maintenance-tools.mjs";
+import { readBoundedFile } from "./maintenance-files.mjs";
+import { VERIFICATION_INPUTS, verificationInput } from "./maintenance-verification.mjs";
 
 export const CHAOS_TEST = "seeded_offline_invariants";
 
@@ -17,11 +19,34 @@ export class CheckFailure extends Error {
   }
 }
 
-export function git(args, cwd = process.cwd()) {
-  return execFileSync("git", ["--no-pager", "--no-optional-locks", ...args], {
-    cwd, encoding: "utf8", timeout: 10_000, maxBuffer: 256 * 1024,
+function gitBytes(args, cwd) {
+  return execFileSync("git", ["--no-pager", "--no-optional-locks", "--no-replace-objects",
+    "-c", "core.fsmonitor=false", ...args], {
+    cwd, timeout: 10_000, maxBuffer: 1024 * 1024,
     env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_CONFIG_NOSYSTEM: "1" },
-  }).trim();
+  });
+}
+
+export function git(args, cwd = process.cwd()) {
+  return gitBytes(args, cwd).toString("utf8").trim();
+}
+
+export async function requireVerificationInputs(source, root = process.cwd()) {
+  requireValue(SHA.test(source?.commit), "missing verification source pin");
+  const staged = git(["diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-only",
+    source.commit, "--", ...VERIFICATION_INPUTS], root);
+  requireValue(!staged, `protected verification inputs changed: ${staged}`);
+  for (const mode of [[], ["--ignored"]]) {
+    const added = git(["ls-files", "--others", ...mode, "--exclude-standard", "-z",
+      "--", ...VERIFICATION_INPUTS], root);
+    requireValue(!added, `untracked verification inputs require human review: ${added.replaceAll("\0", " ")}`);
+  }
+  const tracked = git(["ls-files", "-z", "--", ...VERIFICATION_INPUTS], root).split("\0").filter(Boolean);
+  for (const path of tracked) {
+    const observed = await readBoundedFile(join(root, path), 1024 * 1024);
+    const expected = gitBytes(["show", `${source.commit}:${path}`], root);
+    requireValue(observed.equals(expected), `protected verification input changed: ${path}`);
+  }
 }
 
 export function workspace(cwd = process.cwd()) {
@@ -86,6 +111,7 @@ export async function runCheck(source, policy, {
   root = process.cwd(), gates = false, seed = seedFor(source),
 } = {}) {
   requireValue(Number.isInteger(seed) && seed >= 0 && seed <= 0xffff_ffff, "check seed must be a u32");
+  await requireVerificationInputs(source, root);
   const scratch = await checkDirectory(root, policy);
   const options = checkOptions(root, scratch, policy);
   let run;
@@ -151,7 +177,8 @@ export function patchProblem(paths, category) {
   if (!paths.length || paths.length > 20) return "patch must change between one and twenty files";
   for (const path of paths) {
     if (path.split("/").some((part) => ["", ".", ".."].includes(part))) return "patch contains a noncanonical path";
-    const protectedPath = /^crates\/bureau\/tests\/maintenance_chaos(?:[/.]|$)/u.test(path)
+    const protectedPath = verificationInput(path)
+      || /^crates\/bureau\/tests\/(?:maintenance_chaos|rate_admission)(?:[/.]|$)/u.test(path)
       || ["crates/bureau/tests/runlog_framing.rs", "crates/bureau/tests/edge/testdir.rs",
         "crates/bureau/src/cli/run/tests.rs", "crates/bureau/src/cli/run/claim/tests.rs",
         "crates/bureau/src/cli/run/observe/tests.rs"].includes(path);

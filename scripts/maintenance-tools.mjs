@@ -1,29 +1,18 @@
-import { lstat, readFile, readlink, realpath, symlink, unlink } from "node:fs/promises";
+import { lstat, readlink, realpath, symlink, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { requireValue } from "./maintenance-contract.mjs";
 import { readBoundedFile } from "./maintenance-files.mjs";
+import { filesystemSnapshot } from "./maintenance-mount.mjs";
+
+export { readOnlyMount } from "./maintenance-mount.mjs";
 
 export const TOOL_PACKAGES = ["site", ".github/extensions/bureau-canvas/e2e/playwright"];
 
-function unescapeMount(value) {
-  return value.replace(/\\([0-7]{3})/gu, (_, octal) => String.fromCharCode(Number.parseInt(octal, 8)));
-}
-
-export function readOnlyMount(mountinfo, path) {
-  const mounts = mountinfo.trim().split("\n").map((line) => {
-    const fields = line.split(" ");
-    return { path: unescapeMount(fields[4] ?? ""), options: (fields[5] ?? "").split(",") };
-  }).filter((mount) => path === mount.path || path.startsWith(mount.path === "/" ? "/" : `${mount.path}/`));
-  mounts.sort((left, right) => right.path.length - left.path.length);
-  return mounts.length > 0 && mounts[0].options.includes("ro");
-}
-
 export async function requireReadOnlyTools(policy) {
-  const mounts = await readFile("/proc/self/mountinfo", "utf8");
   for (const path of [policy.site_tools, policy.browser_path]) {
     const canonical = await realpath(path);
-    requireValue(canonical === path && readOnlyMount(mounts, canonical),
+    requireValue(canonical === path && (await filesystemSnapshot(canonical)).readOnly,
       `prepared tools must be on an explicitly read-only mount: ${path}`);
   }
 }

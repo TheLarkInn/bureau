@@ -47,6 +47,10 @@ test("patches cannot edit verification, dependencies, automation or another cate
     ["crates/bureau/tests/runlog_framing.rs"], ["crates/bureau/tests/edge/testdir.rs"],
     ["crates/bureau/src/cli/run/tests.rs"], ["crates/bureau/src/cli/run/claim/tests.rs"],
     ["crates/bureau/src/cli/run/observe/tests.rs"],
+    ["crates/bureau/tests/rate_admission.rs"], ["crates/bureau/tests/rate_admission/support.rs"],
+    ["crates/bureau/Cargo.toml"], ["crates/nested/deeper/Cargo.lock"],
+    ["crates/bureau/build.rs"], ["crates/bureau/.cargo/config.toml"],
+    ["crates/nested/package.json"], ["crates/nested/package-lock.json"],
     Array.from({ length: 21 }, (_, index) => `crates/source${index}.rs`)]) {
     assert.equal(typeof patchProblem(paths, "chaos"), "string");
   }

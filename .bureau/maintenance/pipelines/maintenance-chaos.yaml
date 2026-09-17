@@ -4,7 +4,7 @@ steps:
   type: deterministic
   # This reviewed inline bootstrap checks verifier bytes before importing them.
   run: &check >-
-    node --input-type=module -e 'import {execFileSync} from "node:child_process"; let text=""; for await (const chunk of process.stdin) { text+=chunk; if(Buffer.byteLength(text)>1048576) throw Error("request too large"); } const r=JSON.parse(text); if(r.step!=="intake") { const base=r.inputs?.maintenance_source?.commit; if(!/^[a-f0-9]{40}$/.test(base)) throw Error("missing deterministic source pin"); execFileSync("git",["--no-pager","diff","--no-ext-diff","--exit-code",base,"--","scripts","deployment",".bureau",".github","site",":(exclude)site/src"],{maxBuffer:1048576,timeout:10000}); } await (await import("./scripts/maintenance-step.mjs")).runStep("chaos",r);'
+    node --input-type=module -e 'import {execFileSync} from "node:child_process"; let text=""; for await (const chunk of process.stdin) { text+=chunk; if(Buffer.byteLength(text)>1048576) throw Error("request too large"); } const r=JSON.parse(text); if(r.step!=="intake") { const base=r.inputs?.maintenance_source?.commit; if(!/^[a-f0-9]{40}$/.test(base)) throw Error("missing deterministic source pin"); execFileSync("git",["--no-pager","--no-replace-objects","-c","core.fsmonitor=false","diff","--no-ext-diff","--no-textconv","--exit-code",base,"--","scripts","deployment",".bureau",".github","site",":(exclude)site/src"],{maxBuffer:1048576,timeout:10000}); await (await import("./scripts/maintenance-checks.mjs")).requireVerificationInputs(r.inputs.maintenance_source); } await (await import("./scripts/maintenance-step.mjs")).runStep("chaos",r);'
   next: detect
   on_no_work: reproduce
   on_failure: escalate

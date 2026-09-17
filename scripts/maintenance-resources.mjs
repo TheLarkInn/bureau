@@ -1,9 +1,9 @@
-import { readFile, readdir, realpath, statfs, lstat } from "node:fs/promises";
+import { readFile, readdir, realpath, lstat } from "node:fs/promises";
 import { homedir, release, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { requireValue } from "./maintenance-contract.mjs";
-import { readOnlyMount } from "./maintenance-tools.mjs";
+import { filesystemSnapshot } from "./maintenance-mount.mjs";
 
 export { processGroupUsage } from "./maintenance-process.mjs";
 
@@ -78,23 +78,29 @@ async function cgroups() {
   return groups;
 }
 
+export function backingVerified(backingPaths, disks) {
+  if (!backingPaths.length) return false;
+  const roots = disks.filter((disk) => disk.path === "/");
+  const device = (value) => typeof value === "string" && /^\d+$/u.test(value);
+  requireValue(roots.length === 1 && device(roots[0].device),
+    "root filesystem identity was not observed");
+  return backingPaths.every((path) => {
+    const matches = disks.filter((disk) => disk.path === path);
+    requireValue(matches.length === 1 && device(matches[0].device)
+      && typeof matches[0].readOnly === "boolean", "backing filesystem proof is missing or ambiguous");
+    return matches[0].device !== roots[0].device && matches[0].readOnly;
+  });
+}
+
 export async function resourceSnapshot({ cwd = process.cwd(), backingPaths = [], extraPaths = [] } = {}) {
   requireValue(process.platform === "linux", "resource supervision is Linux-only; Windows cannot emulate this gate");
   const paths = [...new Set(await Promise.all(
     ["/", cwd, tmpdir(), homedir(), ...backingPaths, ...extraPaths].map((path) => realpath(path)),
   ))];
-  const disks = await Promise.all(paths.map(async (path) => {
-    const fs = await statfs(path, { bigint: true });
-    const bytes = fs.bavail * fs.bsize;
-    requireValue(bytes <= BigInt(Number.MAX_SAFE_INTEGER), "filesystem capacity exceeds the safe numeric range");
-    return { path, free: Number(bytes), type: Number(fs.type) };
-  }));
+  const disks = await Promise.all(paths.map((path) => filesystemSnapshot(path)));
   const memory = /^MemAvailable:\s+(\d+) kB$/mu.exec(await readFile("/proc/meminfo", "utf8"));
   requireValue(memory, "Linux MemAvailable is unobservable");
-  const mountinfo = await readFile("/proc/self/mountinfo", "utf8");
-  const rootType = disks.find((disk) => disk.path === "/").type;
-  const backingChecked = backingPaths.length > 0 && backingPaths.every((path) =>
-    disks.some((disk) => disk.path === path && disk.type !== rootType) && readOnlyMount(mountinfo, path));
+  const backingChecked = backingVerified(backingPaths, disks);
   return { platform: process.platform, wsl: /microsoft/iu.test(release()),
     backingChecked, disks,
     availableMemory: Number(memory[1]) * 1024, groups: await cgroups() };
@@ -107,20 +113,68 @@ export async function admit(options = {}, bounds = BOUNDS) {
   return snapshot;
 }
 
-export async function directoryBytes(root, maximum = BOUNDS.maxScratch, inspect = { lstat, readdir }) {
+function directoryKey(info) {
+  requireValue(info.isDirectory() && !info.isSymbolicLink(), "owned root must remain a non-symlink directory");
+  requireValue(typeof info.dev === "bigint" && info.dev >= 0n
+    && typeof info.ino === "bigint" && info.ino >= 0n,
+    "directory identity is unobservable");
+  return `${info.dev}:${info.ino}`;
+}
+
+export async function directoryIdentity(root, inspect = { lstat }) {
+  return directoryKey(await inspect.lstat(root, { bigint: true }));
+}
+
+function disappeared(error, path, root) {
+  return path !== root && ["ENOENT", "ESRCH"].includes(error.code);
+}
+
+export async function directoryBytes(root, maximum = BOUNDS.maxScratch,
+  inspect = { lstat, readdir }, expectedIdentity) {
+  requireValue(Number.isSafeInteger(maximum) && maximum >= 0, "invalid directory byte ceiling");
   const pending = [root];
   let bytes = 0;
   let entries = 0;
+  let identity = expectedIdentity;
   while (pending.length) {
     const path = pending.pop();
-    const info = await inspect.lstat(path);
-    bytes += info.size;
     entries += 1;
-    requireValue(bytes <= maximum && entries <= 10_000, "scratch byte or entry ceiling exceeded");
+    requireValue(entries <= 10_000, "scratch byte or entry ceiling exceeded");
+    let info;
+    try {
+      info = await inspect.lstat(path, { bigint: true });
+    } catch (error) {
+      if (disappeared(error, path, root)) continue;
+      throw error;
+    }
+    const size = typeof info.size === "bigint" ? Number(info.size) : info.size;
+    requireValue(Number.isSafeInteger(size) && size >= 0, "directory size is unobservable");
+    if (path === root) {
+      identity ??= directoryKey(info);
+      requireValue(directoryKey(info) === identity, "owned directory identity changed");
+    }
+    bytes += size;
+    requireValue(bytes <= maximum, "scratch byte or entry ceiling exceeded");
     if (info.isDirectory() && !info.isSymbolicLink()) {
-      for (const name of await inspect.readdir(path)) pending.push(join(path, name));
+      let names;
+      try {
+        names = await inspect.readdir(path);
+        const current = await inspect.lstat(path, { bigint: true });
+        requireValue(directoryKey(current) === directoryKey(info), "directory changed during enumeration");
+      } catch (error) {
+        if (disappeared(error, path, root)) continue;
+        throw error;
+      }
+      requireValue(Array.isArray(names) && entries + pending.length + names.length <= 10_000,
+        "scratch entry observation ceiling exceeded");
+      for (const name of names) {
+        requireValue(typeof name === "string" && name && name !== "." && name !== ".."
+          && basename(name) === name, "noncanonical directory entry");
+        pending.push(join(path, name));
+      }
     }
   }
+  requireValue(await directoryIdentity(root, inspect) === identity, "owned directory identity changed");
   return bytes;
 }
 

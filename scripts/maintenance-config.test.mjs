@@ -36,6 +36,7 @@ test("every pipeline wires reporting, independent handoff verification, reproduc
       assert.equal(pipeline.includes(protectedInputs), true, "deterministic inputs must override agent outputs");
     }
     assert.match(pipeline, /execFileSync\("git".*--no-ext-diff.*--exit-code/u);
+    assert.equal(pipeline.indexOf(".requireVerificationInputs(") < pipeline.indexOf(".runStep("), true);
     assert.match(pipeline, /max_attempts: 2/u);
     assert.equal(pipeline.includes(`runStep("${category}",r)`), true);
   }
@@ -98,7 +99,7 @@ test("durable admission rejects temporary/Windows filesystems and tool writabili
   for (const type of [0x01021994, 0x01021997, 0x794c7630, 0, NaN]) assert.equal(durableFilesystem(type), false);
   const mounts = "1 0 8:1 / / ro,relatime - ext4 /dev/disk rw\n"
     + "2 1 8:1 /tools /opt/tools rw,relatime - ext4 /dev/disk rw\n";
-  assert.equal(readOnlyMount(mounts, "/opt/browser"), true);
-  assert.equal(readOnlyMount(mounts, "/opt/tools"), false);
-  assert.equal(readOnlyMount(mounts, "/opt/tools/package"), false);
+  assert.equal(readOnlyMount(mounts, "/opt/browser", 1), true);
+  assert.equal(readOnlyMount(mounts, "/opt/tools", 2), false);
+  assert.equal(readOnlyMount(mounts, "/opt/tools/package", 2), false);
 });

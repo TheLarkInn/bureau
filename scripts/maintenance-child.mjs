@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-import { BOUNDS, admit, directoryBytes, processGroupUsage, runningProblem } from "./maintenance-resources.mjs";
+import { BOUNDS, admit, directoryBytes, directoryIdentity, processGroupUsage, runningProblem } from "./maintenance-resources.mjs";
 import { requireValue } from "./maintenance-contract.mjs";
 import { lockedCommand, waitingBounds } from "./maintenance-command.mjs";
 
@@ -23,6 +23,9 @@ export async function boundedChild(command, args, {
     "invalid child deadline");
   const context = { cwd, backingPaths, extraPaths };
   await admit(context, lockPath ? waitingBounds(bounds) : bounds);
+  const scratchIdentity = scratch ? await directoryIdentity(scratch) : undefined;
+  const watchedDirectories = await Promise.all(watchedPaths.map(async (watched) =>
+    ({ ...watched, identity: await directoryIdentity(watched.path) })));
   const isolated = [
     "--user", "--map-root-user", "--pid", "--fork", "--mount-proc", "--kill-child=SIGKILL",
     command, ...args,
@@ -61,8 +64,10 @@ export async function boundedChild(command, args, {
     await admit({ cwd, backingPaths, extraPaths },
       { ...bounds, maxRss: 0, memoryFloor: 256 * 1024 * 1024 });
     const usage = await processGroupUsage(child.pid);
-    const size = scratch ? await directoryBytes(scratch, bounds.maxScratch) : 0;
-    for (const watched of watchedPaths) await directoryBytes(watched.path, watched.maximum);
+    const size = scratch ? await directoryBytes(scratch, bounds.maxScratch, undefined, scratchIdentity) : 0;
+    for (const watched of watchedDirectories) {
+      await directoryBytes(watched.path, watched.maximum, undefined, watched.identity);
+    }
     const failure = runningProblem({ ...usage, output: output.bytes, scratch: size }, bounds);
     if (failure) terminate(failure);
   };
@@ -84,8 +89,10 @@ export async function boundedChild(command, args, {
     if (!problem) {
       try {
         await admit({ cwd, backingPaths, extraPaths }, { ...bounds, maxRss: 0, memoryFloor: 256 * 1024 * 1024 });
-        if (scratch) await directoryBytes(scratch, bounds.maxScratch);
-        for (const watched of watchedPaths) await directoryBytes(watched.path, watched.maximum);
+        if (scratch) await directoryBytes(scratch, bounds.maxScratch, undefined, scratchIdentity);
+        for (const watched of watchedDirectories) {
+          await directoryBytes(watched.path, watched.maximum, undefined, watched.identity);
+        }
       } catch (error) {
         problem = error.message;
       }
