@@ -249,7 +249,8 @@ before reaching the existing engine's lease-fenced PR publication.
 Rust/Node manifests and locks at every depth, `build.rs`, `.cargo`, toolchain,
 formatting and Git-filter inputs are not automatic patch scope. The reviewed
 bootstrap and the command adapter both pin those inputs before any Cargo
-invocation; tracked files are compared as raw bytes with the initial source.
+invocation; tracked files and protected invariant/accounting/migration proofs
+are compared as raw bytes with the initial source.
 Ignored/untracked additions and index-hiding flags cannot redirect the exact
 test target. Such changes require a separately reviewed human patch.
 Deterministic `inputs_from` entries come last so agent outputs cannot overwrite
