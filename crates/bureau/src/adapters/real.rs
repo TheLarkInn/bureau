@@ -25,7 +25,7 @@ use std::time::Duration;
 pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
 
 /// Non-secret runtime variables agent CLIs and plugin subprocesses need.
-const RUNTIME_VARS: [&str; 9] = [
+const RUNTIME_VARS: [&str; 10] = [
     "PATH",
     "HOME",
     "COPILOT_HOME",
@@ -35,6 +35,7 @@ const RUNTIME_VARS: [&str; 9] = [
     "RUSTUP_HOME",
     "CARGO_NET_OFFLINE",
     "RUSTUP_AUTO_INSTALL",
+    "BUREAU_RUST_IDENTITY",
 ];
 
 /// Where an adapter discovers agent files inside a worktree.

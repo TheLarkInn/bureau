@@ -128,6 +128,10 @@ test("service and container select the same immutable Rust homes with no network
   const checks = await read("scripts/maintenance-checks.mjs");
   assert.match(checks, /await requirePreparedRust\(root, policy\)/u);
   assert.match(checks, /CARGO_HOME: policy\.cargo_home, RUSTUP_HOME: policy\.rustup_home/u);
+  const launcher = await read("deployment/run-owner.sh");
+  assert.match(launcher, /BUREAU_RUST_IDENTITY="\$\(node deployment\/check\.mjs --home "\$BUREAU_HOME" --runtime-identity\)"\nexport BUREAU_RUST_IDENTITY/u);
+  assert.doesNotMatch(launcher, /export BUREAU_RUST_IDENTITY=/u);
+  for (const text of [service, compose]) assert.doesNotMatch(text, /BUREAU_RUST_IDENTITY/u);
 });
 
 test("durable admission rejects temporary/Windows filesystems and tool writability", () => {

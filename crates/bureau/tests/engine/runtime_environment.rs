@@ -7,7 +7,7 @@ use bureau::runlog::{EventKind, read_events};
 
 use super::rig::{Rig, det_step};
 
-const VALUES: [(&str, &str); 8] = [
+const VALUES: [(&str, &str); 9] = [
     ("HOME", "/nonexistent/bureau-runtime"),
     ("COPILOT_HOME", "/nonexistent/bureau-runtime/copilot"),
     ("CLAUDE_CONFIG_DIR", "/nonexistent/bureau-runtime/claude"),
@@ -16,6 +16,7 @@ const VALUES: [(&str, &str); 8] = [
     ("RUSTUP_HOME", "/opt/bureau/rust/rustup"),
     ("CARGO_NET_OFFLINE", "true"),
     ("RUSTUP_AUTO_INSTALL", "0"),
+    ("BUREAU_RUST_IDENTITY", "daemon-runtime-sentinel"),
 ];
 
 const REJECTED: [&str; 10] = [
@@ -110,6 +111,26 @@ async fn check_forwarding(mode: &str) {
     );
 }
 
+fn single_test_passed(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).lines().any(|line| {
+        line.starts_with("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; ")
+    })
+}
+
+#[test]
+fn isolated_proof_requires_one_executed_test() {
+    for (counts, expected) in [
+        ("ok. 1 passed; 0 failed; 0 ignored", true),
+        ("ok. 0 passed; 0 failed; 0 ignored", false),
+        ("ok. 0 passed; 0 failed; 1 ignored", false),
+        ("FAILED. 0 passed; 1 failed; 0 ignored", false),
+        ("incomplete", false),
+    ] {
+        let summary = format!("test result: {counts}; 0 measured; 16 filtered out;");
+        assert_eq!(single_test_passed(summary.as_bytes()), expected);
+    }
+}
+
 fn isolated(mode: &str) {
     let result = Command::new(std::env::current_exe().expect("test executable"))
         .args([
@@ -124,7 +145,10 @@ fn isolated(mode: &str) {
         .env("BUREAU_RUNTIME_ENV_TEST", mode)
         .output()
         .expect("isolated runtime test");
-    assert!(result.status.success(), "{result:?}");
+    assert!(
+        result.status.success() && single_test_passed(&result.stdout),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -143,9 +167,19 @@ fn explicit_runtime_survives_the_engine_boundary() {
 }
 
 const OFFLINE_CHECK: &str = r#"node --input-type=module -e '
+const { default: assert } = await import("node:assert/strict");
 const { workspace, runCheck } = await import("./scripts/maintenance-checks.mjs");
 const { loadPolicy } = await import("./scripts/maintenance-policy.mjs");
+const { requirePreparedRust } = await import("./scripts/maintenance-rust.mjs");
+const { descriptorSnapshot } = await import("./scripts/maintenance-mount.mjs");
 const policy = await loadPolicy();
+assert.equal(process.getuid(), 0);
+assert.notEqual((await descriptorSnapshot(policy.rust_bin)).metadata.uid, 0n);
+const stale = JSON.parse(process.env.BUREAU_RUST_IDENTITY);
+stale.entries[0][2] = (BigInt(stale.entries[0][2]) + 1n).toString();
+await assert.rejects(requirePreparedRust(process.cwd(), policy, {
+  environment: { ...process.env, BUREAU_RUST_IDENTITY: JSON.stringify(stale) },
+}), /identity receipt differs/u);
 const source = { commit: workspace().commit, category: "chaos",
   id: `TheLarkInn/bureau#${policy.source_issues.chaos}`, cycle: "offline-runtime-qualification" };
 const { evidence, log } = await runCheck(source, policy, { seed: 0 });
@@ -153,21 +187,75 @@ if (!evidence.complete || evidence.checks !== 1 || evidence.findings.length) {
   throw new Error("the real offline maintenance check did not pass");
 }
 console.log(JSON.stringify(evidence));
+console.log("rust-identity-proof: matched unmapped owners; rejected mismatched inode");
 console.log(log);
 '"#;
 
-#[tokio::test]
-#[ignore = "Requires the provisioned immutable maintenance runtime and a bounded native resource slot"]
-async fn offline_tools_execute_through_engine_and_maintenance_child() {
-    let rig = Rig::new();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+const PREPARE_RUST: &str = r#"
+const { loadPolicy } = await import("./scripts/maintenance-policy.mjs");
+const { requirePreparedRust } = await import("./scripts/maintenance-rust.mjs");
+const result = await requirePreparedRust(process.cwd(), await loadPolicy(), { rootOwner: true });
+console.log(result.BUREAU_RUST_IDENTITY);
+"#;
+
+fn source_root() -> &'static std::path::Path {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
-        .expect("source root");
+        .expect("source root")
+}
+
+fn startup_identity() -> String {
+    let result = Command::new("node")
+        .args([
+            "--max-old-space-size=64",
+            "--input-type=module",
+            "-e",
+            PREPARE_RUST,
+        ])
+        .current_dir(source_root())
+        .env_clear()
+        .envs(runtime_env())
+        .env("TMPDIR", std::env::temp_dir())
+        .output()
+        .expect("host-root runtime admission");
+    assert!(result.status.success(), "{result:?}");
+    String::from_utf8(result.stdout)
+        .expect("identity receipt")
+        .trim()
+        .to_owned()
+}
+
+fn isolated_native() {
+    let result = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "runtime_environment::offline_tools_execute_through_engine_and_maintenance_child",
+            "--exact",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env_clear()
+        .envs(runtime_env())
+        .env("BUREAU_RUST_IDENTITY", startup_identity())
+        .env("BUREAU_NATIVE_QUALIFICATION_CHILD", "1")
+        .env("TMPDIR", std::env::temp_dir())
+        .output()
+        .expect("isolated native runtime test");
+    assert!(
+        result.status.success() && single_test_passed(&result.stdout),
+        "{result:?}"
+    );
+    println!("{}", String::from_utf8_lossy(&result.stdout));
+}
+
+async fn qualify_offline_tools() {
+    let rig = Rig::new();
     let mut step = det_step("offline-runtime", OFFLINE_CHECK, Some("done"));
     step.timeout_secs = Some(360);
     let mut plan = rig.plan(vec![step]);
-    plan.repos.get_mut("main").expect("fixture repo").url = root.to_string_lossy().into_owned();
+    plan.repos.get_mut("main").expect("fixture repo").url =
+        source_root().to_string_lossy().into_owned();
     let result = rig.engine().run(&plan).await;
     assert_eq!(result.outcome, StepOutcome::NoWork, "{result:?}");
     let output = step_stdout(&rig, &result.run_id);
@@ -176,4 +264,14 @@ async fn offline_tools_execute_through_engine_and_maintenance_child() {
         "{output}"
     );
     println!("{output}");
+}
+
+#[tokio::test]
+#[ignore = "Requires the provisioned immutable maintenance runtime and a bounded native resource slot"]
+async fn offline_tools_execute_through_engine_and_maintenance_child() {
+    if std::env::var_os("BUREAU_NATIVE_QUALIFICATION_CHILD").is_some() {
+        qualify_offline_tools().await;
+    } else {
+        isolated_native();
+    }
 }

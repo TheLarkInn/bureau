@@ -21,7 +21,7 @@ use bureau::process::{REDACTED, Secret, SpawnRequest};
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
-const RUNTIME_VARS: [&str; 9] = [
+const RUNTIME_VARS: [&str; 10] = [
     "PATH",
     "HOME",
     "COPILOT_HOME",
@@ -31,6 +31,7 @@ const RUNTIME_VARS: [&str; 9] = [
     "RUSTUP_HOME",
     "CARGO_NET_OFFLINE",
     "RUSTUP_AUTO_INSTALL",
+    "BUREAU_RUST_IDENTITY",
 ];
 
 struct TestDir(PathBuf);

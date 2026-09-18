@@ -127,21 +127,42 @@ lint crate's toolchain file selects the nightly with `rustc-dev`. No Rustup
 default or `RUSTUP_TOOLCHAIN` override is needed to replace these reviewed pins.
 Prebuild the matching Dylint driver during provisioning. Dylint otherwise tries
 to build it in `HOME/.dylint_drivers`; the protected runtime must not do so.
+The official builder embeds the nightly sysroot's absolute `lib` RPATH, so build
+with the provisioned Rustup home at its final canonical path. Qualify the driver
+by executing its absolute path directly, as Unix Dylint does, without
+`rustup run` or loader environment variables masking a stale build-time path.
+Its official Unix build also needs `pkg-config` and OpenSSL development files
+for `openssl-sys` (Ubuntu packages `pkg-config`/`pkgconf` and `libssl-dev`).
+Provision only missing prerequisites during separately approved host/image
+preparation, not in the maintenance runtime. Preserve the official generated
+project bytes and its dependency lock; its graph is separate from Bureau's
+workspace lock. A missing crate or system dependency stops qualification rather
+than authorizing an install, broader update, or writable-cache fallback.
 Do not introduce `DYLINT_DRIVER_PATH`, compiler wrappers, flags, loader hooks,
 or a personal authenticated home to bypass a missing payload.
 
 Startup and every deterministic check verify those paths and their ownership,
 mounts, proxy targets, stable/nightly selection and matching Dylint versions.
-Startup requires host-root ownership. Inside the engine's user namespace the
-daemon is uid 0 and host-root ownership is unmapped; the helper checks that
-none of those owners is the mapped daemon, preserving the replacement boundary
-without mistaking namespace-root for the host's administrator.
+Startup runs outside a remapped user namespace and requires host-root ownership.
+The launcher obtains a fresh, bounded `BUREAU_RUST_IDENTITY` admission receipt
+from that check before starting the daemon; it never accepts a supplied receipt
+as startup authority. This is ephemeral evidence, not a generated config or a
+persistent file. It binds the exact verified canonical paths, including protected
+ancestors, to lossless device/inode/ctime values from the same `O_PATH` descriptors
+used for the mount proof. Inside the engine's user namespace, different host
+owners collapse to the same unmapped uid. The helper therefore matches those
+identities and freshly proves read-only mounts rather than trusting a foreign uid.
+Missing, malformed, oversized, mismatched or additional receipt paths fail closed.
+Changing a protected identity, including an ancestor's ctime, requires fresh
+startup admission; the daemon does not silently refresh its own evidence.
 The engine forwards only the explicit Cargo/Rustup homes and offline/install
-controls alongside its existing non-secret runtime variables. The second,
+controls and its startup receipt alongside existing non-secret runtime variables. The second,
 maintenance-child boundary receives the homes explicitly from reviewed policy
 and fixes offline/no-install behavior even for Cargo invocations inside
 `scripts/lint.sh`. It never inherits the parent environment wholesale. Missing
 homes, runtime overrides or unprovisioned tooling fail before compilation.
+Compiler children neither inherit the receipt nor accept it through their extra
+environment allowlist. Agent output and step inputs are not receipt sources.
 Build/test invocations also use `--locked`; manifests, lockfiles and verifier
 bytes remain pinned to the reviewed source before any Cargo command.
 
@@ -358,6 +379,11 @@ A separate, deliberately opt-in native qualification test clones the committed
 local source, uses the real engine's cleared environment, and invokes the actual
 `runCheck`/bounded-child offline chaos compilation and test. Its forge is fake;
 it calls no model or API, publishes nothing, and requires a no-change outcome.
+Before entering the engine it obtains fresh authoritative startup identity
+evidence and re-executes itself with that receipt. In the real engine namespace
+it verifies the unmapped-owner view and rejects a mismatched inode receipt
+against actual descriptors, without modifying any provisioned path. Both
+re-execution guards require one executed passing test, never just exit status.
 After provisioning the exact contract and obtaining the native resource slot,
 build the engine test once into the admitted target cache, then run its exact
 Cargo-reported executable with:

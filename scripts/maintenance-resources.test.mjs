@@ -91,9 +91,16 @@ test("maintenance forwards explicit tool homes but cannot relax offline or insta
   );
   for (const key of ["CARGO_NET_OFFLINE", "RUSTUP_AUTO_INSTALL", "RUSTUP_TOOLCHAIN",
     "RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
-    "DYLINT_DRIVER_PATH", "CARGO_REGISTRIES_CRATES_IO_TOKEN", "NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH"]) {
+    "DYLINT_DRIVER_PATH", "CARGO_REGISTRIES_CRATES_IO_TOKEN", "NODE_OPTIONS", "LD_PRELOAD", "LD_LIBRARY_PATH",
+    "BUREAU_RUST_IDENTITY"]) {
     assert.throws(() => childEnvironment({ [key]: "not-authorized" }), /unapproved/u);
   }
+});
+
+test("the compiler boundary cannot replace or inherit the daemon's Rust identity receipt", () => {
+  const runtime = { PATH: "/opt/bureau/rust/bin:/usr/bin", HOME: "/protected", BUREAU_RUST_IDENTITY: "daemon-only" };
+  assert.equal(Object.hasOwn(childEnvironment({}, runtime), "BUREAU_RUST_IDENTITY"), false);
+  assert.throws(() => childEnvironment({ BUREAU_RUST_IDENTITY: "replacement" }, runtime), /unapproved/u);
 });
 
 test("maintenance compiler symbols are bounded without changing test semantics", () => {

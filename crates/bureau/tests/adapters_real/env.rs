@@ -4,7 +4,7 @@ use bureau::process::Secret;
 
 use super::{TestDir, copilot_request, request, role, step};
 
-const RUNTIME_VARS: [&str; 9] = [
+const RUNTIME_VARS: [&str; 10] = [
     "PATH",
     "HOME",
     "COPILOT_HOME",
@@ -14,6 +14,7 @@ const RUNTIME_VARS: [&str; 9] = [
     "RUSTUP_HOME",
     "CARGO_NET_OFFLINE",
     "RUSTUP_AUTO_INSTALL",
+    "BUREAU_RUST_IDENTITY",
 ];
 
 // Reading env is safe; setting it is `unsafe` on edition 2024, so these

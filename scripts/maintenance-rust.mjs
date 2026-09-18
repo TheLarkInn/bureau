@@ -1,16 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import { join, posix } from "node:path";
 
 import { childEnvironment } from "./maintenance-child.mjs";
 import { requireValue } from "./maintenance-contract.mjs";
 import { readBoundedFile } from "./maintenance-files.mjs";
-import { filesystemSnapshot } from "./maintenance-mount.mjs";
+import { descriptorSnapshot } from "./maintenance-mount.mjs";
+import { RUST_IDENTITY, rustIdentity } from "./maintenance-rust-identity.mjs";
 
 export const RUST_PATHS = ["rust_bin", "rustup_home", "cargo_home", "dylint_drivers"];
 export const DYLINT_VERSION = "5.0.0";
 const PROXIES = ["cargo", "rustc", "rustdoc", "rustfmt", "cargo-fmt", "clippy-driver", "cargo-clippy"];
-const INSPECT = { lstat, readdir, realpath, filesystemSnapshot, read: readBoundedFile, uid: () => process.getuid() };
+const INSPECT = { readdir, realpath, descriptorSnapshot, read: readBoundedFile };
 
 export function validateRustPolicy(policy) {
   for (const key of RUST_PATHS) {
@@ -50,31 +51,37 @@ export function rustEnvironment(policy, environment = process.env) {
   return childEnvironment({ CARGO_HOME: policy.cargo_home, RUSTUP_HOME: policy.rustup_home }, environment);
 }
 
-function protectedOwner(info, inspect) {
-  // The engine maps the daemon to uid 0; host-root files then have an unmapped uid.
-  return Number.isSafeInteger(info.uid) && info.uid >= 0
-    && (inspect.rootOwner ? info.uid === 0 : info.uid !== inspect.uid());
+async function observation(path, inspect) {
+  if (!inspect.observations.has(path)) {
+    inspect.observations.set(path, await inspect.descriptorSnapshot(path));
+  }
+  const snapshot = inspect.observations.get(path);
+  inspect.identity.observe(path, snapshot.metadata);
+  requireValue(typeof snapshot.metadata.mode === "bigint", "Rust descriptor mode is unobservable");
+  return snapshot;
 }
 
 async function protectedDirectory(path, inspect) {
   requireValue(await inspect.realpath(path) === path, `Rust directory must be canonical: ${path}`);
   let ancestor = path;
   for (;;) {
-    const info = await inspect.lstat(ancestor);
-    requireValue(info.isDirectory() && !info.isSymbolicLink() && protectedOwner(info, inspect) && (info.mode & 0o022) === 0,
+    const snapshot = await observation(ancestor, inspect);
+    const info = snapshot.metadata;
+    requireValue(info.isDirectory() && !info.isSymbolicLink() && (info.mode & 0o022n) === 0n,
       `Rust executable/cache ancestry must be operator-owned and protected: ${ancestor}`);
+    if (ancestor === path) requireValue(snapshot.readOnly,
+      `Rust tooling must be on an explicitly read-only mount: ${path}`);
     if (ancestor === "/") break;
     ancestor = posix.dirname(ancestor);
   }
-  requireValue((await inspect.filesystemSnapshot(path)).readOnly,
-    `Rust tooling must be on an explicitly read-only mount: ${path}`);
 }
 
 async function protectedFile(path, inspect, executable = true) {
   requireValue(await inspect.realpath(path) === path, `Rust file must not be a symlink: ${path}`);
-  const info = await inspect.lstat(path);
-  requireValue(info.isFile() && !info.isSymbolicLink() && protectedOwner(info, inspect) && (info.mode & 0o222) === 0
-    && (!executable || (info.mode & 0o111) !== 0), `Rust file must be provisioned immutable tooling: ${path}`);
+  const snapshot = await observation(path, inspect);
+  const info = snapshot.metadata;
+  requireValue(snapshot.readOnly && info.isFile() && !info.isSymbolicLink() && (info.mode & 0o222n) === 0n
+    && (!executable || (info.mode & 0o111n) !== 0n), `Rust file must be provisioned immutable tooling: ${path}`);
   await protectedDirectory(posix.dirname(path), inspect);
 }
 
@@ -85,8 +92,8 @@ async function requireProxies(policy, inspect) {
   }
   for (const command of PROXIES) {
     const path = posix.join(policy.rust_bin, command);
-    const info = await inspect.lstat(path);
-    requireValue(info.isSymbolicLink() && protectedOwner(info, inspect) && await inspect.realpath(path) === rustup,
+    const snapshot = await observation(path, inspect);
+    requireValue(snapshot.readOnly && snapshot.metadata.isSymbolicLink() && await inspect.realpath(path) === rustup,
       `maintenance requires the genuine rustup proxy: ${path}`);
   }
 }
@@ -131,8 +138,9 @@ function probe(command, args, options) {
 export async function requirePreparedRust(root, policy, {
   environment = process.env, inspect = INSPECT, execute = probe, rootOwner = false,
 } = {}) {
-  inspect = { ...inspect, rootOwner };
   const env = rustEnvironment(policy, environment);
+  const identity = await rustIdentity(environment, rootOwner, inspect.read);
+  inspect = { ...inspect, identity, observations: new Map() };
   for (const key of RUST_PATHS) await protectedDirectory(policy[key], inspect);
   await requireProxies(policy, inspect);
   const { stable, nightly, sysroot } = await toolchains(root, policy, inspect);
@@ -144,6 +152,7 @@ export async function requirePreparedRust(root, policy, {
   }
   const driver = posix.join(policy.dylint_drivers, `${nightly}-${policy.rust_host}`, "dylint-driver");
   await protectedFile(driver, inspect);
+  const receipt = identity.finish();
   const run = (command, args, cwd = root) => execute(posix.join(policy.rust_bin, command), args, { cwd, env });
   for (const [channel, prefix, cwd] of [[stable, [], root], [nightly, [`+${nightly}`], root],
     [nightly, [], join(root, "lints", "rust-lints")]]) {
@@ -152,8 +161,8 @@ export async function requirePreparedRust(root, policy, {
   }
   requireValue(run("cargo", ["--version"]).startsWith(`cargo ${stable} `), "stable Cargo version differs from the reviewed pin");
   const dylint = run("cargo", ["dylint", "--version"]);
-  const version = run("rustup", ["run", nightly, driver, "-V"]);
+  const version = execute(driver, ["-V"], { cwd: root, env });
   requireValue(dylint.split(/\s+/u).at(-1) === DYLINT_VERSION && version.split(/\s+/u).at(-1) === DYLINT_VERSION,
     `cargo-dylint and the immutable nightly driver must both be ${DYLINT_VERSION}`);
-  return { CARGO_HOME: policy.cargo_home, RUSTUP_HOME: policy.rustup_home };
+  return { CARGO_HOME: policy.cargo_home, RUSTUP_HOME: policy.rustup_home, [RUST_IDENTITY]: receipt };
 }

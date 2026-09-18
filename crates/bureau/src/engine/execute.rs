@@ -150,8 +150,9 @@ async fn finish_artifacts(
 /// step's environment.
 ///
 /// It receives the runtime PATH, HOME, and explicit Cargo/Rustup homes
-/// and offline/install controls: `env_clear` must not hide provisioned
-/// tools or fall back to an unprovisioned personal toolchain. Compiler
+/// and offline/install controls, plus startup identity evidence:
+/// `env_clear` must not hide provisioned tools or fall back to an
+/// unprovisioned personal toolchain. Compiler
 /// flags, wrappers, toolchain overrides and credentials are not forwarded.
 fn deterministic_request(
     ctx: &RunCtx,

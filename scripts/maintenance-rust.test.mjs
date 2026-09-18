@@ -3,6 +3,7 @@ import { join, posix, resolve } from "node:path";
 import test from "node:test";
 
 import { requirePreparedRust, rustEnvironment, validateRustPolicy } from "./maintenance-rust.mjs";
+import { RUST_IDENTITY } from "./maintenance-rust-identity.mjs";
 import { POLICY } from "./maintenance-test-support.mjs";
 
 const ROOT = resolve("runtime-fixture");
@@ -22,8 +23,10 @@ function inventory() {
   const entries = new Map();
   const calls = [];
   function add(path, kind = "directory") {
+    if (entries.has(path)) return;
     if (path !== "/") add(posix.dirname(path));
-    entries.set(path, { kind, uid: 0, mode: kind === "file" ? 0o555 : 0o755, readOnly: true });
+    entries.set(path, { kind, uid: 0, mode: kind === "file" ? 0o555 : 0o755, readOnly: true,
+      dev: 9007199254740993n, ino: BigInt(entries.size) + 9007199254740993n, ctimeNs: 1234567890123456789n });
   }
   for (const path of [POLICY.cargo_home, POLICY.rustup_home, POLICY.rust_bin, POLICY.dylint_drivers]) add(path);
   for (const command of ["rustup", "cargo-dylint", "dylint-link"]) add(`${POLICY.rust_bin}/${command}`, "file");
@@ -38,6 +41,7 @@ function inventory() {
   add(DRIVER, "file");
   add(RUSTC_DRIVER, "file");
   const pins = new Map([
+    ["/proc/self/uid_map", "0 0 4294967295\n"],
     [join(ROOT, "rust-toolchain.toml"), `[toolchain]\nchannel = "${STABLE}"\n`],
     [join(ROOT, "lints/rust-lints/rust-toolchain"), `[toolchain]\nchannel = "${NIGHTLY}"\n`],
   ]);
@@ -46,19 +50,18 @@ function inventory() {
     return entries.get(path);
   }
   const inspect = {
-    uid: () => 1000,
     async realpath(path) { return entry(path).target ?? path; },
-    async lstat(path) {
+    async descriptorSnapshot(path) {
       const value = entry(path);
-      return { ...value, isDirectory: () => value.kind === "directory",
-        isFile: () => value.kind === "file", isSymbolicLink: () => value.kind === "symlink" };
+      return { readOnly: value.readOnly, metadata: { ...value, uid: BigInt(value.uid), mode: BigInt(value.mode),
+        isDirectory: () => value.kind === "directory",
+        isFile: () => value.kind === "file", isSymbolicLink: () => value.kind === "symlink" } };
     },
     async readdir(path) {
       entry(path);
       return [...entries.keys()].filter((key) => key !== path && posix.dirname(key) === path)
         .map((key) => posix.basename(key));
     },
-    async filesystemSnapshot(path) { return { readOnly: entry(path).readOnly }; },
     async read(path) {
       assert.equal(pins.has(path), true, `missing source pin: ${path}`);
       return Buffer.from(pins.get(path));
@@ -71,10 +74,11 @@ function inventory() {
     }
     if (args[0] === "--version") return `cargo ${STABLE} (offline fixture)`;
     if (args[0] === "dylint") return "cargo-dylint 5.0.0";
-    assert.deepEqual(args, ["run", NIGHTLY, DRIVER, "-V"]);
+    assert.equal(command, DRIVER);
+    assert.deepEqual(args, ["-V"]);
     return "dylint-driver 5.0.0";
   }
-  return { entries, calls, pins, add, inspect, execute, environment: ENVIRONMENT };
+  return { entries, calls, pins, add, inspect, execute, environment: ENVIRONMENT, rootOwner: true };
 }
 
 test("Rust policy rejects omitted, malformed, overlapping and writable-output roots", () => {
@@ -106,8 +110,9 @@ test("the exact runtime environment survives without credentials or ambient comp
 
 test("prepared tools select repository stable, explicit nightly and lint-directory nightly through real proxies", async () => {
   const fixture = inventory();
-  assert.deepEqual(await requirePreparedRust(ROOT, POLICY, fixture),
-    { CARGO_HOME: POLICY.cargo_home, RUSTUP_HOME: POLICY.rustup_home });
+  const { [RUST_IDENTITY]: receipt, ...homes } = await requirePreparedRust(ROOT, POLICY, fixture);
+  assert.deepEqual(homes, { CARGO_HOME: POLICY.cargo_home, RUSTUP_HOME: POLICY.rustup_home });
+  assert.equal(JSON.parse(receipt).schema, "bureau-rust-identity-v1");
   assert.deepEqual(fixture.calls.slice(0, 3).map(({ args, cwd }) => [args, cwd]), [
     [["--print", "sysroot"], ROOT],
     [[`+${NIGHTLY}`, "--print", "sysroot"], ROOT],
@@ -131,6 +136,7 @@ test("absent commands, offline dependencies, rustc-dev or prepared dylint driver
 test("mutable mounts, replaceable ancestors and redirected binaries cannot qualify", async () => {
   for (const [path, change] of [
     [POLICY.rustup_home, { readOnly: false }],
+    [DRIVER, { readOnly: false }],
     [`${POLICY.cargo_home}/registry`, { readOnly: false }],
     [`${sysroot(NIGHTLY)}/bin`, { readOnly: false }],
     [posix.dirname(DRIVER), { readOnly: false }],
@@ -142,20 +148,41 @@ test("mutable mounts, replaceable ancestors and redirected binaries cannot quali
   ]) {
     const fixture = inventory();
     Object.assign(fixture.entries.get(path), change);
-    await assert.rejects(requirePreparedRust(ROOT, POLICY, fixture), /protected|read-only|immutable|canonical|proxy/u);
+    await assert.rejects(requirePreparedRust(ROOT, POLICY, fixture), /ownership|protected|read-only|immutable|canonical|proxy/u);
     assert.equal(fixture.calls.length, 0);
   }
 });
 
-test("root ownership is checked at startup; user namespaces retain the non-daemon ownership boundary", async () => {
+test("namespace checks bind the exact host-root admission rather than accepting unmapped ownership", async () => {
   const fixture = inventory();
-  await requirePreparedRust(ROOT, POLICY, { ...fixture, rootOwner: true });
+  const prepared = await requirePreparedRust(ROOT, POLICY, fixture);
   for (const value of fixture.entries.values()) value.uid = 65534;
-  fixture.inspect.uid = () => 0;
+  fixture.pins.set("/proc/self/uid_map", "0 1000 1\n");
+  fixture.environment = { ...ENVIRONMENT, [RUST_IDENTITY]: prepared[RUST_IDENTITY] };
+  fixture.rootOwner = false;
   await requirePreparedRust(ROOT, POLICY, fixture);
-  await assert.rejects(requirePreparedRust(ROOT, POLICY, { ...fixture, rootOwner: true }), /protected/u);
-  fixture.entries.get("/opt/bureau").uid = 0;
-  await assert.rejects(requirePreparedRust(ROOT, POLICY, fixture), /protected/u);
+  await assert.rejects(requirePreparedRust(ROOT, POLICY, { ...fixture, rootOwner: true }), /remapped user namespace/u);
+  fixture.entries.get(DRIVER).ino += 1n;
+  await assert.rejects(requirePreparedRust(ROOT, POLICY, fixture), /identity receipt differs/u);
+});
+
+test("missing, stale and extra identity entries fail before any runtime command", async () => {
+  for (const change of [
+    () => undefined,
+    (value) => ({ ...value, entries: value.entries.slice(1) }),
+    (value) => ({ ...value, entries: [...value.entries, ["/unexpected", "1", "2", "3"]] }),
+    (value) => ({ ...value, entries: value.entries.map(([path, dev, ino, ctime]) =>
+      [path, dev, ino, String(BigInt(ctime) + 1n)]) }),
+  ]) {
+    const fixture = inventory();
+    const prepared = await requirePreparedRust(ROOT, POLICY, fixture);
+    const receipt = JSON.stringify(change(JSON.parse(prepared[RUST_IDENTITY])));
+    fixture.calls.length = 0;
+    await assert.rejects(requirePreparedRust(ROOT, POLICY, {
+      ...fixture, rootOwner: false, environment: { ...ENVIRONMENT, [RUST_IDENTITY]: receipt },
+    }), /identity receipt/u);
+    assert.equal(fixture.calls.length, 0);
+  }
 });
 
 test("prepared Cargo homes cannot smuggle credentials or compiler configuration", async () => {
@@ -171,7 +198,7 @@ test("malformed pins and mismatched command selections or driver versions fail e
   const malformed = inventory();
   malformed.pins.set(join(ROOT, "rust-toolchain.toml"), '[toolchain]\nchannel = "stable"\n');
   await assert.rejects(requirePreparedRust(ROOT, POLICY, malformed), /toolchain pin/u);
-  for (const command of ["rustc", "cargo", "rustup"]) {
+  for (const command of ["rustc", "cargo", "dylint-driver"]) {
     const fixture = inventory();
     const execute = (path, args, options) => posix.basename(path) === command
       ? "unqualified version" : fixture.execute(path, args, options);
@@ -181,4 +208,14 @@ test("malformed pins and mismatched command selections or driver versions fail e
   await assert.rejects(requirePreparedRust(ROOT, POLICY, {
     ...failed, execute() { throw new Error("missing offline tool"); },
   }), /missing offline tool/u);
+});
+
+test("the Dylint driver must load directly without rustup injecting loader paths", async () => {
+  const fixture = inventory();
+  const execute = (command, args, options) => {
+    if (command === DRIVER) throw new Error("missing canonical rustc_driver library");
+    return fixture.execute(command, args, options);
+  };
+  await assert.rejects(requirePreparedRust(ROOT, POLICY, { ...fixture, execute }),
+    /missing canonical rustc_driver library/u);
 });
