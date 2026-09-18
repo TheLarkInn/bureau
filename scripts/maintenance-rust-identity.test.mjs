@@ -32,6 +32,13 @@ test("only an authoritative host-root observation may issue an admission receipt
   }
 });
 
+test("rootless and user-remapped container startups cannot issue host-root evidence", async () => {
+  for (const mapping of ["0 100000 65536\n", "0 1000 1\n1 231072 65535\n"]) {
+    await assert.rejects(rustIdentity({}, true, async () => Buffer.from(mapping)),
+      /outside a remapped user namespace/u);
+  }
+});
+
 test("missing, malformed, oversized, duplicated and noncanonical receipts fail closed", async () => {
   const valid = JSON.parse(await admitted());
   const invalid = [

@@ -190,8 +190,18 @@ Node observation reader and browser modes. `web/live/overlay.js` only re-exports
 it for existing browser URLs; Node and Playwright imports use `.mjs`. Do not
 rely on Node's syntax detection or change the extension/vendor package boundary.
 
-Every React Flow surface uses [MeasurementGuard](web/graph-measure.mjs) so
-missed measurements cannot leave it blank. Expected edge counts come from the
+Every React Flow surface's `GraphTools` owns [shared measurement recovery](web/graph-measure.mjs) so
+missed measurements can recover after controlled-node updates, including later
+loss with the same IDs. Readiness uses internal dimensions and handle bounds,
+not measurements on controlled user props. Healthy graphs spend no repair
+budget; each loss episode has at most five attempts. Zero-sized hidden surfaces
+wait until visible without spending attempts. Exhaustion ends a queued Fit's
+busy state and reports the failure; an explicit Fit starts a fresh bounded
+recovery, never an automatic unbounded retry. Initial framing, explicit
+Fit, and editor-add Fit wait for the complete visible target, excluding hidden
+and collapsed nodes, rather than accepting a measured subset. Measurement
+recovery alone never resets an already framed camera.
+Expected edge counts come from the
 model, not the renderer's projection; drawn edges need visible paint, not
 just SVG length. See [graph design](DESIGN.md) for layout and navigation.
 

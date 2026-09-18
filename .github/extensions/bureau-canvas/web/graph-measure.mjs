@@ -1,47 +1,68 @@
-// One repair, for every React Flow surface here.
-//
-// React Flow measures a node once, when its ResizeObserver delivery arrives,
-// and `updateNodeInternals` returns without applying anything if the viewport
-// element is not queryable at that moment. A node's box never changes again, so
-// the observer does not fire a second time: a delivery that loses that race
-// leaves the graph blank for good — nodes in the DOM at `visibility: hidden`,
-// an empty minimap, and a surface that reads as "this pipeline has no steps".
-//
-// Rendered as a child of `ReactFlow`, this sits inside the store context, where
-// the viewport is known to exist, so re-driving measurement there always lands.
-// It draws nothing.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useStore, useStoreApi, useUpdateNodeInternals } from "@xyflow/react";
+import { hasNodeMeasurement, measuredGraphNodes } from "./graph-measure-state.mjs";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { useNodesInitialized, useUpdateNodeInternals } from "@xyflow/react";
-
-// Enough attempts to cover a lost delivery, and few enough to stop rather than
-// spin if a node has genuinely left the DOM. `useNodesInitialized` is false for
-// an empty graph, which is a real state here, so an empty `ids` never repairs.
+// Controlled-node updates can lose internal measurements without changing the
+// DOM box. Bound repairs per loss episode, not per lifetime of the node IDs.
 const REPAIRS = 5;
 const DELAY_MS = 80;
 const SEPARATOR = "\u0000";
 
-export function MeasurementGuard({ ids }) {
-  const initialized = useNodesInitialized();
-  const update = useUpdateNodeInternals();
-  const [attempt, setAttempt] = useState(0);
-  // Callers build a fresh array every render; the join gives the effect a
-  // dependency that changes only when the graph's nodes actually change.
+function surfaceVisible(surface) {
+  return surface?.offsetWidth > 0 && surface?.offsetHeight > 0;
+}
+
+function useVisibleSurface() {
+  const surface = useStore((state) => state.domNode);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const observe = () => setVisible(surfaceVisible(surface));
+    observe();
+    if (!surface) return undefined;
+    const observer = new ResizeObserver(observe);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [surface]);
+  return visible;
+}
+
+export function useGraphMeasurement(ids) {
   const key = ids.join(SEPARATOR);
   const list = useMemo(() => (key === "" ? [] : key.split(SEPARATOR)), [key]);
+  // The vendor hook checks internals.userNode; these controlled props do not
+  // receive dimension changes. Rendering and cameras use the internal nodes.
+  const ready = useStore((state) => measuredGraphNodes(list, (id) => state.nodeLookup.get(id)) !== null);
+  const visible = useVisibleSurface();
+  const store = useStoreApi();
+  const update = useUpdateNodeInternals();
+  const [repair, setRepair] = useState(() => ({ key, attempt: 0 }));
+  const attempt = repair.key === key ? repair.attempt : 0;
+  const retry = useCallback(() => setRepair({ key, attempt: 0 }), [key]);
 
-  useEffect(() => setAttempt(0), [key]);
+  useEffect(() => setRepair({ key, attempt: 0 }), [key, ready, visible]);
 
   useEffect(() => {
-    if (initialized || list.length === 0 || attempt >= REPAIRS) {
+    if (ready || !visible || list.length === 0 || attempt >= REPAIRS) {
       return undefined;
     }
+    let frame;
     const timer = setTimeout(() => {
-      update(list);
-      setAttempt((count) => count + 1);
+      const state = store.getState();
+      if (!surfaceVisible(state.domNode)) return;
+      const missing = list.filter((id) => !hasNodeMeasurement(state.nodeLookup.get(id)));
+      if (missing.length) {
+        update(missing);
+        // The vendor applies the repair in its own rAF. Account afterward so
+        // the fifth successful delivery cannot be reported as exhaustion.
+        frame = requestAnimationFrame(() => setRepair((current) =>
+          current.key === key ? { key, attempt: current.attempt + 1 } : current));
+      }
     }, DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [attempt, initialized, list, update]);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
+  }, [attempt, ready, visible, key, list, store, update]);
 
-  return null;
+  return { list, ready, visible, retry, exhausted: !ready && visible && attempt >= REPAIRS };
 }

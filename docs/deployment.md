@@ -93,6 +93,14 @@ may refuse `unshare`. The sample intentionally cannot install or relax policy.
 Do not use a Windows bind mount for SQLite. Do not remove durable volumes during
 an update. No host or container port is publicly published.
 
+The host-root tooling contract below supports only a separately qualified
+rootful, non-user-remapped container startup in the host's global initial user
+namespace. Its `/proc/self/uid_map` must map `0` to `0` over `4294967295` IDs.
+Rootless containers and Docker user-namespace remapping are not supported by
+this contract: their namespace uid 0 is not evidence of host-root ownership,
+so startup refuses them. This restriction does not remove the engine's own
+required user/PID namespace isolation after startup.
+
 ### Immutable Rust runtime
 
 The service and container intentionally use the same paths and environment:
@@ -138,6 +146,15 @@ preparation, not in the maintenance runtime. Preserve the official generated
 project bytes and its dependency lock; its graph is separate from Bureau's
 workspace lock. A missing crate or system dependency stops qualification rather
 than authorizing an install, broader update, or writable-cache fallback.
+For this dated nightly, Dylint 5's official driver build also clones the Clippy
+repository into temporary storage to derive extra symbols. That acquisition is
+outside `Cargo.lock` and does not honor Cargo's offline setting. Driver
+construction therefore needs separately approved, bounded preparation with the
+actual selected Clippy revision and generated symbol input recorded alongside
+the Cargo graph. An offline-only prebuild must deny network and stop if those
+inputs cannot be obtained; it must not silently expand its approval. The
+deployed runtime consumes the prebuilt driver and authorizes none of this
+provisioning activity.
 Do not introduce `DYLINT_DRIVER_PATH`, compiler wrappers, flags, loader hooks,
 or a personal authenticated home to bypass a missing payload.
 
