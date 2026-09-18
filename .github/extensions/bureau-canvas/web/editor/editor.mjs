@@ -22,7 +22,6 @@ import {
 } from "@xyflow/react";
 
 import { drawableEdges } from "../graph-edges.mjs";
-import { MeasurementGuard } from "../graph-measure.mjs";
 import { graphEdgeLabels, graphEdgeCaption, graphTerminalPath } from "../graph-presentation.mjs";
 import { GraphTools, GraphStateBadge } from "../graph-workbench.mjs";
 import { stepNameProblem, TERMINAL_NAMES } from "../step-refs.mjs";
@@ -188,7 +187,6 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
               onSelect: setSelected,
             }),
             h(MiniMap, { position: "bottom-left", pannable: true, zoomable: true, "aria-label": "Pipeline overview", nodeColor: minimapColor }),
-            h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
           ),
         ),
       h(SidePanel, {

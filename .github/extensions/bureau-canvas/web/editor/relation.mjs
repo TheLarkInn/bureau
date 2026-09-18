@@ -9,7 +9,6 @@ import {
 } from "@xyflow/react";
 
 import { drawableEdges } from "../graph-edges.mjs";
-import { MeasurementGuard } from "../graph-measure.mjs";
 import { GraphTools, GraphStateBadge } from "../graph-workbench.mjs";
 
 const h = React.createElement;
@@ -56,7 +55,6 @@ export function RelationGraph({ relation }) {
         label: "nodes",
       }),
       h(MiniMap, { position: "bottom-left", pannable: true, zoomable: true, "aria-label": "Config relation overview" }),
-      h(MeasurementGuard, { ids: flow.nodes.map((node) => node.id) }),
     ),
   );
 }

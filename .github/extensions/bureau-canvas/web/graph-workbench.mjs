@@ -88,17 +88,23 @@ export function GraphTools({ items, nodeIds, fitOnAdd = 0, selectedId, onSelect,
 }
 
 function useGraphView(flow, trigger, ids, fitOnAdd) {
-  const { list, ready } = useGraphMeasurement(ids);
+  const { list, ready, visible, retry, exhausted } = useGraphMeasurement(ids);
   const [request, setRequest] = useState(null);
   const framed = useRef(false);
   const lastCount = useRef(fitOnAdd);
   useEffect(() => {
-    if (fitOnAdd > lastCount.current) setRequest({ padding: 0.22, duration: 200 });
+    if (fitOnAdd > lastCount.current) {
+      retry();
+      setRequest({ padding: 0.22, duration: 200 });
+    }
     lastCount.current = fitOnAdd;
-  }, [fitOnAdd]);
+  }, [fitOnAdd, retry]);
+  useEffect(() => {
+    if (exhausted) setRequest(null);
+  }, [exhausted]);
   useEffect(() => {
     const surface = trigger?.closest(".react-flow");
-    if (!ready || !flow.viewportInitialized || !surface || (!request && framed.current)) {
+    if (!ready || !visible || !flow.viewportInitialized || !surface || (!request && framed.current)) {
       return undefined;
     }
     let frame;
@@ -125,11 +131,18 @@ function useGraphView(flow, trigger, ids, fitOnAdd) {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [flow, ready, trigger, list, request]);
-  return { onFit: () => setRequest({ padding: 0.22, maxZoom: 1 }), pending: request !== null };
+  }, [flow, ready, visible, trigger, list, request]);
+  return {
+    onFit: () => {
+      retry();
+      setRequest({ padding: 0.22, maxZoom: 1 });
+    },
+    pending: request !== null && !exhausted,
+    exhausted,
+  };
 }
 
-function GraphCamera({ onFit, pending }) {
+function GraphCamera({ onFit, pending, exhausted }) {
   const flow = useReactFlow();
   const { zoom } = useViewport();
   return h(Panel, { position: "bottom-right", className: "graph-camera" },
@@ -139,5 +152,6 @@ function GraphCamera({ onFit, pending }) {
         title: "Actual size", onClick: () => flow.zoomTo(1) }, `${Math.round(zoom * 100)}%`),
       h("button", { type: "button", "aria-label": "Zoom in", disabled: zoom >= 3, onClick: () => flow.zoomIn() }, "+"),
       h("button", { type: "button", "aria-label": "Fit graph", onClick: onFit }, "Fit")),
-    h("p", { className: "graph-help" }, "Drag to pan. Scroll to zoom."));
+    h("p", { className: "graph-help", role: exhausted ? "status" : undefined },
+      exhausted ? "Some nodes could not be measured. Fit to retry." : "Drag to pan. Scroll to zoom."));
 }

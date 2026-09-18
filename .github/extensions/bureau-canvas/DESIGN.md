@@ -228,6 +228,9 @@ Fit waits for every requested visible node's internal measurement, including
 new editor steps; it must not fit only the subset already measured. Hidden and
 collapsed members are excluded. Recovery is bounded per measurement-loss
 episode and does not spend attempts on healthy nodes or reframe on its own.
+Hidden surfaces wait until they can be measured. Exhaustion reports a failed
+measurement rather than a permanently busy Fit; explicit Fit can retry within
+the same five-attempt bound.
 
 At **56rem and below**, dense toolbars and two-column control rows collapse
 to their compact layout. This is the one recorded responsive breakpoint for

@@ -2,10 +2,10 @@ import { expect, RUN_ID, test } from "../fixtures.mjs";
 
 test.use({ entryView: "operations" });
 
-async function measurementProbe(page) {
+async function measurementProbe(page, drop = false) {
   await page.clock.install();
-  await page.addInitScript(() => {
-    const probe = { drop: false, allowed: [], blocked: [], queries: [], deliveries: [] };
+  await page.addInitScript((drop) => {
+    const probe = { drop, allowed: [], blocked: [], queries: [], deliveries: [] };
     window.__graphMeasurements = probe;
     const Native = window.ResizeObserver;
     window.ResizeObserver = class extends Native {
@@ -18,7 +18,7 @@ async function measurementProbe(page) {
           } else {
             callback(entries, observer);
           }
-        });
+        }, drop);
       }
     };
     const query = Element.prototype.querySelector;
@@ -40,12 +40,16 @@ async function visibleNodes(graph) {
   for (const node of await nodes.all()) await expect(node).toBeVisible();
 }
 
-async function openGraph(page, canvas, surface) {
-  await measurementProbe(page);
+async function openPipeline(page, canvas, drop = false) {
+  await measurementProbe(page, drop);
   await page.goto(canvas.url);
   await page.getByRole("button", { name: "Configuration", exact: true }).click();
   await page.locator(".assignment-head").first().click();
   await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
+}
+
+async function openGraph(page, canvas, surface) {
+  await openPipeline(page, canvas);
   if (surface === "editor" || surface === "relations") {
     await page.getByRole("link", { name: "Edit" }).click();
     await page.getByRole("tab", { name: "graph", exact: true }).click();
@@ -174,4 +178,55 @@ test("adding an editor step fits only after the added node is measured", async (
   await page.evaluate(() => { window.__graphMeasurements.blocked = []; });
   await page.clock.runFor(400);
   await expectWholeGraphInside(graph);
+});
+
+test("a hidden relation surface keeps its repair budget until it becomes visible", async ({ page, canvas }) => {
+  await openPipeline(page, canvas, true);
+  await page.getByRole("link", { name: "Edit" }).click();
+  await expect(page.locator(".editor-tabs")).toBeVisible();
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
+  await page.clock.runFor(800);
+  expect(await queries(page)).toEqual([]);
+  await page.getByRole("button", { name: "Relations", exact: true }).click();
+  const graph = page.locator(".relation-flow");
+  await graph.getByRole("button", { name: "Fit graph", exact: true }).click();
+  await page.clock.runFor(160);
+  await expectWholeGraphInside(graph);
+});
+
+test("an exhausted Fit ends busy state and an explicit Fit starts bounded recovery", async ({ page, canvas }) => {
+  const graph = await openGraph(page, canvas, "viewer");
+  const originalIds = await ids(graph);
+  await page.evaluate((blocked) => { window.__graphMeasurements.blocked = blocked; }, originalIds);
+  await loseMeasurements(page, graph, "verify");
+  await graph.getByRole("button", { name: "Fit graph", exact: true }).click();
+  await page.clock.runFor(800);
+  expect(await queries(page)).toHaveLength(originalIds.length * 5);
+  await expect(graph.getByRole("group", { name: "Graph view controls" })).not.toHaveAttribute("aria-busy", "true");
+  await expect(graph.locator(".graph-help")).toHaveText("Some nodes could not be measured. Fit to retry.");
+  await page.clock.runFor(800);
+  expect(await queries(page)).toHaveLength(originalIds.length * 5);
+  await page.evaluate(() => { window.__graphMeasurements.blocked = []; });
+  await graph.getByRole("button", { name: "Fit graph", exact: true }).click();
+  await page.clock.runFor(160);
+  await expectWholeGraphInside(graph);
+  expect(await queries(page)).toHaveLength(originalIds.length * 6);
+  await expect(graph.locator(".graph-help")).toHaveText("Drag to pan. Scroll to zoom.");
+});
+
+test("Fit remains queued through a successful fifth measurement repair", async ({ page, canvas }) => {
+  const graph = await openGraph(page, canvas, "viewer");
+  const originalIds = await ids(graph);
+  await page.evaluate((blocked) => { window.__graphMeasurements.blocked = blocked; }, originalIds);
+  await loseMeasurements(page, graph, "verify");
+  await graph.getByRole("button", { name: "Fit graph", exact: true }).click();
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await page.clock.runFor(100);
+    expect(await queries(page)).toHaveLength(originalIds.length * attempt);
+  }
+  await page.evaluate(() => { window.__graphMeasurements.blocked = []; });
+  await page.clock.runFor(160);
+  await expectWholeGraphInside(graph);
+  expect(await queries(page)).toHaveLength(originalIds.length * 5);
+  await expect(graph.locator(".graph-help")).toHaveText("Drag to pan. Scroll to zoom.");
 });
