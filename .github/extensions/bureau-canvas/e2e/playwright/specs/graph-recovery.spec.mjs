@@ -5,20 +5,24 @@ test.use({ entryView: "operations" });
 async function measurementProbe(page, drop = false) {
   await page.clock.install();
   await page.addInitScript((drop) => {
-    const probe = { drop, allowed: [], blocked: [], queries: [], deliveries: [] };
+    const probe = { drop, allowed: [], blocked: [], queries: [], relationQueries: [], deliveries: [],
+      nodeDeliveries: 0, withheldDeliveries: 0 };
     window.__graphMeasurements = probe;
     const Native = window.ResizeObserver;
     window.ResizeObserver = class extends Native {
       constructor(callback) {
         super((entries, observer) => {
-          if (probe.drop && entries.some((entry) => entry.target.hasAttribute("data-id"))) {
+          const nodes = entries.filter((entry) => entry.target.hasAttribute("data-id"));
+          probe.nodeDeliveries += nodes.length;
+          if (probe.drop && nodes.length) {
+            probe.withheldDeliveries += nodes.length;
             probe.deliveries.push(() => callback(entries, observer));
             const allowed = entries.filter((entry) => probe.allowed.includes(entry.target.dataset.id));
             if (allowed.length) callback(allowed, observer);
           } else {
             callback(entries, observer);
           }
-        }, drop);
+        });
       }
     };
     const query = Element.prototype.querySelector;
@@ -27,11 +31,12 @@ async function measurementProbe(page, drop = false) {
       // Only the vendor's explicit repair queries use this selector.
       if (/^\.react-flow__node\[data-id="/u.test(selector)) {
         probe.queries.push(node?.dataset.id);
+        if (this.closest(".relation-flow")) probe.relationQueries.push(node?.dataset.id);
         if (probe.blocked.includes(node?.dataset.id)) return null;
       }
       return node;
     };
-  });
+  }, drop);
 }
 
 async function visibleNodes(graph) {
@@ -184,13 +189,21 @@ test("a hidden relation surface keeps its repair budget until it becomes visible
   await openPipeline(page, canvas, true);
   await page.getByRole("link", { name: "Edit" }).click();
   await expect(page.locator(".editor-tabs")).toBeVisible();
+  const graph = page.locator(".relation-flow");
+  await expect(graph).toBeHidden();
+  expect(await page.evaluate(() => window.__graphMeasurements.drop)).toBe(true);
   await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now() + 1000)));
   await page.clock.runFor(800);
-  expect(await queries(page)).toEqual([]);
+  expect(await page.evaluate(() => window.__graphMeasurements.relationQueries)).toEqual([]);
   await page.getByRole("button", { name: "Relations", exact: true }).click();
-  const graph = page.locator(".relation-flow");
   await graph.getByRole("button", { name: "Fit graph", exact: true }).click();
   await page.clock.runFor(160);
+  await expect.poll(() => page.evaluate(() => window.__graphMeasurements.withheldDeliveries)).toBeGreaterThan(0);
+  const delivered = await page.evaluate(() => {
+    const { nodeDeliveries, withheldDeliveries } = window.__graphMeasurements;
+    return { nodeDeliveries, withheldDeliveries };
+  });
+  expect(delivered.withheldDeliveries).toBe(delivered.nodeDeliveries);
   await expectWholeGraphInside(graph);
 });
 
