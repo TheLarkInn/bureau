@@ -139,42 +139,41 @@ fn explicit_runtime_survives_the_engine_boundary() {
         for mode in ["present", "empty"] {
             isolated(mode);
         }
-
-        const OFFLINE_CHECK: &str = r#"node --input-type=module -e '
-        const { workspace, runCheck } = await import("./scripts/maintenance-checks.mjs");
-        const { loadPolicy } = await import("./scripts/maintenance-policy.mjs");
-        const policy = await loadPolicy();
-        const source = { commit: workspace().commit, category: "chaos",
-          id: `TheLarkInn/bureau#${policy.source_issues.chaos}`, cycle: "offline-runtime-qualification" };
-        const { evidence, log } = await runCheck(source, policy, { seed: 0 });
-        if (!evidence.complete || evidence.checks !== 1 || evidence.findings.length) {
-          throw new Error("the real offline maintenance check did not pass");
-        }
-        console.log(JSON.stringify(evidence));
-        console.log(log);
-        '"#;
-
-        #[tokio::test]
-        #[ignore = "Requires the provisioned immutable maintenance runtime and a bounded native resource slot"]
-        async fn offline_tools_execute_through_engine_and_maintenance_child() {
-            let rig = Rig::new();
-            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .ancestors()
-                .nth(2)
-                .expect("source root");
-            let mut step = det_step("offline-runtime", OFFLINE_CHECK, Some("done"));
-            step.timeout_secs = Some(360);
-            let mut plan = rig.plan(vec![step]);
-            plan.repos.get_mut("main").expect("fixture repo").url =
-                root.to_string_lossy().into_owned();
-            let result = rig.engine().run(&plan).await;
-            assert_eq!(result.outcome, StepOutcome::NoWork, "{result:?}");
-            let output = step_stdout(&rig, &result.run_id);
-            assert!(
-                output.contains("bureau-maintenance-evidence-v1"),
-                "{output}"
-            );
-            println!("{output}");
-        }
     }
+}
+
+const OFFLINE_CHECK: &str = r#"node --input-type=module -e '
+const { workspace, runCheck } = await import("./scripts/maintenance-checks.mjs");
+const { loadPolicy } = await import("./scripts/maintenance-policy.mjs");
+const policy = await loadPolicy();
+const source = { commit: workspace().commit, category: "chaos",
+  id: `TheLarkInn/bureau#${policy.source_issues.chaos}`, cycle: "offline-runtime-qualification" };
+const { evidence, log } = await runCheck(source, policy, { seed: 0 });
+if (!evidence.complete || evidence.checks !== 1 || evidence.findings.length) {
+  throw new Error("the real offline maintenance check did not pass");
+}
+console.log(JSON.stringify(evidence));
+console.log(log);
+'"#;
+
+#[tokio::test]
+#[ignore = "Requires the provisioned immutable maintenance runtime and a bounded native resource slot"]
+async fn offline_tools_execute_through_engine_and_maintenance_child() {
+    let rig = Rig::new();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("source root");
+    let mut step = det_step("offline-runtime", OFFLINE_CHECK, Some("done"));
+    step.timeout_secs = Some(360);
+    let mut plan = rig.plan(vec![step]);
+    plan.repos.get_mut("main").expect("fixture repo").url = root.to_string_lossy().into_owned();
+    let result = rig.engine().run(&plan).await;
+    assert_eq!(result.outcome, StepOutcome::NoWork, "{result:?}");
+    let output = step_stdout(&rig, &result.run_id);
+    assert!(
+        output.contains("bureau-maintenance-evidence-v1"),
+        "{output}"
+    );
+    println!("{output}");
 }
