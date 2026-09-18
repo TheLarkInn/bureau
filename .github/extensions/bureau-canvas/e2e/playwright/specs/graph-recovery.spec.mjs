@@ -48,7 +48,7 @@ async function openGraph(page, canvas, surface) {
   await page.getByRole("button", { name: "Open pipeline agent-eligible-pipeline" }).click();
   if (surface === "editor" || surface === "relations") {
     await page.getByRole("link", { name: "Edit" }).click();
-    await page.getByRole("tab", { name: "Graph", exact: true }).click();
+    await page.getByRole("tab", { name: "graph", exact: true }).click();
     if (surface === "relations") await page.getByRole("button", { name: "Relations", exact: true }).click();
   } else {
     if (surface === "viewer") await page.getByRole("tab", { name: "graph", exact: true }).click();
