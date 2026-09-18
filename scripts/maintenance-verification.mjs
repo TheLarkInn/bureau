@@ -4,6 +4,7 @@ const INPUT_NAMES = ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.j
   "rustfmt.toml", ".rustfmt.toml", ".gitattributes", ".gitignore"];
 
 const VERIFIER_ROOTS = ["crates/bureau/tests/maintenance_chaos", "crates/bureau/tests/rate_admission",
+  "crates/bureau/tests/engine",
   "crates/bureau/tests/runlog_framing", "crates/bureau/tests/migration_cli",
   "crates/bureau/tests/watch", "crates/bureau/tests/watch_render", "crates/bureau/tests/watch_support",
   "crates/bureau/tests/edge/testdir", "crates/bureau/src/cli/run/tests",

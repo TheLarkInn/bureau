@@ -9,6 +9,9 @@ export const POLICY = {
   source_issues: { chaos: 7, "site-accessibility": 8, "site-responsive": 9 },
   backing_paths: [], cargo_target: "/cache/cargo", cargo_cache_max_bytes: 8 * 1024 ** 3,
   site_tools: "/opt/site-tools", browser_path: "/opt/browsers",
+  rust_bin: "/opt/bureau/rust/bin", rustup_home: "/opt/bureau/rust/rustup",
+  cargo_home: "/opt/bureau/rust/cargo", rust_host: "x86_64-unknown-linux-gnu",
+  dylint_drivers: "/var/lib/bureau-maintenance-runtime/.dylint_drivers",
 };
 
 export function fixture(category = "chaos", findings = undefined) {

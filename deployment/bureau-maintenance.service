@@ -13,7 +13,11 @@ WorkingDirectory=/opt/bureau/source
 Environment=HOME=/var/lib/bureau-maintenance-runtime
 Environment=COPILOT_HOME=/var/lib/bureau-maintenance-runtime/copilot
 Environment=BUREAU_HOME=/var/lib/bureau-maintenance
-Environment=PATH=/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/opt/bureau/rust/bin:/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
+Environment=RUSTUP_HOME=/opt/bureau/rust/rustup
+Environment=CARGO_HOME=/opt/bureau/rust/cargo
+Environment=CARGO_NET_OFFLINE=true
+Environment=RUSTUP_AUTO_INSTALL=0
 EnvironmentFile=/etc/bureau/maintenance.env
 StateDirectory=bureau-maintenance
 StateDirectoryMode=0700

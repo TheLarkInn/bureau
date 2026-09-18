@@ -19,7 +19,11 @@ services:
       BUREAU_HOME: /var/lib/bureau-maintenance
       BUREAU_CONFIG_COMMIT: ${BUREAU_CONFIG_COMMIT:?set the reviewed full commit}
       BUREAU_DEPLOYMENT_APPROVED: ${BUREAU_DEPLOYMENT_APPROVED:-false}
-      PATH: /opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
+      PATH: /opt/bureau/rust/bin:/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin
+      RUSTUP_HOME: /opt/bureau/rust/rustup
+      CARGO_HOME: /opt/bureau/rust/cargo
+      CARGO_NET_OFFLINE: "true"
+      RUSTUP_AUTO_INSTALL: "0"
     mem_limit: 8g
     memswap_limit: 8g
     cpus: "2.0"
@@ -31,7 +35,10 @@ services:
       - no-new-privileges:true
     volumes:
       - bureau-maintenance-state:/var/lib/bureau-maintenance
-      - bureau-maintenance-runtime:/var/lib/bureau-maintenance-runtime
+      - bureau-maintenance-runtime:/var/lib/bureau-maintenance-runtime:ro
+      - bureau-maintenance-copilot:/var/lib/bureau-maintenance-runtime/copilot
+      - bureau-maintenance-logs:/var/lib/bureau-maintenance-runtime/logs
+      - bureau-maintenance-tmp:/var/lib/bureau-maintenance-runtime/tmp
       - bureau-maintenance-cache:/var/cache/bureau-maintenance
       - type: bind
         source: ${BUREAU_BACKING_DIRECTORY:?set a dedicated existing backing-capacity directory}
@@ -44,4 +51,7 @@ services:
 volumes:
   bureau-maintenance-state:
   bureau-maintenance-runtime:
+  bureau-maintenance-copilot:
+  bureau-maintenance-logs:
+  bureau-maintenance-tmp:
   bureau-maintenance-cache:

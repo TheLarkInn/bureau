@@ -81,6 +81,8 @@ test("manifest, lock and build-input exclusions apply at every depth and to site
 
 test("protected proof bytes stay pinned even when index flags hide an edit", async (t) => {
   for (const path of ["crates/bureau/src/state/accounting/tests.rs",
+    "crates/bureau/tests/engine.rs", "crates/bureau/tests/engine/rig.rs",
+    "crates/bureau/tests/engine/runtime_environment.rs",
     "crates/bureau/src/state/claim/fresh/quota/tests.rs", "crates/bureau/src/state/claim/fresh/quota/tests/seen.rs",
     "crates/bureau/tests/watch.rs", "crates/bureau/tests/watch_render.rs",
     "crates/bureau/tests/watch_support/mod.rs", "crates/bureau/tests/watch_support/nested/fixture.json"]) {
@@ -94,5 +96,22 @@ test("protected proof bytes stay pinned even when index flags hide an edit", asy
     git(root, "update-index", "--assume-unchanged", path);
     await writeFile(join(root, path), "fn weakened_proof() {}\n");
     await assert.rejects(requireVerificationInputs(source, root), /protected verification input changed/u);
+  }
+});
+
+test("removing or conditionally disabling the runtime proof registration fails before Cargo", async (t) => {
+  const path = "crates/bureau/tests/engine.rs";
+  const original = '#[path = "engine/runtime_environment.rs"]\nmod runtime_environment;\n';
+  for (const changed of ["// registration removed\n", `#[cfg(any())]\n${original}`]) {
+    const { root, source } = await repository(t);
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), original);
+    git(root, "add", path);
+    git(root, "commit", "--quiet", "-m", "runtime registration fixture\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>");
+    source.commit = git(root, "rev-parse", "HEAD");
+    await writeFile(join(root, path), changed);
+    assert.match(patchProblem([path], "chaos"), /protected/u);
+    await assert.rejects(runCheck(source, {}, { root, gates: true, seed: 0 }),
+      /protected verification input changed/u);
   }
 });
