@@ -5,7 +5,7 @@ test.use({ entryView: "operations" });
 async function measurementProbe(page) {
   await page.clock.install();
   await page.addInitScript(() => {
-    const probe = { drop: false, blocked: [], queries: [], deliveries: [] };
+    const probe = { drop: false, allowed: [], blocked: [], queries: [], deliveries: [] };
     window.__graphMeasurements = probe;
     const Native = window.ResizeObserver;
     window.ResizeObserver = class extends Native {
@@ -13,6 +13,8 @@ async function measurementProbe(page) {
         super((entries, observer) => {
           if (probe.drop && entries.some((entry) => entry.target.hasAttribute("data-id"))) {
             probe.deliveries.push(() => callback(entries, observer));
+            const allowed = entries.filter((entry) => probe.allowed.includes(entry.target.dataset.id));
+            if (allowed.length) callback(allowed, observer);
           } else {
             callback(entries, observer);
           }
@@ -138,7 +140,10 @@ test("Fit waits for every intended node instead of fitting a measured subset", a
   await page.clock.runFor(32);
   const originalCamera = await camera(graph);
   const originalIds = await ids(graph);
-  await page.evaluate((blocked) => { window.__graphMeasurements.blocked = blocked; },
+  await page.evaluate((blocked) => {
+    window.__graphMeasurements.blocked = blocked;
+    window.__graphMeasurements.allowed = ["implement"];
+  },
     originalIds.filter((id) => id !== "implement"));
   await loseMeasurements(page, graph, "verify");
   await page.clock.runFor(100);
