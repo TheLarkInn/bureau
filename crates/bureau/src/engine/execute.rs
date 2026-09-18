@@ -149,10 +149,10 @@ async fn finish_artifacts(
 /// resolve their credentials straight from the plan, never via a
 /// step's environment.
 ///
-/// It DOES receive the runtime PATH and HOME: the spawn clears the
-/// environment (`env_clear`), so without them `sh -c "cargo test"` fails
-/// with `cargo: not found` even when the daemon can see cargo. Only
-/// non-secret runtime variables are forwarded, never credentials.
+/// It receives the runtime PATH, HOME, and explicit Cargo/Rustup homes
+/// and offline/install controls: `env_clear` must not hide provisioned
+/// tools or fall back to an unprovisioned personal toolchain. Compiler
+/// flags, wrappers, toolchain overrides and credentials are not forwarded.
 fn deterministic_request(
     ctx: &RunCtx,
     wt: &WtCtx,

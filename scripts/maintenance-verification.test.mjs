@@ -81,6 +81,7 @@ test("manifest, lock and build-input exclusions apply at every depth and to site
 
 test("protected proof bytes stay pinned even when index flags hide an edit", async (t) => {
   for (const path of ["crates/bureau/src/state/accounting/tests.rs",
+    "crates/bureau/tests/engine/runtime_environment.rs",
     "crates/bureau/src/state/claim/fresh/quota/tests.rs", "crates/bureau/src/state/claim/fresh/quota/tests/seen.rs",
     "crates/bureau/tests/watch.rs", "crates/bureau/tests/watch_render.rs",
     "crates/bureau/tests/watch_support/mod.rs", "crates/bureau/tests/watch_support/nested/fixture.json"]) {

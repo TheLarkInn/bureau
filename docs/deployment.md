@@ -28,7 +28,7 @@ The launcher always supplies the explicit maintenance override.
 
 `deployment/maintenance-policy.json` pins the exact source issue numbers,
 maintainer login and numeric issuer ID. It also declares the disposable Cargo
-cache, prepared browser tools, and any backing-volume admission paths. Changing
+output cache, immutable Rust homes/commands, prepared browser tools, and any backing-volume admission paths. Changing
 those paths, identities, resource limits, agents or pipeline grants requires
 normal config/code PR review. No runtime generates a second config or writes
 status into Git. The service pins an explicitly reviewed full config SHA.
@@ -59,7 +59,10 @@ Before activation, provision and qualify:
    its `copilot`, `logs`, and `tmp` subdirectories as `bureau:bureau` mode `0700`.
    The service preserves that ownership rather than managing this home as a
    `StateDirectory`; its writable exceptions and `COPILOT_HOME` are explicit.
-   Pre-provision the container's runtime volume with the same ownership boundary.
+   Pre-provision the container's read-only runtime volume with the same ownership
+   boundary and its three separate writable `copilot`, `logs`, and `tmp` volumes.
+   Rust tools and dependencies follow the explicit contract below; installing
+   Rust into a separate validation account does not make it available here.
 3. Prepared read-only browser tools at `policy.site_tools`: the `site/` package
    and the existing canvas Playwright package at their ordinary relative paths,
    each with its reviewed manifests, lockfiles and installed `node_modules`.
@@ -89,6 +92,66 @@ read-only dependencies, and working user/PID isolation; default runtime policies
 may refuse `unshare`. The sample intentionally cannot install or relax policy.
 Do not use a Windows bind mount for SQLite. Do not remove durable volumes during
 an update. No host or container port is publicly published.
+
+### Immutable Rust runtime
+
+The service and container intentionally use the same paths and environment:
+
+| Purpose | Reviewed location/control |
+|---|---|
+| Genuine Rustup command proxies, `rustup`, `cargo-dylint`, `dylint-link` | `/opt/bureau/rust/bin` on `PATH` |
+| Installed toolchains and Rustup settings | `RUSTUP_HOME=/opt/bureau/rust/rustup` |
+| Prepared registry and Git dependencies, with no credentials or root Cargo config | `CARGO_HOME=/opt/bureau/rust/cargo` |
+| Prebuilt Dylint 5.0.0 driver | `/var/lib/bureau-maintenance-runtime/.dylint_drivers/nightly-2026-01-22-x86_64-unknown-linux-gnu/dylint-driver` |
+| Cargo network and Rustup installation controls | `CARGO_NET_OFFLINE=true`, `RUSTUP_AUTO_INSTALL=0` |
+| Only mutable compiler output | `policy.cargo_target`, currently `/var/cache/bureau-maintenance/cargo`, at most 8 GiB |
+
+These paths are explicit fields in `maintenance-policy.json`, including the
+qualified `rust_host`. Bind existing qualified payloads read-only rather than
+duplicating them when the host has a tight virtual-disk budget. This is an
+operator provisioning action, never a startup action. All selected roots must
+be canonical existing directories on observed read-only mounts, with root-owned
+ancestors that are not group/world-writable. Executables and the prepared driver
+must be root-owned with no write bits. A writable bind, a symlink to another
+cache, a daemon-owned parent, or an absent prepared dependency is a refusal.
+An immutable container image supplies the `/opt` payloads; pre-provision its
+read-only runtime volume with the same driver and protected ancestry.
+
+Keep the genuine `cargo`, `rustc`, `rustdoc`, formatting and Clippy proxies
+pointing to that directory's `rustup`. The exact `PATH` starts with
+`/opt/bureau/rust/bin:/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin`, so another
+installed Cargo cannot take precedence. A direct stable Cargo symlink is not a
+substitute: `rustc +nightly-2026-01-22` and Dylint must still select the installed
+nightly. The repository's `rust-toolchain.toml` selects stable 1.94.0, and the
+lint crate's toolchain file selects the nightly with `rustc-dev`. No Rustup
+default or `RUSTUP_TOOLCHAIN` override is needed to replace these reviewed pins.
+Prebuild the matching Dylint driver during provisioning. Dylint otherwise tries
+to build it in `HOME/.dylint_drivers`; the protected runtime must not do so.
+Do not introduce `DYLINT_DRIVER_PATH`, compiler wrappers, flags, loader hooks,
+or a personal authenticated home to bypass a missing payload.
+
+Startup and every deterministic check verify those paths and their ownership,
+mounts, proxy targets, stable/nightly selection and matching Dylint versions.
+Startup requires host-root ownership. Inside the engine's user namespace the
+daemon is uid 0 and host-root ownership is unmapped; the helper checks that
+none of those owners is the mapped daemon, preserving the replacement boundary
+without mistaking namespace-root for the host's administrator.
+The engine forwards only the explicit Cargo/Rustup homes and offline/install
+controls alongside its existing non-secret runtime variables. The second,
+maintenance-child boundary receives the homes explicitly from reviewed policy
+and fixes offline/no-install behavior even for Cargo invocations inside
+`scripts/lint.sh`. It never inherits the parent environment wholesale. Missing
+homes, runtime overrides or unprovisioned tooling fail before compilation.
+Build/test invocations also use `--locked`; manifests, lockfiles and verifier
+bytes remain pinned to the reviewed source before any Cargo command.
+
+Command resolution and version checks are admission, **not proof of an offline
+build**. Qualify actual compilation and linting with the dependency cache
+read-only under the exact service/container identity and isolation. In
+particular, observe Cargo's package locks/global-cache metadata instead of
+silently placing registry data in writable `HOME`. If the prepared cache cannot
+work read-only, keep deployment disabled and review the exact observed write
+requirement; these samples authorize no writable dependency-cache fallback.
 
 Both launch paths take the same nonblocking `flock` on the state root before
 entering `run-owner.sh`. The lock is held for the daemon's entire lifetime.
@@ -287,6 +350,32 @@ Fast helper/lifecycle tests need only Node and injected fake forge state:
 ```sh
 node --test --test-concurrency=1 scripts/maintenance*.test.mjs
 ```
+
+The ordinary `engine` integration suite also runs an isolated real-engine
+environment regression with explicit homes and hostile credential/compiler-hook
+sentinels. It does not compile another Rust project or require deployment paths.
+A separate, deliberately opt-in native qualification test clones the committed
+local source, uses the real engine's cleared environment, and invokes the actual
+`runCheck`/bounded-child offline chaos compilation and test. Its forge is fake;
+it calls no model or API, publishes nothing, and requires a no-change outcome.
+After provisioning the exact contract and obtaining the native resource slot,
+build the engine test once into the admitted target cache, then run its exact
+Cargo-reported executable with:
+
+```sh
+/absolute/prebuilt/engine-HASH \
+  runtime_environment::offline_tools_execute_through_engine_and_maintenance_child \
+  --exact --ignored --nocapture --test-threads=1
+```
+
+Use the canonical service environment above and a bounded native `TMPDIR`.
+This opt-in test is not run or counted as passing by ordinary CI. Its check has
+the existing five-minute deadline, 2 GiB child RSS plus 1 GiB admission reserve,
+single Cargo job and 8 GiB output-cache ceiling. It refuses absent immutable
+tools or unobservable resource/isolation guards. Retain its exact source head
+and positive-count test evidence, and separately qualify all mandatory gates,
+including actual nightly/Dylint execution. A skipped test, `cargo --version`,
+or a writable-cache-only build does not qualify the deployment.
 
 For a long campaign, obtain a resource slot first. Build the dedicated Rust
 integration test **once**, offline, at a clean reviewed commit, with one Cargo

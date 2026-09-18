@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import { AUTHOR, CATEGORIES, requireValue } from "./maintenance-contract.mjs";
 import { GiB } from "./maintenance-resources.mjs";
 import { readBoundedJson } from "./maintenance-files.mjs";
+import { validateRustPolicy } from "./maintenance-rust.mjs";
 
 export function validatePolicy(policy, requireIdentity = true) {
   requireValue(policy?.schema === "bureau-maintenance-policy-v1", "invalid maintenance policy");
@@ -18,6 +19,7 @@ export function validatePolicy(policy, requireIdentity = true) {
   requireValue(Number.isSafeInteger(policy.cargo_cache_max_bytes)
     && policy.cargo_cache_max_bytes > 0 && policy.cargo_cache_max_bytes <= 8 * GiB,
   "Cargo cache must have a positive ceiling no larger than 8 GiB");
+  validateRustPolicy(policy);
   if (!requireIdentity) return policy;
   requireValue(policy.issuer_login === AUTHOR
     && Number.isSafeInteger(policy.issuer_id) && policy.issuer_id > 0,

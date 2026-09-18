@@ -7,6 +7,7 @@ import { requireValue } from "../scripts/maintenance-contract.mjs";
 import { loadPolicy } from "../scripts/maintenance-policy.mjs";
 import { admit } from "../scripts/maintenance-resources.mjs";
 import { requireReadOnlyTools } from "../scripts/maintenance-tools.mjs";
+import { RUST_PATHS, requirePreparedRust } from "../scripts/maintenance-rust.mjs";
 
 export function durableFilesystem(type) {
   return [0xef53, 0x58465342, 0x9123683e].includes(type);
@@ -26,7 +27,9 @@ export async function deploymentCheck(home, root = process.cwd()) {
   const policy = await loadPolicy(root);
   await requireReadOnlyTools(policy);
   await admit({ cwd: root, backingPaths: policy.backing_paths,
-    extraPaths: [home, policy.cargo_target, policy.site_tools, policy.browser_path] });
+    extraPaths: [home, policy.cargo_target, policy.site_tools, policy.browser_path,
+      ...RUST_PATHS.map((key) => policy[key])] });
+  await requirePreparedRust(root, policy, { rootOwner: true });
   return { schema: "bureau-deployment-admission-v1", admitted: true,
     config_subdir: ".bureau/maintenance", state: home };
 }

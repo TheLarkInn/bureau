@@ -4,17 +4,19 @@ import { BOUNDS, admit, directoryBytes, directoryIdentity, processGroupUsage, ru
 import { requireValue } from "./maintenance-contract.mjs";
 import { lockedCommand, waitingBounds } from "./maintenance-command.mjs";
 
-export function childEnvironment(extra = {}) {
+export function childEnvironment(extra = {}, runtime = process.env) {
   const allowed = ["TMPDIR", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
+    "CARGO_HOME", "RUSTUP_HOME",
     "RUST_BACKTRACE", "BUREAU_CHAOS_SEED", "BUREAU_CANVAS_BUREAU",
     "BUREAU_SITE_TOOLS", "PLAYWRIGHT_BROWSERS_PATH"];
   requireValue(Object.keys(extra).every((key) => allowed.includes(key)
     && typeof extra[key] === "string"), "unapproved child environment variable");
   const environment = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8",
+    PATH: runtime.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8",
     CARGO_PROFILE_DEV_DEBUG: "0", CARGO_PROFILE_TEST_DEBUG: "0",
+    CARGO_NET_OFFLINE: "true", RUSTUP_AUTO_INSTALL: "0",
   };
-  if (process.env.HOME) environment.HOME = process.env.HOME;
+  if (runtime.HOME) environment.HOME = runtime.HOME;
   return { ...environment, ...extra };
 }
 

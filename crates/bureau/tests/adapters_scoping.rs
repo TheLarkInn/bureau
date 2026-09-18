@@ -21,6 +21,18 @@ use bureau::process::{REDACTED, Secret, SpawnRequest};
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
+const RUNTIME_VARS: [&str; 9] = [
+    "PATH",
+    "HOME",
+    "COPILOT_HOME",
+    "CLAUDE_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "CARGO_NET_OFFLINE",
+    "RUSTUP_AUTO_INSTALL",
+];
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -168,13 +180,6 @@ fn gh_token_forwarding_follows_the_forge_grants() {
 #[test]
 fn claude_model_tokens_require_model_invoke() {
     let known = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
-    let runtime = [
-        "PATH",
-        "HOME",
-        "COPILOT_HOME",
-        "CLAUDE_CONFIG_DIR",
-        "XDG_CONFIG_HOME",
-    ];
     let dir = TestDir::new("model-gate");
     let secrets = vec![Secret::new("engine-secret")];
     let granted = role(AdapterKind::Claude, &[Permission::ModelInvoke]);
@@ -183,7 +188,7 @@ fn claude_model_tokens_require_model_invoke() {
     let seen = (
         yes.env
             .keys()
-            .all(|key| known.contains(&key.as_str()) || runtime.contains(&key.as_str())),
+            .all(|key| known.contains(&key.as_str()) || RUNTIME_VARS.contains(&key.as_str())),
         known.iter().any(|name| yes.env.contains_key(*name)) == daemon_has(&known),
         yes.secrets.contains(&Secret::new("engine-secret")),
         known.iter().all(|name| !no.env.contains_key(*name)),
