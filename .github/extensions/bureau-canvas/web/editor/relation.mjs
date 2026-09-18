@@ -49,6 +49,7 @@ export function RelationGraph({ relation }) {
       },
       h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
       h(GraphTools, {
+        nodeIds: flow.nodes.map((node) => node.id),
         items: source.nodes.map((node) => ({ ...node, detail: node.id, state: "design" })),
         selectedId: selected,
         onSelect: setSelected,

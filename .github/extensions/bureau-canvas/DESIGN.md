@@ -224,6 +224,10 @@ readable; explicit Fit may zoom out to 20%. Initial framing runs once, after
 React Flow's internal nodes are measured and the surface is visible, including
 a relation graph revealed after mounting. Read-only controlled node props
 need not carry those measurements. Later observation preserves the user's camera.
+Fit waits for every requested visible node's internal measurement, including
+new editor steps; it must not fit only the subset already measured. Hidden and
+collapsed members are excluded. Recovery is bounded per measurement-loss
+episode and does not spend attempts on healthy nodes or reframe on its own.
 
 At **56rem and below**, dense toolbars and two-column control rows collapse
 to their compact layout. This is the one recorded responsive breakpoint for

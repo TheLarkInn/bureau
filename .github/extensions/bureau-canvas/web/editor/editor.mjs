@@ -6,7 +6,7 @@
 // server's `save-pipeline` intent, which owns validation and the revert.
 // Node positions ride along as the layout sidecar (Q10).
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -88,18 +88,6 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
       window.removeEventListener("keydown", escape);
     };
   }, [dirty, onDirtyChange]);
-  // A step added at a new layer can land outside the visible canvas, which
-  // reads as "nothing happened". Refit when the graph *gains* a node — not on
-  // mount, where the shared camera already frames it and a second animated
-  // one would only keep the nodes moving.
-  const stepCount = view.steps.length;
-  const lastCount = useRef(stepCount);
-  useEffect(() => {
-    if (stepCount > lastCount.current) {
-      flowApi?.fitView({ padding: 0.22, duration: 200 });
-    }
-    lastCount.current = stepCount;
-  }, [flowApi, stepCount]);
   const focusStep = (step) => {
     setSelected(step);
     const node = flow.nodes.find((candidate) => candidate.id === step);
@@ -186,6 +174,8 @@ export function PipelineEditor({ state, name, onSaved, onDirtyChange }) {
             },
             h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
             h(GraphTools, {
+              nodeIds: flow.nodes.map((node) => node.id),
+              fitOnAdd: view.steps.length,
               items: flow.nodes.filter((node) => node.type === "stepNode").map((node) => ({
                 id: node.id,
                 name: node.data.step.name,
