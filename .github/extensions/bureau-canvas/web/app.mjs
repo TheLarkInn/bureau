@@ -24,7 +24,6 @@ import { resolveOverlay } from "./live/overlay.mjs";
 import { terminalCopy } from "./terminals.js";
 import { drawableEdges } from "./graph-edges.mjs";
 import { emptyVerdict } from "./panel-verdict.mjs";
-import { MeasurementGuard } from "./graph-measure.mjs";
 import { GraphTools, GraphStateBadge } from "./graph-workbench.mjs";
 import { graphEdgeCaption, graphEdgeLabels, graphGeometry, graphStepState, graphTerminalPath, needsAttention } from "./graph-presentation.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
@@ -1705,9 +1704,9 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
             proOptions: { hideAttribution: true },
             onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.name),
           }, h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
-          h(GraphTools, { items: graphItems, selectedId: graphItems.find((item) => item.name === selectedStep)?.id, onSelect: selectNode }),
-          h(MiniMap, { pannable: true, zoomable: true, position: "bottom-left", "aria-label": "Pipeline overview" }),
-          h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
+          h(GraphTools, { items: graphItems, nodeIds: flow.nodes.map((node) => node.id),
+            selectedId: graphItems.find((item) => item.name === selectedStep)?.id, onSelect: selectNode }),
+          h(MiniMap, { pannable: true, zoomable: true, position: "bottom-left", "aria-label": "Pipeline overview" })),
         ),
       // graph-overlays: a run's steps left output; design mode has no run.
       active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,

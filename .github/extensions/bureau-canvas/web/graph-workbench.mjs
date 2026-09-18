@@ -1,5 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
-import { getNodesBounds, Panel, useReactFlow, useStore, useViewport } from "@xyflow/react";
+import { getNodesBounds, Panel, useReactFlow, useViewport } from "@xyflow/react";
+import { useGraphMeasurement } from "./graph-measure.mjs";
+import { measuredGraphNodes } from "./graph-measure-state.mjs";
 import { GRAPH_STATE_LABELS, initialGraphViewport, nextAttention, searchGraphItems } from "./graph-presentation.mjs";
 
 const h = React.createElement;
@@ -11,13 +13,13 @@ export function GraphStateBadge({ state = "design" }) {
     GRAPH_STATE_LABELS[known]);
 }
 
-export function GraphTools({ items, selectedId, onSelect, label = "steps" }) {
+export function GraphTools({ items, nodeIds, fitOnAdd = 0, selectedId, onSelect, label = "steps" }) {
   const flow = useReactFlow();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const input = useRef(null);
   const [trigger, setTrigger] = useState(null);
-  useInitialGraphView(flow, trigger);
+  const camera = useGraphView(flow, trigger, nodeIds, fitOnAdd);
   const contentId = useId();
   const results = searchGraphItems(items, query);
   const attention = items.filter((item) => item.attention);
@@ -82,18 +84,27 @@ export function GraphTools({ items, selectedId, onSelect, label = "steps" }) {
       h("span", { role: "status" }, `${attention.length} need attention`),
       h("button", { type: "button", className: "graph-attention-review",
         onClick: () => select(nextAttention(items, selectedId)) }, "Review next")) : null),
-    h(GraphCamera));
+    h(GraphCamera, camera));
 }
 
-function useInitialGraphView(flow, trigger) {
-  // Read-only controlled graphs do not copy measurement changes into user nodes.
-  const initialized = useStore((state) => state.nodeLookup.size > 0
-    && [...state.nodeLookup.values()].every((node) => node.hidden
-      || (node.measured?.width > 0 && node.measured?.height > 0)));
+function useGraphView(flow, trigger, ids, fitOnAdd) {
+  const { list, ready, visible, retry, exhausted } = useGraphMeasurement(ids);
+  const [request, setRequest] = useState(null);
   const framed = useRef(false);
+  const lastCount = useRef(fitOnAdd);
+  useEffect(() => {
+    if (fitOnAdd > lastCount.current) {
+      retry();
+      setRequest({ padding: 0.22, duration: 200 });
+    }
+    lastCount.current = fitOnAdd;
+  }, [fitOnAdd, retry]);
+  useEffect(() => {
+    if (exhausted) setRequest(null);
+  }, [exhausted]);
   useEffect(() => {
     const surface = trigger?.closest(".react-flow");
-    if (!initialized || !flow.viewportInitialized || !surface || framed.current) {
+    if (!ready || !visible || !flow.viewportInitialized || !surface || (!request && framed.current)) {
       return undefined;
     }
     let frame;
@@ -101,11 +112,16 @@ function useInitialGraphView(flow, trigger) {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const box = surface.getBoundingClientRect();
-        if (!framed.current && box.width > 0 && box.height > 0) {
-          const nodes = flow.getNodes().filter((node) => !node.hidden).map((node) => flow.getInternalNode(node.id));
-          flow.setViewport(initialGraphViewport(getNodesBounds(nodes), box.width, box.height))
-            .then((applied) => { framed.current = applied; });
-        }
+        const nodes = measuredGraphNodes(list, flow.getInternalNode);
+        if ((!request && framed.current) || !nodes || box.width <= 0 || box.height <= 0) return;
+        if (nodes.length === 0) return setRequest(null);
+        const apply = request ? flow.fitView({ ...request, nodes })
+          : flow.setViewport(initialGraphViewport(getNodesBounds(nodes), box.width, box.height));
+        apply.then((applied) => {
+          if (!applied) return;
+          framed.current = true;
+          setRequest((current) => current === request ? null : current);
+        });
       });
     };
     const observer = new ResizeObserver(arrange);
@@ -115,18 +131,27 @@ function useInitialGraphView(flow, trigger) {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [flow, initialized, trigger]);
+  }, [flow, ready, visible, trigger, list, request]);
+  return {
+    onFit: () => {
+      retry();
+      setRequest({ padding: 0.22, maxZoom: 1 });
+    },
+    pending: request !== null && !exhausted,
+    exhausted,
+  };
 }
 
-function GraphCamera() {
+function GraphCamera({ onFit, pending, exhausted }) {
   const flow = useReactFlow();
   const { zoom } = useViewport();
   return h(Panel, { position: "bottom-right", className: "graph-camera" },
-    h("div", { role: "group", "aria-label": "Graph view controls" },
+    h("div", { role: "group", "aria-label": "Graph view controls", "aria-busy": pending || undefined },
       h("button", { type: "button", "aria-label": "Zoom out", disabled: zoom <= 0.2, onClick: () => flow.zoomOut() }, "-"),
       h("button", { type: "button", className: "graph-zoom-value", "aria-label": "Actual size",
         title: "Actual size", onClick: () => flow.zoomTo(1) }, `${Math.round(zoom * 100)}%`),
       h("button", { type: "button", "aria-label": "Zoom in", disabled: zoom >= 3, onClick: () => flow.zoomIn() }, "+"),
-      h("button", { type: "button", "aria-label": "Fit graph", onClick: () => flow.fitView({ padding: 0.22, maxZoom: 1 }) }, "Fit")),
-    h("p", { className: "graph-help" }, "Drag to pan. Scroll to zoom."));
+      h("button", { type: "button", "aria-label": "Fit graph", onClick: onFit }, "Fit")),
+    h("p", { className: "graph-help", role: exhausted ? "status" : undefined },
+      exhausted ? "Some nodes could not be measured. Fit to retry." : "Drag to pan. Scroll to zoom."));
 }

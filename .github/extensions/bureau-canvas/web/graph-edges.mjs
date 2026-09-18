@@ -1,7 +1,7 @@
 // What a React Flow surface can be expected to draw, for the surfaces here to
 // publish about themselves.
 //
-// Separate from `graph-measure.mjs` because that module is a React component
+// Separate from `graph-measure.mjs` because that module uses React hooks
 // and this is a pure count: the offline suite holds the rule without a browser
 // and without a renderer.
 
