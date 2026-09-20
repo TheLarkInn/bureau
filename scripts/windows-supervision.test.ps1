@@ -38,6 +38,35 @@ function New-TestProcessInfo {
     return $info
 }
 
+function Get-TestNodePath {
+    return @(Get-Command node -CommandType Application -ErrorAction Stop)[0].Source
+}
+
+function Test-NodeDiscovery {
+    $savedPath = $env:PATH
+    $savedExtensions = $env:PATHEXT
+    $first = [IO.Path]::Combine($script:Scratch, 'first-node')
+    $second = [IO.Path]::Combine($script:Scratch, 'second-node')
+    foreach ($directory in @($first, $second)) {
+        $null = [IO.Directory]::CreateDirectory($directory)
+        [IO.File]::WriteAllBytes([IO.Path]::Combine($directory, 'node.exe'), [byte[]]::new(0))
+    }
+    try {
+        $env:PATH = "$first;$second"
+        $env:PATHEXT = '.EXE'
+        Assert-Test (@(Get-Command node -CommandType Application).Count -eq 2) 'multiple Node candidates are actually discovered'
+        $selected = Get-TestNodePath
+        Assert-Test ($selected -is [string] -and $selected -ceq [IO.Path]::Combine($first, 'node.exe')) 'Node selection preserves first PATH match'
+        $info = New-TestProcessInfo @($script:TestFile, '-Mode', 'worker', '-NodePath', $selected)
+        Assert-Test ($info.ArgumentList.Count -eq 8 -and $info.ArgumentList[7] -ceq $selected) 'worker receives one Node path without array concatenation'
+        $env:PATH = $second
+        Assert-Test ((Get-TestNodePath) -ceq [IO.Path]::Combine($second, 'node.exe')) 'single Node candidate remains supported'
+    } finally {
+        $env:PATH = $savedPath
+        $env:PATHEXT = $savedExtensions
+    }
+}
+
 function Test-FixtureMutexHeld {
     $mutex = [Threading.Mutex]::new($false, 'Global\BureauMaintenanceOwner')
     try {
@@ -740,8 +769,8 @@ function Get-TestNodeVersion {
     try {
         if (!$process.WaitForExit(5000)) { throw 'Node version probe exceeded five seconds' }
         $version = $output.GetAwaiter().GetResult().Trim()
-        Assert-Test ($process.ExitCode -eq 0 -and $version.Length -gt 0 -and
-            $errors.GetAwaiter().GetResult().Length -eq 0) 'tested Node reports its version'
+        Assert-Test ($process.ExitCode -eq 0 -and $version -cmatch '\Av24\.\d+\.\d+\z' -and
+            $errors.GetAwaiter().GetResult().Length -eq 0) 'tested Node is the declared version 24 runtime'
         return $version
     } finally {
         if (!$process.HasExited) { $process.Kill(); $null = $process.WaitForExit(1000) }
@@ -944,6 +973,7 @@ function Invoke-TestWorker {
             . ([scriptblock]::Create($bundle.Texts[$name]))
         }
         Add-Type -TypeDefinition ($bundle.Texts['HostNative.cs'] + "`n" + $bundle.Texts['HostProbe.cs'])
+        Test-NodeDiscovery
         Test-ResourceLayouts
         Test-ExactProtocolText
         Test-ExactConfigText
@@ -986,7 +1016,7 @@ function Invoke-TestWorker {
 }
 
 function Invoke-BoundedTestWorker {
-    $node = (Get-Command node -CommandType Application -ErrorAction Stop).Source
+    $node = Get-TestNodePath
     $process = [Diagnostics.Process]::Start((New-TestProcessInfo @($script:TestFile, '-Mode', 'worker', '-NodePath', $node)))
     $output = $process.StandardOutput.ReadToEndAsync()
     $errors = $process.StandardError.ReadToEndAsync()
