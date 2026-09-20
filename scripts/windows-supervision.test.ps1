@@ -694,11 +694,16 @@ function Test-DrainEvidence {
 }
 
 function New-TestNativeEffects {
-    param($Probe, $Config, [string] $FixtureMode)
-    $record = @{ Starts = 0; Process = $null; ExitCode = $null }
+    param($Probe, $Config, [string] $FixtureMode, [int] $StartupDelayMilliseconds = 0)
+    $record = @{ Starts = 0; Process = $null; ExitCode = $null; DrainClock = $null }
     $native = [Diagnostics.ProcessStartInfo]::new()
     $native.FileName = $script:Node
     $native.WorkingDirectory = $script:Root
+    if ($StartupDelayMilliseconds -gt 0) {
+        $delay = "await new Promise(resolve => setTimeout(resolve, $StartupDelayMilliseconds));"
+        $native.ArgumentList.Add('--import')
+        $native.ArgumentList.Add('data:text/javascript,' + [Uri]::EscapeDataString($delay))
+    }
     $fixture = [IO.Path]::Combine($script:Root, 'scripts\supervision-drain-fixture.mjs')
     foreach ($value in @($fixture, 'client', $Config.commit, $FixtureMode)) { $native.ArgumentList.Add($value) }
     $start = {
@@ -716,33 +721,69 @@ function New-TestNativeEffects {
         $record.Process = [Diagnostics.Process]::Start($native)
         return $record.Process
     }.GetNewClosure()
+    $drain = {
+        $record.DrainClock = [Diagnostics.Stopwatch]::StartNew()
+        return $record.DrainClock
+    }.GetNewClosure()
     return @{ NewProbe = { param($config) $Probe }.GetNewClosure(); StartClient = $start;
-        StopRequested = { $false }; NewDrainClock = { [Diagnostics.Stopwatch]::StartNew() }; Record = $record }
+        StopRequested = { $false }; NewDrainClock = $drain; Record = $record }
+}
+
+function Get-TestNodeVersion {
+    $info = New-BureauStartInfo (New-TestConfig)
+    $info.FileName = $script:Node
+    $info.ArgumentList.Clear()
+    $info.ArgumentList.Add('--version')
+    $process = [Diagnostics.Process]::Start($info)
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $errors = $process.StandardError.ReadToEndAsync()
+    try {
+        if (!$process.WaitForExit(5000)) { throw 'Node version probe exceeded five seconds' }
+        $version = $output.GetAwaiter().GetResult().Trim()
+        Assert-Test ($process.ExitCode -eq 0 -and $version.Length -gt 0 -and
+            $errors.GetAwaiter().GetResult().Length -eq 0) 'tested Node reports its version'
+        return $version
+    } finally {
+        if (!$process.HasExited) { $process.Kill(); $null = $process.WaitForExit(1000) }
+        $process.Dispose()
+    }
+}
+
+function Test-NativeDrainCase {
+    param([string] $FixtureMode, [int] $StartupDelayMilliseconds = 0)
+    $config = New-TestConfig
+    $probe = New-TestProbe $config 'throw' 4
+    # The producer uses 20 ms intervals; real samples still take less than the 2-second bound.
+    $probe.DelayMilliseconds = 650
+    $effects = New-TestNativeEffects $probe $config $FixtureMode $StartupDelayMilliseconds
+    $probe | Add-Member NoteProperty NativeRecord $effects.Record
+    $probe | Add-Member ScriptMethod Dispose {
+        $this.Disposed = $true
+        $this.NativeRecord.ExitCode = $this.NativeRecord.Process.ExitCode
+    } -Force
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $result = Invoke-BureauSupervisor $config $effects $script:NativeBudget
+    $totalMilliseconds = $clock.ElapsedMilliseconds
+    $drainMilliseconds = $null
+    if ($null -ne $effects.Record.DrainClock) { $drainMilliseconds = $effects.Record.DrainClock.ElapsedMilliseconds }
+    [Console]::WriteLine("TIMING actual-native-$FixtureMode startupDelayMs=$StartupDelayMilliseconds totalMs=$totalMilliseconds drainMs=$drainMilliseconds")
+    Assert-Test ($result.Spawned -and !$result.Success -and
+        $result.Drained -eq ($FixtureMode -eq 'drained')) "actual native $FixtureMode drain evidence with retained failure"
+    Assert-Test ($effects.Record.Starts -eq 1 -and $effects.Record.ExitCode -eq 1) "actual native $FixtureMode exits one without restart"
+    Assert-Test ($probe.Count -ge 4) "actual native $FixtureMode accepted starting and running heartbeats before EOF"
+    Assert-Test ($null -ne $drainMilliseconds) 'actual supervisor drain clock was recorded'
+    if ($FixtureMode -eq 'drained') { Assert-Test ($drainMilliseconds -lt 10000) 'actual confirmed drain skips the fallback' }
+    else { Assert-Test ($drainMilliseconds -ge 25000 -and $drainMilliseconds -lt 35000) 'actual missing proof retains the owner through the real drain deadline' }
+    if ($StartupDelayMilliseconds -gt 0) { Assert-Test ($totalMilliseconds -gt 10000) 'permitted slow startup does not consume the confirmed-drain budget' }
+    [Console]::WriteLine("PASS actual-native-$FixtureMode startupDelayMs=$StartupDelayMilliseconds")
 }
 
 function Test-NativeDrainProducer {
     Assert-Test ([IO.Path]::IsPathFullyQualified($script:Node) -and [IO.File]::Exists($script:Node)) 'absolute installed Node is available'
-    foreach ($mode in @('drained', 'unconfirmed')) {
-        $config = New-TestConfig
-        $probe = New-TestProbe $config 'throw' 4
-        # The producer uses 20 ms intervals; real samples still take less than the 2-second bound.
-        $probe.DelayMilliseconds = 650
-        $effects = New-TestNativeEffects $probe $config $mode
-        $probe | Add-Member NoteProperty NativeRecord $effects.Record
-        $probe | Add-Member ScriptMethod Dispose {
-            $this.Disposed = $true
-            $this.NativeRecord.ExitCode = $this.NativeRecord.Process.ExitCode
-        } -Force
-        $clock = [Diagnostics.Stopwatch]::StartNew()
-        $result = Invoke-BureauSupervisor $config $effects $script:NativeBudget
-        Assert-Test ($result.Spawned -and !$result.Success -and
-            $result.Drained -eq ($mode -eq 'drained')) "actual native $mode drain evidence with retained failure"
-        Assert-Test ($effects.Record.Starts -eq 1 -and $effects.Record.ExitCode -eq 1) "actual native $mode exits one without restart"
-        Assert-Test ($probe.Count -ge 4) "actual native $mode accepted starting and running heartbeats before EOF"
-        if ($mode -eq 'drained') { Assert-Test ($clock.ElapsedMilliseconds -lt 10000) 'actual confirmed drain skips the fallback' }
-        else { Assert-Test ($clock.ElapsedMilliseconds -ge 25000 -and $clock.ElapsedMilliseconds -lt 35000) 'actual missing proof retains the owner through the real drain deadline' }
-        [Console]::WriteLine("PASS actual-native-$mode")
-    }
+    [Console]::WriteLine("NODE executable=$script:Node version=$(Get-TestNodeVersion)")
+    Test-NativeDrainCase 'drained'
+    Test-NativeDrainCase 'unconfirmed'
+    Test-NativeDrainCase 'drained' 8500
 }
 
 function Test-MonitorFailures {
