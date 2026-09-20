@@ -1,0 +1,54 @@
+name: Windows supervision
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Exercise the foreground Windows supervisor offline
+        shell: pwsh
+        run: ./scripts/windows-supervision.test.ps1
+
+  systemd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
+      - name: Exercise isolated systemd lifetime and cgroup semantics
+        env:
+          FIXTURE: /run/bureau-supervision-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          sudo systemd-run --wait --pipe --collect \
+            --unit="bureau-supervision-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --property=MemoryMax=256M --property=MemorySwapMax=0 --property=CPUQuota=100% \
+            --property=TasksMax=64 --property=RuntimeMaxSec=300s --property=TimeoutStopSec=3s \
+            --property=KillMode=control-group --property=PrivateNetwork=yes --property=LimitCORE=0 \
+            /usr/bin/env -i PATH=/usr/bin:/bin GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            "$(command -v node)" "$GITHUB_WORKSPACE/scripts/qualify-windows-systemd.mjs" "$FIXTURE"
+      - name: Confirm and clean only test-owned units
+        if: always()
+        env:
+          FIXTURE: /run/bureau-supervision-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          sudo env -i PATH=/usr/bin:/bin GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            "$(command -v node)" "$GITHUB_WORKSPACE/scripts/qualify-windows-systemd.mjs" --cleanup "$FIXTURE"

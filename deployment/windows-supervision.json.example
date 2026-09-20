@@ -1,0 +1,8 @@
+{
+  "schema": "bureau-native-supervision-v1",
+  "approved": false,
+  "commit": "REPLACE_WITH_REVIEWED_FULL_COMMIT",
+  "bureau_sha256": "REPLACE_WITH_QUALIFIED_BINARY_SHA256",
+  "node_path": "REPLACE_WITH_QUALIFIED_CANONICAL_NODE_24_PATH",
+  "node_sha256": "REPLACE_WITH_QUALIFIED_NODE_24_SHA256"
+}

@@ -1,0 +1,5 @@
+{
+  "schema": "bureau-native-budget-v1",
+  "engineMemoryMaxBytes": 8589934592,
+  "guardianMemoryMaxBytes": 134217728
+}

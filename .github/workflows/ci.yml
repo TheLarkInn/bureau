@@ -75,10 +75,16 @@ jobs:
     with:
       ref: ${{ needs.source.outputs.sha }}
 
+  supervision:
+    needs: source
+    uses: ./.github/workflows/windows-supervision.yml
+    with:
+      ref: ${{ needs.source.outputs.sha }}
+
   checks:
     name: All checks passed
     if: always()
-    needs: [source, lint, matrix, visual, binaries, site]
+    needs: [source, lint, matrix, visual, binaries, site, supervision]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
