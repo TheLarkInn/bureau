@@ -1,0 +1,6 @@
+repos:
+  code:
+    url: https://dev.azure.com/example-org/ExampleProject/_git/example-repo
+    forge: ado
+    access: push
+    credential: ado-work

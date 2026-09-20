@@ -94,6 +94,46 @@ test("service and container use the same single owner and explicit maintenance-o
   assert.doesNotMatch(launcher, /\brm\b|repair|git clean|truncate/u);
 });
 
+test("managed runtime preserves operator-owned executable ancestors and explicit writable state", async () => {
+  const service = await read("deployment/bureau-maintenance.service");
+  const compose = await read("deployment/compose.yaml");
+  const values = (name) => [...service.matchAll(new RegExp(`^${name}=(.*)$`, "gmu"))]
+    .flatMap((match) => match[1].split(/\s+/u));
+  const runtime = "/var/lib/bureau-maintenance-runtime";
+  assert.deepEqual(values("StateDirectory"), ["bureau-maintenance"]);
+  assert.equal(values("Environment").includes(`COPILOT_HOME=${runtime}/copilot`), true);
+  assert.deepEqual(values("ReadWritePaths"), ["copilot", "logs", "tmp"].map((name) => `${runtime}/${name}`));
+  assert.deepEqual(values("ProtectSystem"), ["strict"]);
+  assert.match(compose, /COPILOT_HOME: \/var\/lib\/bureau-maintenance-runtime\/copilot/u);
+  assert.match(compose, /bureau-maintenance-runtime:\/var\/lib\/bureau-maintenance-runtime:ro/u);
+  for (const name of ["copilot", "logs", "tmp"]) {
+    assert.equal(compose.includes(`bureau-maintenance-${name}:${runtime}/${name}`), true);
+  }
+});
+
+test("service and container select the same immutable Rust homes with no network or auto-install", async () => {
+  const service = await read("deployment/bureau-maintenance.service");
+  const compose = await read("deployment/compose.yaml");
+  const policy = JSON.parse(await read("deployment/maintenance-policy.json"));
+  const environment = {
+    PATH: `${policy.rust_bin}:/opt/bureau/bin:/usr/local/bin:/usr/bin:/bin`,
+    RUSTUP_HOME: policy.rustup_home, CARGO_HOME: policy.cargo_home,
+    CARGO_NET_OFFLINE: "true", RUSTUP_AUTO_INSTALL: "0",
+  };
+  for (const [key, value] of Object.entries(environment)) {
+    assert.equal(service.includes(`Environment=${key}=${value}\n`), true);
+    assert.match(compose, new RegExp(`^      ${key}: "?${value}"?$`, "mu"));
+  }
+  for (const text of [service, compose]) assert.doesNotMatch(text, /RUSTUP_TOOLCHAIN|RUSTFLAGS|DYLINT_DRIVER_PATH/u);
+  const checks = await read("scripts/maintenance-checks.mjs");
+  assert.match(checks, /await requirePreparedRust\(root, policy\)/u);
+  assert.match(checks, /CARGO_HOME: policy\.cargo_home, RUSTUP_HOME: policy\.rustup_home/u);
+  const launcher = await read("deployment/run-owner.sh");
+  assert.match(launcher, /BUREAU_RUST_IDENTITY="\$\(node deployment\/check\.mjs --home "\$BUREAU_HOME" --runtime-identity\)"\nexport BUREAU_RUST_IDENTITY/u);
+  assert.doesNotMatch(launcher, /export BUREAU_RUST_IDENTITY=/u);
+  for (const text of [service, compose]) assert.doesNotMatch(text, /BUREAU_RUST_IDENTITY/u);
+});
+
 test("durable admission rejects temporary/Windows filesystems and tool writability", () => {
   for (const type of [0xef53, 0x58465342, 0x9123683e]) assert.equal(durableFilesystem(type), true);
   for (const type of [0x01021994, 0x01021997, 0x794c7630, 0, NaN]) assert.equal(durableFilesystem(type), false);

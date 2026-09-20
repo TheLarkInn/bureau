@@ -10,7 +10,7 @@ use bureau::config::{ActivatedConfig, Config};
 use bureau::contract::StepOutcome;
 use bureau::runlog;
 use bureau::state::Store;
-use bureau::watch::Roots;
+use bureau::watch::{self, Frame, Roots};
 
 static NEXT_DIR: AtomicU32 = AtomicU32::new(0);
 
@@ -52,6 +52,19 @@ impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// Loads a frame without changing even unreadable database bytes.
+///
+/// # Panics
+/// Panics when the fixture cannot be read or watch changes its database.
+#[must_use]
+pub fn load_read_only(roots: &Roots) -> Frame {
+    let before = std::fs::read(&roots.state).expect("database before watch");
+    let frame = watch::load(roots, None, 16, 1_000_000);
+    let after = std::fs::read(&roots.state).expect("database after watch");
+    assert_eq!(after, before, "watch must not migrate or repair state");
+    frame
 }
 
 /// One event line with a fixed clock, the way events.jsonl stores it.
@@ -168,7 +181,8 @@ fn write(dir: &Path, name: &str, text: &str) {
     std::fs::write(path, text).expect("write fixture");
 }
 
-/// state.db: two recorded runs at $3 each and one live lease on `demo`.
+/// Two completed runs at $3 each plus a distinct unfinished admission on `demo`.
+/// The live claim is a third rate charge, but has no terminal cost yet.
 ///
 /// # Panics
 /// Panics when the store cannot be opened or written.

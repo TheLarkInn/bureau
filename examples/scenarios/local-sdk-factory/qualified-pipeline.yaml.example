@@ -1,0 +1,59 @@
+# INCOMPLETE: not loaded while named .example. The placeholder digests are
+# deliberately invalid. No SDK release mapping or live entitlement is claimed.
+# After qualification, replace pipelines/local-sdk-factory.yaml in a reviewed PR.
+name: local-sdk-factory
+steps:
+  - name: review
+    type: agent
+    role: factory-reviewer
+    copilot_factory:
+      name: review
+      extension: project:review
+      extension_digest: "REPLACE_WITH_ACTUAL_PROVIDER_TREE_DIGEST"
+      model_credential: copilot-model
+      metadata: factory.json
+      runtime:
+        profile: copilot-sdk-factory-v1
+        directory: /opt/qualified-copilot
+        digest: "REPLACE_WITH_ACTUAL_RUNTIME_TREE_DIGEST"
+        version: "REPLACE_WITH_EXACT_CONNECT_VERSION"
+        executable: bin/node
+        cli: dist/index.js
+        dist: dist
+      args: null # Or { focus: "Check the supplied interface contract." }.
+      limits:
+        max_concurrent_subagents: 2
+        max_total_subagents: 4
+        timeout_seconds: 120
+        max_ai_credits: 1.5
+    timeout_secs: 180
+    next: verify
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: verify
+  - name: verify
+    type: deterministic
+    run: "git diff --check"
+    timeout_secs: 30
+    next: validate-review
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: validate-review
+    type: deterministic
+    inputs_from: [review]
+    run: |
+      python3 -c '
+      import json, sys
+      review = json.load(sys.stdin)["inputs"]["review"]
+      if not isinstance(review, str) or not review.strip():
+          raise SystemExit("qualified factory must return a nonempty outputs.review string")
+      print(json.dumps({"schema": "v2", "outcome": "blocked", "trust": "derived",
+          "outputs": {"review": review}, "artifacts": [],
+          "message": "Qualified local factory review requires human action: " + review}))
+      '
+    timeout_secs: 30
+    next: escalate
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: escalate

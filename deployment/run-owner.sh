@@ -8,7 +8,8 @@ set -euo pipefail
 [[ "$BUREAU_CONFIG_COMMIT" =~ ^[a-f0-9]{40}$ ]] || { echo "config commit must be a full SHA" >&2; exit 1; }
 [[ "$(git -c safe.directory=/opt/bureau/source rev-parse HEAD)" == "$BUREAU_CONFIG_COMMIT" ]] || { echo "installed source differs from the reviewed commit" >&2; exit 1; }
 
-node deployment/check.mjs --home "$BUREAU_HOME"
+BUREAU_RUST_IDENTITY="$(node deployment/check.mjs --home "$BUREAU_HOME" --runtime-identity)"
+export BUREAU_RUST_IDENTITY
 /opt/bureau/bin/bureau validate .bureau/maintenance
 
 # All supported service/container starts take the same external flock. Never

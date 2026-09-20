@@ -17,7 +17,7 @@ import { test as base } from "@playwright/test";
 import { collect, CONTRAST, deadlineVerdict, measureFor, phrasesFor, selectorsFor, SETTLE_BUDGET_MS, SETTLE_REPEATS, settleStep, undrawnFor, undrawnLooks, verdict } from "../../web/statelab/checks.mjs";
 import { assertAdapter, PUBLISH_EVENT, runPath } from "../../web/statelab/driver.mjs";
 import { renderPath } from "../../web/statelab/registry.mjs";
-import { BLOCKED_PREFLIGHT, isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
+import { BLOCKED_PREFLIGHT, isPreflight, offeredAsLive, PASS_STARTED, reachesHost, refusalFor, runListingFailed, setRunListingFailure, withoutPassRun, withPassRun } from "../../web/statelab/intercept.mjs";
 import { staging } from "./gallery-paths.mjs";
 import { holdOffline, offlineFindings } from "./offline.mjs";
 
@@ -112,7 +112,7 @@ export const test = base.extend({
   host: [
     async ({}, use) => {
       const { child, url } = await bootCanvas();
-      const base = await fetch(new URL("/state", url)).then((response) => response.json());
+      const base = await fetch(new URL("/sample", url)).then((response) => response.json());
       await mkdir(galleryDir(), { recursive: true });
       await use({ url, base });
       child.kill("SIGTERM");
@@ -252,6 +252,7 @@ export function pageAdapter(page, host) {
     select: (selector, value) => page.locator(selector).first().selectOption(String(value)),
     press: (selector, key) => page.locator(selector).first().press(key),
     drag: (selector, dx, dy) => dragBy(page, selector, dx, dy),
+    failRuns: () => page.evaluate(setRunListingFailure, true),
     wait: (selector) => page.locator(selector).first().waitFor({ state: "visible" }),
     present: (selector) => page.locator(selector).first().waitFor({ state: "attached" }),
     waitGone: (selector) => page.locator(selector).first().waitFor({ state: "hidden" }),
@@ -377,16 +378,13 @@ async function intercept(page, kind) {
     "stall-runs": () => page.route(/\/runs$/u, () => {}),
     "fail-runs": () => page.route(/\/runs$/u, (route) =>
       route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) })),
-    // Serves the real listing once, then refuses. A run can only be selected
-    // from a listing that answered, so this is the only way to reach the screen
-    // where a run is being watched while the listing has since failed.
-    "fail-runs-later": () => {
-      let served = 0;
-      return page.route(/\/runs$/u, (route) => {
-        served += 1;
-        return served === 1
-          ? route.continue()
-          : route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) });
+    // The path switches phase only after selecting and observing the run.
+    "fail-runs-later": async () => {
+      await page.addInitScript(setRunListingFailure, false);
+      return page.route(/\/runs$/u, async (route) => {
+        return await page.evaluate(runListingFailed)
+          ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "run listing unavailable" }) })
+          : route.continue();
       });
     },
     "stall-intent": () => page.route(/\/intent$/u, (route) => writes(route) || route.fallback()),
@@ -701,7 +699,11 @@ async function sample(state, page) {
     ({ source, request }) => new Function(`return (${source})`)()(document, request),
     { source: collect.toString(), request: { selectors: selectorsFor(state), measure: measureFor(state), contrast: CONTRAST, phrases: phrasesFor(state) } },
   );
-  return { snapshot, failures: [...heldWrites(page), ...leftTheMachine(page), ...verdict(state, snapshot, { slack: 2 })] };
+  return { snapshot, failures: [...isolationFindings(page), ...verdict(state, snapshot, { slack: 2 })] };
+}
+
+export function isolationFindings(page) {
+  return [...heldWrites(page), ...leftTheMachine(page)];
 }
 
 /**

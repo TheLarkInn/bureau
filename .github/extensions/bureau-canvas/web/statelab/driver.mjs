@@ -5,8 +5,8 @@
 // suite drives a Playwright page. Both call `runPath` with an adapter, so the
 // two hosts cannot drift: there is no second notion of how a state is reached.
 //
-// The adapter is deliberately tiny — nine verbs, all of which a plain DOM and
-// a Playwright page can both honour.
+// The adapter shares interaction verbs and explicit network-condition changes
+// between the DOM frame and Playwright.
 
 import { applyFixture } from "./fixtures.mjs";
 
@@ -14,7 +14,7 @@ import { applyFixture } from "./fixtures.mjs";
  * Executes one entry path.
  *
  * @param ops      the state's `ops` array
- * @param adapter  { goto, publish, click, fill, select, press, drag, wait, waitGone }
+ * @param adapter  implementation of ADAPTER_VERBS
  * @param base     the payload `GET /state` returned, which fixtures project
  */
 export async function runPath(ops, adapter, base) {
@@ -39,6 +39,7 @@ const HANDLERS = {
   select: (op, adapter) => adapter.select(op.selector, op.value),
   press: (op, adapter) => adapter.press(op.selector, op.value),
   drag: (op, adapter) => adapter.drag(op.selector, op.dx, op.dy),
+  failRuns: (_op, adapter) => adapter.failRuns(),
   wait: (op, adapter) => adapter.wait(op.selector),
   present: (op, adapter) => adapter.present(op.selector),
   waitGone: (op, adapter) => adapter.waitGone(op.selector),
@@ -53,7 +54,7 @@ const HANDLERS = {
  * host's auto-retry. Both adapters must honour it, or the lab would pass
  * states the browser suite fails.
  */
-export const ADAPTER_VERBS = ["goto", "publish", "click", "fill", "select", "press", "drag", "wait", "present", "waitGone"];
+export const ADAPTER_VERBS = ["goto", "publish", "click", "fill", "select", "press", "drag", "failRuns", "wait", "present", "waitGone"];
 
 /**
  * The verbs that wait for the page rather than advancing the path.

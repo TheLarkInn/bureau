@@ -52,8 +52,8 @@ async function readText(path, maximum) {
   return new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedFile(path, maximum));
 }
 
-export async function filesystemSnapshot(path, {
-  openPath = open, read = readText, capacity = statfs,
+export async function descriptorSnapshot(path, {
+  openPath = open, read = readText, observe = () => undefined,
 } = {}) {
   const handle = await openPath(path, PATH_FLAGS);
   try {
@@ -62,25 +62,33 @@ export async function filesystemSnapshot(path, {
       handle.stat({ bigint: true }),
       read(`/proc/self/fdinfo/${handle.fd}`, 8192),
       read("/proc/self/mountinfo", 1024 * 1024),
-      capacity(`/proc/self/fd/${handle.fd}`, { bigint: true }),
+      observe(handle),
     ]);
     const failure = observations.find((observed) => observed.status === "rejected");
     if (failure) throw failure.reason;
-    const [metadata, info, mounts, fs] = observations.map((observed) => observed.value);
-    requireValue(metadata.isDirectory() && !metadata.isSymbolicLink(),
-      "capacity path must be an existing non-symlink directory");
-    requireValue(typeof metadata.dev === "bigint" && metadata.dev >= 0n,
-      "filesystem device identity is unobservable");
-    requireValue(typeof fs.bavail === "bigint" && fs.bavail >= 0n
-      && typeof fs.bsize === "bigint" && fs.bsize > 0n
-      && typeof fs.type === "bigint", "filesystem capacity is unobservable");
-    const bytes = fs.bavail * fs.bsize;
-    requireValue(bytes <= BigInt(Number.MAX_SAFE_INTEGER)
-      && Number.isSafeInteger(Number(fs.type)), "filesystem capacity exceeds the safe numeric range");
+    const [metadata, info, mounts, observation] = observations.map((observed) => observed.value);
     const mountId = descriptorMountId(info);
-    return { path, free: Number(bytes), type: Number(fs.type), device: String(metadata.dev),
-      mountId, readOnly: readOnlyMount(mounts, path, mountId) };
+    return { metadata, observation, mountId, readOnly: readOnlyMount(mounts, path, mountId) };
   } finally {
     await handle.close();
   }
+}
+
+export async function filesystemSnapshot(path, {
+  openPath = open, read = readText, capacity = statfs,
+} = {}) {
+  const { metadata, observation: fs, mountId, readOnly } = await descriptorSnapshot(path, {
+    openPath, read, observe: (handle) => capacity(`/proc/self/fd/${handle.fd}`, { bigint: true }),
+  });
+  requireValue(metadata.isDirectory() && !metadata.isSymbolicLink(),
+    "capacity path must be an existing non-symlink directory");
+  requireValue(typeof metadata.dev === "bigint" && metadata.dev >= 0n,
+    "filesystem device identity is unobservable");
+  requireValue(typeof fs.bavail === "bigint" && fs.bavail >= 0n
+    && typeof fs.bsize === "bigint" && fs.bsize > 0n
+    && typeof fs.type === "bigint", "filesystem capacity is unobservable");
+  const bytes = fs.bavail * fs.bsize;
+  requireValue(bytes <= BigInt(Number.MAX_SAFE_INTEGER)
+    && Number.isSafeInteger(Number(fs.type)), "filesystem capacity exceeds the safe numeric range");
+  return { path, free: Number(bytes), type: Number(fs.type), device: String(metadata.dev), mountId, readOnly };
 }

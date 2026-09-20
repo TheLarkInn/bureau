@@ -225,6 +225,24 @@ Scheduler state stores exactly two things:
 
 Plus run logs and label-rule audit events, which are records, not scheduler state.
 
+Rate counters retain one admission record per durable run identity, committed
+atomically with the winning lease. This is budget-accounting evidence, not
+pending work: it has no queue position, retry plan, or scheduling decision.
+Lease renewal, expiry, release, and same-run recovery never erase or retime an
+admission. Hourly and daily limits therefore apply independently of concurrency
+and terminal completion; terminal cost projection must not charge the run twice.
+Standing reconciliation checks seen-content eligibility inside that same claim
+fence, before committing a lease or rate charge. Already-seen work must not consume
+the rate budget of later fresh work. Explicit `run` and `retry` retain their
+ability to repeat seen content; committed admissions are never refunded afterward.
+
+Legacy completed counters retain their recorded times. Upgrade retains every
+remaining legacy lease, including expired leases; an unknown admission time is
+conservatively charged at first migration observation, never inferred from lease
+expiry or replaced with zero. Ambiguous synthetic identities from older tables
+remain separately counted. Read-only legacy views do not migrate and conservatively
+include retained leases until a writable open establishes durable accounting.
+
 ---
 
 ## 5. Configuration is git
@@ -1187,6 +1205,13 @@ three credential sources, optional user-global plugin installation, and a
 fixed or AI-authored first pipeline. It previews and validates config, creates
 a config PR, waits for merge, validates the merged commit, runs one reconcile
 pass, and waits for its outcomes. It never runs unmerged config.
+
+`init --print-template` is an authoring-only alternative to `--from`: emit
+an editable initialization request to stdout and exit without discovering
+local state, resolving credentials, installing plugins, contacting a forge,
+or starting work. The modes are mutually exclusive. Shell redirection is
+the operator's file write, not an initialization effect. A fixed pipeline's
+writable step still reaches deterministic verification after `no-work`.
 
 `doctor` checks local state, config, repos, credentials, adapters, plugins/MCP,
 and recovery state. `repair` may restore directories/permissions, disposable

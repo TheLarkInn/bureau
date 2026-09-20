@@ -21,7 +21,9 @@ import {
   READ_INTENTS,
   reachesHost,
   refusalFor,
+  runListingFailed,
   servableInFrame,
+  setRunListingFailure,
   withoutPassRun,
   withPassRun,
 } from "../web/statelab/intercept.mjs";
@@ -164,6 +166,27 @@ test("every intercept the registry asks for is one this module names", () => {
       preSurface: ["block-editor-renderer", "block-renderer", "stall-state"],
     },
   );
+});
+
+test("late listing failure waits for an explicit phase, not Operations or pipeline reads", async () => {
+  const win = windowStub();
+  installIntercept(win, "fail-runs-later");
+  for (const phase of ["Operations", "pipeline", "Live before selection"]) {
+    assert.equal((await win.fetch("./runs")).native, true, phase);
+  }
+  setRunListingFailure(true, win);
+  for (const phase of ["selected run", "subsequent refresh"]) {
+    const response = await win.fetch("./runs");
+    assert.deepEqual([response.status, await response.json()], [503, { error: "run listing unavailable" }], phase);
+  }
+  assert.equal((await win.fetch("./runs/run-live/events")).native, true);
+});
+
+test("an explicit listing-failure transition requires its installed condition", () => {
+  const win = windowStub();
+  assert.throws(() => setRunListingFailure(true, win), /not initialized/u);
+  assert.throws(() => runListingFailed(win), /not initialized/u);
+  assert.throws(() => setRunListingFailure("failed", win), /must be boolean/u);
 });
 
 test("a held save holds only writes, and lets the two reads through", async () => {

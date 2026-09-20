@@ -8,6 +8,8 @@ use super::super::{Error, Store, now_millis};
 use super::LeaseOwner;
 use crate::runlog::{FactoryHistory, FactorySource};
 
+mod quota;
+
 #[cfg(test)]
 mod tests;
 
@@ -126,6 +128,7 @@ impl Store {
 #[derive(Debug, PartialEq, Eq)]
 pub enum FreshClaim {
     Claimed,
+    /// An existing lease or fenced eligibility check excludes this item.
     Busy,
     PreservedFactory(String),
 }
@@ -157,9 +160,10 @@ impl LeaseOwner {
         ttl: Duration,
         runs: &Path,
         prepared: &mut Option<FactoryHistory>,
+        available: &mut impl FnMut(&Connection, i64) -> Result<bool, Error>,
     ) -> Result<Verification<FreshClaim>, Error> {
         let mut checked = None;
-        let won = self.store.claim_owner_if(self, ttl, |connection, _| {
+        let won = self.store.claim_owner_if(self, ttl, |connection, now| {
             let result = inspect(
                 connection,
                 runs,
@@ -167,12 +171,25 @@ impl LeaseOwner {
                 &self.key.forge,
                 prepared,
             )?;
-            let available = matches!(&result, Verification::Current(work)
+            let unreserved = matches!(&result, Verification::Current(work)
                 if !work.contains_key(&self.key.external_id));
             checked = Some(result);
-            Ok(available)
+            Ok(unreserved && available(connection, now)?)
         })?;
         checked_claim(won, checked, &self.key.external_id)
+    }
+
+    fn claim_fresh_if(
+        &self,
+        ttl: Duration,
+        runs: &Path,
+        mut available: impl FnMut(&Connection, i64) -> Result<bool, Error>,
+        before_replay: impl FnMut(),
+    ) -> Result<FreshClaim, Error> {
+        prepared(
+            |history| self.claim_once(ttl, runs, history, &mut available),
+            before_replay,
+        )
     }
 
     fn claim_fresh_with(
@@ -181,7 +198,7 @@ impl LeaseOwner {
         runs: &Path,
         before_replay: impl FnMut(),
     ) -> Result<FreshClaim, Error> {
-        prepared(|history| self.claim_once(ttl, runs, history), before_replay)
+        self.claim_fresh_if(ttl, runs, |_, _| Ok(true), before_replay)
     }
 
     /// Claims fresh work after exact fenced validation of replay prepared outside the fence.

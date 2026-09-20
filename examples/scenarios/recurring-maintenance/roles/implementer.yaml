@@ -1,0 +1,5 @@
+name: implementer
+agent: /bureau:implementer
+adapter: copilot
+permissions: [repo:read, repo:write, model:invoke]
+min_trust: maintainer

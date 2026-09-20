@@ -1,0 +1,79 @@
+name: failing-test-repair
+steps:
+  - name: reproduce
+    type: deterministic
+    run: |
+      python3 -c '
+      import json, subprocess
+      command = ["cargo", "test", "--offline"]
+      process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+      output = process.stdout
+      print(json.dumps({"schema": "v2", "outcome": "no-work" if process.returncode == 0 else "success",
+          "trust": "derived", "artifacts": [],
+          "outputs": {"test_command": command, "test_exit_code": process.returncode,
+              "test_output": output[-24000:], "output_truncated": len(output) > 24000},
+          "message": "Tests already pass." if process.returncode == 0 else "Reproduced a failing test command; inspect the captured evidence."}))
+      '
+    timeout_secs: 1200
+    next: propose
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: done
+  - name: propose
+    type: agent
+    role: repairer
+    inputs_from: [reproduce]
+    max_attempts: 2
+    timeout_secs: 900
+    next: verify
+    on_failure: propose
+    on_blocked: escalate
+    on_no_work: verify
+  - name: verify
+    type: deterministic
+    inputs_from: [propose]
+    run: |
+      python3 -c '
+      import json, subprocess
+      command = ["cargo", "test", "--offline"]
+      process = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+      output = process.stdout
+      print(json.dumps({"schema": "v2", "outcome": "success" if process.returncode == 0 else "failure",
+          "trust": "derived", "artifacts": [],
+          "outputs": {"test_command": command, "test_exit_code": process.returncode,
+              "test_output": output[-24000:], "output_truncated": len(output) > 24000},
+          "message": "Deterministic test verification completed."}))
+      '
+    max_attempts: 3
+    timeout_secs: 1200
+    next: review
+    on_failure: repair
+    on_blocked: escalate
+    on_no_work: abort
+  - name: repair
+    type: agent
+    role: repairer
+    inputs_from: [verify]
+    max_attempts: 2
+    timeout_secs: 900
+    next: verify
+    on_failure: repair
+    on_blocked: escalate
+    on_no_work: verify
+  - name: review
+    type: agent
+    role: reviewer
+    inputs_from: [propose, repair, verify]
+    timeout_secs: 600
+    next: final-verify
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: final-verify
+  - name: final-verify
+    type: deterministic
+    run: "cargo test --offline"
+    timeout_secs: 1200
+    next: done
+    on_failure: escalate
+    on_blocked: escalate
+    on_no_work: abort

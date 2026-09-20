@@ -195,21 +195,11 @@ export const CONSTRAINTS = [
     holds: (combo) => lifecycleAllows(combo.field, combo.fieldState),
   },
   {
-    id: "a-preflight-answers-with-the-hosts-own-config",
-    kind: "harness",
-    reads: ["field", "section"],
-    title: "The delete preflight cannot be reviewed over an injected config",
-    why: "Opening the preflight is a real intent, and `runCrudIntent` answers even a read-only one by calling `refreshState`, which republishes the host's own state over the SSE channel and replaces the injected payload outright. The host serves a single-assignment sample, so a second card cannot survive to be reviewed here. The screen itself is ordinary — a user with two assignments reaches it — which is why this is a harness rule and not a structural one. It stays an exclusion rather than a suppressed axis because suppressing would let the host's one-card screen pass under the name `two-cards`.",
-    limit: "`extension.mjs` `runCrudIntent` calls `refreshState(entry)` before answering, and the preflight is the one intent in the matrix that reaches the host — `reachesHost` names it a read, so even the two states that route `./intent` to stall or refuse the *confirmed* removal let the unconfirmed one through to be answered.",
-    stands: "surface:config+data:validated+section:stack+card:expanded+field:delete",
-    holds: (combo) => combo.field !== "delete" || combo.section !== "two-cards",
-  },
-  {
     id: "a-second-field-needs-a-first",
     kind: "structural",
     reads: ["field", "fieldPair"],
     title: "A second disclosure needs a first one to sit beside",
-    why: "The axis says whether another field editor is open *as well*. With every field at rest there is no first, so there is nothing to be second to. Delete is excluded because it is not a field editor but a preflight, and answering it makes the host republish its own state over the payload the pair was assembled from.",
+    why: "The axis says whether another field editor is open *as well*. With every field at rest there is no first, so there is nothing to be second to. Delete is a confirmation rather than a field editor, so this editor-pair axis does not apply to it.",
     holds: (combo) => (combo.fieldPair !== "n/a") === PAIRABLE_FIELDS.includes(combo.field),
   },
   {

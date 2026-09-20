@@ -49,7 +49,6 @@ fn command(prepared: &Prepared, scoped: Vec<String>) -> Vec<String> {
             arg
         }
     }));
-    argv.push("--no-auto-update".to_owned());
     argv
 }
 

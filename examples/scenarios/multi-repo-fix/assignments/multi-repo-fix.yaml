@@ -1,0 +1,20 @@
+name: multi-repo-fix
+work:
+  forge: github
+  source: example-org/example-repo
+  filter: "is:issue is:open label:contract-fix -label:bureau:failed -label:bureau:needs-human"
+  approval_label: bureau:approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos: [code, contracts]
+pipeline: multi-repo-fix
+role: context-implementer
+verify: "cargo test --offline"
+branch_prefix: bureau/contract-fix/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 2
+  max_runs_per_day: 4
+  max_open_prs: 2
+  max_cost_per_day_usd: 10
+  max_run_hours: 1

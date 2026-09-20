@@ -148,19 +148,19 @@ test("every count the branch reports about itself is what the registry holds", (
       dimensions: 16,
       dimensionValues: 98,
       combinations: 705438720000,
-      constraintRules: 33,
+      constraintRules: 32,
       structuralRules: 22,
       scopingRules: 7,
-      harnessRules: 4,
-      excludedCombinations: 705438719779,
-      matrixStates: 221,
+      harnessRules: 3,
+      excludedCombinations: 705438719776,
+      matrixStates: 224,
       probes: 51,
-      states: 272,
-      transitions: 149,
-      entryTransitions: 106,
-      returnTransitions: 43,
-      roots: 166,
-      renders: 544,
+      states: 275,
+      transitions: 152,
+      entryTransitions: 107,
+      returnTransitions: 45,
+      roots: 168,
+      renders: 550,
     },
   );
 });
@@ -713,7 +713,7 @@ test("no state is a root merely for how it spelled its fixture", async () => {
  * asserting merely that no root is entered does not, because the all-edges
  * roots are a subset of these and so satisfy it too.
  */
-const ROOT_TALLY = { boot: 4, intercepted: 100, probe: 18, landing: 23, "fixture-differs": 21 };
+const ROOT_TALLY = { boot: 4, intercepted: 102, probe: 18, landing: 23, "fixture-differs": 21 };
 const RETURN_ONLY_ROOTS = 11;
 
 test("every state nothing reaches first is attributed, and the books balance", () => {
@@ -1877,14 +1877,9 @@ function contributesTo(axis, combo) {
  * count is pinned because both lists are empty when nothing is declared at all:
  * without it, a `suppress` that stopped being read would pass as compliance.
  *
- * The third bucket is the one this check found on its first run. A suppression
- * declared by a value the matrix never carries is neither exercised nor stale —
- * it is unreachable, and `field:delete-blocked` is unreachable on purpose:
- * `delete-is-offered-only-where-nothing-refers` excludes its screen by name and
- * `test/preflight.test.mjs` holds the screen instead. Folding it into `stale`
- * would report a rule that is working as a defect; leaving it unnamed would let
- * "no state carries this value" excuse any suppression at all. So it is listed,
- * and a second value dropping out of the matrix has to be added here to pass.
+ * Unrendered suppressions are also rejected. Delete preflights no longer
+ * republish state, so neither their data axis nor an unreachable blocked
+ * preflight needs the old exemption.
  */
 test("every suppression names a real axis and drops something a state was promising", () => {
   const declared = DIMENSIONS.flatMap((dimension) => dimension.values.flatMap(
@@ -1907,7 +1902,7 @@ test("every suppression names a real axis and drops something a state was promis
       stale: audited.filter((entry) => entry.rendered && !entry.drops).map((entry) => entry.where),
       unrendered: audited.filter((entry) => !entry.rendered).map((entry) => entry.where),
     },
-    { declared: 3, unnamedAxis: [], stale: [], unrendered: ["field:delete-blocked → data"] },
+    { declared: 1, unnamedAxis: [], stale: [], unrendered: [] },
   );
 });
 
@@ -3644,7 +3639,7 @@ test("a state rides the route its own source decided, not merely the one its ops
       probes: routesOf(STATES.filter((state) => state.kind === "probe")),
       routed: STATES.filter((state) => state.intercept).length,
     },
-    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 107 },
+    { misrouted: [], unrouted: [], boot: BOOT_ROUTES, probes: PROBE_ROUTES, routed: 109 },
   );
 });
 

@@ -120,10 +120,13 @@ fn now_millis() -> u64 {
 /// Splits log text into non-empty lines, identifying a torn final line
 /// (a daemon kill mid-append leaves one) without treating it as corrupt.
 fn log_lines(text: &str) -> (Vec<&str>, Option<&str>) {
-    let mut lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut lines: Vec<&str> = text
+        .split_inclusive('\n')
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let torn = lines
         .last()
-        .is_some_and(|last| serde_json::from_str::<Event>(last).is_err())
+        .is_some_and(|last| !last.ends_with('\n') && serde_json::from_str::<Event>(last).is_err())
         .then(|| lines.pop().unwrap_or_default());
     (lines, torn)
 }
@@ -131,26 +134,29 @@ fn log_lines(text: &str) -> (Vec<&str>, Option<&str>) {
 fn parse_events(lines: &[&str]) -> io::Result<Vec<Event>> {
     lines
         .iter()
-        .map(|line| serde_json::from_str(line).map_err(io::Error::other))
+        .map(|line| {
+            serde_json::from_str(line)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
         .collect()
 }
 
-/// Reads every event in a run directory's log, in sequence order.
+/// Reads every event in a run directory's log, in file order.
 ///
-/// A daemon kill mid-append leaves the final line torn — the scrubber's
-/// holdback tail is flushed only by [`RunLog::close`] — so for crash
-/// recovery a torn LAST line is dropped, not an error, and is truncated
-/// from the file (WAL-style repair on open; otherwise a resume's next
-/// append would fuse onto the partial bytes and poison the log
-/// mid-file). An unparseable line anywhere earlier remains an error.
+/// An incomplete final line without a newline is a torn append: it is
+/// dropped and truncated so a later append cannot fuse with partial bytes.
+/// Complete JSON without a final newline is retained; [`RunLog::resume`]
+/// supplies its separator. Newline-framed corruption is never a torn tail.
+/// All retained records are validated before any tail repair, preserving
+/// the original evidence when a complete record is invalid.
 ///
 /// # Errors
-/// Propagates filesystem failures and rejects any unparseable line
-/// before the last one.
+/// Propagates filesystem failures and rejects malformed complete records as invalid data.
 pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
     let path = dir.join(EVENTS_FILE);
     let text = std::fs::read_to_string(&path)?;
     let (lines, torn) = log_lines(&text);
+    let events = parse_events(&lines)?;
     if let Some(torn) = torn {
         let keep = torn.as_ptr() as usize - text.as_ptr() as usize;
         OpenOptions::new()
@@ -158,7 +164,7 @@ pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
             .open(&path)?
             .set_len(u64::try_from(keep).map_err(io::Error::other)?)?;
     }
-    parse_events(&lines)
+    Ok(events)
 }
 
 /// Read-only [`read_events`] for tools that must never mutate a run
@@ -166,8 +172,7 @@ pub fn read_events(dir: &Path) -> io::Result<Vec<Event>> {
 /// is left exactly as found.
 ///
 /// # Errors
-/// Propagates filesystem failures and rejects any unparseable line
-/// before the last one.
+/// Propagates filesystem failures and rejects malformed complete records as invalid data.
 pub fn read_events_tolerant(dir: &Path) -> io::Result<Vec<Event>> {
     let text = std::fs::read_to_string(dir.join(EVENTS_FILE))?;
     parse_events(&log_lines(&text).0)

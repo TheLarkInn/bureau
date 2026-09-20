@@ -1,0 +1,25 @@
+name: azure-devops
+work:
+  forge: ado
+  source: ExampleProject/example-repo
+  filter: |
+    [System.WorkItemType] = 'Bug'
+      AND [System.State] = 'Active'
+      AND [System.Tags] CONTAINS 'agent-eligible'
+      AND [System.Tags] NOT CONTAINS 'bureau:failed'
+      AND [System.Tags] NOT CONTAINS 'bureau:needs-human'
+  approval_label: agent-approved
+  abort_label: bureau:failed
+  escalate_label: bureau:needs-human
+repos: [code]
+pipeline: azure-devops
+role: implementer
+verify: "dotnet test --no-restore"
+branch_prefix: bureau/ado-fix/
+limits:
+  max_concurrent: 1
+  max_runs_per_hour: 2
+  max_runs_per_day: 4
+  max_open_prs: 2
+  max_cost_per_day_usd: 10
+  max_run_hours: 1

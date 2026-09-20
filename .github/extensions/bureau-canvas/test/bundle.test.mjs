@@ -82,13 +82,24 @@ test("the standalone page has no fork of the canvas host's module graph", async 
   const entries = {
     indexEntry: /await import\("\.\/app\.mjs"\)/u.test(index),
     editorEntry: /await import\("\.\/editor\/index\.mjs"\)/u.test(editor),
-    appImportsShared: ["/modes.js", "/live/live.js", "/replay/replay.js", "/live/overlay.js"].every((part) =>
+    appImportsShared: ["/modes.js", "/live/live.js", "/replay/replay.js", "/live/overlay.mjs"].every((part) =>
       specifiers(app).includes(`.${part}`),
     ),
     editorImportsShared: ["./editor.mjs", "./relation.mjs"].every((part) => specifiers(editorEntry).includes(part)),
   };
 
   assert.deepStrictEqual(entries, { indexEntry: true, editorEntry: true, appImportsShared: true, editorImportsShared: true });
+});
+
+test("the Node-shared reducer is explicit ESM while its old browser URL remains a re-export", async () => {
+  const [observer, compatibility] = await Promise.all([
+    source("lib/run-observation.mjs"),
+    source("web/live/overlay.js"),
+  ]);
+  assert.ok(specifiers(observer).includes("../web/live/overlay.mjs"));
+  assert.match(compatibility, /^(?:\/\/[^\n]*\n)*export \* from "\.\/overlay\.mjs";\s*$/u);
+  const reducer = await import("../web/live/overlay.mjs");
+  assert.equal(typeof reducer.applyEvents, "function");
 });
 
 /**
@@ -117,6 +128,7 @@ test("web modules import only shared siblings and the pinned vendor aliases", as
     "web/modes.js",
     "web/live/live.js",
     "web/live/overlay.js",
+    "web/live/overlay.mjs",
     "web/replay/replay.js",
     "web/editor/index.mjs",
     "web/editor/editor.mjs",

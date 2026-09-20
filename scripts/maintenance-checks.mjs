@@ -9,6 +9,7 @@ import { waitingBounds } from "./maintenance-command.mjs";
 import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedTools } from "./maintenance-tools.mjs";
 import { readBoundedFile } from "./maintenance-files.mjs";
 import { VERIFICATION_INPUTS, verificationInput } from "./maintenance-verification.mjs";
+import { RUST_PATHS, requirePreparedRust } from "./maintenance-rust.mjs";
 
 export const CHAOS_TEST = "seeded_offline_invariants";
 
@@ -99,11 +100,12 @@ async function checkDirectory(root, policy) {
 function checkOptions(root, scratch, policy) {
   return {
     cwd: root, scratch, backingPaths: policy.backing_paths,
-    extraPaths: [policy.cargo_target],
+    extraPaths: [policy.cargo_target, ...RUST_PATHS.map((key) => policy[key])],
     lockPath: join(dirname(policy.cargo_target), "command.lock"),
     watchedPaths: [{ path: policy.cargo_target, maximum: policy.cargo_cache_max_bytes }],
     environment: { TMPDIR: scratch, CARGO_TARGET_DIR: policy.cargo_target,
-      CARGO_BUILD_JOBS: "1", CARGO_INCREMENTAL: "0", RUST_BACKTRACE: "0" },
+      CARGO_BUILD_JOBS: "1", CARGO_INCREMENTAL: "0", RUST_BACKTRACE: "0",
+      CARGO_HOME: policy.cargo_home, RUSTUP_HOME: policy.rustup_home },
   };
 }
 
@@ -118,15 +120,16 @@ export async function runCheck(source, policy, {
   let links = [];
   let failure;
   try {
+    await requirePreparedRust(root, policy);
     if (gates) {
       for (const path of TOOL_PACKAGES) git(["check-ignore", "--quiet", `${path}/node_modules`], root);
       links = await linkPreparedTools(root, policy);
       const command = [
         "set -euo pipefail",
-        "cargo build --offline --quiet --bin bureau",
+        "cargo build --offline --locked --quiet --bin bureau",
         "cargo fmt --all -- --check",
         'bash scripts/lint.sh > "$TMPDIR/lint.log" 2>&1 || { tail -c 65536 "$TMPDIR/lint.log"; exit 1; }',
-        'cargo test --offline --quiet -- --test-threads=1 > "$TMPDIR/test.log" 2>&1 || { tail -c 65536 "$TMPDIR/test.log"; exit 1; }',
+        'cargo test --offline --locked --quiet -- --test-threads=1 > "$TMPDIR/test.log" 2>&1 || { tail -c 65536 "$TMPDIR/test.log"; exit 1; }',
         "printf '%s\\n' 'cargo fmt, scripts/lint.sh and cargo test --offline passed'",
       ].join("\n");
       run = await boundedChild("bash", ["-c", command], {
@@ -141,7 +144,7 @@ export async function runCheck(source, policy, {
       return { evidence: null, log: run.stdout + run.stderr };
     }
     if (source.category === "chaos") {
-      run = await boundedChild("cargo", ["test", "--offline", "--test", "maintenance_chaos", "--",
+      run = await boundedChild("cargo", ["test", "--offline", "--locked", "--test", "maintenance_chaos", "--",
         CHAOS_TEST, "--exact", "--nocapture", "--test-threads=1"], {
         ...options, timeoutMs: 300_000,
         environment: { ...options.environment, BUREAU_CHAOS_SEED: String(seed) },

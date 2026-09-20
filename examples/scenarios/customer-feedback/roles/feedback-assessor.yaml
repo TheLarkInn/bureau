@@ -1,0 +1,5 @@
+name: feedback-assessor
+agent: agents/feedback-assessor.agent.md
+adapter: copilot
+permissions: [repo:read, model:invoke]
+min_trust: untrusted

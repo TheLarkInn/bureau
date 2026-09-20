@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 
 import { factoryForStep, factoryResumeBlocked } from "../web/live/copilot-factory.mjs";
-import { applyEvents, runActions } from "../web/live/overlay.js";
+import { applyEvents, runActions } from "../web/live/overlay.mjs";
 import { enginePauseEvidence } from "./support/engine-pause.mjs";
 
 const enabled = process.platform === "linux" || Boolean(process.env.BUREAU_ENGINE_PAUSE_EVIDENCE_DIR);

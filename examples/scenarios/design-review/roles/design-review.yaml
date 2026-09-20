@@ -1,0 +1,5 @@
+name: design-review
+agent: agents/design-review.agent.md
+adapter: copilot
+permissions: [repo:read, model:invoke]
+min_trust: maintainer

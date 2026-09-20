@@ -40,7 +40,7 @@ test("declares the Bureau canvas", () => {
     assert.deepStrictEqual(canvas.canvasDeclaration, {
         id: "bureau",
         displayName: "Bureau",
-        description: "Renders Bureau config assignments, roles, repos, and pipelines.",
+        description: "Monitor Bureau operations, configure assignments, and inspect pipeline run evidence.",
         inputSchema: canvas.inputSchema,
     });
 });

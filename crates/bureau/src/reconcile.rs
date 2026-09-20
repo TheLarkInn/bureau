@@ -116,6 +116,16 @@ pub fn approved_item(assignment: &Assignment, mut item: Item) -> Option<Item> {
     Some(item)
 }
 
+fn continue_claims(result: Result<bool, Error>, failed: &mut Vec<Error>) -> bool {
+    match result {
+        Ok(available) => available,
+        Err(error) => {
+            failed.push(error);
+            false
+        }
+    }
+}
+
 /// Compares desired and observed state, closing the gap.
 ///
 /// Drain semantics: an assignment removed from the config is never
@@ -164,31 +174,38 @@ impl Reconciler {
             if started.len() >= target {
                 break;
             }
-            if let Err(error) = self.claim_one(observed, item, started) {
-                failed.push(error);
+            if !continue_claims(self.claim_one(observed, item, started), failed) {
                 break;
             }
         }
     }
 
-    /// Claims one item — CAS first, then dedup — and spawns its run.
+    /// Excludes seen content inside the claim fence before charging and spawning.
     fn claim_one(
         &self,
         observed: &Observed<'_>,
         item: Item,
         started: &mut Vec<Started>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let name = observed.assignment.name.as_str();
         let external_id = item.external_id.clone();
         let key = forge_key(observed.assignment.work.forge);
         let run_id = new_run_id(name)?;
         let owner = LeaseOwner::new(self.state.clone(), name, key, &external_id, &run_id)?;
-        if owner.claim_fresh(crate::supervise::LEASE_TTL, &self.engine.runs_dir)?
-            != FreshClaim::Claimed
-        {
-            return Ok(()); // Another live owner or preserved factory still holds this work.
+        match owner.claim_fresh_unseen_with_limits(
+            crate::supervise::LEASE_TTL,
+            &self.engine.runs_dir,
+            &observed.assignment.limits,
+            observed.open_prs.len(),
+            &item.content_hash(),
+        )? {
+            Some(FreshClaim::Claimed) => {
+                self.start_claimed(observed, item, &run_id, owner, started)?;
+                Ok(true)
+            }
+            Some(FreshClaim::Busy | FreshClaim::PreservedFactory(_)) => Ok(true),
+            None => Ok(false),
         }
-        self.start_claimed(observed, item, &run_id, owner, started)
     }
 
     fn start_claimed(

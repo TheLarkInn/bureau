@@ -24,6 +24,21 @@ npx playwright install --with-deps chromium
 prints a skip notice. CI installs dependencies and also gates matrix/visual
 checks. Visual failures publish `canvas-visual-differences`.
 
+The **13 approved screens** retain the ten named Configuration, Design, Live,
+Replay, and editor cases and add Operations at desktop and 375px, plus invalid
+read-only configuration with missing run evidence. Legacy fixtures explicitly
+select their named view; they do not capture the default Operations screen.
+Operations fixtures pin time and parse event logs through the production
+reader/reducer. They retain unknown costs, stale and corrupt logs, unknown
+adopted source, and configured safeguards rather than measured headroom.
+
+Inspect expected, actual, and diff images before updating Linux Chromium
+goldens. Match the CI browser and fonts, retain the strict pixel comparison,
+and keep the only mask on the existing host-specific header path. The shared
+44px navigation adds a 69px row; Live/Replay may scroll to preserve the graph's
+minimum usable height. Fixture screenshots are presentation evidence, not
+proof of a running daemon or a managed deployment.
+
 ## Native engine-to-canvas checks
 
 Presentation fixtures intentionally use a missing binary. They are not

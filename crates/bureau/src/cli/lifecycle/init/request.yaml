@@ -1,0 +1,49 @@
+# Printed by bureau init --print-template; printing does not initialize Bureau.
+# Replace example-org/example-repo, the verification command and limits.
+# Keep credential VALUES out of this file and out of git.
+settings:
+  config:
+    kind: single_repository
+    remote: https://github.com/example-org/example-repo.git
+    reference: main
+  credentials:
+    config: # init uses this explicit reference to propose the config PR.
+      source: environment
+      variable: BUREAU_GITHUB_TOKEN
+    github-work:
+      source: environment
+      variable: BUREAU_GITHUB_TOKEN
+  plugin:
+    install_user_global: false # Set true only to request an explicit installation.
+
+repositories:
+  code:
+    url: https://github.com/example-org/example-repo.git
+    forge: github
+    access: push
+    credential: github-work
+
+assignment:
+  name: fix-failing-tests
+  work:
+    forge: github
+    source: example-org/example-repo
+    filter: "is:issue is:open label:agent-eligible -label:bureau:failed -label:bureau:needs-human"
+    approval_label: bureau:approved # A maintainer applies this separately.
+    abort_label: bureau:failed
+    escalate_label: bureau:needs-human
+  primary_repo: code
+  context_repos: []
+  verify: "cargo test --offline" # Replace with the repository's actual check.
+  branch_prefix: bureau/
+  adapter: copilot
+  limits:
+    max_concurrent: 1
+    max_runs_per_hour: 2
+    max_runs_per_day: 8
+    max_open_prs: 2
+    max_cost_per_day_usd: 10
+    max_run_hours: 1
+
+first_pipeline:
+  kind: fixed

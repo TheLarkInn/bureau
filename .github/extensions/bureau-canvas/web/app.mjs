@@ -20,18 +20,21 @@ import { StepLog, focusStep } from "./live/logs.js";
 import { stepOutput } from "./live/transcript.js";
 import { factoryForStep } from "./live/copilot-factory.mjs";
 import { useReplayOverlay } from "./replay/replay.js";
-import { resolveOverlay } from "./live/overlay.js";
+import { resolveOverlay } from "./live/overlay.mjs";
 import { terminalCopy } from "./terminals.js";
 import { drawableEdges } from "./graph-edges.mjs";
 import { emptyVerdict } from "./panel-verdict.mjs";
-import { MeasurementGuard } from "./graph-measure.mjs";
 import { GraphTools, GraphStateBadge } from "./graph-workbench.mjs";
 import { graphEdgeCaption, graphEdgeLabels, graphGeometry, graphStepState, graphTerminalPath, needsAttention } from "./graph-presentation.mjs";
 import { RelationGraph } from "./editor/relation.mjs";
 import { DIRTY_FIELD_EDITORS, nextExpandedAssignment } from "./assignment-state.js";
 import { sessionValue, storeSessionValue } from "./session-state.js";
+import { OperationsView } from "./operations-view.mjs";
+import { intentNavigation, navigationKey } from "./navigation.mjs";
+import { isReadOnly, readOnlyControl } from "./access-policy.mjs";
 
 const h = React.createElement;
+const localNavigations = new Set();
 const CARD_WIDTH = 240;
 const CARD_HEIGHT = 112;
 const CONFIG_PAD = 72;
@@ -58,6 +61,27 @@ window.dispatchEvent(new Event("bureau-mounted"));
 function App() {
   const [state, setState] = useState(null);
   const [selectedSteps, setSelectedSteps] = useState({});
+  const [navigationError, setNavigationError] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const latest = useRef(null);
+  const declined = useRef(null);
+  const receive = (next) => {
+    const previous = latest.current;
+    const revision = next.navigation?.revision;
+    const changed = previous && revision && revision !== previous.navigation?.revision;
+    const locallyApproved = changed && [...localNavigations].some((request) => request.key === navigationKey(next.navigation));
+    if (changed && revision !== declined.current && !locallyApproved && !confirmClosingEditor()) {
+      declined.current = revision;
+      setNavigationError("Navigation canceled; unsaved field changes were kept.");
+    }
+    if (previous && revision === declined.current) {
+      next = { ...next, pipeline: previous.pipeline, selectedPipeline: previous.selectedPipeline, navigation: previous.navigation };
+    } else {
+      declined.current = null;
+    }
+    latest.current = next;
+    setState(next);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -66,11 +90,15 @@ function App() {
     // ordering, and it must not win: it fills the surface only if nothing has
     // arrived yet.
     fetch("./state", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((next) => alive && setState((current) => current ?? next));
+      .then((response) => {
+        if (!response.ok) throw new Error(`Configuration read failed (HTTP ${response.status}).`);
+        return response.json();
+      })
+      .then((next) => { if (alive && !latest.current) receive(next); })
+      .catch((error) => alive && setLoadError(String(error.message ?? error)));
     const events = new EventSource("./events");
-    const localState = (event) => setState(event.detail);
-    events.addEventListener("state", (event) => setState(JSON.parse(event.data)));
+    const localState = (event) => receive(event.detail);
+    events.addEventListener("state", (event) => receive(JSON.parse(event.data)));
     events.addEventListener("focus", (event) =>
       applyFocus(JSON.parse(event.data), setSelectedSteps, setState));
     window.addEventListener("bureau-state", localState);
@@ -81,18 +109,38 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!state?.navigation?.revision) return;
+    const assignment = state.navigation.assignment;
+    const target = assignment
+      ? document.querySelector(`[data-ref="assignment:${CSS.escape(assignment)}"] .assignment-head`)
+      : document.querySelector("#operations-title, .pipeline-toolbar h2, .config-heading");
+    target?.focus();
+  }, [state?.navigation?.revision]);
+
   if (!state) {
-    return h("main", { className: "app-shell" }, h("p", { className: "status" }, "Loading…"));
+    return h("main", { className: "app-shell" }, h("p", { className: "status", role: loadError ? "alert" : "status" }, loadError ?? "Loading…"));
   }
   const pipeline = state.selectedPipeline?.name;
   const selectedStep = pipeline ? selectedStepFor(selectedSteps, pipeline) : null;
   const selectStep = (step) => rememberStep(setSelectedSteps, pipeline, step);
+  const navigate = async (input) => {
+    setNavigationError(null);
+    const result = await postIntent({ kind: "navigate", input });
+    if (!result?.ok && !result?.cancelled) setNavigationError(result?.error || "Could not change the view; the current selection is unchanged.");
+  };
+  const operations = !state.selectedPipeline && state.navigation?.view === "operations";
 
   return h(
     "main",
     { className: "app-shell" },
     h(Header, { state }),
-    h(DraftBar, { plan: state.plan }),
+    isReadOnly(state.access) ? h("p", { id: "read-only-notice", className: "access-notice", role: "status" }, state.access.reason) : null,
+    h("nav", { className: "bureau-navigation", "aria-label": "Bureau views" },
+      h("button", { type: "button", className: "btn btn--small", "aria-current": operations ? "page" : undefined, onClick: () => navigate({ view: "operations" }) }, "Operations"),
+      h("button", { type: "button", className: "btn btn--small", "aria-current": operations ? undefined : "page", onClick: () => navigate({ view: "config" }) }, "Configuration")),
+    navigationError ? h("p", { role: "alert", className: "navigation-error" }, navigationError) : null,
+    h(DraftBar, { plan: state.plan, access: state.access }),
     h(Findings, { className: "general-findings", findings: state.generalFindings ?? [] }),
     state.selectedPipeline
       ? h(PipelineView, {
@@ -101,7 +149,8 @@ function App() {
         selectedStep,
         setSelectedStep: selectStep,
       })
-      : h(ConfigView, { state }),
+      : operations ? h(OperationsView, { state, onNavigate: navigate, onRefresh: () => postIntent({ kind: "operations", refresh: true }) })
+        : h(ConfigView, { state }),
   );
 }
 
@@ -135,6 +184,10 @@ function applyFocus(payload, setSelectedSteps, setState) {
       }
     });
   }
+  if (focus?.kind === "assignment" || focus?.kind === "config") {
+    postIntent({ kind: "navigate", input: { view: "config", ...(focus.kind === "assignment" ? { assignment: focus.name } : {}) } })
+      .then((result) => result?.ok && setState(result.state));
+  }
 }
 
 function Header({ state }) {
@@ -142,7 +195,7 @@ function Header({ state }) {
   return h(
     "header",
     { className: "app-header" },
-    h("div", {}, h("h1", {}, "Bureau config"), h("p", { className: "summary" }, summaryText(view))),
+    h("div", {}, h("h1", {}, !state.selectedPipeline && state.navigation?.view === "operations" ? "Bureau operations" : "Bureau config"), h("p", { className: "summary" }, summaryText(view))),
     h(
       "div",
       { className: "status", "aria-live": "polite" },
@@ -167,7 +220,7 @@ function Header({ state }) {
  * unsaved work. The two were one screen in the registry for exactly that
  * reason, and being one screen was the defect rather than the economy.
  */
-function DraftBar({ plan }) {
+function DraftBar({ plan, access }) {
   const [error, setError] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   if (!plan) {
@@ -198,8 +251,8 @@ function DraftBar({ plan }) {
     h(
       "div",
       { className: "draft-actions" },
-      h("button", { type: "button", className: "btn btn--small btn--primary", "data-testid": "draft-save", disabled: busy, onClick: () => act("save-plan") }, pendingAction === "save-plan" ? "Saving…" : "Save"),
-      h("button", { type: "button", className: "btn btn--small", "data-testid": "draft-discard", disabled: busy, onClick: () => act("discard-plan") }, pendingAction === "discard-plan" ? "Discarding…" : "Discard"),
+      h("button", { type: "button", className: "btn btn--small btn--primary", "data-testid": "draft-save", disabled: busy, ...readOnlyControl(access), onClick: () => act("save-plan") }, pendingAction === "save-plan" ? "Saving…" : "Save"),
+      h("button", { type: "button", className: "btn btn--small", "data-testid": "draft-discard", disabled: busy, ...readOnlyControl(access), onClick: () => act("discard-plan") }, pendingAction === "discard-plan" ? "Discarding…" : "Discard"),
     ),
     error ? h("p", { className: "note note--err", role: "alert" }, error) : null,
   );
@@ -210,7 +263,7 @@ function shortPath(path) {
 }
 
 /** A quiet global create affordance; the form appears only when requested. */
-function CreateBar({ dir }) {
+function CreateBar({ dir, access }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState("pipeline");
   const [name, setName] = useState("");
@@ -254,7 +307,7 @@ function CreateBar({ dir }) {
       publishLocalState(result);
     });
   };
-  if (!open) {
+  if (!open || isReadOnly(access)) {
     return h(
       "div",
       { className: "create-toolbar" },
@@ -263,6 +316,7 @@ function CreateBar({ dir }) {
         ref: trigger,
         className: "btn btn--primary",
         "data-testid": "create-open",
+        ...readOnlyControl(access),
         onClick: () => setOpen(true),
       }, "+ New pipeline or role"),
     );
@@ -353,7 +407,7 @@ function CreateBar({ dir }) {
 }
 
 /** Delete asks first and shows what breaks; the entry-step case reads louder. */
-function DeleteControl({ dir, kind, name }) {
+function DeleteControl({ dir, kind, name, access }) {
   const [preflight, setPreflight] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -398,9 +452,9 @@ function DeleteControl({ dir, kind, name }) {
       }
     });
   };
-  if (!preflight) {
+  if (!preflight || isReadOnly(access)) {
     return h(React.Fragment, null,
-      h("button", { type: "button", className: "btn btn--small btn--danger card-action", "data-testid": "delete-start", disabled: busy, onClick: ask }, busy ? "Checking…" : "Delete"),
+      h("button", { type: "button", className: "btn btn--small btn--danger card-action", "data-testid": "delete-start", disabled: busy, ...readOnlyControl(access), onClick: ask }, busy ? "Checking…" : "Delete"),
       error ? h("p", { className: "note note--err", role: "alert" }, error) : null);
   }
   return h(
@@ -447,8 +501,8 @@ function ConfigView({ state }) {
     h(
       "div",
       { className: "config-heading-row" },
-      h("h2", { className: "config-heading" }, "Assignments"),
-      h(CreateBar, { dir: state.dir }),
+      h("h2", { className: "config-heading", tabIndex: -1 }, "Assignments"),
+      h(CreateBar, { dir: state.dir, access: state.access }),
     ),
     h(AssignmentStack, { state, view }),
     h(OrphanStrip, { state, view }),
@@ -458,7 +512,10 @@ function ConfigView({ state }) {
 
 /** The landing: assignments as a vertical stack, each expanding in place. */
 function AssignmentStack({ state, view }) {
-  const [expanded, setExpanded] = useState(() => sessionStorage.getItem("bureau.expanded-assignment"));
+  const [expanded, setExpanded] = useState(() => state.navigation?.assignment ?? sessionStorage.getItem("bureau.expanded-assignment"));
+  useEffect(() => {
+    if (state.navigation?.assignment) setExpanded(state.navigation.assignment);
+  }, [state.navigation?.revision]);
   useEffect(() => {
     if (expanded) {
       sessionStorage.setItem("bureau.expanded-assignment", expanded);
@@ -522,14 +579,14 @@ function AssignmentDetail({ state, assignment }) {
   return h(
     "div",
     { className: "assignment-detail" },
-    h(DetailRow, { label: "work source" }, h(WorkSourceField, { assignment })),
-    h(DetailRow, { label: "work rules" }, h(AssignmentRuntimeField, { assignment })),
-    h(DetailRow, { label: "forge signals" }, h(TerminalLabelsField, { assignment })),
+    h(DetailRow, { label: "work source" }, h(WorkSourceField, { assignment, access: state.access })),
+    h(DetailRow, { label: "work rules" }, h(AssignmentRuntimeField, { assignment, access: state.access })),
+    h(DetailRow, { label: "forge signals" }, h(TerminalLabelsField, { assignment, access: state.access })),
     h(DetailRow, { label: "repos" }, h(ReposField, { state, assignment })),
     h(DetailRow, { label: "pipeline" }, h(PipelineLink, { state, name: assignment.pipeline })),
-    h(DetailRow, { label: "limits" }, h(LimitsField, { assignment })),
+    h(DetailRow, { label: "limits" }, h(LimitsField, { assignment, access: state.access })),
     h("div", { className: "assignment-actions" },
-      h(DeleteControl, { dir: state.dir, kind: "assignment", name: assignment.name })),
+      h(DeleteControl, { dir: state.dir, kind: "assignment", name: assignment.name, access: state.access })),
   );
 }
 
@@ -555,7 +612,7 @@ function PipelineLink({ state, name }) {
       type: "button",
       className: "pipeline-ref",
       "aria-label": `Open pipeline ${name}`,
-      onClick: () => confirmClosingEditor() && selectPipeline(name),
+      onClick: () => selectPipeline(name),
     },
     h("span", { className: "pipeline-ref__name" }, name),
     h(
@@ -660,7 +717,7 @@ function runtimeFields(assignment, changes = {}) {
   };
 }
 
-function AssignmentRuntimeField({ assignment }) {
+function AssignmentRuntimeField({ assignment, access }) {
   const [editing, setEditing] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setEditing, trigger);
@@ -675,6 +732,7 @@ function AssignmentRuntimeField({ assignment }) {
         className: "runtime-value",
         "aria-expanded": editing,
         title: "Change the work filter, approval label, or branch prefix",
+        ...readOnlyControl(access),
         onClick: () => setEditing((current) => !current),
       },
       h("span", { className: "chips" },
@@ -682,7 +740,7 @@ function AssignmentRuntimeField({ assignment }) {
         h("span", { className: "chip" }, assignment.work?.approvalLabel ? `approval: ${assignment.work.approvalLabel}` : "no approval label"),
         h("span", { className: "chip" }, `branches: ${assignment.branchPrefix ?? "not set"}`)),
     ),
-    editing ? h(AssignmentRuntimeEditor, { assignment, onDone: close }) : null,
+    editing && !isReadOnly(access) ? h(AssignmentRuntimeEditor, { assignment, onDone: close }) : null,
   );
 }
 
@@ -755,7 +813,7 @@ function AssignmentRuntimeEditor({ assignment, onDone }) {
  * value stays on screen and the editor discloses beneath it — swapping the
  * value out was this field's alone, and it made the row jump.
  */
-function TerminalLabelsField({ assignment }) {
+function TerminalLabelsField({ assignment, access }) {
   const [editing, setEditing] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setEditing, trigger);
@@ -770,12 +828,13 @@ function TerminalLabelsField({ assignment }) {
         className: "terminal-label-value",
         "aria-expanded": editing,
         title: "Change the labels Bureau applies at terminal states",
+        ...readOnlyControl(access),
         onClick: () => setEditing((current) => !current),
       },
       h(TerminalSignal, { kind: "abort", label: assignment.work?.abortLabel }),
       h(TerminalSignal, { kind: "escalate", label: assignment.work?.escalateLabel }),
     ),
-    editing ? h(TerminalLabelsEditor, { assignment, onDone: close }) : null,
+    editing && !isReadOnly(access) ? h(TerminalLabelsEditor, { assignment, onDone: close }) : null,
   );
 }
 
@@ -898,6 +957,7 @@ function ReposField({ state, assignment }) {
         ref: trigger,
         type: "button", className: "repos-value", "aria-expanded": editing,
         title: "Change the repos this assignment touches",
+        ...readOnlyControl(state.access),
         onClick: () => setEditing((current) => !current),
       },
       repos.length
@@ -906,7 +966,7 @@ function ReposField({ state, assignment }) {
               index === 0 ? `${name} · primary` : name)))
         : h("span", { className: "muted" }, "no repos"),
     ),
-    editing ? h(ReposEditor, { state, assignment, onDone: close }) : null,
+    editing && !isReadOnly(state.access) ? h(ReposEditor, { state, assignment, onDone: close }) : null,
   );
 }
 
@@ -1179,7 +1239,7 @@ function LimitsSummary({ limits }) {
   );
 }
 
-function LimitsField({ assignment }) {
+function LimitsField({ assignment, access }) {
   const [editing, setEditing] = useState(false);
   const limits = limitsFromView(assignment.limits);
   const trigger = useRef(null);
@@ -1193,11 +1253,12 @@ function LimitsField({ assignment }) {
         ref: trigger,
         type: "button", className: "limits-value", "aria-expanded": editing,
         title: "Change the limits on this assignment",
+        ...readOnlyControl(access),
         onClick: () => setEditing((current) => !current),
       },
       h(LimitsSummary, { limits }),
     ),
-    editing ? h(LimitsEditor, { assignment, saved: limits, onDone: close }) : null,
+    editing && !isReadOnly(access) ? h(LimitsEditor, { assignment, saved: limits, onDone: close }) : null,
   );
 }
 
@@ -1322,7 +1383,7 @@ function LimitRow({ field, value, busy, onToggle, onChange }) {
  * one of the two written: `github · ?` is a forge with no source, and saying
  * "no work source" there would describe a file that is not on disk.
  */
-function WorkSourceField({ assignment }) {
+function WorkSourceField({ assignment, access }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef(null);
   const close = () => closeDisclosure(setOpen, trigger);
@@ -1338,11 +1399,12 @@ function WorkSourceField({ assignment }) {
         className: "ws-value",
         "aria-expanded": open,
         title: "Link a board or issues page",
+        ...readOnlyControl(access),
         onClick: () => setOpen((current) => !current),
       },
       label,
     ),
-    open ? h(WorkSourceEditor, { assignment, onDone: close }) : null,
+    open && !isReadOnly(access) ? h(WorkSourceEditor, { assignment, onDone: close }) : null,
   );
 }
 
@@ -1484,7 +1546,7 @@ function OrphanStrip({ state, view }) {
       view.orphans.map((orphan) =>
         h("span", { key: `${orphan.kind}:${orphan.name}`, className: "orphan-entry" },
           h("span", { className: `chip orphan-chip orphan-chip--${orphan.kind}` }, `${orphan.kind}: ${orphan.name}`),
-          h(DeleteControl, { dir: state.dir, kind: orphan.kind, name: orphan.name })),
+          h(DeleteControl, { dir: state.dir, kind: orphan.kind, name: orphan.name, access: state.access })),
       ),
     ),
   );
@@ -1544,7 +1606,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   const name = state.selectedPipeline.name;
   const pipeline = state.pipelines?.[name];
   // graph-overlays: design keeps the static graph; live and replay restyle
-  // it from run events via the shared reducer in web/live/overlay.js.
+  // it from run events via the shared reducer in web/live/overlay.mjs.
   const [mode, setMode] = useState(() => {
     const stored = sessionValue("pipeline-mode", "design");
     return MODES.includes(stored) ? stored : "design";
@@ -1560,7 +1622,7 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
   const live = useLiveOverlay(activity, (runId) => {
     replay.setRunId(runId);
     leaveLive("replay");
-  }, name);
+  }, name, state.access);
   // Leaving Live ends what this visit said: its refusal and its pass report
   // are statements about a request made here, and the hook that holds them
   // outlives the surface.
@@ -1570,6 +1632,14 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
     }
     setMode(next);
   };
+  useEffect(() => {
+    const request = state.navigation;
+    if (!request?.revision || sessionValue("applied-navigation") === request.revision) return;
+    if (request.view !== "pipeline") return;
+    leaveLive(request.mode ?? "design");
+    if (request.run_id) (request.mode === "live" ? live : replay).setRunId(request.run_id);
+    storeSessionValue("applied-navigation", request.revision);
+  }, [state.navigation?.revision]);
   const active = mode === "live" ? live : mode === "replay" ? replay : null;
   const flow = useMemo(
     () => toFlow(pipeline, state, selectedStep, active?.decoration ?? null, mode),
@@ -1604,10 +1674,12 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
           "div",
           { className: "pipeline-toolbar" },
           h("button", { className: "btn btn--small", type: "button", "data-testid": "pipeline-back", onClick: backToConfig }, "← Assignments"),
-          h("h2", {}, name),
+          h("h2", { tabIndex: -1 }, name),
           h(ModeSwitcher, { mode, onMode: leaveLive, activity }),
           mode === "design" ? h(DesignSurfaceSwitcher, { value: designSurface, onChange: setDesignSurface }) : null,
-          h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
+          isReadOnly(state.access)
+            ? h("button", { type: "button", className: "btn btn--small editor-link", ...readOnlyControl(state.access) }, "Edit pipeline")
+            : h("a", { className: "btn btn--small editor-link", href: `./editor.html?pipeline=${encodeURIComponent(name)}` }, "Edit pipeline"),
           active?.controls ?? null,
         ),
         mode === "live" ? h(LiveActivity, { activity, runId: live.runId }) : null,
@@ -1632,9 +1704,9 @@ function PipelineView({ state, selectedStep, setSelectedStep }) {
             proOptions: { hideAttribution: true },
             onNodeClick: (_, item) => item.type === "stepCard" && setSelectedStep(item.data.step.name),
           }, h(Background, { variant: BackgroundVariant.Lines, gap: 48, size: 1 }),
-          h(GraphTools, { items: graphItems, selectedId: graphItems.find((item) => item.name === selectedStep)?.id, onSelect: selectNode }),
-          h(MiniMap, { pannable: true, zoomable: true, position: "bottom-left", "aria-label": "Pipeline overview" }),
-          h(MeasurementGuard, { ids: flow.nodes.map((item) => item.id) })),
+          h(GraphTools, { items: graphItems, nodeIds: flow.nodes.map((node) => node.id),
+            selectedId: graphItems.find((item) => item.name === selectedStep)?.id, onSelect: selectNode }),
+          h(MiniMap, { pannable: true, zoomable: true, position: "bottom-left", "aria-label": "Pipeline overview" })),
         ),
       // graph-overlays: a run's steps left output; design mode has no run.
       active ? h(StepLog, stepLogProps(state, pipeline, active, selectedStep)) : null,
@@ -2351,11 +2423,20 @@ function publishLocalState(result) {
  * screenshot could tell them apart. A body that is not JSON lands here too.
  */
 function postIntent(body) {
+  const target = intentNavigation(body);
+  if (target && !confirmClosingEditor()) return Promise.resolve({ ok: false, cancelled: true });
+  const approval = target ? { key: navigationKey(target) } : null;
+  if (approval) localNavigations.add(approval);
   return fetch("./intent", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
     .then((response) => response.ok ? response.json() : null)
-    .catch(() => null);
+    .then((result) => {
+      if (approval) publishLocalState(result);
+      return result;
+    })
+    .catch(() => null)
+    .finally(() => localNavigations.delete(approval));
 }

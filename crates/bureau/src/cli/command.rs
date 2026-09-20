@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use clap::Subcommand;
 
 use super::github_cloud::{ControlArgs, ListArgs, RunArgs, ShowArgs};
-use super::{dashboard, reconcile};
+use super::{dashboard, lifecycle, reconcile};
 
 /// Fake adapter operations.
 #[derive(Debug, Subcommand)]
@@ -104,11 +104,7 @@ pub enum Verb {
         config_cache: Option<PathBuf>,
     },
     /// Performs first-time local initialization.
-    Init {
-        /// YAML initialization request.
-        #[arg(long)]
-        from: PathBuf,
-    },
+    Init(lifecycle::InitArgs),
     /// Replaces non-secret local settings.
     Setup {
         /// YAML settings file to adopt.

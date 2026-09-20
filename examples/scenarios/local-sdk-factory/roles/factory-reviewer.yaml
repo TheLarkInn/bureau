@@ -1,0 +1,5 @@
+name: factory-reviewer
+agent: /bureau:reviewer
+adapter: copilot
+permissions: [repo:read, model:invoke]
+min_trust: maintainer

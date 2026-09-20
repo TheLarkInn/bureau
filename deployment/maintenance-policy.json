@@ -10,6 +10,11 @@
   "backing_paths": ["/mnt/bureau-q-capacity"],
   "site_tools": "/opt/bureau/site-tools",
   "browser_path": "/opt/bureau/browsers",
+  "rust_bin": "/opt/bureau/rust/bin",
+  "rustup_home": "/opt/bureau/rust/rustup",
+  "cargo_home": "/opt/bureau/rust/cargo",
+  "dylint_drivers": "/var/lib/bureau-maintenance-runtime/.dylint_drivers",
+  "rust_host": "x86_64-unknown-linux-gnu",
   "cargo_target": "/var/cache/bureau-maintenance/cargo",
   "cargo_cache_max_bytes": 8589934592
 }

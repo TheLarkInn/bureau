@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { descriptorMountId, filesystemSnapshot, readOnlyMount } from "./maintenance-mount.mjs";
+import { descriptorMountId, descriptorSnapshot, filesystemSnapshot, readOnlyMount } from "./maintenance-mount.mjs";
 import { backingVerified } from "./maintenance-resources.mjs";
 
 function mount(id, path, mode) {
@@ -58,6 +58,16 @@ test("capacity and effective mount proof use the same live descriptor and always
   assert.equal(calls.some(([action, path]) => action === "capacity" && path === "/proc/self/fd/7"), true);
   assert.deepEqual(calls.at(-1), ["close"]);
   assert.deepEqual(calls[0], ["open", "/tools", 0o10000000 | 0o400000]);
+});
+
+test("file identity and ownership use the descriptor whose effective mount is proven", async () => {
+  const metadata = { dev: 9007199254740993n, ino: 9007199254740995n,
+    uid: 0n, ctimeNs: 1234567890123456789n, mode: 0o100555n };
+  const { io, calls } = fixture({ metadata });
+  const observed = await descriptorSnapshot("/tools/rustup", io);
+  assert.deepEqual(observed, { metadata, observation: undefined, mountId: 21, readOnly: true });
+  assert.equal(calls.filter(([action]) => action === "open").length, 1);
+  assert.deepEqual(calls.at(-1), ["close"]);
 });
 
 test("missing and inaccessible paths never fall back to a read-only ancestor", async () => {

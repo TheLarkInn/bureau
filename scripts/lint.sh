@@ -13,24 +13,12 @@
 #   rustup toolchain install nightly-2026-01-22 --component rustc-dev
 set -euo pipefail
 
-# `node --test` exits 0 even when tests fail on the Node in use here, so each
-# result is read from TAP rather than from the exit code — otherwise this gate
-# passes silently while tests are red. Also fails when nothing ran, which is
-# what a mistyped glob looks like.
+# Check process status and complete TAP; CPU quotas alone do not bound Node's
+# default test-file concurrency on high-core hosts.
 node_tests() {
     local label="$1"
     shift
-    local output
-    output="$(node --test --test-reporter=tap "$@")" || true
-    printf '%s\n' "$output"
-    if grep -qE '^not ok ' <<<"$output"; then
-        echo "$label failed" >&2
-        return 1
-    fi
-    if ! grep -qE '^ok 1 ' <<<"$output"; then
-        echo "$label did not run" >&2
-        return 1
-    fi
+    node scripts/run-node-tests.mjs "$label" "$@"
 }
 
 # Browser tests for the assignment card controls. Skipped with a notice when
@@ -42,7 +30,7 @@ canvas_browser_tests() {
         echo "skipping canvas browser tests: run 'npm ci && npx playwright install --with-deps chromium' in $dir" >&2
         return 0
     fi
-    (cd "$dir" && npm run test:pr)
+    (cd "$dir" && npm run test:pr -- --workers=1)
 }
 
 node_tests "canvas tests" .github/extensions/bureau-canvas/test/*.test.mjs

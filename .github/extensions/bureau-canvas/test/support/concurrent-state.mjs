@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
  * fixture. The fixture takes them from the payload it projects over, so the
  * committed module holds none of them and renders the same on every machine.
  */
-export const PROJECTED_FIELDS = ["canvasId", "instanceId", "repoRoot", "dir"];
+export const PROJECTED_FIELDS = ["canvasId", "instanceId", "repoRoot", "dir", "authoring", "navigation"];
 
 export const MODULE_URL = new URL("../../web/statelab/concurrent-state.mjs", import.meta.url);
 const PAYLOAD_URL = new URL("../fixtures/concurrent-payload.json", import.meta.url);
@@ -23,6 +23,7 @@ export async function buildConcurrentState() {
   const opened = await canvas.openBureauCanvas({ instanceId, input: { pipeline: "review-queue-pipeline" } }, { payload });
   try {
     const served = await fetch(new URL("/state", opened.url)).then((response) => response.json());
+    delete served.validation.checked_at_ms;
     return Object.fromEntries(Object.entries(served).filter(([key]) => !PROJECTED_FIELDS.includes(key)));
   } finally {
     await canvas.closeBureauCanvas({ instanceId });

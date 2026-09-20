@@ -4,6 +4,10 @@
 
 #[path = "engine/rig.rs"]
 mod rig;
+#[path = "engine/runtime_environment.rs"]
+mod runtime_environment;
+#[path = "engine/scenario_offline.rs"]
+mod scenario_offline;
 #[path = "engine/terminal_labels.rs"]
 mod terminal_labels;
 

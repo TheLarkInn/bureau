@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { summarize } from "../lib/runs.mjs";
-import { applyEvents, stateUpTo } from "../web/live/overlay.js";
+import { applyEvents, stateUpTo } from "../web/live/overlay.mjs";
 import { factoryDetails, factoryEvents, factoryForStep, factoryResumeBlocked } from "../web/live/copilot-factory.mjs";
 import { readHistory } from "../web/live/history.mjs";
 
@@ -147,7 +147,7 @@ test("malformed factory events latch diagnostics and cloud events never become l
 });
 
 test("unreadable native history is an error, never an empty successful replay", async () => {
-  await assert.rejects(readHistory({ ok: false, status: 404 }), /Run history unavailable/u);
+  await assert.rejects(readHistory(new Response("not found", { status: 404 })), /Run history unavailable/u);
   await assert.rejects(readHistory({ ok: true, json: async () => ({ result: [] }) }), /no event array/u);
   assert.deepEqual(await readHistory({ ok: true, json: async () => ({ events: [] }) }), { events: [] });
 });

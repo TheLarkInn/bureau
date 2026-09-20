@@ -1,0 +1,66 @@
+name: issue-triage
+steps:
+  - name: baseline
+    type: deterministic
+    run: |
+      python3 -c '
+      import json, subprocess
+      base = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+      print(json.dumps({"schema": "v2", "outcome": "success", "trust": "derived",
+          "outputs": {"baseline_commit": base}, "artifacts": [], "message": "Recorded the pre-step Git commit."}))
+      '
+    timeout_secs: 30
+    next: triage
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: triage
+    type: agent
+    role: triager
+    max_attempts: 2
+    timeout_secs: 300
+    next: verify-read-only
+    on_failure: triage
+    on_blocked: escalate
+    on_no_work: verify-read-only
+  - name: verify-read-only
+    type: deterministic
+    inputs_from: [baseline]
+    run: |
+      python3 -c '
+      import json, subprocess, sys
+      base = json.load(sys.stdin)["inputs"]["baseline_commit"]
+      subprocess.run(["git", "diff", "--exit-code", base, "--"], check=True)
+      if subprocess.check_output(["git", "ls-files", "--others", "--exclude-standard"]):
+          raise SystemExit("read-only triage created untracked files")
+      '
+    timeout_secs: 30
+    next: validate-triage
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: abort
+  - name: validate-triage
+    type: deterministic
+    inputs_from: [triage]
+    run: |
+      python3 -c '
+      import json, sys
+      triage = json.load(sys.stdin)["inputs"]["triage"]
+      if not isinstance(triage, dict) or set(triage) != {"classification", "summary", "evidence"}:
+          raise SystemExit("triage must contain classification, summary and evidence")
+      if triage["classification"] not in ("bug", "duplicate", "needs-information", "not-a-bug"):
+          raise SystemExit("triage.classification is invalid")
+      if not isinstance(triage["summary"], str) or not triage["summary"].strip():
+          raise SystemExit("triage.summary must be nonempty")
+      evidence = triage["evidence"]
+      if not isinstance(evidence, list) or not evidence or not all(isinstance(x, str) and x.strip() for x in evidence):
+          raise SystemExit("triage.evidence must contain nonempty strings")
+      print(json.dumps({"schema": "v2", "outcome": "blocked", "trust": "derived",
+          "outputs": {"triage": triage}, "artifacts": [],
+          "message": "Human triage required; no labels or implementation approved: " + json.dumps(triage, sort_keys=True)}))
+      '
+    timeout_secs: 30
+    next: escalate
+    on_failure: abort
+    on_blocked: escalate
+    on_no_work: escalate

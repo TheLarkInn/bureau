@@ -108,6 +108,14 @@ const LEASE_COLUMNS: &[&str] = &[
     "expires_at_ms",
 ];
 const RUN_COLUMNS: &[&str] = &["run_id", "assignment", "started_at_ms", "cost_usd"];
+const ADMISSION_COLUMNS: &[&str] = &[
+    "assignment",
+    "forge",
+    "external_id",
+    "run_id",
+    "admitted_at_ms",
+    "keep_legacy_run",
+];
 const DEDUP_COLUMNS: &[&str] = &["content_hash", "disposition", "at_ms"];
 const LABEL_RULE_EVENT_COLUMNS: &[&str] = &[
     "id",
@@ -135,6 +143,7 @@ fn required_columns(table: &str, columns: &BTreeSet<String>) -> anyhow::Result<(
     let required: &[&str] = match table {
         "leases" => &["assignment", "forge", "external_id", "expires_at_ms"],
         "runs" => &["assignment", "started_at_ms", "cost_usd"],
+        "run_admissions" => ADMISSION_COLUMNS,
         "dedup" => &["content_hash", "disposition", "at_ms"],
         "label_rule_events" => LABEL_RULE_EVENT_COLUMNS,
         _ => anyhow::bail!("unknown migration table `{table}`"),
@@ -176,6 +185,35 @@ fn reject_active_leases(connection: &Connection, tables: &BTreeSet<String>) -> a
     Ok(())
 }
 
+fn validate_tables(connection: &Connection) -> anyhow::Result<BTreeSet<String>> {
+    let tables = table_names(connection)?;
+    let allowed = BTreeSet::from([
+        "dedup".to_owned(),
+        "label_rule_events".to_owned(),
+        "leases".to_owned(),
+        "runs".to_owned(),
+        "run_admissions".to_owned(),
+    ]);
+    anyhow::ensure!(
+        tables.is_subset(&allowed),
+        "migration database is from a newer schema"
+    );
+    Ok(tables)
+}
+
+fn validate_all_columns(connection: &Connection) -> anyhow::Result<()> {
+    for (table, columns) in [
+        ("leases", LEASE_COLUMNS),
+        ("runs", RUN_COLUMNS),
+        ("run_admissions", ADMISSION_COLUMNS),
+        ("dedup", DEDUP_COLUMNS),
+        ("label_rule_events", LABEL_RULE_EVENT_COLUMNS),
+    ] {
+        validate_columns(connection, table, columns)?;
+    }
+    Ok(())
+}
+
 fn validate_database(path: &Path) -> anyhow::Result<()> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let integrity: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
@@ -183,22 +221,11 @@ fn validate_database(path: &Path) -> anyhow::Result<()> {
         integrity == "ok",
         "migration database integrity check failed"
     );
-    let tables = table_names(&connection)?;
-    let allowed = BTreeSet::from([
-        "dedup".to_owned(),
-        "label_rule_events".to_owned(),
-        "leases".to_owned(),
-        "runs".to_owned(),
-    ]);
-    anyhow::ensure!(
-        tables.is_subset(&allowed),
-        "migration database is from a newer schema"
-    );
+    let tables = validate_tables(&connection)?;
     reject_active_leases(&connection, &tables)?;
-    validate_columns(&connection, "leases", LEASE_COLUMNS)?;
-    validate_columns(&connection, "runs", RUN_COLUMNS)?;
-    validate_columns(&connection, "dedup", DEDUP_COLUMNS)?;
-    validate_columns(&connection, "label_rule_events", LABEL_RULE_EVENT_COLUMNS)
+    validate_all_columns(&connection)?;
+    bureau::state::Store::open_read_only(path)?;
+    Ok(())
 }
 
 pub(super) fn source(layout: &bureau::home::Layout, source: &Path) -> anyhow::Result<Source> {

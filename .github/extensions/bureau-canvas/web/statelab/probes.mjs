@@ -1476,11 +1476,13 @@ export const PROBES = [
       { op: "wait", selector: S.pipelineView },
       { op: "click", selector: S.modeLive },
       ...runOps("live", "running"),
+      { op: "wait", selector: S.overlayRunning },
+      { op: "failRuns" },
       { op: "wait", selector: S.runActivityUnavailable },
     ],
     expect: {
-      shows: [S.overlayRunning, S.runActivityUnavailable, S.runPickerLive],
-      hides: [S.runPickerLiveDisabled],
+      shows: [S.overlayRunning, S.runActivityUnavailable, S.runPickerLive, S.liveCountUnavailable],
+      hides: [S.runPickerLiveDisabled, S.liveCountZero],
       copy: [
         { selector: S.runActivityTitle, text: "Run list unavailable" },
         "a run already open keeps streaming",

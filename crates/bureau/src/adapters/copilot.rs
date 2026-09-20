@@ -56,6 +56,7 @@ fn argv(role: &Role, worktree: &Path) -> Vec<String> {
         "--allow-tool=bureau-io".to_owned(),
     ];
     argv.extend(permission_flags(&role.permissions, worktree));
+    argv.push("--no-auto-update".to_owned());
     argv
 }
 

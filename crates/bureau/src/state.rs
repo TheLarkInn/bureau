@@ -5,18 +5,21 @@
 //!
 //! - **leases** — claim records with expiry. Single-claim is enforced by
 //!   a unique index inside a transaction, never an in-process mutex, so
-//!   two daemons on two machines arbitrate through the database alone.
-//! - **budget counters** — run history for limits checked *before* spawn.
+//!   competing owners sharing the same database arbitrate through `SQLite`.
+//! - **budget counters** — immutable admissions for rate limits checked before
+//!   spawn, plus idempotent terminal cost records. No queued work is stored.
 //! - **dedup markers** — content hashes of proposed output, so a
 //!   scheduled pipeline never re-proposes an identical change.
 //! - **label-rule events** — an append-only audit trail and hourly
 //!   mutation counter for deterministic forge-label reconciliation.
 
+mod accounting;
 mod claim;
 mod disposition;
 mod label_rule;
 mod lease;
 mod limits;
+mod migration;
 mod project;
 mod sql;
 
@@ -102,8 +105,8 @@ fn duration_millis(duration: Duration) -> i64 {
 /// One moment's usage: live leases, runs this hour and day, day's spend.
 fn usage(conn: &Connection, assignment: &str, now: i64) -> Result<(u32, u32, u32, f64), Error> {
     let live = sql::count(conn, sql::LIVE_LEASES, assignment, now)?;
-    let hour = sql::count(conn, sql::RUNS_SINCE, assignment, now - HOUR_MS)?;
-    let day = sql::count(conn, sql::RUNS_SINCE, assignment, now - DAY_MS)?;
+    let hour = accounting::runs_since(conn, assignment, now - HOUR_MS)?;
+    let day = accounting::runs_since(conn, assignment, now - DAY_MS)?;
     let spent = sql::cost_since(conn, assignment, now - DAY_MS)?;
     Ok((live, hour, day, spent))
 }
@@ -155,7 +158,7 @@ impl Store {
         Self::init(Connection::open_in_memory()?)
     }
 
-    /// Opens an existing database read-only: no creation, no schema, no
+    /// Opens an existing database read-only: no creation, no schema writes, no
     /// migration — a watcher must never write or block the writer.
     /// Fails when the file is absent; callers treat that as "no state
     /// yet".
@@ -165,6 +168,7 @@ impl Store {
     pub fn open_read_only(path: &Path) -> Result<Self, Error> {
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         conn.busy_timeout(Duration::from_secs(5))?;
+        accounting::schema_ready(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -194,7 +198,7 @@ impl Store {
         let count: i64 = self
             .lock()
             .query_row(sql::LIVE_LEASES_TOTAL, (now,), |row| row.get(0))?;
-        Ok(u32::try_from(count).unwrap_or(0))
+        sql::count_value(count)
     }
 
     /// How many more runs the assignment may start now: the minimum
@@ -265,11 +269,9 @@ impl Store {
     }
 
     /// Applies the schema to a connection behind the sharing mutex.
-    fn init(conn: Connection) -> Result<Self, Error> {
+    fn init(mut conn: Connection) -> Result<Self, Error> {
         conn.busy_timeout(Duration::from_secs(5))?;
-        conn.execute_batch(sql::SCHEMA)?;
-        sql::migrate_leases(&conn)?;
-        sql::migrate_runs(&conn)?;
+        accounting::migrate(&mut conn, now_millis)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
