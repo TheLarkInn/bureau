@@ -8,11 +8,11 @@ async function workflow(name) {
   return parse(await readFile(new URL(`../.github/workflows/${name}.yml`, import.meta.url), "utf8"));
 }
 
-test("one CI gate includes lint, all browser suites, and every native architecture", async () => {
+test("one CI gate includes lint, browser suites, supervision, and every native architecture", async () => {
   const ci = await workflow("ci");
-  assert.deepEqual(ci.jobs.checks.needs, ["source", "lint", "matrix", "visual", "binaries", "site"]);
+  assert.deepEqual(ci.jobs.checks.needs, ["source", "lint", "matrix", "visual", "binaries", "site", "supervision"]);
   assert.equal(ci.jobs.checks.if, "always()");
-  for (const name of ["lint", "matrix", "visual", "binaries", "site"]) {
+  for (const name of ["lint", "matrix", "visual", "binaries", "site", "supervision"]) {
     assert.deepEqual(ci.jobs[name].needs, "source");
     assert.equal(ci.jobs[name].with.ref, "${{ needs.source.outputs.sha }}");
   }
@@ -50,7 +50,7 @@ test("jobs running real Engine tests enable namespaces before the test gate", as
   const prepare = "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0";
   for (const [name, job, command] of [
     ["release-build", "build", 'cargo test --locked --offline --target "$TARGET"'],
-    ["rust-lints", "lint", "./scripts/lint.sh"],
+    ["rust-lints", "lint", "bash scripts/lint.sh"],
   ]) {
     const { steps } = (await workflow(name)).jobs[job];
     const isolation = steps.findIndex(({ run }) => run === prepare);
@@ -61,7 +61,8 @@ test("jobs running real Engine tests enable namespaces before the test gate", as
 });
 
 test("untrusted test jobs have no repository write token", async () => {
-  for (const name of ["rust-lints", "canvas-state-matrix", "canvas-visual-regression", "release-build", "site-checks"]) {
+  for (const name of ["rust-lints", "canvas-state-matrix", "canvas-visual-regression", "release-build", "site-checks",
+    "windows-supervision"]) {
     const file = await workflow(name);
     assert.deepEqual(file.permissions, { contents: "read" });
     const jobs = Object.values(file.jobs);
@@ -69,6 +70,13 @@ test("untrusted test jobs have no repository write token", async () => {
       const checkout = steps.find(({ uses }) => uses?.startsWith("actions/checkout@"));
       assert.equal(checkout.with["persist-credentials"], false);
     }
+  }
+});
+
+test("both supervision jobs qualify the declared native Node runtime", async () => {
+  for (const { steps } of Object.values((await workflow("windows-supervision")).jobs)) {
+    const node = steps.find(({ uses }) => uses?.startsWith("actions/setup-node@"));
+    assert.equal(node?.with["node-version"], 24);
   }
 });
 

@@ -35,6 +35,10 @@ try {
       requireValue(stdout.trim() === "separate unprivileged forged peer refused", "forged-peer proof missing");
     }
     await requestAdmission(`${runtime}/admission.sock`, { invocation: process.env.INVOCATION_ID, pid: process.pid });
+    if (mode === "forged-peer") {
+      await assert.rejects(requestAdmission(`${runtime}/admission.sock`,
+        { invocation: process.env.INVOCATION_ID, pid: process.pid }));
+    }
   } else {
     requireValue(role === "heartbeat", "unknown fixture role");
     const effects = nativeEffects({ engine, guard, runtime, commit, executable,

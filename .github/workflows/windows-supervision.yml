@@ -19,6 +19,9 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: 24
       - name: Exercise the foreground Windows supervisor offline
         shell: pwsh
         run: ./scripts/windows-supervision.test.ps1

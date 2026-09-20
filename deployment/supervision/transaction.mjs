@@ -7,7 +7,7 @@ import { requireValue } from "../../scripts/maintenance-contract.mjs";
 import { clock } from "./lease.mjs";
 import { NATIVE_BUDGET } from "./budget.mjs";
 import { FRAME_BYTES, SCHEMA, LIMITS, sameIdentity, identity, writeFrame } from "./protocol.mjs";
-import { ENGINE, ENV, GUARD, ROOT, RUNTIME, emptyService, installation, processIdentity, serviceState } from "./system.mjs";
+import { ENGINE, ENV, GUARD, ROOT, RUNTIME, drainProcessIdentity, emptyService, installation, serviceState } from "./system.mjs";
 
 export function unitArguments({ engine = ENGINE, guard = GUARD, runtime = RUNTIME,
   script = `${ROOT}/deployment/supervision/heartbeat.mjs`, node = process.execPath, group = "bureau", args = [] } = {}) {
@@ -25,7 +25,7 @@ export function unitArguments({ engine = ENGINE, guard = GUARD, runtime = RUNTIM
 }
 
 export async function drain(engine, owned, {
-  show = serviceState, empty = emptyService, inspect = processIdentity,
+  show = serviceState, empty = emptyService, inspect = drainProcessIdentity,
   now = clock, wait = sleep, timeout = LIMITS.drain,
 } = {}) {
   const deadline = now() + timeout;
@@ -36,10 +36,13 @@ export async function drain(engine, owned, {
     requireValue(!owned || !state.ControlGroup || state.ControlGroup === owned.cgroup,
       "engine cgroup changed during drain");
     if (owned && Number(state.MainPID) > 0) {
-      requireValue(sameIdentity((await inspect(state)).identity, owned), "engine process changed during drain");
+      const observed = await inspect(state, owned);
+      requireValue(observed.status === "absent"
+        || (["running", "exited"].includes(observed.status) && sameIdentity(observed.identity, owned)),
+      "engine process changed during drain");
     }
     if (["inactive", "failed"].includes(state.ActiveState) && state.MainPID === "0") {
-      const final = await empty(engine);
+      const final = await empty(engine, owned);
       requireValue(!owned || ((!final.InvocationID || final.InvocationID === owned.invocation)
         && (!final.ControlGroup || final.ControlGroup === owned.cgroup)), "engine changed during final drain observation");
       return;

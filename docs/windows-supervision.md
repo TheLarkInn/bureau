@@ -90,8 +90,14 @@ only before running, under an absolute deadline; it is not reported as admission
 
 Every Windows response answers a new random native challenge after a fresh host
 sample. Frames are strict bounded JSON, not an accumulating heartbeat queue.
-There is one outstanding response, a six-second native read deadline, and an
-independent twelve-second systemd watchdog. A frozen Windows sampler, EOF,
+There is one outstanding response, a six-second native read deadline, and a
+twelve-second systemd watchdog enforced outside the native event loop. That is
+an aggregate freshness bound, not permission to add the individual command
+timeouts together. An overloaded monitor that cannot finish an exchange within
+that bound must fail closed too; host qualification must exercise these deadlines
+under the intended load. Watchdog renewal requires a fresh ownership exchange,
+not an independent timer that could keep stale ownership alive.
+A frozen Windows sampler, EOF,
 process loss, malformed input, stale reply, identity change or resource refusal
 cannot renew ownership. A frozen native event loop cannot renew the watchdog.
 Inherited credential, SSH, proxy and executable-override environments are not
@@ -102,6 +108,14 @@ forced termination, rather than the ordinary seventy-minute drain allowance.
 The heartbeat has a two-second stop bound. The attached transaction waits for
 the engine to become inactive/failed with no main PID and an empty cgroup before
 acknowledging `drained`. Killing only the client is never a drain receipt.
+During shutdown, a disappearing or already-exited matching leader is only
+progress, not proof of drain. Permission failures, corrupt observations and
+changed ownership still refuse; terminal service and cgroup evidence remain
+required. Live monitoring never accepts an absent or exited leader.
+The verifier retains the owned cgroup path even after systemd clears its
+metadata. A missing population counter is not emptiness: the directory must
+be demonstrably removed under an observable parent, and terminal ownership is
+rechecked after the cgroup observation.
 Refusal does not restart or retry. Retain run history and inspect interrupted
 work before an explicit new admission.
 

@@ -88,7 +88,7 @@ test("drain waits for exact owned service and cgroup emptiness without any stop-
   const states = [{ ActiveState: "deactivating", MainPID: `${ENGINE.pid}`, InvocationID: ENGINE.invocation },
     { ActiveState: "inactive", MainPID: "0", InvocationID: "" }];
   await drain("engine.service", ENGINE, { show: async () => states[Math.min(reads++, 1)],
-    inspect: async () => ({ identity: ENGINE }), now: () => reads, wait: async () => {},
+    inspect: async () => ({ status: "running", identity: ENGINE }), now: () => reads, wait: async () => {},
     empty: async () => { verified = true; return states[1]; }, timeout: 10 });
   assert.deepEqual([reads, verified], [2, true]);
 });
@@ -101,7 +101,7 @@ test("identity drift during shutdown never targets a replacement by name", async
   for (const patch of [{ pid: 900 }, { starttime: "1012" }, { cgroup: "/system.slice/other.service" }]) {
     await assert.rejects(drain("engine.service", ENGINE, {
       show: async () => ({ ActiveState: "deactivating", MainPID: `${ENGINE.pid}`, InvocationID: ENGINE.invocation }),
-      inspect: async () => ({ identity: { ...ENGINE, ...patch } }),
+      inspect: async () => ({ status: "running", identity: { ...ENGINE, ...patch } }),
     }), /process changed during drain/u);
   }
 });
@@ -110,7 +110,7 @@ test("unknown and populated cgroups cannot be called drained; deadlines are abso
   let now = 0;
   await assert.rejects(drain("engine.service", ENGINE, {
     show: async () => ({ ActiveState: "deactivating", MainPID: `${ENGINE.pid}`, InvocationID: ENGINE.invocation }),
-    inspect: async () => ({ identity: ENGINE }), now: () => now++, wait: async () => {}, timeout: 2,
+    inspect: async () => ({ status: "running", identity: ENGINE }), now: () => now++, wait: async () => {}, timeout: 2,
   }), /not confirmed/u);
   await assert.rejects(drain("engine.service", ENGINE, {
     show: async () => ({ ActiveState: "inactive", MainPID: "0", InvocationID: "" }),
