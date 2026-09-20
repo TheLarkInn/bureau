@@ -925,30 +925,46 @@ function Test-OwnerOverlap {
     }
 }
 
-function Test-TaskPreparation {
+function Invoke-TestTaskPreparation {
+    param([string] $PwshPath, [string] $Target)
     $scriptPath = [IO.Path]::Combine($script:Windows, 'prepare-task.ps1')
     $supervisor = [IO.Path]::Combine($script:Windows, 'supervise.ps1')
-    $target = [IO.Path]::Combine($script:Scratch, 'disabled-task.xml')
-    $arguments = @($scriptPath, '-UserSid', $script:Config.windowsUserSid, '-PwshPath', $script:Pwsh,
-        '-PwshSha256', (Get-FileHash -LiteralPath $script:Pwsh -Algorithm SHA256).Hash.ToLowerInvariant(),
+    $arguments = @($scriptPath, '-UserSid', $script:Config.windowsUserSid, '-PwshPath', $PwshPath,
+        '-PwshSha256', (Get-FileHash -LiteralPath $PwshPath -Algorithm SHA256).Hash.ToLowerInvariant(),
         '-SupervisorPath', $supervisor, '-SupervisorSha256', $script:Config.sourceSha256['supervise.ps1'],
         '-ConfigPath', $script:ConfigPath, '-ConfigSha256',
-        (Get-FileHash -LiteralPath $script:ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant(), '-OutputPath', $target)
+        (Get-FileHash -LiteralPath $script:ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant(), '-OutputPath', $Target)
     $process = [Diagnostics.Process]::Start((New-TestProcessInfo $arguments))
+    $output = $process.StandardOutput.ReadToEndAsync()
+    $errors = $process.StandardError.ReadToEndAsync()
     try {
-        Assert-Test ($process.WaitForExit(10000) -and $process.ExitCode -eq 0) 'preparation exits without task activity'
+        if (!$process.WaitForExit(10000)) { throw 'task preparation fixture exceeded ten seconds' }
+        $diagnostics = $errors.GetAwaiter().GetResult()
+        if ($diagnostics.Length -gt 2048 -or $output.GetAwaiter().GetResult().Length -gt 0) {
+            throw 'task preparation fixture exceeded its output bound'
+        }
+        Assert-Test ($process.ExitCode -eq 0 -and !$diagnostics) "preparation exits without task activity; exit=$($process.ExitCode); $diagnostics"
     } finally {
         if (!$process.HasExited) { $process.Kill(); $null = $process.WaitForExit(1000) }
         $process.Dispose()
     }
-    $xml = [xml] [IO.File]::ReadAllText($target)
-    $wrongNamespace = @($xml.SelectNodes('//*') | Where-Object { $_.NamespaceURI -cne 'http://schemas.microsoft.com/windows/2004/02/mit/task' })
-    Assert-Test ($wrongNamespace.Count -eq 0) 'task elements use the scheduler XML schema'
-    Assert-Test ($xml.Task.Settings.Enabled -ceq 'false' -and $xml.Task.Triggers.LogonTrigger.Enabled -ceq 'false' -and
-        $xml.Task.Principals.Principal.LogonType -ceq 'InteractiveToken') 'disabled interactive logon only'
-    Assert-Test ($xml.Task.Principals.Principal.UserId -ceq $script:Config.windowsUserSid -and
-        $xml.Task.Actions.Exec.Command -ceq $script:Pwsh -and
-        $xml.Task.Actions.Exec.Arguments -ceq "-NoProfile -NonInteractive -File `"$supervisor`" -ConfigPath `"$script:ConfigPath`"") 'pinned paths without credential arguments'
+    return [xml] [IO.File]::ReadAllText($Target)
+}
+
+function Test-TaskPreparation {
+    $supervisor = [IO.Path]::Combine($script:Windows, 'supervise.ps1')
+    foreach ($case in @(@('lower', 'pwsh.exe'), @('upper', 'PWSH.EXE'))) {
+        $pwshPath = [IO.Path]::Combine([IO.Path]::GetDirectoryName($script:Pwsh), $case[1])
+        $target = [IO.Path]::Combine($script:Scratch, "disabled-$($case[0]).xml")
+        $xml = Invoke-TestTaskPreparation $pwshPath $target
+        $wrongNamespace = @($xml.SelectNodes('//*') | Where-Object { $_.NamespaceURI -cne 'http://schemas.microsoft.com/windows/2004/02/mit/task' })
+        Assert-Test ($wrongNamespace.Count -eq 0) 'task elements use the scheduler XML schema'
+        Assert-Test ($xml.Task.Settings.Enabled -ceq 'false' -and $xml.Task.Triggers.LogonTrigger.Enabled -ceq 'false' -and
+            $xml.Task.Principals.Principal.LogonType -ceq 'InteractiveToken') 'disabled interactive logon only'
+        Assert-Test ($xml.Task.Principals.Principal.UserId -ceq $script:Config.windowsUserSid -and
+            $xml.Task.Actions.Exec.Command -ceq $pwshPath -and
+            $xml.Task.Actions.Exec.Arguments -ceq "-NoProfile -NonInteractive -File `"$supervisor`" -ConfigPath `"$script:ConfigPath`"") 'pinned paths without credential arguments'
+    }
     $escapedSupervisor = [IO.Path]::Combine($script:Scratch, 'supervisor & space.ps1')
     $escapedConfig = [IO.Path]::Combine($script:Scratch, 'config & space.json')
     $escaped = [xml] (New-BureauLogonTaskXml $script:Config.windowsUserSid $script:Pwsh $escapedSupervisor $escapedConfig)

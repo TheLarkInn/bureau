@@ -128,7 +128,8 @@ function Write-BureauTaskAction {
 if ($MyInvocation.InvocationName -ne '.') {
     $locks = [Collections.Generic.List[IDisposable]]::new()
     try {
-        if ([IO.Path]::GetFileName($PwshPath) -cne 'pwsh.exe') { throw 'explicit-pwsh-required' }
+        if (![string]::Equals([IO.Path]::GetFileName($PwshPath), 'pwsh.exe',
+            [StringComparison]::OrdinalIgnoreCase)) { throw 'explicit-pwsh-required' }
         Read-BureauTaskPin $PwshPath $PwshSha256 $locks
         Read-BureauTaskPin $SupervisorPath $SupervisorSha256 $locks
         Read-BureauTaskPin $ConfigPath $ConfigSha256 $locks
