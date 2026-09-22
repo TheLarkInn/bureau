@@ -13,8 +13,4 @@ verify: cargo fmt --all -- --check && bash scripts/lint.sh && cargo test --offli
 branch_prefix: bureau/maintenance-site-responsive/
 limits:
   max_concurrent: 1
-  max_runs_per_hour: 2
-  max_runs_per_day: 6
-  max_open_prs: 2
-  max_cost_per_day_usd: 10
   max_run_hours: 1
