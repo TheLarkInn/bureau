@@ -8,19 +8,31 @@ import { readOnlyMount } from "./maintenance-tools.mjs";
 
 const read = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).replace(/\r\n/gu, "\n");
 
-test("isolated profile has exactly three selective bounded assignments, never ordinary root assignment copies", async () => {
+test("isolated profile has exactly three selective assignments with bounded execution", async () => {
   const directory = new URL("../.bureau/maintenance/assignments/", import.meta.url);
   assert.deepEqual((await readdir(directory)).sort(), CATEGORIES.map((category) => `maintenance-${category}.yaml`).sort());
   for (const category of CATEGORIES) {
     const assignment = await read(`.bureau/maintenance/assignments/maintenance-${category}.yaml`);
     for (const required of [`name: maintenance-${category}`, `pipeline: maintenance-${category}`,
       'source: TheLarkInn/bureau', `label:"bureau:maintenance-${category}"`,
-      `approval_label: ${LABELS.ready}`, "max_concurrent: 1", "max_runs_per_hour: 2",
-      "max_runs_per_day: 6", "max_open_prs: 2", "max_cost_per_day_usd: 10", "max_run_hours: 1"]) {
+      `approval_label: ${LABELS.ready}`, `abort_label: ${LABELS.failed}`,
+      `escalate_label: ${LABELS.human}`,
+      "verify: cargo fmt --all -- --check && bash scripts/lint.sh && cargo test --offline"]) {
       assert.equal(assignment.includes(required), true, required);
     }
+    assert.match(assignment, /^  max_concurrent: 1$/mu);
+    assert.match(assignment, /^  max_run_hours: 1$/mu);
     assert.match(assignment, /-label:agent-eligible/u);
     assert.match(assignment, /-label:"bureau:design-scan"/u);
+  }
+});
+
+test("every maintenance assignment omits cost, run-rate and open-PR caps", async () => {
+  for (const category of CATEGORIES) {
+    const assignment = await read(`.bureau/maintenance/assignments/maintenance-${category}.yaml`);
+    assert.doesNotMatch(assignment,
+      /\b(?:max_cost_per_day_usd|max_runs_per_hour|max_runs_per_day|max_open_prs)\s*:/u,
+      `${category} must leave cost, run-rate and open-PR limits unset`);
   }
 });
 
@@ -82,6 +94,7 @@ test("service and container use the same single owner and explicit maintenance-o
   const launcher = await read("deployment/run-owner.sh");
   assert.match(service, /flock --nonblock --no-fork .*\/owner\.lock/u);
   assert.match(service, /MemoryMax=8G/u);
+  assert.match(service, /MemorySwapMax=0/u);
   assert.match(service, /CPUQuota=200%/u);
   assert.match(service, /TasksMax=256/u);
   assert.match(service, /KillMode=mixed/u);

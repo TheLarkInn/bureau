@@ -79,10 +79,11 @@ Before activation, provision and qualify:
    The current adapter needs `repo:write` to invoke any shell, including the
    reporter helper. Native grants are not token attenuation: provision the
    narrowest actual credential and sandbox policy the operation needs.
-5. Measurable adapter USD usage. Each assignment caps daily cost at $10;
-   **unknown cost is not zero**. An unmeasured model step fails closed and may
-   leave an inert draft requiring inspection. Do not remove the cost cap to
-   disguise missing accounting. No automatic merges are authorized.
+5. Inspect adapter usage as reported: **unknown usage remains unknown, not zero**.
+   These maintenance assignments have no cost cap, so a step is no longer
+   rejected solely because the adapter omitted measurable USD. This policy
+   does not establish provider billing terms or model entitlement.
+   No automatic merges are authorized.
 
 Use `deployment/bureau-maintenance.service` for a provisioned Linux host.
 `deployment/compose.yaml` is an alternative for an independently qualified,
@@ -293,11 +294,14 @@ than killing work. Inspect before explicitly retrying a failed/indeterminate run
 | `maintenance-site-accessibility` | `node site/check.mjs --kind accessibility --json`, real loopback browser/axe | `site/src/**` only |
 | `maintenance-site-responsive` | `node site/check.mjs --kind responsive --json`, real viewport measurements | `site/src/**` only |
 
-Every assignment permits one active run, two runs/hour, six/day, two open PRs
-and one hour per run. At most three assignments can have active work at once;
-the service bounds their aggregate resources and deterministic command admission
-is serial. A full open-PR cap also pauses scans: review outstanding proposals,
-do not quietly raise the cap. Rate/cost limits include reporting and fixes.
+Each maintenance assignment permits one active run and one hour per run.
+The three assignments omit `max_cost_per_day_usd`, `max_runs_per_hour`,
+`max_runs_per_day`, and `max_open_prs`; these omitted limits mean unlimited
+under DESIGN section 6. Reporting and fixes no longer stop at those policy caps.
+Approvals, provenance, deduplication, per-step timeouts and attempts, offline
+verification, and all service resource guards remain in force. At most three
+assignments can have active work at once; the service bounds their aggregate
+resources and deterministic command admission is serial.
 
 A canonical persistent source has exactly one category marker and intent block:
 
