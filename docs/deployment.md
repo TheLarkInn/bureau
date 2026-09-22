@@ -94,6 +94,12 @@ may refuse `unshare`. The sample intentionally cannot install or relax policy.
 Do not use a Windows bind mount for SQLite. Do not remove durable volumes during
 an update. No host or container port is publicly published.
 
+For a deliberately Windows-supervised WSL deployment, use the separately
+installed [Windows lifetime-supervision profile](windows-supervision.md).
+Starting this ordinary service from a Windows wrapper is not supervision:
+without that opt-in profile an unrelated WSL terminal can keep an unguarded
+engine alive after the wrapper fails. Ordinary native Linux behavior is unchanged.
+
 The host-root tooling contract below supports only a separately qualified
 rootful, non-user-remapped container startup in the host's global initial user
 namespace. Its `/proc/self/uid_map` must map `0` to `0` over `4294967295` IDs.
