@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { ENGINE, GUARD, parseProperties } from "../deployment/supervision/system.mjs";
@@ -109,6 +111,22 @@ test("all native provenance regex fields reject JSON type coercion", () => {
       assert.throws(() => binaryApproval({ ...good, [field]: value }, COMMIT), /provenance/u);
     }
   }
+});
+
+const ENTRY = "deployment/windows-entry.sh";
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+const indexedMode = (path) => {
+  const listed = spawnSync("git", ["ls-files", "-s", "--", path], { cwd: ROOT, encoding: "utf8" });
+  return listed.status === 0 ? listed.stdout.split(" ")[0] || undefined : undefined;
+};
+
+// wsl.exe --exec calls execvpe on the entry itself; a 0644 entry fails with Permission denied.
+test("Windows supervision entry is executable for wsl.exe --exec", {
+  skip: process.platform === "win32" && "Windows file modes do not carry owner-execute",
+}, async () => {
+  const { mode } = await stat(new URL(`../${ENTRY}`, import.meta.url));
+  assert.deepEqual([mode & 0o100, indexedMode(ENTRY) ?? "100755"], [0o100, "100755"]);
 });
 
 test("native bootstrap and unprivileged claim use the original service PATH without root prefix", async () => {
