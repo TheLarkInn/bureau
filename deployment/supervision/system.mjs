@@ -19,6 +19,7 @@ export const ENV = Object.freeze({
   GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_OPTIONAL_LOCKS: "0",
 });
 const execute = promisify(execFile);
+const REPEATED_PROPERTIES = new Set(["EnvironmentFiles"]);
 
 export async function command(file, args, env = ENV) {
   try {
@@ -31,18 +32,27 @@ export async function command(file, args, env = ENV) {
   }
 }
 
+export function parseProperties(text, names) {
+  const expected = new Set(names);
+  requireValue(expected.size === names.length, "incomplete systemd observation");
+  const values = new Map();
+  for (const line of text.split("\n")) {
+    const offset = line.indexOf("=");
+    requireValue(offset > 0, "malformed systemd observation");
+    const name = line.slice(0, offset);
+    requireValue(expected.has(name), "incomplete systemd observation");
+    requireValue(!values.has(name) || REPEATED_PROPERTIES.has(name), "incomplete systemd observation");
+    const current = values.get(name) ?? [];
+    values.set(name, [...current, line.slice(offset + 1)]);
+  }
+  requireValue(values.size === names.length, "incomplete systemd observation");
+  return Object.fromEntries(names.map((name) => [name, values.get(name).join(" ")]));
+}
+
 export async function properties(unit, names) {
   requireValue(typeof unit === "string" && /^[a-zA-Z0-9_.@-]+\.service$/u.test(unit), "invalid exact service name");
   const text = await command("/usr/bin/systemctl", ["show", unit, "--no-pager", `--property=${names.join(",")}`]);
-  const entries = text.split("\n").map((line) => {
-    const offset = line.indexOf("=");
-    requireValue(offset > 0, "malformed systemd observation");
-    return [line.slice(0, offset), line.slice(offset + 1)];
-  });
-  const result = Object.fromEntries(entries);
-  requireValue(entries.length === names.length && Object.keys(result).length === names.length
-    && names.every((name) => name in result), "incomplete systemd observation");
-  return result;
+  return parseProperties(text, names);
 }
 
 export async function protectedPath(path, directory = false) {

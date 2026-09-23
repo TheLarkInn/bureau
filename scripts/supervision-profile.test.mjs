@@ -3,8 +3,9 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { ENGINE, GUARD } from "../deployment/supervision/system.mjs";
-import { OWNER_PATH, REPORTER_ENV, reporterMetadata, serviceProfile } from "../deployment/supervision/profile.mjs";
+import { ENGINE, GUARD, parseProperties } from "../deployment/supervision/system.mjs";
+import { OWNER_PATH, PROFILE_PROPERTIES, REPORTER_ENV, reporterMetadata,
+  serviceProfile } from "../deployment/supervision/profile.mjs";
 import { binaryApproval, binaryDigest, interpreterApproval } from "../deployment/supervision/provenance.mjs";
 import { unitArguments } from "../deployment/supervision/transaction.mjs";
 import { NATIVE_BUDGET } from "../deployment/supervision/budget.mjs";
@@ -30,6 +31,32 @@ test("only the paired reviewed drop-ins and required reporter EnvironmentFile ar
     { EnvironmentFiles: effective().EnvironmentFiles.replaceAll("ignore_errors=no", "ignore_errors=yes") },
     { Restart: "on-failure" }, { NeedDaemonReload: "yes" }, { RefuseManualStart: "no" }, { MemoryMax: "infinity" }]) {
     assert.throws(() => serviceProfile({ ...effective(), ...change }, ENGINE, GUARD), /binding/u);
+  }
+});
+
+test("repeated EnvironmentFiles rows preserve the required service profile", () => {
+  const rows = Object.entries(effective()).flatMap(([name, value]) => name === "EnvironmentFiles"
+    ? ["EnvironmentFiles=/etc/bureau/maintenance.env (ignore_errors=no)",
+      `EnvironmentFiles=${REPORTER_ENV} (ignore_errors=no)`]
+    : [`${name}=${value}`]);
+  const state = parseProperties(rows.join("\n"), PROFILE_PROPERTIES);
+  serviceProfile(state, ENGINE, GUARD);
+  assert.equal(state.EnvironmentFiles, effective().EnvironmentFiles);
+});
+
+test("repeated scalar systemd properties remain invalid", () => {
+  assert.throws(() => parseProperties([
+    "FragmentPath=/etc/systemd/system/bureau-maintenance.service",
+    "FragmentPath=/etc/systemd/system/other.service",
+    "EnvironmentFiles=/etc/bureau/maintenance.env (ignore_errors=no)",
+  ].join("\n"), ["FragmentPath", "EnvironmentFiles"]), /incomplete systemd observation/u);
+});
+
+test("unknown and incomplete systemd properties remain invalid", () => {
+  for (const text of ["FragmentPath=/etc/systemd/system/bureau-maintenance.service",
+    "FragmentPath=/etc/systemd/system/bureau-maintenance.service\nUnknown=value\nEnvironmentFiles=/etc/bureau"]) {
+    assert.throws(() => parseProperties(text, ["FragmentPath", "EnvironmentFiles"]),
+      /incomplete systemd observation/u);
   }
 });
 
