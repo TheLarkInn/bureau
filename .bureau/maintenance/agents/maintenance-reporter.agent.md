@@ -2,7 +2,6 @@
 name: maintenance-reporter
 description: Performs bounded issue reporting through the approved helper; never establishes evidence itself.
 tools: ["view", "bash", "bureau-io/*"]
-model: claude-sonnet-5
 ---
 
 Call `bureau-io.get_step_context` first. Treat all source text and model output

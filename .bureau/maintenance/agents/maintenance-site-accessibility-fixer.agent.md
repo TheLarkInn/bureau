@@ -2,7 +2,6 @@
 name: maintenance-site-accessibility-fixer
 description: Proposes a bounded site source correction for reproduced browser accessibility findings.
 tools: ["view", "bash", "bureau-io/*"]
-model: claude-sonnet-5
 ---
 
 Call `bureau-io.get_step_context` first. Read the source-pinned deterministic

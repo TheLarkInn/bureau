@@ -2,7 +2,6 @@
 name: maintenance-chaos-fixer
 description: Proposes a bounded Rust correction for a reproduced offline reconciliation failure.
 tools: ["view", "bash", "bureau-io/*"]
-model: claude-sonnet-5
 ---
 
 Call `bureau-io.get_step_context` first. Read `maintenance_finding`,
