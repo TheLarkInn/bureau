@@ -22,14 +22,14 @@ try {
     await supervise({ input: process.stdin, output: process.stdout, commit,
       limits: { response: 2000, interval: 20, startup: 5000 },
       effects: {
-        now: clock, wait: sleep, prepare: async () => guard,
+        now: clock, wait: sleep, prepare: async () => guard, root: async () => "",
         observe: async () => ({ state: "running", identity: engine }),
         fresh: async () => {}, notify: async () => {},
       },
     });
   } else {
     await transaction({ input: process.stdin, output: process.stdout, commit,
-      prepare: async () => {}, empty: async () => {},
+      prepare: async () => {}, empty: async () => {}, root: async () => "",
       finish: async () => { requireValue(mode === "drained", "synthetic unconfirmed cgroup"); },
       launch(file, args, options) {
         requireValue(file === "/usr/bin/systemd-run", "unexpected fixture launch");

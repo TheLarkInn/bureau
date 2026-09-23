@@ -15,14 +15,43 @@ export function exactKeys(value, names) {
     && Object.keys(value).sort().join(",") === [...names].sort().join(","), "invalid supervision fields");
 }
 
-export function identity(value) {
+const SEGMENT = /^[a-zA-Z0-9_.@-]+$/u;
+const SERVICE = /^[a-zA-Z0-9_.@-]+\.service$/u;
+const SCOPE = "/init.scope";
+
+function managerPath(root) {
+  return typeof root === "string" && (root === "" || (root.startsWith("/") && root.slice(1).split("/")
+    .every((part) => SEGMENT.test(part) && part !== "." && part !== "..")));
+}
+
+// systemd roots its hierarchy at PID 1's cgroup without init.scope. That is
+// empty on ordinary hosts; WSL nests it under a per-boot /wsl-user/distro-N.
+export function managerRoot(text) {
+  const line = typeof text === "string" && text.endsWith("\n") ? text.slice(0, -1) : "";
+  const root = line.slice("0::".length, -SCOPE.length);
+  requireValue(line.startsWith("0::") && line.endsWith(SCOPE) && !line.includes("\n")
+    && line.length >= "0::".length + SCOPE.length && managerPath(root), "unobservable systemd manager cgroup root");
+  return root;
+}
+
+export function serviceCgroup(group, root) {
+  const slice = `${root}/system.slice/`;
+  return managerPath(root) && typeof group === "string" && group.startsWith(slice)
+    && SERVICE.test(group.slice(slice.length));
+}
+
+export function identity(value, root) {
   exactKeys(value, ["invocation", "pid", "starttime", "cgroup"]);
   requireValue(typeof value.invocation === "string" && ID.test(value.invocation)
     && Number.isSafeInteger(value.pid) && value.pid > 1
     && typeof value.starttime === "string" && /^[1-9]\d{0,19}$/u.test(value.starttime)
-    && typeof value.cgroup === "string" && /^\/system\.slice\/[a-zA-Z0-9_.@-]+\.service$/u.test(value.cgroup),
+    && serviceCgroup(value.cgroup, root),
   "unobservable owned identity");
   return value;
+}
+
+export function refusalReason(text, bound = 160) {
+  return String(text).replace(/[^\x20-\x7e]+/gu, " ").trim().slice(0, bound);
 }
 
 export function sameIdentity(left, right) {

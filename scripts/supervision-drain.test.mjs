@@ -23,7 +23,7 @@ function proc({ stat = statRecord(), group = `0::${ENGINE.cgroup}\n`, stage, cod
     return value;
   };
   return { calls, readFile: async (path) => observe(path, path.endsWith("/stat") ? stat : group),
-    realpath: async (path) => observe(path, "/opt/bureau/bin/bureau") };
+    realpath: async (path) => observe(path, "/opt/bureau/bin/bureau"), root: async () => "" };
 }
 
 test("drain observes matching live and exited leaders without requiring a zombie executable", async () => {
@@ -143,12 +143,12 @@ test("real emptiness verifier still checks the owned cgroup when systemd clears 
   const cleared = { ...terminal, ControlGroup: "", InvocationID: "" };
   for (const populated of ["populated 1\n", "", "populated 0\npopulated 1\n", "populated unknown\n"]) {
     await assert.rejects(emptyService("engine.service", ENGINE, {
-      show: async () => cleared, readFile: async () => populated,
+      show: async () => cleared, readFile: async () => populated, root: async () => "",
     }), /populated|unobservable/u);
   }
   let reads = 0;
   const result = await emptyService("engine.service", ENGINE, {
-    show: async () => { reads += 1; return cleared; },
+    show: async () => { reads += 1; return cleared; }, root: async () => "",
     readFile: async (path) => {
       assert.equal(path, `/sys/fs/cgroup${ENGINE.cgroup}/cgroup.events`);
       return "populated 0\nfrozen 0\n";
@@ -159,7 +159,7 @@ test("real emptiness verifier still checks the owned cgroup when systemd clears 
 
 test("collected cgroup proof requires actual directory absence and an observable parent", async () => {
   const directory = { isDirectory: () => true, isSymbolicLink: () => false };
-  const inspect = { show: async () => terminal, readFile: async () => { throw missing("ENOENT"); },
+  const inspect = { show: async () => terminal, root: async () => "", readFile: async () => { throw missing("ENOENT"); },
     lstat: async (path) => {
       if (path === `/sys/fs/cgroup${ENGINE.cgroup}`) throw missing("ENOENT");
       assert.equal(path, "/sys/fs/cgroup/system.slice");
@@ -183,7 +183,7 @@ test("real emptiness proof rechecks terminal ownership after observing the cgrou
     let reads = 0;
     await assert.rejects(emptyService("engine.service", ENGINE, {
       show: async () => reads++ === 0 ? terminal : { ...terminal, ...patch },
-      readFile: async () => "populated 0\n",
+      readFile: async () => "populated 0\n", root: async () => "",
     }), /not drained|ownership changed/u);
     assert.equal(reads, 2);
   }

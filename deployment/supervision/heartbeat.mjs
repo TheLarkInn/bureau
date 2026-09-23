@@ -7,8 +7,9 @@ import { requireValue } from "../../scripts/maintenance-contract.mjs";
 import { readBoundedJson } from "../../scripts/maintenance-files.mjs";
 import { clock, publish } from "./lease.mjs";
 import { admissionServer } from "./admission.mjs";
-import { SCHEMA, LIMITS, frames, heartbeat, identity, nonce, sameIdentity, writeFrame } from "./protocol.mjs";
-import { ENGINE, ENV, GUARD, RUNTIME, command, installation, processIdentity, properties, serviceState } from "./system.mjs";
+import { SCHEMA, LIMITS, frames, heartbeat, identity, nonce, refusalReason, sameIdentity, writeFrame } from "./protocol.mjs";
+import { ENGINE, ENV, GUARD, RUNTIME, command, installation, processIdentity, properties, serviceState, systemRoot }
+  from "./system.mjs";
 
 export async function supervise({ input, output, commit, effects, limits = LIMITS }) {
   const reader = frames(input);
@@ -17,12 +18,13 @@ export async function supervise({ input, output, commit, effects, limits = LIMIT
   const startedAt = effects.now();
   let owner;
   let known;
+  let root;
   let started = false;
   const observe = async () => {
     const current = await effects.observe();
     requireValue(["starting", "running"].includes(current.state), "engine left its owned lifetime");
     if (current.state === "running") {
-      identity(current.identity);
+      identity(current.identity, root);
       requireValue(!known || sameIdentity(known, current.identity), "engine identity changed");
       known = current.identity;
     } else {
@@ -31,7 +33,9 @@ export async function supervise({ input, output, commit, effects, limits = LIMIT
     return current;
   };
   try {
-    const guard = identity(await effects.prepare());
+    const prepared = await effects.prepare();
+    root = await effects.root();
+    const guard = identity(prepared, root);
     for (let sequence = 0; ; sequence += 1) {
       reader.check();
       const state = started ? await observe() : { state: "starting", identity: null };
@@ -69,7 +73,7 @@ export function nativeEffects({ engine = ENGINE, guard = GUARD, runtime = RUNTIM
     return observed;
   };
   return {
-    now: clock, wait: sleep,
+    now: clock, wait: sleep, root: systemRoot,
     async prepare() {
       await prepare();
       guardian = await ownGuard();
@@ -128,8 +132,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const commit = process.argv[2];
     await supervise({ input: process.stdin, output: process.stdout, commit, effects: nativeEffects({ commit }) });
-  } catch {
-    console.error("Windows ownership supervision refused");
+  } catch (error) {
+    console.error(`Windows ownership supervision refused: ${refusalReason(error?.message)}`);
     process.exitCode = 1;
   }
 }
