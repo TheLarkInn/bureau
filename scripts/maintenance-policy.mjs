@@ -1,7 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
 
 import { AUTHOR, CATEGORIES, requireValue } from "./maintenance-contract.mjs";
-import { GiB } from "./maintenance-resources.mjs";
+import { BOUNDS, GiB } from "./maintenance-resources.mjs";
 import { readBoundedJson } from "./maintenance-files.mjs";
 import { validateRustPolicy } from "./maintenance-rust.mjs";
 
@@ -17,8 +17,8 @@ export function validatePolicy(policy, requireIdentity = true) {
       `${key} must be an absolute, pre-provisioned read-only path`);
   }
   requireValue(Number.isSafeInteger(policy.cargo_cache_max_bytes)
-    && policy.cargo_cache_max_bytes > 0 && policy.cargo_cache_max_bytes <= 8 * GiB,
-  "Cargo cache must have a positive ceiling no larger than 8 GiB");
+    && policy.cargo_cache_max_bytes > BOUNDS.cargoPruneBytes && policy.cargo_cache_max_bytes <= 8 * GiB,
+  "Cargo cache ceiling must exceed the prune bound and be no larger than 8 GiB");
   validateRustPolicy(policy);
   if (!requireIdentity) return policy;
   requireValue(policy.issuer_login === AUTHOR
