@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { requireValue } from "../../scripts/maintenance-contract.mjs";
 import { readBoundedFile } from "../../scripts/maintenance-files.mjs";
 import { filesystemSnapshot } from "../../scripts/maintenance-mount.mjs";
-import { COMMIT, ID, LIMITS, identity, sameIdentity } from "./protocol.mjs";
+import { COMMIT, ID, LIMITS, identity, managerRoot, sameIdentity, serviceCgroup } from "./protocol.mjs";
 import { binaryProvenance } from "./provenance.mjs";
 import { PROFILE_PROPERTIES, REPORTER_ENV, reporterMetadata, serviceProfile } from "./profile.mjs";
 
@@ -111,6 +111,14 @@ export async function installation(commit) {
   reporterMetadata(await lstat(REPORTER_ENV), uid, gid);
 }
 
+let observedRoot;
+
+// PID 1 cannot change cgroup within one boot, so one observation per process suffices.
+export function systemRoot() {
+  observedRoot ??= readFile("/proc/1/cgroup", "utf8").then(managerRoot);
+  return observedRoot;
+}
+
 function serviceProcess(state) {
   const pid = Number(state.MainPID);
   requireValue(typeof state.InvocationID === "string" && ID.test(state.InvocationID)
@@ -120,14 +128,15 @@ function serviceProcess(state) {
   return pid;
 }
 
-async function processRecord(state, inspect) {
+async function processRecord(state, inspect, root) {
   const pid = serviceProcess(state);
   const stat = await inspect.readFile(`/proc/${pid}/stat`, "utf8");
   const end = stat.lastIndexOf(")");
   const fields = stat.slice(end + 2).trim().split(/\s+/u);
   requireValue(stat.startsWith(`${pid} (`) && end > 0 && stat[end + 1] === " " && fields.length >= 22
     && /^[RSDZTtXxKWPI]$/u.test(fields[0]), "malformed owned process stat");
-  const result = identity({ invocation: state.InvocationID, pid, starttime: fields[19], cgroup: state.ControlGroup });
+  const result = identity({ invocation: state.InvocationID, pid, starttime: fields[19],
+    cgroup: state.ControlGroup }, root);
   return { identity: result, status: ["Z", "X", "x"].includes(fields[0]) ? "exited" : "running" };
 }
 
@@ -141,25 +150,27 @@ async function processExecutable(owned, inspect) {
   return inspect.realpath(`/proc/${owned.pid}/exe`);
 }
 
-export async function processIdentity(state, inspect = { readFile, realpath }) {
-  const observed = await processRecord(state, inspect);
+export async function processIdentity(state, inspect = { readFile, realpath, root: systemRoot }) {
+  const observed = await processRecord(state, inspect, await inspect.root());
   requireValue(observed.status === "running", "owned process is absent or dead");
   return { identity: observed.identity, executable: await processExecutable(observed.identity, inspect) };
 }
 
-export async function drainProcessIdentity(state, owned, inspect = { readFile, realpath }) {
+export async function drainProcessIdentity(state, owned, inspect = { readFile, realpath, root: systemRoot }) {
   const pid = serviceProcess(state);
   requireValue(state.InvocationID === owned.invocation && pid === owned.pid && state.ControlGroup === owned.cgroup,
     "engine process changed during drain");
+  // Observe the manager root first: its failure must never read as a vanished leader.
+  const root = await inspect.root();
   try {
-    const observed = await processRecord(state, inspect);
+    const observed = await processRecord(state, inspect, root);
     requireValue(sameIdentity(observed.identity, owned), "engine process changed during drain");
     // Exited leaders can lose their executable and cgroup membership before reaping.
     if (observed.status === "exited") return observed;
     const group = await processCgroup(owned, inspect);
     if (group !== `0::${owned.cgroup}`) {
       requireValue(group === "0::/", "owned process escaped its service cgroup");
-      const repeated = await processRecord(state, inspect);
+      const repeated = await processRecord(state, inspect, root);
       requireValue(sameIdentity(repeated.identity, owned), "engine process changed during drain");
       requireValue(repeated.status === "exited", "owned process escaped its service cgroup");
       return repeated;
@@ -195,8 +206,7 @@ async function removedCgroup(path, inspect) {
 }
 
 async function emptyCgroup(group, inspect) {
-  requireValue(typeof group === "string" && /^\/system\.slice\/[a-zA-Z0-9_.@-]+\.service$/u.test(group),
-    "service cgroup is unobservable");
+  requireValue(serviceCgroup(group, await inspect.root()), "service cgroup is unobservable");
   const path = `/sys/fs/cgroup${group}`;
   let text;
   try {
@@ -210,7 +220,7 @@ async function emptyCgroup(group, inspect) {
   requireValue(population.length === 1 && population[0] === "populated 0", "service cgroup is still populated or unobservable");
 }
 
-export async function emptyService(unit, owned, inspect = { show: serviceState, readFile, lstat }) {
+export async function emptyService(unit, owned, inspect = { show: serviceState, readFile, lstat, root: systemRoot }) {
   const state = await inspect.show(unit);
   terminalService(state, owned);
   const group = owned?.cgroup || state.ControlGroup;

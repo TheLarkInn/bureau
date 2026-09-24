@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { requireValue } from "../../scripts/maintenance-contract.mjs";
 import { clock } from "./lease.mjs";
 import { NATIVE_BUDGET } from "./budget.mjs";
-import { FRAME_BYTES, SCHEMA, LIMITS, sameIdentity, identity, writeFrame } from "./protocol.mjs";
-import { ENGINE, ENV, GUARD, ROOT, RUNTIME, drainProcessIdentity, emptyService, installation, serviceState } from "./system.mjs";
+import { FRAME_BYTES, SCHEMA, LIMITS, sameIdentity, identity, refusalReason, writeFrame } from "./protocol.mjs";
+import { ENGINE, ENV, GUARD, ROOT, RUNTIME, drainProcessIdentity, emptyService, installation, serviceState, systemRoot }
+  from "./system.mjs";
 
 export function unitArguments({ engine = ENGINE, guard = GUARD, runtime = RUNTIME,
   script = `${ROOT}/deployment/supervision/heartbeat.mjs`, node = process.execPath, group = "bureau", args = [] } = {}) {
@@ -54,8 +55,9 @@ export async function drain(engine, owned, {
 
 export async function transaction({ input, output, commit, engine = ENGINE, guard = GUARD,
   arguments: args = unitArguments({ args: [commit] }), prepare = installation, launch = spawn,
-  finish = drain, empty = emptyService }) {
+  finish = drain, empty = emptyService, root = systemRoot }) {
   await prepare(commit);
+  const manager = await root();
   await empty(engine);
   await empty(guard);
   const child = launch("/usr/bin/systemd-run", args, { env: ENV, stdio: ["pipe", "pipe", "pipe"] });
@@ -63,6 +65,7 @@ export async function transaction({ input, output, commit, engine = ENGINE, guar
   let owned;
   let buffered = "";
   let diagnostics = 0;
+  let retained = Buffer.alloc(0);
   let sequence = 0;
   let deadline;
   const boundClient = () => {
@@ -85,6 +88,7 @@ export async function transaction({ input, output, commit, engine = ENGINE, guar
   child.stderr.on("error", refuse);
   output.on("error", refuse);
   child.stderr.on("data", (chunk) => {
+    retained = Buffer.concat([retained, chunk.subarray(0, Math.max(0, 512 - diagnostics))]);
     diagnostics += chunk.length;
     if (diagnostics > 65_536) refuse();
   });
@@ -103,7 +107,7 @@ export async function transaction({ input, output, commit, engine = ENGINE, guar
         "invalid native supervision output");
       sequence += 1;
       if (value.state === "running") {
-        identity(value.identity);
+        identity(value.identity, manager);
         requireValue(!owned || sameIdentity(owned, value.identity), "owned identity changed in native output");
         owned = value.identity;
       } else requireValue(value.state === "starting" && !owned && value.identity === null, "native identity disappeared");
@@ -122,8 +126,11 @@ export async function transaction({ input, output, commit, engine = ENGINE, guar
     await finish(engine, owned);
     await empty(guard);
     await writeFrame(output, { schema: SCHEMA, type: "stopped", drained: true });
-    requireValue(owned && !problem && !buffered && result.code === 0 && result.signal === null,
-      "ownership ended; cgroup drained, explicit re-admission required");
+    if (!(owned && !problem && !buffered && result.code === 0 && result.signal === null)) {
+      // Reported only after the drain proof, bounded, so native refusals stay visible.
+      throw Object.assign(new Error("ownership ended; cgroup drained, explicit re-admission required"),
+        { native: refusalReason(retained.toString("utf8"), 512) });
+    }
   } finally {
     clearTimeout(deadline);
     output.off("error", refuse);
@@ -133,8 +140,9 @@ export async function transaction({ input, output, commit, engine = ENGINE, guar
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     await transaction({ input: process.stdin, output: process.stdout, commit: process.argv[2] });
-  } catch {
-    console.error("Windows supervised transaction refused; inspect native service state before re-admission");
+  } catch (error) {
+    const native = typeof error?.native === "string" && error.native ? ` (native: ${error.native})` : "";
+    console.error(`Windows supervised transaction refused; inspect native service state before re-admission${native}`);
     process.exitCode = 1;
   }
 }

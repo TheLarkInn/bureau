@@ -37,7 +37,7 @@ test("actual one-use admission file refuses concurrent and replacement invocatio
   await publish(runtime, "lease.json", lease());
   const context = { runtime, engine: "engine.service", guard: "guard.service", commit: COMMIT,
     invocation: ENGINE.invocation, pid: 321, executable: "/opt/bureau/bin/node" };
-  const effects = { now: () => 1100, inspect: async (state) => state.ActiveState === "active" ? { identity: GUARD }
+  const effects = { now: () => 1100, root: async () => "", inspect: async (state) => state.ActiveState === "active" ? { identity: GUARD }
     : { identity: { ...ENGINE, invocation: context.invocation, pid: context.pid }, executable: context.executable },
     show: async (unit) => unit === context.guard ? { ActiveState: "active", SubState: "running" }
       : { ActiveState: "activating", SubState: "start-pre", InvocationID: context.invocation, ControlPID: String(context.pid) } };
@@ -51,7 +51,7 @@ test("actual one-use admission file refuses concurrent and replacement invocatio
 test("startup grant rejects stale ownership, mismatched guardian and unrelated start", async () => {
   const context = { runtime: "/not-used", engine: "engine.service", guard: "guard.service",
     commit: COMMIT, invocation: ENGINE.invocation, pid: 321, executable: "/opt/bureau/bin/node" };
-  const base = { now: () => 1100, inspect: async (state) => state.ActiveState === "active" ? { identity: GUARD }
+  const base = { now: () => 1100, root: async () => "", inspect: async (state) => state.ActiveState === "active" ? { identity: GUARD }
     : { identity: { ...ENGINE, pid: 321 }, executable: context.executable }, read: async () => lease(),
     save: async () => { throw new Error("unexpected admission"); },
     show: async (unit) => unit === context.guard ? { ActiveState: "active", SubState: "running" }
@@ -70,14 +70,14 @@ test("startup grant rejects stale ownership, mismatched guardian and unrelated s
 test("lease age is monotonic, finite and bounded; future and missing counters are refusal", () => {
   for (const value of [{ ...lease(), at: 1101 }, { ...lease(), at: NaN }, { ...lease(), at: undefined },
     { ...lease(), sequence: -1 }, { ...lease(), owner: "" }]) {
-    assert.throws(() => checkedLease(value, 1100, COMMIT), /stale/u);
+    assert.throws(() => checkedLease(value, 1100, COMMIT, ""), /stale/u);
   }
 });
 
 test("lease textual fields reject JSON type coercion before startup publication", () => {
   for (const field of ["owner", "commit"]) {
     for (const value of [[lease()[field]], {}, null, true, 123]) {
-      assert.throws(() => checkedLease({ ...lease(), [field]: value }, 1100, value), /stale/u);
+      assert.throws(() => checkedLease({ ...lease(), [field]: value }, 1100, value, ""), /stale/u);
     }
   }
 });
@@ -121,7 +121,7 @@ test("unknown and populated cgroups cannot be called drained; deadlines are abso
 test("real process identity parser retains starttime and rejects missing PID or cgroup drift", async () => {
   const state = { MainPID: `${ENGINE.pid}`, InvocationID: ENGINE.invocation, ControlGroup: ENGINE.cgroup };
   const fields = ["S", ...Array(18).fill("0"), ENGINE.starttime, "0", "0"];
-  const inspect = { realpath: async () => "/opt/bureau/bin/bureau",
+  const inspect = { realpath: async () => "/opt/bureau/bin/bureau", root: async () => "",
     readFile: async (path) => path.endsWith("/stat") ? `${ENGINE.pid} (a ) name) ${fields.join(" ")}`
       : `0::${ENGINE.cgroup}\n` };
   assert.deepEqual((await processIdentity(state, inspect)).identity, ENGINE);

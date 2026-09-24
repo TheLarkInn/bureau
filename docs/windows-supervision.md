@@ -85,8 +85,14 @@ check-then-name-stop. Replacement admission is prohibited for the lifetime of
 the dependency, and the native transaction refuses observed identity drift.
 Each running observation binds the real systemd invocation, main PID, Linux
 process starttime, cgroup membership and cgroup device/inode. A running service
-with empty or unknown identity is a refusal. Startup without a PID is allowed
-only before running, under an absolute deadline; it is not reported as admission.
+with empty or unknown identity is a refusal.
+A service cgroup must be exactly `<root>/system.slice/<unit>.service`, where
+`<root>` is systemd's own root: PID 1's single cgroup v2 line
+`0::<root>/init.scope` without `/init.scope`. It is empty on ordinary hosts;
+WSL runs systemd under a per-boot `/wsl-user/distro-<N>/systemd`. Another
+prefix, slice, traversal or malformed `/proc/1/cgroup` refuses.
+Startup without a PID is allowed only before running, under an absolute
+deadline; it is not reported as admission.
 
 Every Windows response answers a new random native challenge after a fresh host
 sample. Frames are strict bounded JSON, not an accumulating heartbeat queue.
@@ -116,6 +122,8 @@ The verifier retains the owned cgroup path even after systemd clears its
 metadata. A missing population counter is not emptiness: the directory must
 be demonstrably removed under an observable parent, and terminal ownership is
 rechecked after the cgroup observation.
+A refusing heartbeat prints its bounded reason; after the drain proof the
+transaction repeats at most 512 sanitized bytes of that native diagnostic.
 Refusal does not restart or retry. Retain run history and inspect interrupted
 work before an explicit new admission.
 

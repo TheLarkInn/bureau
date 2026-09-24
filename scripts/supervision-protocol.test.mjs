@@ -56,14 +56,14 @@ test("every heartbeat binds the nonce, sequence, owner, guard, commit and sample
 test("running identity cannot be absent, unknown, malformed or an escaping cgroup", () => {
   for (const value of [null, {}, { ...ENGINE, pid: 0 }, { ...ENGINE, starttime: "" },
     { ...ENGINE, invocation: "" }, { ...ENGINE, cgroup: "/system.slice/../unrelated.service" }]) {
-    assert.throws(() => identity(value), /identity|fields/u);
+    assert.throws(() => identity(value, ""), /identity|fields/u);
   }
 });
 
 test("JSON arrays and other nonstrings cannot impersonate textual identity fields", () => {
   for (const field of ["invocation", "starttime", "cgroup"]) {
     for (const value of [[ENGINE[field]], {}, null, true, 123]) {
-      assert.throws(() => identity({ ...ENGINE, [field]: value }), /identity/u);
+      assert.throws(() => identity({ ...ENGINE, [field]: value }, ""), /identity/u);
     }
   }
 });
@@ -118,6 +118,6 @@ test("partial startup and monitor failures stop the actual loop without later wa
 test("a lost Windows output reader refuses before readiness without an unhandled stream error", async () => {
   const output = new Writable({ write(chunk, encoding, callback) { callback(new Error("closed reader")); } });
   await assert.rejects(supervise({ input: new PassThrough(), output, commit: COMMIT,
-    effects: { now: () => 0, prepare: async () => GUARD },
+    effects: { now: () => 0, prepare: async () => GUARD, root: async () => "" },
   }), /closed/u);
 });

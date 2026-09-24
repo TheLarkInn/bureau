@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { requireValue } from "../../scripts/maintenance-contract.mjs";
 import { readBoundedJson } from "../../scripts/maintenance-files.mjs";
 import { COMMIT, ID, LIMITS, exactKeys, identity, nonce, sameIdentity } from "./protocol.mjs";
-import { processIdentity, serviceState } from "./system.mjs";
+import { processIdentity, serviceState, systemRoot } from "./system.mjs";
 
 export const clock = () => Math.floor(uptime() * 1000);
 
-export function checkedLease(value, now, commit) {
+export function checkedLease(value, now, commit, root) {
   exactKeys(value, ["guard", "owner", "commit", "sequence", "at"]);
-  identity(value.guard);
+  identity(value.guard, root);
   requireValue(typeof value.owner === "string" && ID.test(value.owner)
     && typeof value.commit === "string" && COMMIT.test(value.commit) && value.commit === commit
     && Number.isSafeInteger(value.sequence) && value.sequence >= 0
@@ -34,11 +34,12 @@ export async function publish(runtime, name, value, once = false) {
 
 export async function claim({ runtime, engine, guard, commit, invocation, pid, executable = process.execPath }, {
   now = clock, show = serviceState, inspect = processIdentity, read = readBoundedJson, save = publish,
-  live = () => true,
+  live = () => true, root = systemRoot,
 } = {}) {
   requireValue(live() && typeof invocation === "string" && ID.test(invocation)
     && Number.isSafeInteger(pid) && pid > 1, "startup has no live systemd identity");
-  const lease = checkedLease(await read(join(runtime, "lease.json")), now(), commit);
+  const manager = await root();
+  const lease = checkedLease(await read(join(runtime, "lease.json")), now(), commit, manager);
   const guardian = await show(guard);
   requireValue(guardian.ActiveState === "active" && guardian.SubState === "running"
     && sameIdentity((await inspect(guardian)).identity, lease.guard), "startup guardian identity changed");
@@ -49,7 +50,7 @@ export async function claim({ runtime, engine, guard, commit, invocation, pid, e
   const control = await inspect({ ...service, MainPID: service.ControlPID });
   requireValue(control.identity.invocation === invocation && control.identity.pid === pid
     && control.executable === executable, "pre-start process is not the qualified interpreter");
-  checkedLease(lease, now(), commit);
+  checkedLease(lease, now(), commit, manager);
   requireValue(live(), "startup ownership ended during claim");
   // A successful link consumes the only admission for this heartbeat lifetime.
   // Failure is not rolled back, so even a failed ExecStart cannot be replaced.

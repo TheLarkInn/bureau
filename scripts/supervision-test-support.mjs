@@ -20,7 +20,7 @@ export function harness(receive, options = {}) {
   const events = [];
   let current = { state: "running", identity: ENGINE };
   const effects = {
-    now: () => performance.now(), wait: sleep,
+    now: () => performance.now(), wait: sleep, root: async () => "",
     prepare: async () => { events.push("prepare"); return GUARD; },
     observe: async () => current,
     fresh: async () => { events.push("fresh"); },
