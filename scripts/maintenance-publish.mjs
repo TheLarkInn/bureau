@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readStepRequest } from "./read-step-request.mjs";
+import { readPublisherRequest } from "./maintenance-request.mjs";
 import {
   LABELS, categoryLabel, findingBody, fingerprint, issueUrl, reportBody,
   requireValue, stepResult, validateEvidence,
@@ -116,14 +116,13 @@ export async function clear(api, value, policy) {
 
 async function main() {
   try {
-    const request = await readStepRequest({ maximumBytes: 1024 * 1024 });
-    requireValue(request?.schema === "v2", "publisher requires a v2 request");
+    const mode = process.argv[2];
+    const request = await readPublisherRequest(mode);
     const policy = await loadPolicy();
-    const value = validateEvidence(request.inputs?.maintenance_evidence);
+    const value = validateEvidence(request.inputs.maintenance_evidence);
     requireClean(value.source, process.cwd(), { activeAgent: PUBLISHER_AGENT });
     const api = github({ token: process.env.GH_TOKEN });
     requireValue(process.env.GH_TOKEN, "publisher has no explicitly granted forge credential");
-    const mode = process.argv[2];
     let receipt = null;
     if (mode === "draft") receipt = await draft(api, value, policy);
     else if (mode === "handoff") receipt = await handoff(api, value, request.inputs.maintenance_draft,
