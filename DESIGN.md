@@ -413,9 +413,13 @@ rate, open-PR, and cost limits mean unlimited. Omitted `max_run_hours` uses the
 system default of 24 hours; an explicit positive value may raise or lower it.
 
 `approval_label` is a hard pre-claim admission check and grants `Maintainer`
-trust. Recheck it at every step boundary and before publication. Removing it
-blocks the active run and requires explicit retry. An ADO assignment with a
-reachable agent step requiring more than `Untrusted` trust must configure it.
+trust. Recheck it at every step boundary and before publication. The recheck
+reads the run's own item from the forge, not the work filter: the filter admits
+new work, and its exclusions may match labels the run adds. Item state is not
+part of the recheck; use `bureau cancel` to stop a run on a closed item.
+Removing the label, a failed read, or a missing item blocks the active run and
+requires explicit retry. An ADO assignment with a reachable agent step
+requiring more than `Untrusted` trust must configure it.
 
 ### label_rules/&lt;name&gt;.yaml — bounded label reconciliation
 

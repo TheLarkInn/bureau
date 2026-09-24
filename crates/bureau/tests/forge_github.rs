@@ -260,3 +260,36 @@ async fn query_follows_next_links() {
     let count = (items.len(), server.requests().len());
     assert_eq!(count, (2, 2));
 }
+
+/// One issue read directly: labeled, transferred away, then deleted.
+const ISSUE_BODY: &str = r#"{"number":7,"repository_url":"https://api.github.com/repos/o/r","title":"T","body":null,"html_url":"https://x/7","labels":[{"name":"ready"}],"author_association":"OWNER"}"#;
+
+/// Each read's labels, or its error text.
+async fn read_three(forge: &GitHubForge) -> Vec<Result<Vec<String>, String>> {
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let read = forge.item("o/r#7").await;
+        seen.push(read.map(|item| item.labels).map_err(|e| e.to_string()));
+    }
+    seen
+}
+
+#[tokio::test]
+async fn item_reads_one_issue_and_refuses_moved_or_missing_ones() {
+    let moved = ISSUE_BODY.replace("repos/o/r", "repos/o/elsewhere");
+    let missing = response(404, r#"{"message":"Not Found"}"#, "");
+    let server = TestServer::start(|_| vec![ok_json(ISSUE_BODY), ok_json(&moved), missing]);
+    let seen = read_three(&server.forge()).await;
+    let targets: Vec<String> = server
+        .requests()
+        .iter()
+        .map(|r| decoded_target(r))
+        .collect();
+    let expected = vec![
+        Ok(vec!["ready".to_owned()]),
+        Err("unexpected forge response: work item `o/r#7` changed repositories".to_owned()),
+        Err(r#"forge API error (status 404): {"message":"Not Found"}"#.to_owned()),
+    ];
+    let paths = vec!["/repos/o/r/issues/7".to_owned(); 3];
+    assert_eq!((seen, targets), (expected, paths));
+}

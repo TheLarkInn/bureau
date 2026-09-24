@@ -2,6 +2,7 @@
 
 pub mod cloud;
 mod dependencies;
+mod issue;
 mod labels;
 mod rate;
 mod status;
@@ -11,8 +12,8 @@ use reqwest::{Method, RequestBuilder};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
+use self::issue::Issue;
 use super::{Error, Forge, Item, Pr, PrRequest, PrStatus};
-use crate::contract::Trust;
 use crate::process::Secret;
 
 const MAX_PAGES: u32 = 10;
@@ -56,13 +57,6 @@ fn repo_name(source: &str) -> Result<String, Error> {
         })
 }
 
-fn trust(association: &str) -> Trust {
-    match association {
-        "OWNER" | "MEMBER" | "COLLABORATOR" => Trust::Maintainer,
-        _ => Trust::Untrusted,
-    }
-}
-
 fn closes_item(body: Option<&str>, repo: &str) -> Option<String> {
     let body = body?.to_lowercase();
     let start = body.find("closes #")? + "closes #".len();
@@ -83,39 +77,6 @@ fn split_item_id(item_id: &str) -> Result<(String, u64), Error> {
         Some((repo.to_owned(), number.parse().ok()?))
     };
     parsed().ok_or_else(|| Error::Parse(format!("expected owner/name#number, got {item_id:?}")))
-}
-
-#[derive(Deserialize)]
-struct Label {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct Issue {
-    number: u64,
-    repository_url: String,
-    title: String,
-    body: Option<String>,
-    html_url: String,
-    labels: Vec<Label>,
-    author_association: String,
-}
-
-impl Issue {
-    fn into_item(self, expected_repo: &str) -> Option<Item> {
-        let repo = repo_name(&self.repository_url).ok()?;
-        if !repo.eq_ignore_ascii_case(expected_repo) {
-            return None;
-        }
-        Some(Item {
-            external_id: format!("{repo}#{}", self.number),
-            title: self.title,
-            body: self.body.unwrap_or_default(),
-            url: self.html_url,
-            labels: self.labels.into_iter().map(|label| label.name).collect(),
-            trust: trust(&self.author_association),
-        })
-    }
 }
 
 #[derive(Deserialize)]
@@ -230,6 +191,10 @@ impl Forge for GitHubForge {
                 .collect()
         })
         .await
+    }
+
+    async fn item(&self, item_id: &str) -> Result<Item, Error> {
+        issue::read(self, item_id).await
     }
 
     async fn open_prs(&self, repo: &str, branch_prefix: &str) -> Result<Vec<Pr>, Error> {
