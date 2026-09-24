@@ -62,6 +62,7 @@ exhaustive = true
 
 # --- engine integration tests ---
 "engine:rig" = []
+"engine:concurrent_runs" = ["rig"]
 "engine:runtime_environment" = ["rig"]
 "engine:scenario_offline" = ["rig"]
 "engine:terminal_labels" = ["rig"]

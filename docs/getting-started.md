@@ -495,7 +495,9 @@ config-adoption time.
 By default, both production adapters use the official Rust ACP client and stable protocol
 v1 over supervised stdio: `copilot --acp --stdio` or `claude-agent-acp`.
 Each attempt opens a fresh session, selects the exact advertised custom agent,
-and supplies `bureau-io` through MCP. A missing selector fails before prompting;
+and supplies `bureau-io` through MCP. Claude receives it in the ACP session;
+Copilot's ACP server accepts only HTTP and SSE client servers, so Copilot
+receives it through `--additional-mcp-config`. A missing selector fails before prompting;
 hidden session state does not pass between steps.
 
 Role grants authorize normal work. Additional permission requests, including

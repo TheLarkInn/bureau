@@ -37,7 +37,9 @@ Before activation, provision and qualify:
 
 1. A dedicated non-root Linux account, a **new** private persistent
    `/var/lib/bureau-maintenance`, a separate runtime home, and a disposable
-   `/var/cache/bureau-maintenance/cargo` with an 8 GiB ceiling. State must be
+   `/var/cache/bureau-maintenance/cargo` with an 8 GiB ceiling. The cache must
+   be a canonical directory owned by the service account, with no group/world
+   write bits. State must be
    native ext4, XFS or Btrfs, not tmpfs, a Windows mount, or a network share.
    Independently guarantee persistent volume backing; filesystem type alone
    does not prove that a VM disk survives deletion of its host.
@@ -131,6 +133,15 @@ must be root-owned with no write bits. A writable bind, a symlink to another
 cache, a daemon-owned parent, or an absent prepared dependency is a refusal.
 An immutable container image supplies the `/opt` payloads; pre-provision its
 read-only runtime volume with the same driver and protected ancestry.
+
+Cargo never garbage-collects its target directory; each commit with new
+dependency or feature hashes adds roughly 235 MB. Before every check, under
+the same `command.lock` as Cargo commands and before disk admission, the
+checker measures `policy.cargo_target`. Above 3 GiB or 6,000 entries it empties
+the directory in place, like `cargo clean`, then rebuilds from scratch. Cleanup
+never follows symlinks or crosses filesystems. A non-canonical, foreign-owned
+or group/world-writable root, a replaced directory, or a permission error fails
+the check instead. The 8 GiB ceiling must exceed this prune bound.
 
 Keep the genuine `cargo`, `rustc`, `rustdoc`, formatting and Clippy proxies
 pointing to that directory's `rustup`. The exact `PATH` starts with
