@@ -3,10 +3,14 @@
 #[path = "engine/rig.rs"]
 mod rig;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use bureau::contract::{StepOutcome, Trust};
-use bureau::forge::Forge;
+use bureau::forge::fake::FakeForge;
+use bureau::forge::{Error, Forge, Item, Pr, PrRequest, PrStatus};
 use bureau::runlog::{self, EventKind};
 
 #[tokio::test]
@@ -91,4 +95,128 @@ fn use_fixture_helpers(rig: &rig::Rig) {
         rig::decision_step("unused", "other"),
         Trust::Derived,
     );
+}
+
+const READY: &str = "bureau:maintenance-ready";
+const REPORTED: &str = "bureau:maintenance-reported";
+
+fn labels(names: &[&str]) -> Vec<String> {
+    names.iter().map(|&name| name.to_owned()).collect()
+}
+
+/// What the forge reports after the first step, before its boundary check.
+enum Change {
+    Labels(Vec<String>, Vec<String>),
+    Fail,
+    Vanish,
+}
+
+/// The fake forge behind an admission filter excluding `REPORTED`, as the
+/// maintenance assignments' filters do. Its second read applies `change`.
+struct MidRun {
+    inner: Arc<FakeForge>,
+    change: Change,
+    reads: AtomicUsize,
+}
+
+impl MidRun {
+    async fn observe(&self) -> Result<(), Error> {
+        match (&self.change, self.reads.fetch_add(1, Ordering::SeqCst)) {
+            (_, 0) => Ok(()),
+            (Change::Fail, _) => Err(Error::Parse("offline forge outage".to_owned())),
+            (Change::Labels(add, remove), 1) => self.inner.update_labels("42", add, remove).await,
+            (Change::Vanish, 1) => {
+                self.inner.remove_item("42");
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+#[async_trait]
+impl Forge for MidRun {
+    async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error> {
+        self.observe().await?;
+        let mut items = self.inner.query(source, filter).await?;
+        items.retain(|item| !item.labels.iter().any(|label| label == REPORTED));
+        Ok(items)
+    }
+
+    async fn item(&self, item_id: &str) -> Result<Item, Error> {
+        self.observe().await?;
+        self.inner.item(item_id).await
+    }
+
+    async fn open_prs(&self, repo: &str, prefix: &str) -> Result<Vec<Pr>, Error> {
+        self.inner.open_prs(repo, prefix).await
+    }
+
+    async fn create_pr(&self, request: &PrRequest) -> Result<Pr, Error> {
+        self.inner.create_pr(request).await
+    }
+
+    async fn pr_status(&self, repo: &str, number: u64) -> Result<PrStatus, Error> {
+        self.inner.pr_status(repo, number).await
+    }
+
+    async fn comment(&self, item_id: &str, body: &str) -> Result<(), Error> {
+        self.inner.comment(item_id, body).await
+    }
+
+    async fn set_labels(&self, item_id: &str, labels: &[String]) -> Result<(), Error> {
+        self.inner.set_labels(item_id, labels).await
+    }
+
+    async fn update_labels(
+        &self,
+        item_id: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> Result<(), Error> {
+        self.inner.update_labels(item_id, add, remove).await
+    }
+}
+
+/// One approved run whose forge state changes during its only step.
+async fn run_with(change: Change) -> (StepOutcome, String) {
+    let rig = rig::Rig::new();
+    rig.forge
+        .set_labels("42", &labels(&[READY]))
+        .await
+        .expect("approve");
+    let step = rig::det_step("report", "echo changed >> file.txt", Some("done"));
+    let mut plan = rig.plan(vec![step]);
+    plan.assignment.work.approval_label = Some(READY.to_owned());
+    plan.forge = Arc::new(MidRun {
+        inner: rig.forge.clone(),
+        change,
+        reads: AtomicUsize::new(0),
+    });
+    let outcome = rig.engine().run(&plan).await;
+    (outcome.outcome, outcome.message)
+}
+
+#[tokio::test]
+async fn approval_recheck_reads_the_item_not_the_admission_filter() {
+    let cases = [
+        (
+            Change::Labels(labels(&[REPORTED]), Vec::new()),
+            StepOutcome::Success,
+            "",
+        ),
+        (
+            Change::Labels(Vec::new(), labels(&[READY])),
+            StepOutcome::Blocked,
+            "is missing",
+        ),
+        (Change::Fail, StepOutcome::Blocked, "offline forge outage"),
+        (Change::Vanish, StepOutcome::Blocked, "`42` not found"),
+    ];
+    let mut seen = Vec::new();
+    for (change, outcome, needle) in cases {
+        let (got, message) = run_with(change).await;
+        seen.push((got == outcome && message.contains(needle), got, message));
+    }
+    assert!(seen.iter().all(|case| case.0), "{seen:#?}");
 }

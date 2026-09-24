@@ -47,6 +47,10 @@ impl Forge for Gate {
         self.forge.query(source, filter).await
     }
 
+    async fn item(&self, item: &str) -> Result<Item, Error> {
+        self.forge.item(item).await
+    }
+
     async fn open_prs(&self, repo: &str, prefix: &str) -> Result<Vec<Pr>, Error> {
         self.waiting.notify_one();
         self.release.notified().await;

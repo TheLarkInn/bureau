@@ -113,6 +113,14 @@ impl Forge for FakeForge {
         Ok(lock(&self.items).clone())
     }
 
+    async fn item(&self, item_id: &str) -> Result<Item, Error> {
+        lock(&self.items)
+            .iter()
+            .find(|item| item.external_id == item_id)
+            .cloned()
+            .ok_or_else(|| Error::Parse(format!("work item `{item_id}` not found")))
+    }
+
     async fn open_prs(&self, repo: &str, branch_prefix: &str) -> Result<Vec<Pr>, Error> {
         Ok(lock(&self.prs)
             .iter()
@@ -186,11 +194,7 @@ impl LabelForge for FakeForge {
     }
 
     async fn item(&self, item_id: &str) -> Result<Item, Error> {
-        lock(&self.items)
-            .iter()
-            .find(|item| item.external_id == item_id)
-            .cloned()
-            .ok_or_else(|| Error::Parse(format!("work item `{item_id}` not found")))
+        <Self as Forge>::item(self, item_id).await
     }
 
     async fn blocking_dependencies(&self, item_id: &str) -> Result<Vec<Dependency>, Error> {

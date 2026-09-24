@@ -65,6 +65,10 @@ impl Forge for Observation {
         self.forge.query(source, filter).await
     }
 
+    async fn item(&self, id: &str) -> Result<Item, Error> {
+        self.forge.item(id).await
+    }
+
     async fn open_prs(&self, repo: &str, prefix: &str) -> Result<Vec<Pr>, Error> {
         self.forge.open_prs(repo, prefix).await
     }

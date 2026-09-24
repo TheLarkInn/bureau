@@ -3,7 +3,7 @@
 use reqwest::Method;
 use serde::Deserialize;
 
-use super::{Error, GitHubForge, Issue, json_body, repo_name, split_item_id};
+use super::{Error, GitHubForge, repo_name, split_item_id};
 use crate::forge::{Dependency, Item, LabelForge};
 
 #[derive(Deserialize)]
@@ -47,12 +47,7 @@ impl LabelForge for GitHubForge {
     }
 
     async fn item(&self, item_id: &str) -> Result<Item, Error> {
-        let (repo, number) = split_item_id(item_id)?;
-        let url = format!("{}/repos/{repo}/issues/{number}", self.base_url);
-        let issue: Issue = json_body(self.request(Method::GET, &url).send().await?).await?;
-        issue
-            .into_item(&repo)
-            .ok_or_else(|| Error::Parse(format!("work item `{item_id}` changed repositories")))
+        super::issue::read(self, item_id).await
     }
 
     async fn blocking_dependencies(&self, item_id: &str) -> Result<Vec<Dependency>, Error> {

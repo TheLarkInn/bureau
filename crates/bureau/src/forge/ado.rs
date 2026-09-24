@@ -1,7 +1,7 @@
 //! Azure DevOps forge: REST over reqwest with rustls; never `az`.
 //!
 //! `query` takes `project/repo`; `open_prs`/`create_pr` take the registry
-//! URL or bare `project/repo`; `comment`/`set_labels` take `{project}/{id}`.
+//! URL or bare `project/repo`; `item`/`comment`/`set_labels` take `{project}/{id}`.
 
 mod labels;
 mod status;
@@ -224,6 +224,16 @@ impl Forge for AdoForge {
             items.extend(self.hydrate(&project, chunk).await?);
         }
         Ok(items)
+    }
+
+    async fn item(&self, item_id: &str) -> Result<Item, Error> {
+        let (project, id) = item_parts(item_id)?;
+        let wanted = format!("{project}/{id}");
+        let items = self.hydrate(&project, &[id]).await?;
+        items
+            .into_iter()
+            .find(|item| item.external_id == wanted)
+            .ok_or_else(|| Error::Parse(format!("work item `{item_id}` not found")))
     }
 
     async fn open_prs(&self, repo: &str, branch_prefix: &str) -> Result<Vec<Pr>, Error> {

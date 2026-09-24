@@ -190,6 +190,10 @@ pub trait Forge: Send + Sync {
     /// Work items matching the forge-native `filter` at `source`.
     async fn query(&self, source: &str, filter: &str) -> Result<Vec<Item>, Error>;
 
+    /// Reads one current work item by its forge id, without applying any
+    /// work-source filter.
+    async fn item(&self, item_id: &str) -> Result<Item, Error>;
+
     /// Open PRs in `repo` whose branch starts with `branch_prefix`.
     async fn open_prs(&self, repo: &str, branch_prefix: &str) -> Result<Vec<Pr>, Error>;
 

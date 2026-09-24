@@ -1,30 +1,28 @@
 //! Live approval-label admission at every step boundary.
+//!
+//! The check reads the run's own item. It never re-runs the assignment
+//! filter: that filter admits new work, and its exclusions can match labels
+//! the run itself adds, such as a report label.
 
 use super::context::RunCtx;
 
-async fn query(ctx: &RunCtx, label: &str) -> Result<Vec<crate::forge::Item>, String> {
-    let work = &ctx.plan.assignment.work;
-    ctx.plan
-        .forge
-        .query(&work.source, &work.filter)
-        .await
-        .map_err(|error| {
-            format!("could not confirm approval label `{label}`; the forge query failed: {error}")
-        })
+async fn read(ctx: &RunCtx, label: &str) -> Result<crate::forge::Item, String> {
+    let id = &ctx.plan.item.external_id;
+    ctx.plan.forge.item(id).await.map_err(|error| {
+        format!(
+            "could not confirm approval label `{label}` on work item `{id}`; the forge read failed: {error}"
+        )
+    })
 }
 
 pub(super) async fn check(ctx: &RunCtx) -> Result<(), String> {
     let Some(label) = ctx.plan.assignment.work.approval_label.as_deref() else {
         return Ok(());
     };
-    let items = tokio::time::timeout(ctx.remaining(), query(ctx, label))
+    let item = tokio::time::timeout(ctx.remaining(), read(ctx, label))
         .await
         .map_err(|_| super::control::deadline_message(ctx))??;
-    let approved = items
-        .iter()
-        .find(|item| item.external_id == ctx.plan.item.external_id)
-        .is_some_and(|item| item.labels.iter().any(|item_label| item_label == label));
-    if approved {
+    if item.labels.iter().any(|item_label| item_label == label) {
         Ok(())
     } else {
         Err(format!(
