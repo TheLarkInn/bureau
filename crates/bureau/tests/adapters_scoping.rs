@@ -111,8 +111,10 @@ fn copilot_request(permissions: &[Permission], dir: &Path) -> SpawnRequest {
     copilot::spawn_request(&role, &step(), &request(dir), Vec::new(), None)
 }
 
+/// The session-free launch shape grants `bureau-io`; its definition carries
+/// per-session paths, so `execute` adds it once the MCP session exists.
 #[test]
-fn copilot_grants_bureau_io_without_legacy_mcp_configuration() {
+fn copilot_grants_bureau_io_before_the_session_defines_it() {
     let dir = TestDir::new("mcp-shape");
     let req = copilot_request(&[], dir.path());
     assert_eq!(
@@ -125,8 +127,8 @@ fn copilot_grants_bureau_io_without_legacy_mcp_configuration() {
     );
 }
 
-/// The definition rides on ACP, so nothing is left in the worktree for
-/// the agent to commit into its own pull request.
+/// The definition rides on the launch argv, so nothing is left in the
+/// worktree for the agent to commit into its own pull request.
 #[test]
 fn copilot_leaves_no_mcp_config_in_the_worktree() {
     let dir = TestDir::new("mcp-clean");
