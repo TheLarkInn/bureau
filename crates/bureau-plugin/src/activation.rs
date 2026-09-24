@@ -16,6 +16,7 @@ fn parent(path: &Path) -> Result<&Path, Error> {
         .ok_or_else(|| Error::invalid(path, "activation path has no parent"))
 }
 
+/// Keep in sync with `activationPaths` in `scripts/maintenance-checks.mjs`.
 fn agent_destinations(worktree: &Path, agent: &str) -> [PathBuf; 2] {
     [
         worktree

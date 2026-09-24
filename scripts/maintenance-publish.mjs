@@ -13,6 +13,9 @@ import {
 } from "./maintenance-lifecycle.mjs";
 import { requireClean } from "./maintenance-checks.mjs";
 
+// The only role that runs this helper; its engine activation files are live while it runs.
+export const PUBLISHER_AGENT = "maintenance-reporter";
+
 async function actor(api, policy) {
   const user = await api.request("GET", "/user");
   requireValue(user.login === policy.issuer_login && user.id === policy.issuer_id,
@@ -117,7 +120,7 @@ async function main() {
     requireValue(request?.schema === "v2", "publisher requires a v2 request");
     const policy = await loadPolicy();
     const value = validateEvidence(request.inputs?.maintenance_evidence);
-    requireClean(value.source);
+    requireClean(value.source, process.cwd(), { activeAgent: PUBLISHER_AGENT });
     const api = github({ token: process.env.GH_TOKEN });
     requireValue(process.env.GH_TOKEN, "publisher has no explicitly granted forge credential");
     const mode = process.argv[2];

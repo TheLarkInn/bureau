@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { lstatSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -54,10 +55,28 @@ export function workspace(cwd = process.cwd()) {
   return { commit: git(["rev-parse", "HEAD"], cwd), status: git(["status", "--porcelain"], cwd) };
 }
 
-export function requireClean(source, cwd = process.cwd()) {
+// The files `bureau-plugin` direct activation writes for a running agent
+// (`agent_destinations`). The engine's restoration guard removes them after the
+// step and blocks the run if their bytes changed; later deterministic steps
+// check strictly.
+export function activationPaths(agent) {
+  requireValue(typeof agent === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(agent),
+    "invalid active agent name");
+  return [`.github/agents/${agent}.agent.md`, `.claude/agents/${agent}.md`];
+}
+
+function onlyActivation(cwd, agent) {
+  const owned = activationPaths(agent);
+  const entries = gitBytes(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd)
+    .toString("utf8").split("\0").filter(Boolean);
+  return entries.every((entry) => entry.startsWith("?? ") && owned.includes(entry.slice(3))
+    && lstatSync(join(cwd, entry.slice(3))).isFile());
+}
+
+export function requireClean(source, cwd = process.cwd(), { activeAgent } = {}) {
   const state = workspace(cwd);
-  requireValue(state.commit === source.commit && state.status === "",
-    "reporting changed the source worktree");
+  const clean = activeAgent === undefined ? state.status === "" : onlyActivation(cwd, activeAgent);
+  requireValue(state.commit === source.commit && clean, "reporting changed the source worktree");
 }
 
 export function siteResult(run, category) {
