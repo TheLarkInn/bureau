@@ -137,7 +137,7 @@ read-only runtime volume with the same driver and protected ancestry.
 Cargo never garbage-collects its target directory; each commit with new
 dependency or feature hashes adds roughly 235 MB. Before every check, under
 the same `command.lock` as Cargo commands and before disk admission, the
-checker measures `policy.cargo_target`. Above 3 GiB or 6,000 entries it empties
+checker measures `policy.cargo_target`, holding the lock for at most 60 s. Above 3 GiB or 6,000 entries it empties
 the directory in place, like `cargo clean`, then rebuilds from scratch. Cleanup
 never follows symlinks or crosses filesystems. A non-canonical, foreign-owned
 or group/world-writable root, a replaced directory, or a permission error fails
@@ -244,9 +244,20 @@ Container samples use the same hard bounds but do not automatically restart.
 Deterministic helpers additionally reserve the complete allowed child RSS plus
 1 GiB headroom, independently on the host and every cgroup ancestor, and require
 16 PID slots before spawn. Hierarchical cgroup limits are checked,
-not just host RAM. Checks share one command lock, waiting only within their
-existing deadline so concurrently selected assignments do not immediately fail
-each other. Waiting retains the disk/PID/output guards and a 256 MiB memory
+not just host RAM. Checks share one command lock so concurrently selected
+assignments do not immediately fail each other. Deterministic steps receive no
+deadline, so `scripts/maintenance-deadline.mjs` mirrors each pipeline's
+`timeout_secs`; a test keeps them equal. Each lock wait (cleanup and check) is
+the step deadline minus elapsed time, the rest of this step's lock holds and a
+60 s exit reserve. The check's own timeout (chaos 300 s, site 150 s, gates
+900 s) starts when the lock is acquired, not at spawn. Check steps (990 s;
+full gates 1,590 s chaos, 1,740 s site) cover one full hold by each other
+category, the case where all three are admitted in one cycle. If the lock is
+still busy, the step reports Blocked with `maintenance command lock busy for
+N s; the check did not run` and escalates; it never reports success or no-work.
+Pipeline YAML is pinned engine config, so a changed `timeout_secs` needs a
+config reinstall; install it before the matching intent update.
+Waiting retains the disk/PID/output guards and a 256 MiB memory
 floor; full child RSS plus headroom is checked again after acquisition and
 before execution. The lock holder waits for the original process, which replaces
 itself with `unshare` rather than leaving an intermediate command parent.

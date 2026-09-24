@@ -7,6 +7,7 @@ import { SHA, evidence, requireValue, seedFor, validateFindings } from "./mainte
 import { BOUNDS, GiB, admit, directoryBytes } from "./maintenance-resources.mjs";
 import { boundedChild } from "./maintenance-child.mjs";
 import { waitingBounds } from "./maintenance-command.mjs";
+import { CHECK_TIMEOUT_MS, checkKind, checkWaitSeconds, pruneWaitSeconds } from "./maintenance-deadline.mjs";
 import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedTools } from "./maintenance-tools.mjs";
 import { readBoundedFile } from "./maintenance-files.mjs";
 import { VERIFICATION_INPUTS, verificationInput } from "./maintenance-verification.mjs";
@@ -108,9 +109,9 @@ export function chaosResult(run, seed) {
   }] : [] };
 }
 
-async function checkDirectory(root, policy) {
+async function checkDirectory(root, policy, deadline, kind) {
   // Prune under the shared command lock, before admission, so freed space counts.
-  await lockedPrune(policy.cargo_target, commandLock(policy));
+  await lockedPrune(policy.cargo_target, commandLock(policy), { waitSeconds: pruneWaitSeconds(deadline, kind) });
   await admit({ cwd: root, backingPaths: policy.backing_paths, extraPaths: [policy.cargo_target] },
     waitingBounds(BOUNDS));
   await directoryBytes(policy.cargo_target, policy.cargo_cache_max_bytes);
@@ -119,11 +120,11 @@ async function checkDirectory(root, policy) {
   return mkdtemp(join(parent, "check-"));
 }
 
-function checkOptions(root, scratch, policy) {
+function checkOptions(root, scratch, policy, deadline, kind) {
   return {
     cwd: root, scratch, backingPaths: policy.backing_paths,
     extraPaths: [policy.cargo_target, ...RUST_PATHS.map((key) => policy[key])],
-    lockPath: commandLock(policy),
+    lockPath: commandLock(policy), deadline, kind,
     watchedPaths: [{ path: policy.cargo_target, maximum: policy.cargo_cache_max_bytes }],
     environment: { TMPDIR: scratch, CARGO_TARGET_DIR: policy.cargo_target,
       CARGO_BUILD_JOBS: "1", CARGO_INCREMENTAL: "0", RUST_BACKTRACE: "0",
@@ -131,13 +132,21 @@ function checkOptions(root, scratch, policy) {
   };
 }
 
+// The lock wait is computed immediately before spawn from what the step
+// deadline still leaves after this check's own hold and exit work.
+function checkChild(command, args, { deadline, kind, ...options }) {
+  return boundedChild(command, args, { ...options, timeoutMs: CHECK_TIMEOUT_MS[kind],
+    lockWaitMs: checkWaitSeconds(deadline, kind) * 1000 });
+}
+
 export async function runCheck(source, policy, {
-  root = process.cwd(), gates = false, seed = seedFor(source),
+  root = process.cwd(), gates = false, seed = seedFor(source), deadline,
 } = {}) {
   requireValue(Number.isInteger(seed) && seed >= 0 && seed <= 0xffff_ffff, "check seed must be a u32");
   await requireVerificationInputs(source, root);
-  const scratch = await checkDirectory(root, policy);
-  const options = checkOptions(root, scratch, policy);
+  const kind = checkKind(source.category, gates);
+  const scratch = await checkDirectory(root, policy, deadline, kind);
+  const options = checkOptions(root, scratch, policy, deadline, kind);
   let run;
   let links = [];
   let failure;
@@ -154,8 +163,8 @@ export async function runCheck(source, policy, {
         'cargo test --offline --locked --quiet -- --test-threads=1 > "$TMPDIR/test.log" 2>&1 || { tail -c 65536 "$TMPDIR/test.log"; exit 1; }',
         "printf '%s\\n' 'cargo fmt, scripts/lint.sh and cargo test --offline passed'",
       ].join("\n");
-      run = await boundedChild("bash", ["-c", command], {
-        ...options, timeoutMs: 900_000, bounds: { ...BOUNDS, maxRss: 4 * GiB },
+      run = await checkChild("bash", ["-c", command], {
+        ...options, bounds: { ...BOUNDS, maxRss: 4 * GiB },
         environment: { ...options.environment,
           BUREAU_CANVAS_BUREAU: join(policy.cargo_target, "debug", "bureau"),
           BUREAU_SITE_TOOLS: policy.site_tools, PLAYWRIGHT_BROWSERS_PATH: policy.browser_path,
@@ -166,16 +175,16 @@ export async function runCheck(source, policy, {
       return { evidence: null, log: run.stdout + run.stderr };
     }
     if (source.category === "chaos") {
-      run = await boundedChild("cargo", ["test", "--offline", "--locked", "--test", "maintenance_chaos", "--",
+      run = await checkChild("cargo", ["test", "--offline", "--locked", "--test", "maintenance_chaos", "--",
         CHAOS_TEST, "--exact", "--nocapture", "--test-threads=1"], {
-        ...options, timeoutMs: 300_000,
+        ...options,
         environment: { ...options.environment, BUREAU_CHAOS_SEED: String(seed) },
       });
     } else {
       await requireReadOnlyTools(policy);
-      run = await boundedChild(process.execPath, ["--max-old-space-size=512", "site/check.mjs",
+      run = await checkChild(process.execPath, ["--max-old-space-size=512", "site/check.mjs",
         "--kind", source.category.replace("site-", ""), "--json"], {
-        ...options, timeoutMs: 150_000,
+        ...options,
         environment: { ...options.environment, BUREAU_SITE_TOOLS: policy.site_tools,
           PLAYWRIGHT_BROWSERS_PATH: policy.browser_path },
       });

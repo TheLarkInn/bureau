@@ -7,6 +7,7 @@ import { github } from "./maintenance-http.mjs";
 import { loadPolicy } from "./maintenance-policy.mjs";
 import { checkSource, liveFix, observe, verifyDraft, verifyHandoff } from "./maintenance-lifecycle.mjs";
 import { CheckFailure, git, requireClean, requirePatch, runCheck, saveEvidence, workspace } from "./maintenance-checks.mjs";
+import { stepDeadline } from "./maintenance-deadline.mjs";
 
 async function intake(category, request, policy, api) {
   const number = issueNumber(request.item.external_id);
@@ -34,7 +35,7 @@ async function scan(category, request, policy, api) {
   const source = request.inputs.maintenance_source;
   checkSource(await api.issue(policy.source_issues[category]), category, policy, source);
   requireClean(source);
-  const checked = await runCheck(source, policy);
+  const checked = await runCheck(source, policy, { deadline: stepDeadline(category, request.step) });
   requireClean(source);
   checkSource(await api.issue(policy.source_issues[category]), category, policy, source);
   const artifacts = await saveEvidence(checked.evidence, checked.log, request.step);
@@ -61,7 +62,8 @@ async function fixCheck(category, request, policy, api) {
   await liveFix(api, request, category, policy);
   const source = request.inputs.maintenance_source;
   if (request.step !== "reproduce") requirePatch(source);
-  const checked = await runCheck(source, policy, { seed: request.inputs.maintenance_finding.seed });
+  const checked = await runCheck(source, policy, { seed: request.inputs.maintenance_finding.seed,
+    deadline: stepDeadline(category, request.step) });
   await liveFix(api, request, category, policy);
   const artifacts = await saveEvidence(checked.evidence, checked.log, request.step);
   if (request.step === "reproduce") {
@@ -81,7 +83,7 @@ async function fullGates(category, request, policy, api) {
   await liveFix(api, request, category, policy);
   requirePatch(request.inputs.maintenance_source);
   const checked = await runCheck(request.inputs.maintenance_source, policy,
-    { gates: true, seed: request.inputs.maintenance_finding.seed });
+    { gates: true, seed: request.inputs.maintenance_finding.seed, deadline: stepDeadline(category, request.step) });
   await liveFix(api, request, category, policy);
   requirePatch(request.inputs.maintenance_source);
   const artifacts = await saveEvidence({ gates: "passed" }, checked.log, "full-gates");

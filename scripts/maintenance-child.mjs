@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 
 import { BOUNDS, admit, directoryBytes, directoryIdentity, processGroupUsage, runningProblem } from "./maintenance-resources.mjs";
 import { requireValue } from "./maintenance-contract.mjs";
-import { lockedCommand, waitingBounds } from "./maintenance-command.mjs";
+import { ACQUIRED, ACQUIRED_FD, lockedCommand, waitingBounds } from "./maintenance-command.mjs";
+import { childDeadline } from "./maintenance-deadline.mjs";
 
 export function childEnvironment(extra = {}, runtime = process.env) {
   const allowed = ["TMPDIR", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
@@ -22,10 +23,12 @@ export function childEnvironment(extra = {}, runtime = process.env) {
 
 export async function boundedChild(command, args, {
   cwd, scratch, timeoutMs = 150_000, backingPaths = [], extraPaths = [],
-  environment = {}, bounds = BOUNDS, lockPath, watchedPaths = [],
+  environment = {}, bounds = BOUNDS, lockPath, lockWaitMs, watchedPaths = [],
 } = {}) {
   requireValue(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 900_000,
     "invalid child deadline");
+  requireValue(lockWaitMs === undefined || (lockPath && Number.isSafeInteger(lockWaitMs) && lockWaitMs >= 0),
+    "invalid command lock wait");
   const context = { cwd, backingPaths, extraPaths };
   await admit(context, lockPath ? waitingBounds(bounds) : bounds);
   const scratchIdentity = scratch ? await directoryIdentity(scratch) : undefined;
@@ -37,9 +40,11 @@ export async function boundedChild(command, args, {
   ];
   const executable = lockPath ? "flock" : "unshare";
   const argv = lockPath
-    ? lockedCommand(lockPath, isolated, context, bounds, timeoutMs) : isolated;
+    ? lockedCommand(lockPath, isolated, context, bounds, lockWaitMs ?? timeoutMs) : isolated;
+  const stdio = ["ignore", "pipe", "pipe"];
+  if (lockPath) stdio[ACQUIRED_FD] = "pipe";
   const child = spawn(executable, argv, {
-    cwd, env: childEnvironment(environment), detached: true, stdio: ["ignore", "pipe", "pipe"],
+    cwd, env: childEnvironment(environment), detached: true, stdio,
   });
   const output = { stdout: [], stderr: [], bytes: 0 };
   let problem = null;
@@ -64,7 +69,13 @@ export async function boundedChild(command, args, {
   };
   child.stdout.on("data", capture("stdout"));
   child.stderr.on("data", capture("stderr"));
-  const timer = setTimeout(() => terminate("maintenance child deadline exceeded"), timeoutMs);
+  const deadline = childDeadline({ timeoutMs, lockWaitMs, locked: Boolean(lockPath) }, terminate);
+  const signal = child.stdio[ACQUIRED_FD];
+  signal?.on("error", () => {});
+  signal?.once("data", (chunk) => {
+    if (chunk.toString("utf8") === ACQUIRED) deadline.acquire();
+    else terminate("command lock helper sent an invalid acquisition signal");
+  });
   const checkUsage = async () => {
     await admit({ cwd, backingPaths, extraPaths },
       { ...bounds, maxRss: 0, memoryFloor: 256 * 1024 * 1024 });
@@ -88,7 +99,8 @@ export async function boundedChild(command, args, {
     });
     finished = true;
     clearInterval(monitor);
-    clearTimeout(timer);
+    deadline.stop();
+    problem ??= deadline.problem(result.code);
     if (checking) await checking;
     // Recheck at completion; an unobserved guard is never a successful check.
     if (!problem) {
@@ -106,7 +118,7 @@ export async function boundedChild(command, args, {
       stdout: Buffer.concat(output.stdout).toString("utf8"),
       stderr: Buffer.concat(output.stderr).toString("utf8"), outputBytes: output.bytes };
   } finally {
-    clearTimeout(timer);
+    deadline.stop();
     clearInterval(monitor);
     for (const signal of ["SIGINT", "SIGTERM"]) process.off(signal, cancelled);
   }
