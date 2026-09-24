@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/TheLarkInn/bureau/compare/v0.2.3...v0.2.4) - 2026-09-24
+
+### Fixed
+
+- *(engine)* read the run's own item in the approval recheck ([#150](https://github.com/TheLarkInn/bureau/pull/150))
+- serialize checkout cache mirror refreshes across concurrent runs ([#149](https://github.com/TheLarkInn/bureau/pull/149))
+- *(adapters)* register bureau-io with Copilot through --additional-mcp-config ([#148](https://github.com/TheLarkInn/bureau/pull/148))
+
 ## [0.2.3](https://github.com/TheLarkInn/bureau/compare/v0.2.2...v0.2.3) - 2026-09-24
 
 ### Fixed
