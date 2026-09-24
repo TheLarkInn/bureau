@@ -17,7 +17,7 @@ steps:
   on_no_work: report-clean
   on_failure: escalate
   on_blocked: escalate
-  timeout_secs: 210
+  timeout_secs: 990
 - name: report-findings
   type: agent
   role: maintenance-reporter
@@ -80,7 +80,7 @@ steps:
   on_failure: escalate
   on_blocked: escalate
   on_no_work: escalate
-  timeout_secs: 210
+  timeout_secs: 990
 - name: implement
   type: agent
   role: maintenance-site-accessibility-fixer
@@ -100,7 +100,7 @@ steps:
   on_blocked: escalate
   on_no_work: escalate
   max_attempts: 2
-  timeout_secs: 210
+  timeout_secs: 990
 - name: repair
   type: agent
   role: maintenance-site-accessibility-fixer
@@ -118,4 +118,4 @@ steps:
   next: done
   on_failure: escalate
   on_blocked: escalate
-  timeout_secs: 960
+  timeout_secs: 1740

@@ -5,6 +5,7 @@ import { basename, dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { requireValue } from "./maintenance-contract.mjs";
+import { LOCK_CONFLICT_EXIT, PRUNE_HOLD_MS, lockBusy } from "./maintenance-deadline.mjs";
 import { BOUNDS, CeilingExceeded, directoryBytes, directoryIdentity, directoryKey } from "./maintenance-resources.mjs";
 
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
@@ -99,14 +100,20 @@ export async function pruneTarget(root, {
 }
 
 export async function lockedPrune(root, lockPath, {
-  run = promisify(execFile), waitSeconds = 900, environment = { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+  waitSeconds, holdMs = PRUNE_HOLD_MS,
+  run = promisify(execFile), environment = { PATH: process.env.PATH ?? "/usr/bin:/bin" },
 } = {}) {
+  requireValue(Number.isSafeInteger(waitSeconds) && waitSeconds >= 0, "invalid Cargo target cleanup lock wait");
   let stdout;
   try {
-    ({ stdout } = await run("flock", ["--wait", String(waitSeconds), "--conflict-exit-code", "75", lockPath,
+    ({ stdout } = await run("flock", ["--wait", String(waitSeconds), "--conflict-exit-code",
+      String(LOCK_CONFLICT_EXIT), lockPath,
       process.execPath, "--input-type=module", "-e", BOOTSTRAP, import.meta.url, root],
-    { env: environment, timeout: (waitSeconds + 600) * 1000, maxBuffer: 64 * 1024 }));
+    { env: environment, timeout: waitSeconds * 1000 + holdMs, maxBuffer: 64 * 1024 }));
   } catch (error) {
+    if (error.code === LOCK_CONFLICT_EXIT) {
+      throw new Error(`Cargo target cleanup skipped: ${lockBusy(waitSeconds * 1000)}`, { cause: error });
+    }
     throw new Error(`Cargo target cleanup failed: ${error.stderr?.trim() || error.message}`, { cause: error });
   }
   const result = JSON.parse(stdout);

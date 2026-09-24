@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { PRUNE_HOLD_MS } from "./maintenance-deadline.mjs";
 import { BOUNDS, GiB, directoryIdentity } from "./maintenance-resources.mjs";
 import { commandLock, lockedPrune, pruneTarget } from "./maintenance-target.mjs";
 
@@ -92,7 +93,7 @@ test("a symlinked, foreign, shared or missing root is refused untouched", { skip
 test("pruning runs under the shared command lock and reports its measurement", { skip: !hasFlock }, async () => {
   const { base, root } = await fixture();
   const lock = commandLock({ cargo_target: root });
-  const kept = await lockedPrune(root, lock);
+  const kept = await lockedPrune(root, lock, { waitSeconds: 5 });
   const holder = spawn("flock", [lock, "-c", "echo held; exec sleep 30"],
     { detached: true, stdio: ["ignore", "pipe", "ignore"] });
   await once(holder.stdout, "data");
@@ -103,11 +104,33 @@ test("pruning runs under the shared command lock and reports its measurement", {
   for (let index = 0; index < BOUNDS.cargoPruneEntries; index += 1) {
     await writeFile(join(root, "debug", `stale-${index}`), "");
   }
-  const pruned = await lockedPrune(root, lock);
+  const pruned = await lockedPrune(root, lock, { waitSeconds: 5 });
   const left = (await readdir(root)).length;
   await rm(base, { recursive: true });
-  assert.deepEqual([kept.pruned, entries, pruned.pruned, left, lock, blocked.startsWith("Cargo target cleanup failed")],
-    [false, 2, true, 0, join(base, "command.lock"), true]);
+  assert.deepEqual([kept.pruned, entries, pruned.pruned, left, lock, blocked],
+    [false, 2, true, 0, join(base, "command.lock"),
+      "Cargo target cleanup skipped: maintenance command lock busy for 0 s; the check did not run"]);
+});
+
+test("cleanup lock waits are explicit, bounded by the prune hold and report contention", async () => {
+  const observed = [];
+  const conflict = Object.assign(new Error("Command failed"), { code: 75, stderr: "" });
+  for (const waitSeconds of [0, 7]) {
+    await lockedPrune("/cache/cargo", "/cache/command.lock", { waitSeconds,
+      run: async (file, args, options) => {
+        observed.push([file, args.slice(0, 5), options.timeout]);
+        throw conflict;
+      } }).catch((error) => observed.push(error.message));
+  }
+  await lockedPrune("/cache/cargo", "/cache/command.lock", { run: async () => ({ stdout: "{}" }) })
+    .catch((error) => observed.push(error.message));
+  assert.deepEqual(observed, [
+    ["flock", ["--wait", "0", "--conflict-exit-code", "75", "/cache/command.lock"], PRUNE_HOLD_MS],
+    "Cargo target cleanup skipped: maintenance command lock busy for 0 s; the check did not run",
+    ["flock", ["--wait", "7", "--conflict-exit-code", "75", "/cache/command.lock"], 7000 + PRUNE_HOLD_MS],
+    "Cargo target cleanup skipped: maintenance command lock busy for 7 s; the check did not run",
+    "invalid Cargo target cleanup lock wait",
+  ]);
 });
 
 test("cleanup failures are fatal and malformed results are rejected", async () => {
@@ -115,7 +138,7 @@ test("cleanup failures are fatal and malformed results are rejected", async () =
   const outcomes = [];
   for (const run of [async () => { throw failed; }, async () => ({ stdout: "{}" }),
     async () => ({ stdout: JSON.stringify({ pruned: true, bytes: -1 }) })]) {
-    await lockedPrune("/cache/cargo", "/cache/command.lock", { run }).then(() => outcomes.push("accepted"),
+    await lockedPrune("/cache/cargo", "/cache/command.lock", { run, waitSeconds: 1 }).then(() => outcomes.push("accepted"),
       (error) => outcomes.push(error.message));
   }
   assert.deepEqual(outcomes, ["Cargo target cleanup failed: owned directory identity changed",
