@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { lstatSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { SHA, evidence, requireValue, seedFor, validateFindings } from "./maintenance-contract.mjs";
 import { BOUNDS, GiB, admit, directoryBytes } from "./maintenance-resources.mjs";
@@ -11,6 +11,7 @@ import { TOOL_PACKAGES, linkPreparedTools, requireReadOnlyTools, unlinkPreparedT
 import { readBoundedFile } from "./maintenance-files.mjs";
 import { VERIFICATION_INPUTS, verificationInput } from "./maintenance-verification.mjs";
 import { RUST_PATHS, requirePreparedRust } from "./maintenance-rust.mjs";
+import { commandLock, lockedPrune } from "./maintenance-target.mjs";
 
 export const CHAOS_TEST = "seeded_offline_invariants";
 
@@ -108,6 +109,8 @@ export function chaosResult(run, seed) {
 }
 
 async function checkDirectory(root, policy) {
+  // Prune under the shared command lock, before admission, so freed space counts.
+  await lockedPrune(policy.cargo_target, commandLock(policy));
   await admit({ cwd: root, backingPaths: policy.backing_paths, extraPaths: [policy.cargo_target] },
     waitingBounds(BOUNDS));
   await directoryBytes(policy.cargo_target, policy.cargo_cache_max_bytes);
@@ -120,7 +123,7 @@ function checkOptions(root, scratch, policy) {
   return {
     cwd: root, scratch, backingPaths: policy.backing_paths,
     extraPaths: [policy.cargo_target, ...RUST_PATHS.map((key) => policy[key])],
-    lockPath: join(dirname(policy.cargo_target), "command.lock"),
+    lockPath: commandLock(policy),
     watchedPaths: [{ path: policy.cargo_target, maximum: policy.cargo_cache_max_bytes }],
     environment: { TMPDIR: scratch, CARGO_TARGET_DIR: policy.cargo_target,
       CARGO_BUILD_JOBS: "1", CARGO_INCREMENTAL: "0", RUST_BACKTRACE: "0",

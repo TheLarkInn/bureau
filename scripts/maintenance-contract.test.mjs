@@ -57,5 +57,6 @@ test("unconfigured identities and source IDs fail closed", () => {
     { ...POLICY, issuer_id: null }, { ...POLICY, issuer_login: "outside" },
     { ...POLICY, source_issues: { chaos: 7, "site-accessibility": 7, "site-responsive": 9 } },
     { ...POLICY, source_issues: {} }, { ...POLICY, cargo_cache_max_bytes: Infinity },
+    { ...POLICY, cargo_cache_max_bytes: 3 * 1024 ** 3 },
   ]) assert.throws(() => validatePolicy(changed));
 });

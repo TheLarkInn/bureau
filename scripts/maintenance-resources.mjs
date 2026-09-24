@@ -13,7 +13,14 @@ export const BOUNDS = Object.freeze({
   diskFloor: 4 * GiB, memoryFloor: GiB, maxRss: 2 * GiB,
   maxProcesses: 96, maxOutput: MiB, maxScratch: 128 * MiB,
   maxCgroupMemory: 8 * GiB, maxCgroupPids: 256, maxCpus: 4,
+  maxEntries: 10_000, cargoPruneBytes: 3 * GiB, cargoPruneEntries: 6_000,
 });
+
+export class CeilingExceeded extends Error {}
+
+function ceiling(condition, message) {
+  if (!condition) throw new CeilingExceeded(message);
+}
 
 export function admissionProblem(snapshot, bounds = BOUNDS) {
   const requiredMemory = bounds.maxRss + bounds.memoryFloor;
@@ -113,7 +120,7 @@ export async function admit(options = {}, bounds = BOUNDS) {
   return snapshot;
 }
 
-function directoryKey(info) {
+export function directoryKey(info) {
   requireValue(info.isDirectory() && !info.isSymbolicLink(), "owned root must remain a non-symlink directory");
   requireValue(typeof info.dev === "bigint" && info.dev >= 0n
     && typeof info.ino === "bigint" && info.ino >= 0n,
@@ -130,8 +137,9 @@ function disappeared(error, path, root) {
 }
 
 export async function directoryBytes(root, maximum = BOUNDS.maxScratch,
-  inspect = { lstat, readdir }, expectedIdentity) {
+  inspect = { lstat, readdir }, expectedIdentity, maxEntries = BOUNDS.maxEntries) {
   requireValue(Number.isSafeInteger(maximum) && maximum >= 0, "invalid directory byte ceiling");
+  requireValue(Number.isSafeInteger(maxEntries) && maxEntries > 0, "invalid directory entry ceiling");
   const pending = [root];
   let bytes = 0;
   let entries = 0;
@@ -139,7 +147,7 @@ export async function directoryBytes(root, maximum = BOUNDS.maxScratch,
   while (pending.length) {
     const path = pending.pop();
     entries += 1;
-    requireValue(entries <= 10_000, "scratch byte or entry ceiling exceeded");
+    ceiling(entries <= maxEntries, "scratch byte or entry ceiling exceeded");
     let info;
     try {
       info = await inspect.lstat(path, { bigint: true });
@@ -154,7 +162,7 @@ export async function directoryBytes(root, maximum = BOUNDS.maxScratch,
       requireValue(directoryKey(info) === identity, "owned directory identity changed");
     }
     bytes += size;
-    requireValue(bytes <= maximum, "scratch byte or entry ceiling exceeded");
+    ceiling(bytes <= maximum, "scratch byte or entry ceiling exceeded");
     if (info.isDirectory() && !info.isSymbolicLink()) {
       let names;
       try {
@@ -165,7 +173,8 @@ export async function directoryBytes(root, maximum = BOUNDS.maxScratch,
         if (disappeared(error, path, root)) continue;
         throw error;
       }
-      requireValue(Array.isArray(names) && entries + pending.length + names.length <= 10_000,
+      requireValue(Array.isArray(names), "directory entries are unobservable");
+      ceiling(entries + pending.length + names.length <= maxEntries,
         "scratch entry observation ceiling exceeded");
       for (const name of names) {
         requireValue(typeof name === "string" && name && name !== "." && name !== ".."
