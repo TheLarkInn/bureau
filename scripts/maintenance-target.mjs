@@ -93,7 +93,9 @@ export async function pruneTarget(root, {
     if (!(error instanceof CeilingExceeded)) throw error;
   }
   await emptyTarget(root, identity);
-  return { pruned: true, bytes: await directoryBytes(root, bytes, undefined, identity, entries) };
+  requireValue((await readdir(root)).length === 0, "Cargo target cleanup left entries behind");
+  // An emptied ext4 directory keeps its allocated size, so only emptiness is bounded.
+  return { pruned: true, bytes: await directoryBytes(root, Number.MAX_SAFE_INTEGER, undefined, identity, 1) };
 }
 
 export async function lockedPrune(root, lockPath, {
