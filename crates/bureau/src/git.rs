@@ -2,7 +2,10 @@
 //! through the layer-0 process contract; no `git2`/libgit2.
 //!
 //! - One bare mirror per remote in the checkout cache, keyed by a hash
-//!   of the URL.
+//!   of the URL, with a `flock` lock file beside it. Every refresh, and
+//!   every run-branch cut that follows one, holds that lock, so
+//!   concurrent runs and processes never race on the mirror's refs.
+//!   Refreshes spare branches checked out by live worktrees.
 //! - One worktree per run, on a branch carrying the assignment's
 //!   `branch_prefix` so cleanup is one glob.
 //! - Worktree teardown is idempotent and runs on the unwind path via
@@ -17,6 +20,7 @@
 //! push; the container is the sandbox boundary (DESIGN.md section 10).
 
 mod commit;
+mod lock;
 /// Committed-snapshot reads: exact-commit worktrees, ref resolution, blobs.
 pub mod snapshot;
 mod worktree;
@@ -28,6 +32,7 @@ use std::time::Duration;
 use crate::forge::ForgeKind;
 use crate::process::{Secret, SpawnOutcome, SpawnRequest, SpawnResult, spawn};
 
+pub use lock::MirrorLock;
 pub use worktree::Worktree;
 
 /// The per-command timeout for git operations.
@@ -143,10 +148,28 @@ async fn git(
     check(result, args)
 }
 
-/// Creates the cache root off the executor's worker threads.
-async fn create_root(root: PathBuf) -> Result<(), Error> {
-    let created = tokio::task::spawn_blocking(move || std::fs::create_dir_all(root)).await;
-    created.map_err(std::io::Error::other)?.map_err(Error::from)
+/// Negative refspecs for the branches the mirror's worktrees have
+/// checked out. Run branches exist only here until pushed, so the
+/// mirror refspec's `--prune` would delete them under live runs.
+async fn live_branches(dir: &Path) -> Result<Vec<String>, Error> {
+    let args = ["worktree", "list", "--porcelain"];
+    let listed = git(&args, dir, None, &mut Vec::new()).await?;
+    let listed = String::from_utf8_lossy(&listed);
+    let branches = listed
+        .lines()
+        .filter_map(|line| line.strip_prefix("branch "));
+    Ok(branches.map(|branch| format!("^{branch}")).collect())
+}
+
+/// `git fetch --prune` with the mirror refspec, sparing live branches.
+async fn fetch(dir: &Path, credential: Option<&Credential>) -> Result<(), Error> {
+    let mut args = ["fetch", "--prune", "origin", "+refs/*:refs/*"]
+        .map(str::to_owned)
+        .to_vec();
+    args.extend(live_branches(dir).await?);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    git(&args, dir, credential, &mut Vec::new()).await?;
+    Ok(())
 }
 
 /// Bare-mirror cache, one directory per remote URL.
@@ -172,24 +195,60 @@ impl CheckoutCache {
         self.root.join(format!("{:016x}", hasher.finish()))
     }
 
+    /// The lock file serializing mutation of `url`'s mirror; it sits next
+    /// to the mirror directory so clearing the cache removes both.
+    fn lock_path(&self, url: &str) -> PathBuf {
+        self.mirror_dir(url).with_extension("lock")
+    }
+
     /// Ensures an up-to-date bare mirror of `url` exists and returns its
     /// path: `git clone --mirror` on first use, `git fetch --prune` after.
+    /// Waits up to [`GIT_TIMEOUT`] for other writers of the mirror.
     ///
     /// # Errors
-    /// Propagates git and filesystem failures.
+    /// Propagates lock, git, and filesystem failures.
     pub async fn mirror(
         &self,
         url: &str,
         credential: Option<&Credential>,
     ) -> Result<PathBuf, Error> {
-        let dir = self.mirror_dir(url);
-        let mut secrets = Vec::new();
-        if dir.exists() {
-            git(&["fetch", "--prune"], &dir, credential, &mut secrets).await?;
-        } else {
-            self.clone_mirror(url, &dir, credential).await?;
-        }
+        let (dir, _lock) = self.mirror_locked(url, credential, GIT_TIMEOUT).await?;
         Ok(dir)
+    }
+
+    /// [`Self::mirror`], returning the mirror's lock still held. Hold it
+    /// across every change to the mirror's refs and worktree registrations
+    /// (such as cutting a run branch) that must not interleave with
+    /// another run's refresh. Waits at most `wait` for the lock.
+    ///
+    /// # Errors
+    /// Propagates lock, git, and filesystem failures; a lock still busy
+    /// after `wait` is an [`std::io::ErrorKind::TimedOut`] error.
+    pub async fn mirror_locked(
+        &self,
+        url: &str,
+        credential: Option<&Credential>,
+        wait: Duration,
+    ) -> Result<(PathBuf, MirrorLock), Error> {
+        let lock = lock::acquire(self.lock_path(url), wait).await?;
+        let dir = self.mirror_dir(url);
+        self.refresh(url, &dir, credential).await?;
+        Ok((dir, lock))
+    }
+
+    /// `git clone --mirror` on first use, `git fetch --prune` after; the
+    /// caller holds the mirror's lock, so the existence check cannot race.
+    async fn refresh(
+        &self,
+        url: &str,
+        dir: &Path,
+        credential: Option<&Credential>,
+    ) -> Result<(), Error> {
+        if dir.exists() {
+            fetch(dir, credential).await
+        } else {
+            self.clone_mirror(url, dir, credential).await
+        }
     }
 
     async fn clone_mirror(
@@ -198,7 +257,6 @@ impl CheckoutCache {
         dir: &Path,
         credential: Option<&Credential>,
     ) -> Result<(), Error> {
-        create_root(self.root.clone()).await?;
         let name = dir
             .file_name()
             .unwrap_or_default()

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::{CheckoutCache, Credential, Error, Worktree, git};
+use super::{CheckoutCache, Credential, Error, GIT_TIMEOUT, Worktree, git};
 
 async fn prune(mirror: &Path) -> Result<(), Error> {
     let mut secrets = Vec::new();
@@ -75,6 +75,7 @@ async fn checkout(mirror: &Path, commit: &str, directory: &Path) -> Result<Workt
 
 impl CheckoutCache {
     /// Creates a detached worktree at an exact commit resolved from `reference`.
+    /// The mirror stays locked until the worktree is registered.
     ///
     /// # Errors
     /// Propagates mirror, ref-resolution, worktree, and reset failures.
@@ -85,7 +86,8 @@ impl CheckoutCache {
         reference: &str,
         directory: &Path,
     ) -> Result<(Worktree, String), Error> {
-        let (mirror, commit) = self.resolve_reference(url, credential, reference).await?;
+        let (mirror, _lock) = self.mirror_locked(url, credential, GIT_TIMEOUT).await?;
+        let commit = resolve_commit(&mirror, reference).await?;
         let worktree = checkout(&mirror, &commit, directory).await?;
         Ok((worktree, commit))
     }
