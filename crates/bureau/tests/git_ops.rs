@@ -278,5 +278,7 @@ async fn drop_when_the_mirror_is_gone_still_removes_the_dir() {
     assert!(!dir.exists());
 }
 
+#[path = "git_ops/concurrency.rs"]
+mod concurrency;
 #[path = "git_ops/retained.rs"]
 mod retained;

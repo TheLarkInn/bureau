@@ -2,6 +2,8 @@
 //! machine, its terminals, resume, and secret scrubbing — all offline
 //! against local git repos and the `fake` adapter and forge.
 
+#[path = "engine/concurrent_runs.rs"]
+mod concurrent_runs;
 #[path = "engine/rig.rs"]
 mod rig;
 #[path = "engine/runtime_environment.rs"]

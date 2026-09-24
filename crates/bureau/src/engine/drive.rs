@@ -7,7 +7,7 @@ use super::context::{RunCtx, WtCtx};
 use super::machine::{Stop, primary_repo, run_loop};
 use super::{RunOutcome, RunPlan, finalize, gitcmd, plugins, settle, stream};
 use crate::contract::StepOutcome;
-use crate::git::{CheckoutCache, Worktree, credential_for};
+use crate::git::{CheckoutCache, MirrorLock, Worktree, credential_for};
 use crate::runlog::{self, RunTerminal};
 
 mod factory;
@@ -55,32 +55,38 @@ async fn restore_checkpoint(worktree: &Worktree, commit: Option<&str>) -> Result
     Ok(())
 }
 
-/// Ensures the mirror is fresh and clears stale worktree state for the
-/// run branch, returning `(mirror, branch, worktree dir)`.
+/// Refreshes the mirror and clears stale worktree state for the run
+/// branch, returning `(mirror, branch, worktree dir)` with the mirror's
+/// lock held. The caller keeps the lock until the run branch exists:
+/// another run's refresh prunes unregistered branches, and `branch -D`,
+/// `worktree prune`, and `worktree add -b` all take ref and registration
+/// locks that a concurrent refresh also takes. The wait for the lock is
+/// bounded by the run deadline.
 async fn prepare(
     cache: &CheckoutCache,
     ctx: &RunCtx,
-) -> Result<(PathBuf, String, PathBuf), String> {
+) -> Result<(PathBuf, String, PathBuf, MirrorLock), String> {
     let (name, repo) = primary_repo(&ctx.plan)?;
     let credential = ctx
         .plan
         .credentials
         .get(&repo.credential)
         .map(|secret| credential_for(repo.forge, secret.clone()));
-    let mirror = cache
-        .mirror(&repo.url, credential.as_ref())
+    let (mirror, lock) = cache
+        .mirror_locked(&repo.url, credential.as_ref(), ctx.remaining())
         .await
         .map_err(|e| format!("mirroring `{name}` failed: {e}"))?;
     let branch = branch_name(&ctx.plan);
     let wt_dir = stream::lock(&ctx.log).dir().join("wt");
     clear_stale(&mirror, &wt_dir, &branch).await;
-    Ok((mirror, branch, wt_dir))
+    Ok((mirror, branch, wt_dir, lock))
 }
 
 /// Cuts (or re-cuts) the worktree and records its start commit.
 async fn fresh_worktree(cache: &CheckoutCache, ctx: &RunCtx) -> Result<WtCtx, String> {
-    let (mirror, branch, wt_dir) = prepare(cache, ctx).await?;
+    let (mirror, branch, wt_dir, lock) = prepare(cache, ctx).await?;
     let (worktree, created_head) = create_worktree(&mirror, &wt_dir, &branch).await?;
+    drop(lock);
     restore_checkpoint(&worktree, ctx.checkpoint.as_deref()).await?;
     let start_head = ctx.base_commit.clone().unwrap_or(created_head);
     Ok(WtCtx {
