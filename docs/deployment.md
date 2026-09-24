@@ -352,6 +352,12 @@ resource refusals and malformed evidence escalate without manufacturing findings
 Executed checks retain their bounded raw stdout/stderr as failure artifacts,
 including incomplete accessibility reports needing manual review. Failure to
 persist those artifacts is reported explicitly, never converted to a clean scan.
+The reporter's helper runs while the engine has materialized that agent's own
+file (`.github/agents/maintenance-reporter.agent.md` and
+`.claude/agents/maintenance-reporter.md`, untracked). It exempts exactly those
+two regular files; any other untracked, modified or staged path still fails.
+The engine removes them after the step and blocks if their bytes changed, and
+every later deterministic step requires a fully clean checkout.
 
 With real findings, the model-facing reporter invokes the bounded helper to
 create or adopt **one inert finding issue**. Its body is canonical deterministic

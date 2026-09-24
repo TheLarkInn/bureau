@@ -145,11 +145,17 @@ fn pinned_direct_agent_is_materialized_and_restored() {
         &fixture.run,
     )
     .expect("activate");
+    // scripts/maintenance-checks.mjs `activationPaths` exempts exactly these files.
+    let layout: Vec<PathBuf> = entries(&fixture.worktree).into_keys().collect();
     let active = materialized_agents(&fixture);
     activation.restore().expect("restore");
+    let expected = [
+        ".claude/agents/reviewer.md",
+        ".github/agents/reviewer.agent.md",
+    ];
     assert_eq!(
-        (active, entries(&fixture.worktree)),
-        (true, BTreeMap::new())
+        (active, layout, entries(&fixture.worktree)),
+        (true, expected.map(PathBuf::from).to_vec(), BTreeMap::new())
     );
 }
 
