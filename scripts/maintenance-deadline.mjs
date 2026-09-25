@@ -57,6 +57,16 @@ export function stepDeadline(category, step) {
   return seconds * 1000;
 }
 
+// Forge verification steps take no command lock; every category pins the same
+// `timeout_secs` for them (a config test keeps them equal).
+export const VERIFY_TIMEOUT_SECONDS = Object.freeze({ "verify-draft": 120, "verify-handoff": 120, "verify-clear": 120 });
+
+export function verifyDeadline(step) {
+  const seconds = VERIFY_TIMEOUT_SECONDS[step];
+  requireValue(Number.isSafeInteger(seconds), `no maintenance verification deadline for ${step}`);
+  return seconds * 1000;
+}
+
 function lockWaitSeconds(deadline, reservedMs, now) {
   requireValue(Number.isFinite(deadline), "maintenance lock wait requires the step deadline");
   const seconds = Math.floor((deadline - now - reservedMs) / 1000);

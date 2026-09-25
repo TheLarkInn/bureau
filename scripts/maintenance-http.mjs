@@ -25,7 +25,9 @@ export function github({ token, fetchImpl = fetch } = {}) {
     requireValue(method === "GET" || token, "forge mutation requires an explicit credential");
     const url = path === "/user" ? "https://api.github.com/user" : `${BASE}${path}`;
     const response = await fetchImpl(url, {
-      method, headers: { ...headers, "Content-Type": "application/json" },
+      method, headers: { ...headers, "Content-Type": "application/json",
+        // Ask shared caches to revalidate; verification never depends on it.
+        ...(method === "GET" && { "Cache-Control": "no-cache" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "error", signal: AbortSignal.timeout(10_000),
     });
