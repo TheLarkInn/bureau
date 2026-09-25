@@ -386,6 +386,15 @@ the reporter record an exact source report and add the category-specific
 deterministic step verifies those observed effects. Ordinary `agent-eligible`
 and design-scan labels are forbidden. Zero findings likewise require a verified
 source report, not simply an agent saying "no work".
+Verification steps read without a credential, and those public reads can be
+cached for up to 60 s (`Cache-Control: max-age=60`). If the only failure is an
+effect the reporter wrote but the read does not yet show (a missing finding,
+report, label change or ready label), the step waits until 61 s after its first
+observation, re-reads everything once and re-runs the full verification. A
+second failure blocks with both messages. Forge HTTP, identity, intent,
+evidence and duplicate failures block immediately. The retry runs only while
+30 s of the pinned 120 s verify timeout remain after the wait.
+(`scripts/maintenance-deadline.mjs` mirrors that timeout; a test keeps it equal.)
 Same-cycle draft evidence must exactly match the detector. Reuse of an older
 cycle requires a canonical source report whose forge-created and last-edited
 timestamps both precede the source's forge timestamp observed at deterministic

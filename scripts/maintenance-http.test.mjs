@@ -12,7 +12,8 @@ test("forge reads are scoped, finite and reject redirects; deterministic reads h
   assert.deepEqual(await api.issues(), []);
   assert.equal(requests[0].url, "https://api.github.com/repos/TheLarkInn/bureau/issues?state=all&per_page=100&page=1");
   assert.equal(requests[0].options.redirect, "error");
-  assert.equal(requests[0].options.headers.Authorization, undefined);
+  assert.deepEqual([requests[0].options.headers.Authorization, requests[0].options.headers["Cache-Control"]],
+    [undefined, "no-cache"]);
   await assert.rejects(api.request("GET", "/issues/1/../../other"), /unsupported/u);
   await assert.rejects(api.request("POST", "/issues", {}), /credential/u);
 });

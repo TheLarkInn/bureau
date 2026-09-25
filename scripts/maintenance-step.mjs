@@ -5,9 +5,10 @@ import {
 } from "./maintenance-contract.mjs";
 import { github } from "./maintenance-http.mjs";
 import { loadPolicy } from "./maintenance-policy.mjs";
-import { checkSource, liveFix, observe, verifyDraft, verifyHandoff } from "./maintenance-lifecycle.mjs";
+import { checkSource, liveFix, verifyDraft, verifyHandoff } from "./maintenance-lifecycle.mjs";
 import { CheckFailure, git, requireClean, requirePatch, runCheck, saveEvidence, workspace } from "./maintenance-checks.mjs";
-import { stepDeadline } from "./maintenance-deadline.mjs";
+import { stepDeadline, verifyDeadline } from "./maintenance-deadline.mjs";
+import { verifyObserved } from "./maintenance-observe.mjs";
 
 async function intake(category, request, policy, api) {
   const number = issueNumber(request.item.external_id);
@@ -43,18 +44,20 @@ async function scan(category, request, policy, api) {
     { maintenance_evidence: checked.evidence }, "bounded deterministic scan completed", artifacts);
 }
 
-async function verifyPublication(category, request, policy, api) {
+async function verifyPublication(category, request, policy, api, clock) {
   const value = validateEvidence(request.inputs.maintenance_evidence);
   requireClean(request.inputs.maintenance_source);
-  const observed = await observe(api, category, policy);
+  const options = { deadline: verifyDeadline(request.step), clock };
   if (request.step === "verify-draft") {
-    const receipt = verifyDraft(observed, value, policy, request.inputs.maintenance_observed_at);
+    const receipt = await verifyObserved(api, category, policy, (observed) => verifyDraft(observed, value, policy,
+      request.inputs.maintenance_observed_at), options);
     requireValue(JSON.stringify(receipt) === JSON.stringify(request.inputs.maintenance_publication),
       "agent publication claim differs from independently observed forge state");
     return stepResult("success", { maintenance_draft: receipt }, "draft independently verified; no handoff yet");
   }
   const expected = request.step === "verify-clear" ? null : request.inputs.maintenance_draft;
-  verifyHandoff(observed, value, expected, policy);
+  await verifyObserved(api, category, policy,
+    (observed) => verifyHandoff(observed, value, expected, policy), options);
   return stepResult("success", {}, "live source, issuer, evidence, dedup and handoff verified");
 }
 
@@ -90,14 +93,14 @@ async function fullGates(category, request, policy, api) {
   return stepResult("success", {}, "repository gates passed; existing engine owns PR publication", artifacts);
 }
 
-export async function executeStep(category, request, policy, api) {
+export async function executeStep(category, request, policy, api, clock) {
   requireValue(request?.schema === "v2", "maintenance requires the v2 step contract");
   requireValue(await realpath(request.worktree) === await realpath(process.cwd()), "worktree identity mismatch");
   if (request.step === "intake") return intake(category, request, policy, api);
   requireValue(request.inputs?.maintenance_source?.category === category, "missing deterministic source pin");
   if (request.step === "detect") return scan(category, request, policy, api);
   if (["verify-draft", "verify-handoff", "verify-clear"].includes(request.step)) {
-    return verifyPublication(category, request, policy, api);
+    return verifyPublication(category, request, policy, api, clock);
   }
   if (["reproduce", "validate-patch"].includes(request.step)) return fixCheck(category, request, policy, api);
   if (request.step === "full-gates") return fullGates(category, request, policy, api);

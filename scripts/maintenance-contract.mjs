@@ -20,6 +20,15 @@ export function requireValue(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+// Observed forge state lacks an effect the reporter already wrote. A cached
+// read explains exactly this, so it alone may be re-observed; it never
+// covers identity, trust, intent, evidence or transport failures.
+export class UnobservedEffect extends Error {}
+
+export function requireObserved(condition, message) {
+  if (!condition) throw new UnobservedEffect(message);
+}
+
 export function categoryLabel(category) {
   requireValue(CATEGORIES.includes(category), "unknown maintenance category");
   return `bureau:maintenance-${category}`;

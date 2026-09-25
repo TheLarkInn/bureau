@@ -1,6 +1,6 @@
 import {
   LABELS, authorizedSource, categoryLabel, digest, findingBody, findingMarker, fingerprint,
-  issueNumber, issueUrl, labels, readEvidence, readIntent, reportBody, requireValue,
+  issueNumber, issueUrl, labels, readEvidence, readIntent, reportBody, requireObserved, requireValue,
   trustedIssue, urlNumber, validateEvidence,
 } from "./maintenance-contract.mjs";
 import { issuer } from "./maintenance-policy.mjs";
@@ -53,7 +53,9 @@ export function publication(issue, value) {
 export function verifyReport(comments, value, published, policy) {
   const expected = reportBody(value, published);
   const matches = comments.filter((comment) => comment.body === expected);
-  requireValue(matches.length === 1, "expected exactly one independently observed source report");
+  const message = "expected exactly one independently observed source report";
+  requireObserved(matches.length > 0, message);
+  requireValue(matches.length === 1, message);
   issuer(matches[0], policy);
 }
 
@@ -76,6 +78,7 @@ export function verifyDraft({ source, issues, comments }, value, policy, observe
   const expected = validateEvidence(value);
   checkSource(source, expected.source.category, policy, expected.source);
   const matches = matchingIssues(issues, expected);
+  requireObserved(matches.length > 0, "expected one finding-marker issue, observed 0");
   requireValue(matches.length === 1, `expected one finding-marker issue, observed ${matches.length}`);
   const issue = matches[0];
   const recorded = checkedFinding(issue, expected, policy);
@@ -100,18 +103,19 @@ export function verifyHandoff({ source, issues, comments }, value, expected, pol
   const intent = readIntent(source.body, checked.source.category);
   requireValue(intent.commit === checked.source.commit && intent.cycle === checked.source.cycle,
     "source intent changed during handoff");
-  requireValue(!labels(source).includes(LABELS.scan) && labels(source).includes(LABELS.reported),
+  requireObserved(!labels(source).includes(LABELS.scan) && labels(source).includes(LABELS.reported),
     "source scan was not durably reported");
   if (expected) {
     const matches = matchingIssues(issues, checked);
-    requireValue(matches.length === 1 && matches[0].number === urlNumber(expected.url),
-      "handoff issue identity is missing or duplicated");
+    const identity = "handoff issue identity is missing or duplicated";
+    requireObserved(matches.length > 0, identity);
+    requireValue(matches.length === 1 && matches[0].number === urlNumber(expected.url), identity);
     checkedFinding(matches[0], checked, policy);
     requireValue(JSON.stringify(publication(matches[0], checked)) === JSON.stringify(expected),
       "finding state changed during handoff");
     if (expected.disposition === "open") {
       const observed = labels(matches[0]);
-      requireValue([categoryLabel(checked.source.category), LABELS.fix, LABELS.ready]
+      requireObserved([categoryLabel(checked.source.category), LABELS.fix, LABELS.ready]
         .every((label) => observed.includes(label)), "fix handoff is not ready");
     }
   } else {
